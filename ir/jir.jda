@@ -1,0 +1,222 @@
+; =============================================================================
+; JIR - Jda Intermediate Representation
+; =============================================================================
+; SSA (Static Single Assignment) form IR designed for:
+;   - CPU vectorization (AVX-512, NEON)
+;   - GPU kernel generation (PTX backend)
+;   - Compile-time autograd
+;
+; This file defines the JIR data structures and two optimization passes:
+;   1. Constant Folding
+;   2. Dead Code Elimination (DCE)
+;
+; Written in minimal Jda syntax (Phase 1 compatible).
+; =============================================================================
+
+; --- Value Types ---
+; Every JIR value is tagged with a type.
+; Types are stored as integers for Stage 0 compatibility.
+;
+;   TYPE_I32  = 0
+;   TYPE_I64  = 1
+;   TYPE_F32  = 2
+;   TYPE_F64  = 3
+;   TYPE_PTR  = 4
+;   TYPE_VEC  = 5   ; AVX-512 vector (512-bit = 16 x f32)
+;   TYPE_VOID = 6
+
+; --- SSA Value ---
+; Each SSA value has a unique ID (version number).
+; Once assigned, a value is never reassigned (SSA property).
+;
+; struct Value {
+;     id:    i64    ; unique SSA value id (e.g., %0, %1, %2 ...)
+;     type:  i32    ; TYPE_* constant above
+;     def:   i64    ; index of the instruction that defines this value
+; }
+
+; --- Instruction Opcodes ---
+;
+;   OP_CONST   = 0   ; %v = const <type> <imm>
+;   OP_ADD     = 1   ; %v = add <type> %a, %b
+;   OP_SUB     = 2   ; %v = sub <type> %a, %b
+;   OP_MUL     = 3   ; %v = mul <type> %a, %b
+;   OP_DIV     = 4   ; %v = div <type> %a, %b
+;   OP_LOAD    = 5   ; %v = load <type> %ptr
+;   OP_STORE   = 6   ;      store <type> %val, %ptr
+;   OP_CALL    = 7   ; %v = call <fn> %args...
+;   OP_RET     = 8   ;      ret %v
+;   OP_BR      = 9   ;      br %cond, <then_bb>, <else_bb>
+;   OP_JMP     = 10  ;      jmp <target_bb>
+;   OP_PHI     = 11  ; %v = phi [%a, bb0], [%b, bb1]  ; SSA merge
+;   OP_VECMUL  = 12  ; %v = vecmul %a, %b              ; AVX-512 SIMD multiply
+;   OP_MATMUL  = 13  ; %v = matmul %A, %B, i64 M, N, K ; Tensor multiply
+
+; --- Instruction ---
+; struct Instr {
+;     op:      i32    ; OP_* opcode
+;     dest:    i64    ; SSA value id of result (-1 if no result, e.g. store/ret)
+;     type:    i32    ; TYPE_* for result
+;     operand0: i64   ; first operand SSA id (or immediate for OP_CONST)
+;     operand1: i64   ; second operand SSA id (-1 if unused)
+;     imm:     i64    ; immediate value (for OP_CONST, OP_MATMUL dims, etc.)
+;     dead:    i32    ; DCE flag: 1 = instruction is dead, 0 = alive
+; }
+
+; --- Basic Block ---
+; A linear sequence of instructions with one entry and one exit.
+; struct BasicBlock {
+;     id:        i64    ; basic block id
+;     instrs:    Instr* ; instruction array
+;     instr_cnt: i64    ; number of instructions
+;     succs:     i64[2] ; successor block ids (-1 = none)
+;     preds:     i64[4] ; predecessor block ids
+; }
+
+; --- Function ---
+; struct Function {
+;     name:     str
+;     blocks:   BasicBlock*
+;     block_cnt: i64
+;     val_cnt:  i64   ; SSA value counter (for assigning new IDs)
+; }
+
+; =============================================================================
+; Optimization Pass 1: Constant Folding
+; =============================================================================
+; Folds instructions where all operands are constants at compile time.
+;
+; Example:
+;   %0 = const i32 5
+;   %1 = const i32 3
+;   %2 = add i32 %0, %1     =>  %2 = const i32 8
+;
+; Algorithm:
+;   For each instruction I in each block B:
+;     If I.op is ADD/SUB/MUL/DIV:
+;       Look up def(I.operand0) and def(I.operand1)
+;       If both defs are OP_CONST:
+;         Compute result at compile time
+;         Replace I with OP_CONST(result)
+;         Mark original const defs as candidates for DCE
+;
+; Jda pseudocode (will be compiled by Stage 1):
+;
+;   fn fold_constants(fn: &Function) {
+;       loop block in fn.blocks {
+;           loop instr in block.instrs {
+;               if instr.op == OP_ADD or OP_SUB or OP_MUL or OP_DIV {
+;                   let a_def = lookup_def(fn, instr.operand0)
+;                   let b_def = lookup_def(fn, instr.operand1)
+;                   if a_def.op == OP_CONST and b_def.op == OP_CONST {
+;                       let result = compute(instr.op, a_def.imm, b_def.imm)
+;                       instr.op  = OP_CONST
+;                       instr.imm = result
+;                       instr.operand0 = -1
+;                       instr.operand1 = -1
+;                   }
+;               }
+;           }
+;       }
+;   }
+;
+;   fn compute(op: i32, a: i64, b: i64) -> i64 {
+;       if op == OP_ADD { ret a + b }
+;       if op == OP_SUB { ret a - b }
+;       if op == OP_MUL { ret a * b }
+;       if op == OP_DIV { ret a / b }
+;   }
+
+; =============================================================================
+; Optimization Pass 2: Dead Code Elimination (DCE)
+; =============================================================================
+; Removes instructions whose results are never used.
+;
+; Algorithm (mark-sweep):
+;   Phase 1 (Mark live):
+;     Start from all RET and STORE instructions (side-effects = always live).
+;     For each live instruction I:
+;       Mark I.operand0 and I.operand1 as live.
+;       Recurse on their defining instructions.
+;   Phase 2 (Sweep dead):
+;     For each instruction I:
+;       If I is not marked live AND I has no side effects (not STORE/RET/CALL):
+;         Set I.dead = 1
+;
+; Jda pseudocode:
+;
+;   fn dce(fn: &Function) {
+;       ; Phase 1: Mark live using a worklist
+;       let worklist = Vec::new()
+;       loop block in fn.blocks {
+;           loop instr in block.instrs {
+;               if instr.op == OP_RET or OP_STORE or OP_CALL {
+;                   worklist.push(instr)
+;               }
+;           }
+;       }
+;       loop worklist.len() > 0 {
+;           let i = worklist.pop()
+;           i.dead = 0   ; mark live
+;           if i.operand0 >= 0 {
+;               let def = lookup_def(fn, i.operand0)
+;               if def.dead != 0 { worklist.push(def) }
+;           }
+;           if i.operand1 >= 0 {
+;               let def = lookup_def(fn, i.operand1)
+;               if def.dead != 0 { worklist.push(def) }
+;           }
+;       }
+;       ; Phase 2: Sweep - mark remaining as dead
+;       loop block in fn.blocks {
+;           loop instr in block.instrs {
+;               ; dead field defaults to 1 (dead) before mark phase
+;               ; so anything not touched by mark is dead
+;           }
+;       }
+;   }
+
+; =============================================================================
+; JIR Text Representation (for debugging/serialization)
+; =============================================================================
+; Human-readable JIR dump format mirrors the internal structure.
+; Example function in JIR text form:
+;
+;   fn @compute(i32 %arg0, i32 %arg1) -> i32 {
+;   bb0:
+;       %0 = const i32 10
+;       %1 = add i32 %arg0, %arg1
+;       %2 = mul i32 %1, %0
+;       ret i32 %2
+;   }
+;
+; After constant folding (if %arg0=%arg1=const):
+;   fn @compute(i32 5, i32 3) -> i32 {
+;   bb0:
+;       %0 = const i32 10
+;       %1 = const i32 8     ; folded: 5+3
+;       %2 = const i32 80    ; folded: 8*10
+;       ret i32 %2
+;   }
+;
+; After DCE:
+;   fn @compute() -> i32 {
+;   bb0:
+;       %2 = const i32 80
+;       ret i32 %2
+;   }
+
+; =============================================================================
+; GPU Extension: JIR -> PTX lowering hook (Phase 4 target)
+; =============================================================================
+; OP_MATMUL instructions in JIR are lowered to PTX in Phase 4.
+; The lowering takes:
+;   %out = matmul %A, %B, i64 M, N, K
+; And emits:
+;   .kernel jad_matmul_MxNxK
+;       ...tiled PTX loop with shared memory...
+;   .end_kernel
+;
+; AVX-512 lowering:
+;   OP_VECMUL on TYPE_VEC operands becomes:
+;     VMULPS zmm0, zmm1, zmm2   ; 16 x f32 in one instruction

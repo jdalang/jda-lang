@@ -1,0 +1,232 @@
+; =============================================================================
+; jda::net::http — HTTP/1.1 Parser & Response Writer
+; =============================================================================
+; Minimal HTTP/1.1 implementation entirely in Jda.
+; Zero-copy parser — all slices point into the original request buffer.
+; No allocations — caller provides a Region arena.
+; Optimised for J-Thread concurrency (no global state).
+; =============================================================================
+
+import jda::net::tcp::TcpStream
+
+; =============================================================================
+; HTTP Request (zero-copy — slices into raw buffer)
+; =============================================================================
+struct HttpRequest {
+    method:  []i8       ; "GET", "POST", etc. — slice of raw buf
+    path:    []i8       ; "/index.html"
+    query:   []i8       ; "key=val&key2=val2" (empty slice if no query)
+    version: []i8       ; "HTTP/1.1"
+    headers: []Header   ; parsed headers (up to MAX_HEADERS)
+    body:    []i8       ; request body (empty for GET/HEAD)
+}
+
+struct Header {
+    name:  []i8
+    value: []i8
+}
+
+const MAX_HEADERS = 32
+
+; =============================================================================
+; HTTP Response
+; =============================================================================
+struct HttpResponse {
+    status:  i32
+    headers: []i8       ; raw header string (e.g. "Content-Type: text/html\r\n")
+    body:    []i8
+}
+
+; =============================================================================
+; parse_request(buf: []i8) -> Result<HttpRequest, []i8>
+; =============================================================================
+; Parses an HTTP/1.1 request in-place. Returns slices into `buf`.
+; No copying, no allocation.
+fn parse_request(buf: []i8) -> Result<HttpRequest, []i8> {
+    let pos = 0
+    let req = HttpRequest { method: "", path: "", query: "", version: "",
+                            headers: [], body: "" }
+
+    ; --- Parse request line: METHOD SP PATH SP VERSION CRLF ---
+    req.method = read_token(buf, &mut pos)
+    skip_sp(buf, &mut pos)
+    let full_path = read_token(buf, &mut pos)
+
+    ; Split path from query string at '?'
+    let q_pos = find_char(full_path, '?')
+    if q_pos >= 0 {
+        req.path  = full_path[0..q_pos]
+        req.query = full_path[q_pos+1..]
+    } else {
+        req.path  = full_path
+        req.query = ""
+    }
+
+    skip_sp(buf, &mut pos)
+    req.version = read_token(buf, &mut pos)
+    skip_crlf(buf, &mut pos)
+
+    ; --- Parse headers: Name: Value CRLF ... empty-line ---
+    let h_count = 0
+    let headers  = [MAX_HEADERS]Header
+
+    loop pos < buf.len and not is_crlf(buf, pos) {
+        let name  = read_until(buf, &mut pos, ':')
+        pos = pos + 1   ; skip ':'
+        skip_sp(buf, &mut pos)
+        let value = read_until_crlf(buf, &mut pos)
+        skip_crlf(buf, &mut pos)
+
+        if h_count < MAX_HEADERS {
+            headers[h_count] = Header { name: name, value: value }
+            h_count = h_count + 1
+        }
+    }
+    req.headers = headers[0..h_count]
+    skip_crlf(buf, &mut pos)   ; skip the empty line
+
+    ; --- Body (remainder of buffer) ---
+    req.body = buf[pos..]
+
+    ret ok(req)
+}
+
+; =============================================================================
+; send_response(fd: i32, resp: HttpResponse) — write HTTP response to socket
+; =============================================================================
+fn send_response(fd: i32, resp: HttpResponse) {
+    ; Status line
+    let status_text = status_to_text(resp.status)
+
+    ; Write status line: "HTTP/1.1 200 OK\r\n"
+    let line = [128]i8
+    let line_s = fmt(line, "HTTP/1.1 {} {}\r\n", resp.status, status_text)
+    tcp_write_raw(fd, line_s)
+
+    ; Content-Length header (always include it)
+    let cl_buf = [64]i8
+    let cl_s = fmt(cl_buf, "Content-Length: {}\r\n", resp.body.len)
+    tcp_write_raw(fd, cl_s)
+
+    ; Custom headers from response
+    if resp.headers.len > 0 {
+        tcp_write_raw(fd, resp.headers)
+    }
+
+    ; Connection: close (HTTP/1.0 style for simplicity)
+    tcp_write_raw(fd, "Connection: close\r\n")
+
+    ; End of headers
+    tcp_write_raw(fd, "\r\n")
+
+    ; Body
+    if resp.body.len > 0 {
+        tcp_write_raw(fd, resp.body)
+    }
+}
+
+; =============================================================================
+; HttpRequest helpers
+; =============================================================================
+impl HttpRequest {
+    ; Get header value by name (case-insensitive). Returns "" if not found.
+    fn header(self, name: ref []i8) -> []i8 {
+        for h in self.headers {
+            if str_eq_ci(h.name, name) { ret h.value }
+        }
+        ret ""
+    }
+
+    fn content_length(self) -> i64 {
+        let cl = self.header("content-length")
+        if cl.len == 0 { ret 0 }
+        ret parse_i64(cl).unwrap_or(0)
+    }
+
+    fn is_keep_alive(self) -> bool {
+        let conn = self.header("connection")
+        ret str_eq_ci(conn, "keep-alive")
+    }
+}
+
+; =============================================================================
+; Parsing helpers (all zero-copy — slice into existing buffer)
+; =============================================================================
+
+fn read_token(buf: []i8, pos: &mut i64) -> []i8 {
+    let start = pos[0]
+    loop pos[0] < buf.len and buf[pos[0]] != ' ' and buf[pos[0]] != '\r' {
+        pos[0] = pos[0] + 1
+    }
+    ret buf[start..pos[0]]
+}
+
+fn read_until(buf: []i8, pos: &mut i64, delim: i8) -> []i8 {
+    let start = pos[0]
+    loop pos[0] < buf.len and buf[pos[0]] != delim {
+        pos[0] = pos[0] + 1
+    }
+    ret buf[start..pos[0]]
+}
+
+fn read_until_crlf(buf: []i8, pos: &mut i64) -> []i8 {
+    let start = pos[0]
+    loop pos[0] < buf.len and not is_crlf(buf, pos[0]) {
+        pos[0] = pos[0] + 1
+    }
+    ret buf[start..pos[0]]
+}
+
+fn skip_sp(buf: []i8, pos: &mut i64) {
+    loop pos[0] < buf.len and buf[pos[0]] == ' ' { pos[0] = pos[0] + 1 }
+}
+
+fn skip_crlf(buf: []i8, pos: &mut i64) {
+    if pos[0] < buf.len and buf[pos[0]] == '\r' { pos[0] = pos[0] + 1 }
+    if pos[0] < buf.len and buf[pos[0]] == '\n' { pos[0] = pos[0] + 1 }
+}
+
+fn is_crlf(buf: []i8, pos: i64) -> bool {
+    ret pos < buf.len and (buf[pos] == '\r' or buf[pos] == '\n')
+}
+
+fn find_char(s: []i8, c: i8) -> i64 {
+    loop i in 0..s.len { if s[i] == c { ret i } }
+    ret -1
+}
+
+fn status_to_text(code: i32) -> []i8 {
+    match code {
+        200 => "OK"
+        201 => "Created"
+        204 => "No Content"
+        301 => "Moved Permanently"
+        302 => "Found"
+        304 => "Not Modified"
+        400 => "Bad Request"
+        401 => "Unauthorized"
+        403 => "Forbidden"
+        404 => "Not Found"
+        405 => "Method Not Allowed"
+        408 => "Request Timeout"
+        429 => "Too Many Requests"
+        500 => "Internal Server Error"
+        502 => "Bad Gateway"
+        503 => "Service Unavailable"
+        _   => "Unknown"
+    }
+}
+
+fn tcp_write_raw(fd: i32, s: []i8) {
+    syscall(44, fd, s, s.len, 0, 0, 0)   ; SYS_SENDTO
+}
+
+fn str_eq_ci(a: []i8, b: []i8) -> bool {
+    if a.len != b.len { ret false }
+    loop i in 0..a.len {
+        let ac = if a[i] >= 'A' and a[i] <= 'Z' { a[i] + 32 } else { a[i] }
+        let bc = if b[i] >= 'A' and b[i] <= 'Z' { b[i] + 32 } else { b[i] }
+        if ac != bc { ret false }
+    }
+    ret true
+}
