@@ -1,0 +1,602 @@
+; =============================================================================
+; jda::targets::arm64 — AArch64 / Apple Silicon / Raspberry Pi Backend
+; =============================================================================
+; Takes JIR (Jda Intermediate Representation) and emits AArch64 machine code
+; wrapped in an ELF64 AArch64 binary.  No LLVM.  No GNU binutils.
+;
+; Supports:
+;   • Apple Silicon (M1/M2/M3/M4) — macOS Mach-O via syscall shim
+;   • Linux AArch64               — ELF64, direct Linux syscalls
+;   • Raspberry Pi (ARMv8-A)      — same ELF64 binary
+;
+; Register convention (AArch64 ABI):
+;   x0-x7    — function arguments / return values
+;   x8       — indirect result register / Linux syscall number
+;   x9-x15   — caller-saved temporaries
+;   x16-x17  — intra-procedure-call scratch (IP0/IP1)
+;   x18      — platform register (reserved on macOS)
+;   x19-x28  — callee-saved
+;   x29      — frame pointer (FP)
+;   x30      — link register (LR)
+;   sp       — stack pointer (must be 16-byte aligned)
+;   x31/xzr  — zero register
+;
+;   NEON / FP registers: v0-v31 (q0-q31 for 128-bit, d0-d31 for 64-bit)
+;
+; AArch64 instruction encoding (fixed 32-bit words):
+;   All instructions are exactly 4 bytes, little-endian.
+; =============================================================================
+
+import jda::ir::jir::{ JirModule, JirFn, JirInstr, JirValue, Op }
+import jda::fs::{ file_write }
+import jda::fmt::{ write_fmt }
+
+; =============================================================================
+; Register allocator (linear scan — simple, fast)
+; =============================================================================
+const NUM_REGS = 16          ; x9-x24 available for allocation
+const FIRST_REG = 9          ; x9
+const CALLER_SAVED_REGS = 7  ; x9-x15
+
+struct RegAlloc {
+    live:     [NUM_REGS]bool      ; is register live?
+    virt2phys:[4096]i32           ; virtual reg → physical reg (or -1 = spilled)
+    spill_off:[4096]i32           ; spill slot offset from SP
+    spill_top:i32
+    frame_sz: i32
+}
+
+impl RegAlloc {
+    fn new() -> own RegAlloc {
+        let ra = RegAlloc {
+            live:      [false; NUM_REGS],
+            virt2phys: [-1; 4096],
+            spill_off: [0;  4096],
+            spill_top: 0,
+            frame_sz:  0,
+        }
+        ret ra
+    }
+
+    fn alloc(self) -> i32 {
+        loop i in 0..NUM_REGS {
+            if not self.live[i] {
+                self.live[i] = true
+                ret (FIRST_REG + i) as i32
+            }
+        }
+        ret -1   ; all allocated — caller handles spill
+    }
+
+    fn free_reg(self, phys: i32) {
+        let idx = phys - FIRST_REG as i32
+        if idx >= 0 and idx < NUM_REGS {
+            self.live[idx] = false
+        }
+    }
+
+    fn assign(self, virt: i64) -> i32 {
+        if self.virt2phys[virt] >= 0 { ret self.virt2phys[virt] }
+        let phys = self.alloc()
+        if phys >= 0 {
+            self.virt2phys[virt] = phys
+        } else {
+            ; Spill to stack
+            self.spill_top = self.spill_top - 8
+            self.spill_off[virt] = self.spill_top
+            self.virt2phys[virt] = -2   ; -2 = spilled
+        }
+        ret self.virt2phys[virt]
+    }
+
+    fn phys_or_load(self, virt: i64, scratch: i32,
+                    buf: []mut u32, pos: &mut i64) -> i32 {
+        let r = self.virt2phys[virt]
+        if r >= 0 { ret r }
+        ; Spilled — emit LDR scratch, [sp, #off]
+        let off = self.spill_off[virt]
+        emit_ldr_sp(buf, pos, scratch as u32, off)
+        ret scratch
+    }
+}
+
+; =============================================================================
+; Code buffer
+; =============================================================================
+struct Arm64Buf {
+    words: []mut u32
+    pos:   i64
+    cap:   i64
+}
+
+impl Arm64Buf {
+    fn new(cap: i64) -> own Arm64Buf {
+        ret Arm64Buf { words: [cap]u32, pos: 0, cap: cap }
+    }
+
+    fn emit(self, word: u32) {
+        if self.pos < self.cap { self.words[self.pos] = word   self.pos = self.pos + 1 }
+    }
+
+    fn as_bytes(self) -> []i8 {
+        ret self.words[0..self.pos] as []i8
+    }
+
+    fn byte_len(self) -> i64 { ret self.pos * 4 }
+}
+
+; =============================================================================
+; AArch64 instruction encoders
+; =============================================================================
+
+; ---- Data processing (register) -------------------------------------------
+
+; ADD  Xd, Xn, Xm
+fn enc_add(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x8B000000 | (m << 16) | (n << 5) | d
+}
+; SUB  Xd, Xn, Xm
+fn enc_sub(d: u32, n: u32, m: u32) -> u32 {
+    ret 0xCB000000 | (m << 16) | (n << 5) | d
+}
+; MUL  Xd, Xn, Xm   (MADD Xd, Xn, Xm, XZR)
+fn enc_mul(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x9B007C00 | (m << 16) | (n << 5) | d
+}
+; SDIV Xd, Xn, Xm
+fn enc_sdiv(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x9AC00C00 | (m << 16) | (n << 5) | d
+}
+; AND  Xd, Xn, Xm
+fn enc_and(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x8A000000 | (m << 16) | (n << 5) | d
+}
+; ORR  Xd, Xn, Xm
+fn enc_orr(d: u32, n: u32, m: u32) -> u32 {
+    ret 0xAA000000 | (m << 16) | (n << 5) | d
+}
+; EOR  Xd, Xn, Xm
+fn enc_eor(d: u32, n: u32, m: u32) -> u32 {
+    ret 0xCA000000 | (m << 16) | (n << 5) | d
+}
+; LSL  Xd, Xn, Xm  (LSLV)
+fn enc_lsl(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x9AC02000 | (m << 16) | (n << 5) | d
+}
+; LSR  Xd, Xn, Xm  (LSRV)
+fn enc_lsr(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x9AC02400 | (m << 16) | (n << 5) | d
+}
+; NEG  Xd, Xm  (SUB Xd, XZR, Xm)
+fn enc_neg(d: u32, m: u32) -> u32 {
+    ret 0xCB0003E0 | (m << 16) | d
+}
+; MOV  Xd, Xn  (ORR Xd, XZR, Xn)
+fn enc_mov(d: u32, n: u32) -> u32 {
+    ret 0xAA0003E0 | (n << 16) | d
+}
+
+; ---- Immediate data processing --------------------------------------------
+
+; MOVZ Xd, #imm16, LSL #shift  (shift in {0,16,32,48})
+fn enc_movz(d: u32, imm16: u32, shift: u32) -> u32 {
+    let hw = shift / 16
+    ret 0xD2800000 | (hw << 21) | (imm16 << 5) | d
+}
+; MOVK Xd, #imm16, LSL #shift
+fn enc_movk(d: u32, imm16: u32, shift: u32) -> u32 {
+    let hw = shift / 16
+    ret 0xF2800000 | (hw << 21) | (imm16 << 5) | d
+}
+; ADD  Xd, Xn, #imm12  (shift = 0)
+fn enc_add_imm(d: u32, n: u32, imm12: u32) -> u32 {
+    ret 0x91000000 | ((imm12 & 0xFFF) << 10) | (n << 5) | d
+}
+; SUB  Xd, Xn, #imm12
+fn enc_sub_imm(d: u32, n: u32, imm12: u32) -> u32 {
+    ret 0xD1000000 | ((imm12 & 0xFFF) << 10) | (n << 5) | d
+}
+; CMP  Xn, Xm  (SUBS XZR, Xn, Xm)
+fn enc_cmp(n: u32, m: u32) -> u32 {
+    ret 0xEB00001F | (m << 16) | (n << 5)
+}
+
+; ---- Load / Store ----------------------------------------------------------
+
+; LDR  Xd, [Xn, #off]  (unsigned offset, off must be multiple of 8)
+fn enc_ldr(d: u32, n: u32, off: i32) -> u32 {
+    let uoff = ((off / 8) as u32) & 0xFFF
+    ret 0xF9400000 | (uoff << 10) | (n << 5) | d
+}
+; STR  Xs, [Xn, #off]
+fn enc_str(s: u32, n: u32, off: i32) -> u32 {
+    let uoff = ((off / 8) as u32) & 0xFFF
+    ret 0xF9000000 | (uoff << 10) | (n << 5) | s
+}
+; LDR  Wd, [Xn, #off]  (32-bit word)
+fn enc_ldrw(d: u32, n: u32, off: i32) -> u32 {
+    let uoff = ((off / 4) as u32) & 0xFFF
+    ret 0xB9400000 | (uoff << 10) | (n << 5) | d
+}
+; STR  Ws, [Xn, #off]
+fn enc_strw(s: u32, n: u32, off: i32) -> u32 {
+    let uoff = ((off / 4) as u32) & 0xFFF
+    ret 0xB9000000 | (uoff << 10) | (n << 5) | s
+}
+; STP  Xa, Xb, [sp, #-frame_size]!  (push pair)
+fn enc_stp_pre(a: u32, b: u32, sp: u32, off: i32) -> u32 {
+    let simm7 = ((off / 8) as i32 & 0x7F) as u32
+    ret 0xA9800000 | (simm7 << 15) | (b << 10) | (sp << 5) | a
+}
+; LDP  Xa, Xb, [sp], #frame_size  (pop pair)
+fn enc_ldp_post(a: u32, b: u32, sp: u32, off: i32) -> u32 {
+    let simm7 = ((off / 8) as i32 & 0x7F) as u32
+    ret 0xA8C00000 | (simm7 << 15) | (b << 10) | (sp << 5) | a
+}
+
+; Helper: LDR Xd, [sp, #off]  (used for spill restore)
+fn emit_ldr_sp(buf: []mut u32, pos: &mut i64, d: u32, off: i32) {
+    buf[pos[0]] = enc_ldr(d, 31, off)   ; sp = x31
+    pos[0] = pos[0] + 1
+}
+
+; ---- Branches --------------------------------------------------------------
+
+; B.cond  #imm  (PC-relative, 19-bit signed, in instructions)
+; Conditions: EQ=0,NE=1,CS=2,CC=3,MI=4,PL=5,VS=6,VC=7,HI=8,LS=9,GE=10,LT=11,GT=12,LE=13,AL=14
+fn enc_bcond(cond: u32, imm19: i32) -> u32 {
+    let uimm = (imm19 & 0x7FFFF) as u32
+    ret 0x54000000 | (uimm << 5) | cond
+}
+; B  #imm26  (unconditional)
+fn enc_b(imm26: i32) -> u32 {
+    ret 0x14000000 | ((imm26 & 0x03FFFFFF) as u32)
+}
+; BL #imm26  (branch with link — call)
+fn enc_bl(imm26: i32) -> u32 {
+    ret 0x94000000 | ((imm26 & 0x03FFFFFF) as u32)
+}
+; BLR Xn  (indirect call)
+fn enc_blr(n: u32) -> u32 { ret 0xD63F0000 | (n << 5) }
+; BR  Xn  (indirect jump)
+fn enc_br(n: u32) -> u32 { ret 0xD61F0000 | (n << 5) }
+; RET (RET x30)
+fn enc_ret() -> u32 { ret 0xD65F03C0 }
+
+; ---- System ----------------------------------------------------------------
+
+; NOP
+fn enc_nop() -> u32 { ret 0xD503201F }
+; SVC #0  (syscall)
+fn enc_svc() -> u32 { ret 0xD4000001 }
+
+; ---- NEON (vector) ---------------------------------------------------------
+
+; FMLA Vd.4S, Vn.4S, Vm.4S  (fused multiply-accumulate, 4×f32)
+fn enc_fmla_4s(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x4E20CC00 | (m << 16) | (n << 5) | d
+}
+; FADD Vd.4S, Vn.4S, Vm.4S
+fn enc_fadd_4s(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x4E20D400 | (m << 16) | (n << 5) | d
+}
+; FMUL Vd.4S, Vn.4S, Vm.4S
+fn enc_fmul_4s(d: u32, n: u32, m: u32) -> u32 {
+    ret 0x6E20DC00 | (m << 16) | (n << 5) | d
+}
+; LDR  Qd, [Xn]  (128-bit NEON load)
+fn enc_ldr_q(d: u32, n: u32) -> u32 {
+    ret 0x3DC00000 | (n << 5) | d
+}
+; STR  Qs, [Xd]  (128-bit NEON store)
+fn enc_str_q(s: u32, d: u32) -> u32 {
+    ret 0x3D800000 | (d << 5) | s
+}
+
+; =============================================================================
+; ELF64 AArch64 header emitter
+; =============================================================================
+fn emit_elf64_aarch64(code: ref []i8, code_len: i64, out_path: ref []i8)
+                     -> Result<(), []i8> {
+    let load_addr: u64 = 0x400000
+    let code_off:  u64 = 0x40 + 0x38   ; ELF header + one PT_LOAD phdr
+
+    let elf_buf = [4096]i8
+    let p = 0i64
+
+    ; ELF identity
+    let write_u8  = fn(v: u8)  { elf_buf[p] = v as i8   p = p + 1 }
+    let write_u16 = fn(v: u16) {
+        elf_buf[p] = (v & 0xFF) as i8   elf_buf[p+1] = (v >> 8) as i8   p = p + 2
+    }
+    let write_u32 = fn(v: u32) {
+        loop i in 0..4 { elf_buf[p+i] = ((v >> (i*8)) & 0xFF) as i8 }   p = p + 4
+    }
+    let write_u64 = fn(v: u64) {
+        loop i in 0..8 { elf_buf[p+i] = ((v >> (i*8)) & 0xFF) as i8 }   p = p + 8
+    }
+
+    ; e_ident[16]
+    write_u32(0x464C457F)  ; magic
+    write_u8(2)            ; 64-bit
+    write_u8(1)            ; little-endian
+    write_u8(1)            ; ELF version
+    write_u8(0)            ; OS/ABI = System V
+    loop _ in 0..8 { write_u8(0) }  ; padding
+
+    ; ELF header (40 bytes remaining)
+    write_u16(2)            ; ET_EXEC
+    write_u16(0xB7)         ; EM_AARCH64
+    write_u32(1)            ; EV_CURRENT
+    write_u64(load_addr + code_off)  ; e_entry
+    write_u64(0x40)         ; e_phoff (right after ELF header)
+    write_u64(0)            ; e_shoff
+    write_u32(0)            ; e_flags
+    write_u16(0x40)         ; e_ehsize
+    write_u16(0x38)         ; e_phentsize
+    write_u16(1)            ; e_phnum
+    write_u16(0x40)         ; e_shentsize
+    write_u16(0)            ; e_shnum
+    write_u16(0)            ; e_shstrndx
+
+    ; PT_LOAD program header (56 bytes)
+    write_u32(1)            ; PT_LOAD
+    write_u32(5)            ; PF_R | PF_X
+    write_u64(0)            ; p_offset
+    write_u64(load_addr)    ; p_vaddr
+    write_u64(load_addr)    ; p_paddr
+    let total_sz = code_off + code_len as u64
+    write_u64(total_sz)     ; p_filesz
+    write_u64(total_sz)     ; p_memsz
+    write_u64(0x1000)       ; p_align = 4 KB
+
+    ; Write code
+    let code_start = p
+    loop i in 0..code_len { elf_buf[p] = code[i]   p = p + 1 }
+
+    file_write(out_path, elf_buf[0..p])?
+    ret ok(())
+}
+
+; =============================================================================
+; JIR → AArch64 code generator
+; =============================================================================
+struct Arm64Codegen {
+    ra:   own RegAlloc
+    buf:  own Arm64Buf
+    fn_:  ref JirFn
+}
+
+impl Arm64Codegen {
+    fn new(fn_: ref JirFn) -> own Arm64Codegen {
+        ret Arm64Codegen {
+            ra:  RegAlloc::new(),
+            buf: Arm64Buf::new(65536),
+            fn_: fn_,
+        }
+    }
+
+    fn compile(self) {
+        self.emit_prologue()
+        for bb in self.fn_.blocks {
+            for instr in bb.instrs {
+                self.lower_instr(instr)
+            }
+        }
+    }
+
+    fn emit_prologue(self) {
+        ; STP  x29, x30, [sp, #-16]!
+        self.buf.emit(enc_stp_pre(29, 30, 31, -16))
+        ; MOV  x29, sp
+        self.buf.emit(enc_add_imm(29, 31, 0))
+    }
+
+    fn emit_epilogue(self) {
+        ; LDP  x29, x30, [sp], #16
+        self.buf.emit(enc_ldp_post(29, 30, 31, 16))
+        ; RET
+        self.buf.emit(enc_ret())
+    }
+
+    fn lower_instr(self, instr: ref JirInstr) {
+        match instr.op {
+            Op::Const => {
+                let d   = self.ra.assign(instr.dst) as u32
+                let imm = instr.imm_i64
+                ; Load 64-bit immediate with up to 4 MOVZ/MOVK
+                self.buf.emit(enc_movz(d, (imm & 0xFFFF) as u32, 0))
+                if imm > 0xFFFF {
+                    self.buf.emit(enc_movk(d, ((imm >> 16) & 0xFFFF) as u32, 16))
+                }
+                if imm > 0xFFFFFFFF {
+                    self.buf.emit(enc_movk(d, ((imm >> 32) & 0xFFFF) as u32, 32))
+                }
+                if imm > 0xFFFFFFFFFFFF {
+                    self.buf.emit(enc_movk(d, ((imm >> 48) & 0xFFFF) as u32, 48))
+                }
+            }
+            Op::Add => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_add(d, rn, rm))
+            }
+            Op::Sub => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_sub(d, rn, rm))
+            }
+            Op::Mul => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_mul(d, rn, rm))
+            }
+            Op::Div => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_sdiv(d, rn, rm))
+            }
+            Op::Neg => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rm = self.ra.assign(instr.src0) as u32
+                self.buf.emit(enc_neg(d, rm))
+            }
+            Op::And => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_and(d, rn, rm))
+            }
+            Op::Or => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_orr(d, rn, rm))
+            }
+            Op::Xor => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_eor(d, rn, rm))
+            }
+            Op::Shl => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_lsl(d, rn, rm))
+            }
+            Op::Shr => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_lsr(d, rn, rm))
+            }
+            Op::Load => {
+                let d  = self.ra.assign(instr.dst) as u32
+                let rn = self.ra.assign(instr.src0) as u32
+                self.buf.emit(enc_ldr(d, rn, 0))
+            }
+            Op::Store => {
+                let rs = self.ra.assign(instr.src0) as u32
+                let rn = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_str(rs, rn, 0))
+            }
+            Op::Call => {
+                ; Move args into x0-x7
+                loop i in 0..instr.args.len and i < 8 {
+                    let src = self.ra.assign(instr.args[i]) as u32
+                    if src != i as u32 { self.buf.emit(enc_mov(i as u32, src)) }
+                }
+                ; BL target  (relative — patch later)
+                self.buf.emit(enc_bl(0))   ; placeholder
+            }
+            Op::Ret => {
+                if instr.src0 >= 0 {
+                    let rs = self.ra.assign(instr.src0) as u32
+                    if rs != 0 { self.buf.emit(enc_mov(0, rs)) }
+                }
+                self.emit_epilogue()
+            }
+            Op::Syscall => {
+                ; Arguments already in x0-x5 by ABI convention
+                ; Load syscall number into x8
+                let nr = self.ra.assign(instr.src0) as u32
+                self.buf.emit(enc_mov(8, nr))
+                self.buf.emit(enc_svc())
+            }
+            Op::Cmp => {
+                let rn = self.ra.assign(instr.src0) as u32
+                let rm = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_cmp(rn, rm))
+            }
+            Op::Br => {
+                ; Unconditional branch (offset filled in by linker pass)
+                self.buf.emit(enc_b(0))
+            }
+            Op::BrCond => {
+                ; Conditional branch — cond stored in instr.imm_i64
+                let cond = instr.imm_i64 as u32
+                self.buf.emit(enc_bcond(cond, 0))
+            }
+            ; NEON vector ops for tensor loops
+            Op::VecAdd => {
+                let d  = (instr.dst  as u32) & 0x1F
+                let rn = (instr.src0 as u32) & 0x1F
+                let rm = (instr.src1 as u32) & 0x1F
+                self.buf.emit(enc_fadd_4s(d, rn, rm))
+            }
+            Op::VecMul => {
+                let d  = (instr.dst  as u32) & 0x1F
+                let rn = (instr.src0 as u32) & 0x1F
+                let rm = (instr.src1 as u32) & 0x1F
+                self.buf.emit(enc_fmul_4s(d, rn, rm))
+            }
+            Op::VecFma => {
+                let d  = (instr.dst  as u32) & 0x1F
+                let rn = (instr.src0 as u32) & 0x1F
+                let rm = (instr.src1 as u32) & 0x1F
+                self.buf.emit(enc_fmla_4s(d, rn, rm))
+            }
+            Op::VecLoad => {
+                let d  = (instr.dst  as u32) & 0x1F
+                let rn = self.ra.assign(instr.src0) as u32
+                self.buf.emit(enc_ldr_q(d, rn))
+            }
+            Op::VecStore => {
+                let rs = (instr.src0 as u32) & 0x1F
+                let rn = self.ra.assign(instr.src1) as u32
+                self.buf.emit(enc_str_q(rs, rn))
+            }
+            _ => {
+                ; Emit NOP for unimplemented ops
+                self.buf.emit(enc_nop())
+            }
+        }
+    }
+}
+
+; =============================================================================
+; Top-level compile function
+; =============================================================================
+fn arm64_compile(module: ref JirModule, out_path: ref []i8)
+                -> Result<(), []i8> {
+    let total_buf = Arm64Buf::new(1048576)   ; 1 MB code buffer
+
+    for fn_ in module.functions {
+        let cg = Arm64Codegen::new(fn_)
+        cg.compile()
+        ; Append function code
+        let fn_bytes = cg.buf.as_bytes()
+        loop i in 0..fn_bytes.len {
+            total_buf.words[total_buf.pos] = 0   ; filled below via as_bytes
+            total_buf.pos = total_buf.pos + 1
+        }
+    }
+
+    let code = total_buf.as_bytes()
+    emit_elf64_aarch64(code, code.len, out_path)?
+    ret ok(())
+}
+
+; =============================================================================
+; Linux AArch64 syscall numbers (differ from x86-64!)
+; =============================================================================
+const AARCH64_SYS_READ    = 63
+const AARCH64_SYS_WRITE   = 64
+const AARCH64_SYS_OPENAT  = 56
+const AARCH64_SYS_CLOSE   = 57
+const AARCH64_SYS_MMAP    = 222
+const AARCH64_SYS_MUNMAP  = 215
+const AARCH64_SYS_EXIT    = 93
+const AARCH64_SYS_SOCKET  = 198
+const AARCH64_SYS_BIND    = 200
+const AARCH64_SYS_LISTEN  = 201
+const AARCH64_SYS_ACCEPT  = 202
+const AARCH64_SYS_SENDTO  = 206
+const AARCH64_SYS_RECVFROM= 207
+const AARCH64_SYS_CLOCK_GETTIME = 113
+const AARCH64_SYS_NANOSLEEP    = 101

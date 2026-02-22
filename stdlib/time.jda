@@ -1,0 +1,426 @@
+; =============================================================================
+; jda::time — Clocks, Durations & Timers
+; =============================================================================
+; Direct Linux syscalls — no libc, no <time.h>.
+;
+; Linux syscalls used:
+;   SYS_CLOCK_GETTIME  = 228   clock_gettime(clockid, timespec)
+;   SYS_CLOCK_GETRES   = 229   clock_getres(clockid, timespec)
+;   SYS_NANOSLEEP      = 35    nanosleep(req, rem)
+;   SYS_CLOCK_NANOSLEEP= 230   clock_nanosleep(clockid, flags, req, rem)
+;   SYS_GETTIMEOFDAY   = 96    gettimeofday(timeval, timezone)
+;
+; CPU cycle counter via RDTSC (inline asm) for tight benchmarks.
+;
+; Types:
+;   Instant   — monotonic clock snapshot
+;   Duration  — signed nanosecond delta
+;   WallClock — wall-clock timestamp (seconds since Unix epoch)
+;   Timer     — deadline-based countdown
+;   Stopwatch — start/lap/stop benchmark helper
+;
+; Usage:
+;   let t0 = Instant::now()
+;   heavy_work()
+;   let elapsed = t0.elapsed()
+;   print("took: ", elapsed.as_ms(), " ms")
+;
+;   time::sleep_ms(100)
+;
+;   let timer = Timer::new(Duration::from_secs(5))
+;   loop not timer.expired() { do_work() }
+; =============================================================================
+
+const SYS_NANOSLEEP       = 35
+const SYS_GETTIMEOFDAY    = 96
+const SYS_CLOCK_GETTIME   = 228
+const SYS_CLOCK_GETRES    = 229
+const SYS_CLOCK_NANOSLEEP = 230
+
+; POSIX clock IDs
+const CLOCK_REALTIME        : i32 = 0
+const CLOCK_MONOTONIC       : i32 = 1
+const CLOCK_PROCESS_CPUTIME : i32 = 2
+const CLOCK_THREAD_CPUTIME  : i32 = 3
+const CLOCK_MONOTONIC_RAW   : i32 = 4
+const CLOCK_BOOTTIME        : i32 = 7
+
+; =============================================================================
+; Timespec — raw kernel time structure
+; =============================================================================
+struct Timespec {
+    tv_sec:  i64
+    tv_nsec: i64
+}
+
+struct Timeval {
+    tv_sec:  i64
+    tv_usec: i64
+}
+
+fn clock_gettime(clockid: i32) -> Timespec {
+    let ts = Timespec { tv_sec: 0, tv_nsec: 0 }
+    syscall(SYS_CLOCK_GETTIME, clockid, &mut ts)
+    ret ts
+}
+
+; =============================================================================
+; Duration — a signed span of time, stored as nanoseconds
+; =============================================================================
+struct Duration {
+    nanos: i64    ; total nanoseconds (may be negative)
+}
+
+impl Duration {
+    fn from_nanos(n: i64)  -> Duration { ret Duration { nanos: n } }
+    fn from_us(us: i64)    -> Duration { ret Duration { nanos: us * 1_000 } }
+    fn from_ms(ms: i64)    -> Duration { ret Duration { nanos: ms * 1_000_000 } }
+    fn from_secs(s: i64)   -> Duration { ret Duration { nanos: s  * 1_000_000_000 } }
+    fn from_mins(m: i64)   -> Duration { ret Duration { nanos: m  * 60_000_000_000 } }
+    fn from_hours(h: i64)  -> Duration { ret Duration { nanos: h  * 3_600_000_000_000 } }
+
+    fn as_nanos(self)  -> i64 { ret self.nanos }
+    fn as_us(self)     -> i64 { ret self.nanos / 1_000 }
+    fn as_ms(self)     -> i64 { ret self.nanos / 1_000_000 }
+    fn as_secs(self)   -> i64 { ret self.nanos / 1_000_000_000 }
+    fn as_secs_f64(self) -> f64 { ret self.nanos as f64 / 1_000_000_000.0 }
+
+    fn abs(self)    -> Duration { ret Duration { nanos: if self.nanos < 0 { -self.nanos } else { self.nanos } } }
+    fn is_zero(self) -> bool    { ret self.nanos == 0 }
+    fn is_negative(self) -> bool { ret self.nanos < 0 }
+
+    fn add(self, other: Duration) -> Duration {
+        ret Duration { nanos: self.nanos + other.nanos }
+    }
+    fn sub(self, other: Duration) -> Duration {
+        ret Duration { nanos: self.nanos - other.nanos }
+    }
+    fn mul(self, factor: i64) -> Duration {
+        ret Duration { nanos: self.nanos * factor }
+    }
+    fn div(self, divisor: i64) -> Duration {
+        ret Duration { nanos: self.nanos / divisor }
+    }
+
+    ; Human-readable string  ("1.234 s", "456 ms", "789 µs", "12 ns")
+    fn to_str(self) -> []i8 {
+        let buf = [64]i8
+        let n   = self.nanos
+        if n < 0 { n = -n }
+        if n >= 1_000_000_000 {
+            let s  = n / 1_000_000_000
+            let ms = (n % 1_000_000_000) / 1_000_000
+            ret buf[0..write_fmt("{}.{:03} s",
+                [ArgI64(s), ArgI64(ms)], buf, 64)]
+        }
+        if n >= 1_000_000 {
+            ret buf[0..write_fmt("{} ms",
+                [ArgI64(n / 1_000_000)], buf, 64)]
+        }
+        if n >= 1_000 {
+            ret buf[0..write_fmt("{} µs",
+                [ArgI64(n / 1_000)], buf, 64)]
+        }
+        ret buf[0..write_fmt("{} ns", [ArgI64(n)], buf, 64)]
+    }
+
+    fn to_timespec(self) -> Timespec {
+        let n = if self.nanos < 0 { 0 } else { self.nanos }
+        ret Timespec { tv_sec:  n / 1_000_000_000,
+                       tv_nsec: n % 1_000_000_000 }
+    }
+}
+
+; =============================================================================
+; Instant — monotonic clock snapshot
+; =============================================================================
+struct Instant {
+    ts: Timespec
+}
+
+impl Instant {
+    ; Capture the current monotonic clock value
+    fn now() -> Instant {
+        ret Instant { ts: clock_gettime(CLOCK_MONOTONIC) }
+    }
+
+    ; Elapsed duration since this snapshot was taken
+    fn elapsed(self) -> Duration {
+        let now = Instant::now()
+        ret now.since(self)
+    }
+
+    ; Duration from `earlier` to `self`
+    fn since(self, earlier: ref Instant) -> Duration {
+        let sec_diff  = self.ts.tv_sec  - earlier.ts.tv_sec
+        let nsec_diff = self.ts.tv_nsec - earlier.ts.tv_nsec
+        ret Duration::from_nanos(sec_diff * 1_000_000_000 + nsec_diff)
+    }
+
+    ; Add a Duration to produce a future Instant
+    fn add(self, d: Duration) -> Instant {
+        let total_ns = self.ts.tv_nsec + d.nanos
+        let extra_s  = total_ns / 1_000_000_000
+        ret Instant {
+            ts: Timespec {
+                tv_sec:  self.ts.tv_sec + extra_s,
+                tv_nsec: total_ns % 1_000_000_000,
+            }
+        }
+    }
+
+    fn before(self, other: ref Instant) -> bool {
+        ret self.ts.tv_sec < other.ts.tv_sec or
+            (self.ts.tv_sec == other.ts.tv_sec and
+             self.ts.tv_nsec < other.ts.tv_nsec)
+    }
+}
+
+; =============================================================================
+; WallClock — CLOCK_REALTIME (Unix epoch)
+; =============================================================================
+struct WallClock {
+    sec:  i64   ; seconds since 1970-01-01T00:00:00Z
+    nsec: i64
+}
+
+impl WallClock {
+    fn now() -> WallClock {
+        let ts = clock_gettime(CLOCK_REALTIME)
+        ret WallClock { sec: ts.tv_sec, nsec: ts.tv_nsec }
+    }
+
+    fn unix_ms(self) -> i64 {
+        ret self.sec * 1000 + self.nsec / 1_000_000
+    }
+
+    fn unix_us(self) -> i64 {
+        ret self.sec * 1_000_000 + self.nsec / 1_000
+    }
+
+    ; Decompose into (year, month, day, hour, min, sec) — UTC
+    fn to_utc(self) -> (i64, i64, i64, i64, i64, i64) {
+        let s = self.sec
+        ; seconds → date (Proleptic Gregorian)
+        let days = s / 86400
+        let rem  = s % 86400
+        let h    = rem / 3600
+        let m    = (rem % 3600) / 60
+        let sec2 = rem % 60
+        ; day number → year/month/day (civil_from_days algorithm)
+        let z   = days + 719468
+        let era = if z >= 0 { z } else { z - 146096 } / 146097
+        let doe = z - era * 146097
+        let yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365
+        let y   = yoe + era * 400
+        let doy = doe - (365*yoe + yoe/4 - yoe/100)
+        let mp  = (5*doy + 2)/153
+        let d   = doy - (153*mp+2)/5 + 1
+        let mo  = mp + if mp < 10 { 3 } else { -9 }
+        let yr  = y + if mo <= 2 { 1 } else { 0 }
+        ret (yr, mo, d, h, m, sec2)
+    }
+
+    ; ISO 8601 string: "2025-11-04T13:02:07Z"
+    fn to_iso8601(self) -> []i8 {
+        let (y, mo, d, h, mi, s) = self.to_utc()
+        let buf = [32]i8
+        let n = write_fmt("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+                          [ArgI64(y), ArgI64(mo), ArgI64(d),
+                           ArgI64(h), ArgI64(mi), ArgI64(s)],
+                          buf, 32)
+        ret buf[0..n]
+    }
+}
+
+; =============================================================================
+; Sleep functions
+; =============================================================================
+
+fn sleep_ns(ns: i64) {
+    let req = Duration::from_nanos(ns).to_timespec()
+    let rem = Timespec { tv_sec: 0, tv_nsec: 0 }
+    loop {
+        let r = syscall(SYS_NANOSLEEP, &req, &mut rem) as i32
+        if r == 0 { break }
+        ; EINTR = 4 — interrupted by signal, sleep the remainder
+        if -r == 4 { req = rem } else { break }
+    }
+}
+
+fn sleep_us(us: i64)   { sleep_ns(us * 1_000) }
+fn sleep_ms(ms: i64)   { sleep_ns(ms * 1_000_000) }
+fn sleep_secs(s: i64)  { sleep_ns(s  * 1_000_000_000) }
+fn sleep(d: Duration)  { sleep_ns(d.nanos) }
+
+; =============================================================================
+; RDTSC — CPU cycle counter (x86-64 only)
+; =============================================================================
+fn rdtsc() -> u64 {
+    let hi: u64   let lo: u64
+    asm {
+        out rdx = hi
+        out rax = lo
+        ---
+        rdtsc
+    }
+    ret (hi << 32) | lo
+}
+
+fn rdtscp() -> (u64, u32) {
+    let hi: u64   let lo: u64   let aux: u32
+    asm {
+        out rdx = hi
+        out rax = lo
+        out ecx = aux
+        ---
+        rdtscp
+    }
+    ret ((hi << 32) | lo, aux)
+}
+
+; Estimate CPU frequency from a 100ms wall-clock sample
+fn cpu_freq_hz() -> u64 {
+    let t0 = rdtsc()
+    sleep_ms(100)
+    let t1 = rdtsc()
+    ret (t1 - t0) * 10
+}
+
+; =============================================================================
+; Timer — deadline-based countdown
+; =============================================================================
+struct Timer {
+    deadline: Instant
+}
+
+impl Timer {
+    fn new(timeout: Duration) -> Timer {
+        ret Timer { deadline: Instant::now().add(timeout) }
+    }
+
+    fn expired(self) -> bool {
+        ret Instant::now().before(&self.deadline) == false
+    }
+
+    fn remaining(self) -> Duration {
+        let now = Instant::now()
+        if not now.before(&self.deadline) { ret Duration::from_nanos(0) }
+        ret self.deadline.since(now)
+    }
+
+    fn reset(self, timeout: Duration) {
+        self.deadline = Instant::now().add(timeout)
+    }
+}
+
+; =============================================================================
+; Stopwatch — start/lap/stop benchmark helper
+; =============================================================================
+struct Stopwatch {
+    start:    Instant
+    last_lap: Instant
+    running:  bool
+}
+
+impl Stopwatch {
+    fn start() -> Stopwatch {
+        let now = Instant::now()
+        ret Stopwatch { start: now, last_lap: now, running: true }
+    }
+
+    ; Record a lap — returns duration since last lap
+    fn lap(self) -> Duration {
+        let now  = Instant::now()
+        let d    = now.since(self.last_lap)
+        self.last_lap = now
+        ret d
+    }
+
+    ; Total elapsed since start (even if stopped)
+    fn elapsed(self) -> Duration {
+        ret Instant::now().since(self.start)
+    }
+
+    fn stop(self) -> Duration {
+        self.running = false
+        ret self.elapsed()
+    }
+
+    fn reset(self) {
+        let now = Instant::now()
+        self.start    = now
+        self.last_lap = now
+        self.running  = true
+    }
+}
+
+; =============================================================================
+; Rate limiter — token bucket (one token per `interval`)
+; =============================================================================
+struct RateLimiter {
+    interval: Duration
+    last:     Instant
+}
+
+impl RateLimiter {
+    fn new(rate_hz: i64) -> RateLimiter {
+        ret RateLimiter {
+            interval: Duration::from_nanos(1_000_000_000 / rate_hz),
+            last:     Instant::now(),
+        }
+    }
+
+    ; Block until the next token is available
+    fn wait(self) {
+        let next = self.last.add(self.interval)
+        let now  = Instant::now()
+        if now.before(&next) {
+            sleep(next.since(now))
+        }
+        self.last = Instant::now()
+    }
+
+    ; Non-blocking check — returns true if a token is available
+    fn try_acquire(self) -> bool {
+        let now = Instant::now()
+        if now.before(&self.last.add(self.interval)) { ret false }
+        self.last = now
+        ret true
+    }
+}
+
+; =============================================================================
+; Usage examples
+; =============================================================================
+;
+;   ; ── measure function latency ─────────────────────────────────────────────
+;   let sw = Stopwatch::start()
+;   do_work()
+;   print("elapsed: ", sw.elapsed().to_str())
+;
+;   ; ── sleep for 250 ms ──────────────────────────────────────────────────────
+;   sleep_ms(250)
+;
+;   ; ── countdown timer ───────────────────────────────────────────────────────
+;   let timer = Timer::new(Duration::from_secs(10))
+;   loop not timer.expired() {
+;       poll_events()
+;       sleep_ms(1)
+;   }
+;
+;   ; ── wall clock ────────────────────────────────────────────────────────────
+;   let now = WallClock::now()
+;   print("UTC: ", now.to_iso8601())      ; "2025-11-04T13:02:07Z"
+;   print("unix ms: ", now.unix_ms())
+;
+;   ; ── rate limiter: 60 ops/sec ──────────────────────────────────────────────
+;   let rl = RateLimiter::new(60)
+;   loop {
+;       rl.wait()
+;       send_frame()
+;   }
+;
+;   ; ── CPU frequency detection ───────────────────────────────────────────────
+;   let hz = cpu_freq_hz()
+;   print("CPU: ", hz / 1_000_000, " MHz")
