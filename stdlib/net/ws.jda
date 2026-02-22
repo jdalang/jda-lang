@@ -1,0 +1,402 @@
+; =============================================================================
+; jda::net::ws — WebSocket Protocol (RFC 6455)
+; =============================================================================
+; Full WebSocket implementation over jda's TCP layer.
+; No libc. No OpenSSL (plain ws:// — add TLS layer for wss://).
+;
+; Protocol flow:
+;   1. Client sends HTTP/1.1 Upgrade request
+;   2. Server responds with 101 Switching Protocols
+;   3. Both sides exchange framed messages
+;
+; Frame format (RFC 6455 §5.2):
+;   Byte 0:  FIN(1) RSV(3) OPCODE(4)
+;   Byte 1:  MASK(1) PAYLOAD_LEN(7)
+;   Bytes 2-9: extended payload length (if len=126: u16, if len=127: u64)
+;   Bytes n: masking key (4 bytes, client→server only)
+;   Bytes m: payload data (XOR masked if mask bit set)
+;
+; Opcodes:
+;   0x0 Continuation   0x1 Text    0x2 Binary
+;   0x8 Close          0x9 Ping    0xA Pong
+; =============================================================================
+
+import jda::net::tcp::{ TcpStream, TcpListener }
+import jda::net::http::{ parse_request, HttpRequest }
+import jda::mem::region::{ Region, region_alloc }
+
+const WS_OP_CONTINUATION = 0x0
+const WS_OP_TEXT         = 0x1
+const WS_OP_BINARY       = 0x2
+const WS_OP_CLOSE        = 0x8
+const WS_OP_PING         = 0x9
+const WS_OP_PONG         = 0xA
+
+const WS_MAX_FRAME       = 65536    ; 64 KB max frame (configurable)
+
+; =============================================================================
+; WsMessage — a fully received WebSocket message
+; =============================================================================
+enum WsMessage {
+    Text([]i8)      ; UTF-8 text payload
+    Binary([]u8)    ; raw binary payload
+    Ping([]u8)      ; ping payload (echo back as Pong)
+    Pong([]u8)      ; pong response
+    Close(u16, []i8) ; close code + reason
+}
+
+; =============================================================================
+; WsConn — an established WebSocket connection
+; =============================================================================
+struct WsConn {
+    stream:  TcpStream
+    is_server: bool     ; server-side conns don't mask outgoing frames
+}
+
+; =============================================================================
+; SERVER SIDE: ws_accept
+; =============================================================================
+; Upgrades an incoming HTTP connection to WebSocket.
+; Reads the HTTP Upgrade request, validates it, sends 101 response.
+
+fn ws_accept(stream: own TcpStream) -> Result<own WsConn, []i8> {
+    let buf = [4096]i8
+    let n   = stream.read(buf, 4096)
+    if n <= 0 { ret err("ws_accept: connection closed") }
+
+    let req = parse_request(buf[0..n])?
+
+    ; Validate upgrade headers
+    if not req.header("upgrade").starts_with_ci("websocket") {
+        ret err("ws_accept: not a websocket upgrade")
+    }
+    let key = req.header("sec-websocket-key")
+    if key.len == 0 {
+        ret err("ws_accept: missing Sec-WebSocket-Key")
+    }
+
+    ; Compute accept key: base64(sha1(key + GUID))
+    let guid    = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    let concat  = [256]i8
+    let clen    = str_copy(concat, key)
+    clen        = str_append(concat, clen, guid)
+    let sha_out = [20]u8
+    sha1(concat[0..clen], sha_out)
+    let accept  = [32]i8
+    let alen    = base64_encode(sha_out, accept)
+
+    ; Send 101 Switching Protocols
+    let resp    = [512]i8
+    let rlen    = fmt(resp,
+        "HTTP/1.1 101 Switching Protocols\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Accept: {}\r\n\r\n", accept[0..alen])
+    stream.write(resp[0..rlen], rlen)
+
+    ret ok(WsConn { stream: stream, is_server: true })
+}
+
+; =============================================================================
+; CLIENT SIDE: ws_connect
+; =============================================================================
+; Opens a TCP connection and performs the WebSocket handshake as a client.
+
+fn ws_connect(host: ref []i8, port: u16, path: ref []i8)
+             -> Result<own WsConn, []i8> {
+    let stream = TcpStream::connect(host, port)?
+
+    ; Generate a random 16-byte key, base64-encoded
+    let raw_key = [16]u8
+    random_bytes(raw_key)
+    let key = [24]i8
+    base64_encode(raw_key, key)
+
+    ; Send HTTP Upgrade request
+    let req = [512]i8
+    let rlen = fmt(req,
+        "GET {} HTTP/1.1\r\n" +
+        "Host: {}:{}\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: {}\r\n" +
+        "Sec-WebSocket-Version: 13\r\n\r\n",
+        path, host, port, key)
+    stream.write(req[0..rlen], rlen)
+
+    ; Read 101 response
+    let resp_buf = [1024]i8
+    let n = stream.read(resp_buf, 1024)
+    if n <= 0 { ret err("ws_connect: no response") }
+    if not resp_buf[0..n].contains("101 Switching") {
+        ret err("ws_connect: server did not upgrade")
+    }
+
+    ret ok(WsConn { stream: stream, is_server: false })
+}
+
+; =============================================================================
+; RECV: ws_recv — read one complete message (handles fragmentation)
+; =============================================================================
+fn ws_recv(conn: &WsConn, r: &mut Region) -> Result<WsMessage, []i8> {
+    let payload_buf = region_alloc(r, WS_MAX_FRAME, 8) as []mut u8
+    let total_len   = 0i64
+    let final_op    = 0u8
+
+    loop {
+        let (op, fin, data, dlen) = ws_read_frame(conn, r)?
+
+        if op != WS_OP_CONTINUATION {
+            final_op = op
+        }
+
+        ; Handle control frames immediately (not subject to fragmentation)
+        if op == WS_OP_PING {
+            ws_send_frame(conn, WS_OP_PONG, data[0..dlen], false)
+            next
+        }
+        if op == WS_OP_CLOSE {
+            let code   = if dlen >= 2 { (data[0] as u16 << 8) | data[1] as u16 } else { 1000 }
+            let reason = if dlen > 2  { data[2..dlen] as []i8 } else { "" }
+            ret ok(WsMessage::Close(code, reason))
+        }
+
+        ; Accumulate payload fragments
+        if total_len + dlen <= WS_MAX_FRAME {
+            mem_copy(payload_buf + total_len, data, dlen)
+            total_len = total_len + dlen
+        }
+
+        if fin { break }
+    }
+
+    match final_op {
+        WS_OP_TEXT   => ret ok(WsMessage::Text(payload_buf[0..total_len] as []i8))
+        WS_OP_BINARY => ret ok(WsMessage::Binary(payload_buf[0..total_len]))
+        WS_OP_PONG   => ret ok(WsMessage::Pong(payload_buf[0..total_len]))
+        _            => ret err("ws_recv: unknown opcode")
+    }
+}
+
+; =============================================================================
+; Read one raw frame from the wire
+; Returns: (opcode, fin, payload_ptr, payload_len)
+; =============================================================================
+fn ws_read_frame(conn: &WsConn, r: &mut Region)
+                -> Result<(u8, bool, *u8, i64), []i8> {
+    let hdr = [14]u8    ; max header size (2 + 8 + 4)
+
+    ; Read first 2 bytes
+    tcp_read_exact(conn.stream.fd, hdr, 2)?
+
+    let fin    = (hdr[0] & 0x80) != 0
+    let opcode = hdr[0] & 0x0F
+    let masked = (hdr[1] & 0x80) != 0
+    let len7   = (hdr[1] & 0x7F) as i64
+
+    ; Determine actual payload length
+    let payload_len: i64
+    if len7 < 126 {
+        payload_len = len7
+    } else if len7 == 126 {
+        tcp_read_exact(conn.stream.fd, hdr + 2, 2)?
+        payload_len = (hdr[2] as i64 << 8) | hdr[3] as i64
+    } else {
+        tcp_read_exact(conn.stream.fd, hdr + 2, 8)?
+        payload_len = 0i64
+        loop i in 0..8 { payload_len = (payload_len << 8) | hdr[2 + i] as i64 }
+    }
+
+    ; Read masking key (client→server frames are always masked)
+    let mask = [4]u8
+    if masked { tcp_read_exact(conn.stream.fd, mask, 4)? }
+
+    ; Read payload into arena buffer
+    let payload = region_alloc(r, payload_len + 1, 1) as *u8
+    tcp_read_exact(conn.stream.fd, payload, payload_len)?
+
+    ; Unmask payload (XOR with 4-byte key, cycling)
+    if masked {
+        loop i in 0..payload_len {
+            payload[i] = payload[i] ^ mask[i & 3]
+        }
+    }
+
+    ret ok((opcode, fin, payload, payload_len))
+}
+
+; =============================================================================
+; SEND: ws_send_text / ws_send_binary / ws_send_close / ws_ping
+; =============================================================================
+fn ws_send_text(conn: &WsConn, text: ref []i8) {
+    ws_send_frame(conn, WS_OP_TEXT, text as []u8, not conn.is_server)
+}
+
+fn ws_send_binary(conn: &WsConn, data: ref []u8) {
+    ws_send_frame(conn, WS_OP_BINARY, data, not conn.is_server)
+}
+
+fn ws_ping(conn: &WsConn) {
+    ws_send_frame(conn, WS_OP_PING, [], false)
+}
+
+fn ws_close(conn: &WsConn, code: u16, reason: ref []i8) {
+    let payload = [128]u8
+    payload[0] = (code >> 8) as u8
+    payload[1] = (code & 0xFF) as u8
+    let rlen = reason.len.min(123)
+    mem_copy(payload + 2, reason, rlen)
+    ws_send_frame(conn, WS_OP_CLOSE, payload[0..rlen + 2], false)
+}
+
+; =============================================================================
+; Build and write a single WebSocket frame
+; =============================================================================
+fn ws_send_frame(conn: &WsConn, opcode: u8, data: []u8, mask: bool) {
+    let hdr    = [14]u8
+    let hdr_len = 0i64
+
+    ; Byte 0: FIN=1, RSV=0, opcode
+    hdr[0] = 0x80 | (opcode & 0x0F)
+    hdr_len = hdr_len + 1
+
+    ; Byte 1+: payload length + mask bit
+    let dlen = data.len
+    let mask_bit: u8 = if mask { 0x80 } else { 0x00 }
+
+    if dlen < 126 {
+        hdr[hdr_len] = mask_bit | dlen as u8
+        hdr_len = hdr_len + 1
+    } else if dlen <= 65535 {
+        hdr[hdr_len] = mask_bit | 126
+        hdr[hdr_len + 1] = (dlen >> 8) as u8
+        hdr[hdr_len + 2] = (dlen & 0xFF) as u8
+        hdr_len = hdr_len + 3
+    } else {
+        hdr[hdr_len] = mask_bit | 127
+        loop i in 0..8 {
+            hdr[hdr_len + 1 + i] = ((dlen >> (56 - i * 8)) & 0xFF) as u8
+        }
+        hdr_len = hdr_len + 9
+    }
+
+    ; Masking key (random 4 bytes — required for client→server)
+    let mkey = [4]u8
+    if mask {
+        random_bytes(mkey)
+        mem_copy(hdr + hdr_len, mkey, 4)
+        hdr_len = hdr_len + 4
+    }
+
+    ; Write header
+    conn.stream.write(hdr[0..hdr_len] as []i8, hdr_len)
+
+    ; Write payload (masked if needed)
+    if mask and dlen > 0 {
+        let masked_buf = [WS_MAX_FRAME]u8
+        loop i in 0..dlen { masked_buf[i] = data[i] ^ mkey[i & 3] }
+        conn.stream.write(masked_buf[0..dlen] as []i8, dlen)
+    } else if dlen > 0 {
+        conn.stream.write(data as []i8, dlen)
+    }
+}
+
+; =============================================================================
+; Helper: read exactly n bytes from TCP (retry until full)
+; =============================================================================
+fn tcp_read_exact(fd: i32, buf: *u8, n: i64) -> Result<(), []i8> {
+    let got = 0i64
+    loop got < n {
+        let r = tcp_read_raw(fd, buf + got, n - got)
+        if r <= 0 { ret err("tcp_read_exact: connection closed") }
+        got = got + r
+    }
+    ret ok(())
+}
+
+; =============================================================================
+; SHA-1 (needed for WebSocket handshake accept key)
+; =============================================================================
+; Standard SHA-1 implementation — 20-byte digest.
+; Input: message bytes. Output: 20-byte hash written to `out`.
+fn sha1(msg: ref []i8, out: []mut u8) {
+    ; Initial hash values (first fractional bits of sqrt of primes)
+    let h0 = 0x67452301u32
+    let h1 = 0xEFCDAB89u32
+    let h2 = 0x98BADCFEu32
+    let h3 = 0x10325476u32
+    let h4 = 0xC3D2E1F0u32
+
+    ; Pre-processing: pad message to 512-bit blocks
+    let orig_len = msg.len
+    let padded   = [2048]u8
+    mem_copy(padded, msg, orig_len)
+    padded[orig_len] = 0x80             ; append 1 bit
+    ; Pad with zeros to 56 mod 64, then append 64-bit bit length
+    let total = ((orig_len + 9 + 63) / 64) * 64
+    let bit_len = (orig_len * 8) as u64
+    loop i in 0..8 {
+        padded[total - 8 + i] = ((bit_len >> (56 - i * 8)) & 0xFF) as u8
+    }
+
+    ; Process each 512-bit (64-byte) block
+    let block = 0i64
+    loop block < total / 64 {
+        let w = [80]u32
+        loop i in 0..16 {
+            let b = block * 64 + i * 4
+            w[i] = (padded[b] as u32 << 24) | (padded[b+1] as u32 << 16) |
+                   (padded[b+2] as u32 << 8) | padded[b+3] as u32
+        }
+        loop i in 16..80 {
+            w[i] = rol32(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1)
+        }
+
+        let a = h0   let b = h1   let c = h2   let d = h3   let e = h4
+
+        loop i in 0..80 {
+            let (f, k) = match i {
+                0..=19  => ((b & c) | (~b & d),          0x5A827999u32)
+                20..=39 => (b ^ c ^ d,                   0x6ED9EBA1u32)
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDCu32)
+                60..=79 => (b ^ c ^ d,                   0xCA62C1D6u32)
+            }
+            let temp = rol32(a, 5) + f + e + k + w[i]
+            e = d   d = c   c = rol32(b, 30)   b = a   a = temp
+        }
+
+        h0 = h0 + a   h1 = h1 + b   h2 = h2 + c
+        h3 = h3 + d   h4 = h4 + e
+        block = block + 1
+    }
+
+    ; Write digest (big-endian)
+    loop i in 0..4 {
+        out[i]      = ((h0 >> (24 - i * 8)) & 0xFF) as u8
+        out[4  + i] = ((h1 >> (24 - i * 8)) & 0xFF) as u8
+        out[8  + i] = ((h2 >> (24 - i * 8)) & 0xFF) as u8
+        out[12 + i] = ((h3 >> (24 - i * 8)) & 0xFF) as u8
+        out[16 + i] = ((h4 >> (24 - i * 8)) & 0xFF) as u8
+    }
+}
+
+fn rol32(x: u32, n: u32) -> u32 => (x << n) | (x >> (32 - n))
+
+; =============================================================================
+; Base64 encoder (RFC 4648)
+; =============================================================================
+fn base64_encode(src: []u8, dst: []mut i8) -> i64 {
+    let table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    let i = 0i64   let j = 0i64
+    loop i < src.len {
+        let b0 = src[i]
+        let b1 = if i + 1 < src.len { src[i + 1] } else { 0u8 }
+        let b2 = if i + 2 < src.len { src[i + 2] } else { 0u8 }
+        dst[j]     = table[(b0 >> 2) as i64]
+        dst[j + 1] = table[((b0 & 3) << 4 | b1 >> 4) as i64]
+        dst[j + 2] = if i + 1 < src.len { table[((b1 & 0xF) << 2 | b2 >> 6) as i64] } else { '=' }
+        dst[j + 3] = if i + 2 < src.len { table[(b2 & 0x3F) as i64] } else { '=' }
+        i = i + 3   j = j + 4
+    }
+    ret j
+}
