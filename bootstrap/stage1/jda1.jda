@@ -19,55 +19,271 @@
 ; =============================================================================
 
 ; ============================================================
-; 1. TOKEN TYPES
+; 0. CONSTANTS
 ; ============================================================
-; The lexer converts source text into a stream of tokens.
-; Each token has a type and optional value.
 
-; Token type constants:
-;   TOK_FN      = 0    keyword: fn
-;   TOK_LET     = 1    keyword: let
-;   TOK_IF      = 2    keyword: if
-;   TOK_ELSE    = 3    keyword: else
-;   TOK_LOOP    = 4    keyword: loop
-;   TOK_RET     = 5    keyword: ret
-;   TOK_STRUCT  = 6    keyword: struct
-;   TOK_MATCH   = 7    keyword: match
-;   TOK_PRINT   = 8    keyword: print
-;   TOK_SYSCALL = 9    keyword: syscall
-;   TOK_IDENT   = 10   identifier
-;   TOK_INT     = 11   integer literal
-;   TOK_STR     = 12   string literal
-;   TOK_LPAREN  = 13   (
-;   TOK_RPAREN  = 14   )
-;   TOK_LBRACE  = 15   {
-;   TOK_RBRACE  = 16   }
-;   TOK_LBRACK  = 17   [
-;   TOK_RBRACK  = 18   ]
-;   TOK_COMMA   = 19   ,
-;   TOK_COLON   = 20   :
-;   TOK_SEMI    = 21   ;
-;   TOK_ARROW   = 22   ->
-;   TOK_EQ      = 23   =
-;   TOK_EQEQ    = 24   ==
-;   TOK_NEQ     = 25   !=
-;   TOK_LT      = 26   <
-;   TOK_GT      = 27   >
-;   TOK_PLUS    = 28   +
-;   TOK_MINUS   = 29   -
-;   TOK_STAR    = 30   *
-;   TOK_SLASH   = 31   /
-;   TOK_AMP     = 32   &
-;   TOK_DOT     = 33   .
-;   TOK_FATARROW= 34   =>
-;   TOK_EOF     = 35
+; Token type constants
+const TOK_FN      = 0
+const TOK_LET     = 1
+const TOK_IF      = 2
+const TOK_ELSE    = 3
+const TOK_LOOP    = 4
+const TOK_RET     = 5
+const TOK_STRUCT  = 6
+const TOK_MATCH   = 7
+const TOK_PRINT   = 8
+const TOK_SYSCALL = 9
+const TOK_IDENT   = 10
+const TOK_INT     = 11
+const TOK_STR     = 12
+const TOK_LPAREN  = 13
+const TOK_RPAREN  = 14
+const TOK_LBRACE  = 15
+const TOK_RBRACE  = 16
+const TOK_LBRACK  = 17
+const TOK_RBRACK  = 18
+const TOK_COMMA   = 19
+const TOK_COLON   = 20
+const TOK_SEMI    = 21
+const TOK_ARROW   = 22
+const TOK_EQ      = 23
+const TOK_EQEQ    = 24
+const TOK_NEQ     = 25
+const TOK_LT      = 26
+const TOK_GT      = 27
+const TOK_PLUS    = 28
+const TOK_MINUS   = 29
+const TOK_STAR    = 30
+const TOK_SLASH   = 31
+const TOK_AMP     = 32
+const TOK_DOT     = 33
+const TOK_FATARROW= 34
+const TOK_EOF     = 35
+; Type keyword tokens (classified by lexer)
+const TOK_I64     = 36
+const TOK_I32     = 37
+const TOK_I8      = 38
+const TOK_F64     = 39
+
+; AST node types
+const NODE_FN     = 0
+const NODE_LET    = 1
+const NODE_IF     = 2
+const NODE_LOOP   = 3
+const NODE_CALL   = 4
+const NODE_BINOP  = 5
+const NODE_IDENT  = 6
+const NODE_INT    = 7
+const NODE_STR    = 8
+const NODE_RET    = 9
+const NODE_BLOCK  = 10
+const NODE_STRUCT = 11
+const NODE_FIELD  = 12
+const NODE_MATCH  = 13
+const NODE_PRINT  = 14
+const NODE_SYSCALL= 15
+
+; Type system
+const TYPE_VOID   = 0
+const TYPE_I64    = 1
+const TYPE_I32    = 2
+const TYPE_I8     = 3
+const TYPE_F64    = 4
+const TYPE_PTR    = 5
+
+; JIR opcodes
+const OP_CONST    = 0
+const OP_ADD      = 1
+const OP_SUB      = 2
+const OP_MUL      = 3
+const OP_DIV      = 4
+const OP_NEG      = 5
+const OP_CMP_EQ   = 6
+const OP_CMP_NE   = 7
+const OP_CMP_LT   = 8
+const OP_CMP_GT   = 9
+const OP_RET      = 10
+const OP_BR       = 11
+const OP_JMP      = 12
+const OP_CALL     = 13
+const OP_SYSCALL  = 14
+const OP_STRLIT   = 15
+const OP_STRLEN   = 16
+const OP_STORE    = 17
+const OP_LOAD     = 18
+
+; x86-64 physical register numbers (Intel encoding)
+const PHYS_RAX = 0
+const PHYS_RCX = 1
+const PHYS_RDX = 2
+const PHYS_RBX = 3
+const PHYS_RSP = 4
+const PHYS_RBP = 5
+const PHYS_RSI = 6
+const PHYS_RDI = 7
+const PHYS_R8  = 8
+const PHYS_R9  = 9
+const PHYS_R10 = 10
+const PHYS_R11 = 11
+
+; Allocatable pool size: rax rcx rdx rbx rsi r10 r11 r9
+const N_ALLOC_REGS = 8
+
+; ============================================================
+; 1. STRUCT DEFINITIONS
+; ============================================================
+
+struct Token {
+    type:      i32
+    str_start: i64
+    str_len:   i64
+    imm:       i64
+}
+
+struct Node {
+    node_type: i32
+    op:        i32
+    imm:       i64
+    data_type: i32
+    param_cnt: i32
+    child_cnt: i32
+    ret_type:  i32
+    token:     Token
+    token2:    Token
+    child0:    &Node
+    child1:    &Node
+    child2:    &Node
+    child3:    &Node
+    children:  &Node
+}
+
+struct Instr {
+    op:         i32
+    itype:      i32
+    id:         i64
+    dead:       i32
+    operand0:   i64
+    operand1:   i64
+    operand2:   i64
+    operand3:   i64
+    imm:        i64
+    str_start:  i64
+    str_len:    i64
+    bb_target0: i64
+    bb_target1: i64
+}
+
+struct BasicBlock {
+    id:        i64
+    instrs:    Instr[256]
+    instr_cnt: i64
+    label_off: i64
+}
+
+struct VarEntry {
+    name_start: i64
+    name_len:   i64
+    val_id:     i64
+}
+
+struct JirFunction {
+    src:        &i8
+    blocks:     BasicBlock[64]
+    block_cnt:  i64
+    vars:       VarEntry[256]
+    var_cnt:    i64
+    next_id:    i64
+    strtab:     i8[4096]
+    strtab_pos: i64
+}
+
+struct ConstVal {
+    found: i32
+    val:   i64
+}
+
+struct Fixup {
+    code_off:  i64
+    target_bb: i64
+}
+
+struct RegAlloc {
+    pool:      i32[8]
+    val2reg:   i32[4096]
+    reg2val:   i64[8]
+    spill_off: i64[4096]
+    sp_top:    i64
+}
+
+struct LowerCtx {
+    ra:      RegAlloc
+    fixups:  Fixup[1024]
+    fix_cnt: i64
+}
 
 ; ============================================================
 ; 2. LEXER
 ; ============================================================
 
+fn streq(src: &i8, start: i64, len: i64, kw: &i8) -> i32 {
+    let i = 0
+    loop i < len {
+        if src[start + i] != kw[i] { ret 0 }
+        i = i + 1
+    }
+    if kw[len] != 0 { ret 0 }
+    ret 1
+}
+
+fn is_alpha(c: i8) -> i32 {
+    ret (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')
+}
+
+fn is_digit(c: i8) -> i32 {
+    ret c >= '0' and c <= '9'
+}
+
+fn char_to_tok(c: i8) -> i32 {
+    if c == '(' { ret TOK_LPAREN }
+    if c == ')' { ret TOK_RPAREN }
+    if c == '{' { ret TOK_LBRACE }
+    if c == '}' { ret TOK_RBRACE }
+    if c == '[' { ret TOK_LBRACK }
+    if c == ']' { ret TOK_RBRACK }
+    if c == ',' { ret TOK_COMMA }
+    if c == ':' { ret TOK_COLON }
+    if c == '=' { ret TOK_EQ }
+    if c == '<' { ret TOK_LT }
+    if c == '>' { ret TOK_GT }
+    if c == '+' { ret TOK_PLUS }
+    if c == '-' { ret TOK_MINUS }
+    if c == '*' { ret TOK_STAR }
+    if c == '/' { ret TOK_SLASH }
+    if c == '&' { ret TOK_AMP }
+    if c == '.' { ret TOK_DOT }
+    ret TOK_EOF
+}
+
+fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
+    if streq(src, start, len, "fn")      { ret TOK_FN }
+    if streq(src, start, len, "let")     { ret TOK_LET }
+    if streq(src, start, len, "if")      { ret TOK_IF }
+    if streq(src, start, len, "else")    { ret TOK_ELSE }
+    if streq(src, start, len, "loop")    { ret TOK_LOOP }
+    if streq(src, start, len, "ret")     { ret TOK_RET }
+    if streq(src, start, len, "struct")  { ret TOK_STRUCT }
+    if streq(src, start, len, "match")   { ret TOK_MATCH }
+    if streq(src, start, len, "print")   { ret TOK_PRINT }
+    if streq(src, start, len, "syscall") { ret TOK_SYSCALL }
+    if streq(src, start, len, "i64")     { ret TOK_I64 }
+    if streq(src, start, len, "i32")     { ret TOK_I32 }
+    if streq(src, start, len, "i8")      { ret TOK_I8 }
+    if streq(src, start, len, "f64")     { ret TOK_F64 }
+    ret TOK_IDENT
+}
+
 fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
-    let pos = 0
+    let pos   = 0
     let count = 0
 
     loop pos < src_len {
@@ -92,9 +308,9 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
             loop pos < src_len and src[pos] != '"' {
                 pos = pos + 1
             }
-            out_toks[count].type = TOK_STR
+            out_toks[count].type      = TOK_STR
             out_toks[count].str_start = start
-            out_toks[count].str_len = pos - start
+            out_toks[count].str_len   = pos - start
             count = count + 1
             pos = pos + 1  ; skip closing "
         }
@@ -118,7 +334,7 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
                 pos = pos + 1
             }
             let len = pos - start
-            out_toks[count].type = classify_keyword(src, start, len)
+            out_toks[count].type      = classify_keyword(src, start, len)
             out_toks[count].str_start = start
             out_toks[count].str_len   = len
             count = count + 1
@@ -159,49 +375,47 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
     ret ok(0)
 }
 
-fn is_alpha(c: i8) -> i32 {
-    ret (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')
-}
-
-fn is_digit(c: i8) -> i32 {
-    ret c >= '0' and c <= '9'
-}
-
-fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
-    if streq(src, start, len, "fn")     { ret TOK_FN }
-    if streq(src, start, len, "let")    { ret TOK_LET }
-    if streq(src, start, len, "if")     { ret TOK_IF }
-    if streq(src, start, len, "else")   { ret TOK_ELSE }
-    if streq(src, start, len, "loop")   { ret TOK_LOOP }
-    if streq(src, start, len, "ret")    { ret TOK_RET }
-    if streq(src, start, len, "struct") { ret TOK_STRUCT }
-    if streq(src, start, len, "match")  { ret TOK_MATCH }
-    if streq(src, start, len, "print")  { ret TOK_PRINT }
-    if streq(src, start, len, "syscall"){ ret TOK_SYSCALL }
-    ret TOK_IDENT
-}
-
 ; ============================================================
-; 3. AST NODE TYPES
+; 3. PARSER HELPERS
 ; ============================================================
 
-; AST node types:
-;   NODE_FN       = 0   function definition
-;   NODE_LET      = 1   variable binding
-;   NODE_IF       = 2   conditional
-;   NODE_LOOP     = 3   loop
-;   NODE_CALL     = 4   function call
-;   NODE_BINOP    = 5   binary operator
-;   NODE_IDENT    = 6   identifier reference
-;   NODE_INT      = 7   integer literal
-;   NODE_STR      = 8   string literal
-;   NODE_RET      = 9   return
-;   NODE_BLOCK    = 10  { statements }
-;   NODE_STRUCT   = 11  struct definition
-;   NODE_FIELD    = 12  field access: a.b
-;   NODE_MATCH    = 13  match expression
-;   NODE_PRINT    = 14  print statement
-;   NODE_SYSCALL  = 15  raw syscall
+fn expect(toks: &Token, pos: &i64, expected: i32) {
+    if toks[pos[0]].type != expected {
+        print("Parse error: unexpected token")
+    }
+    pos[0] = pos[0] + 1
+}
+
+fn parse_type(toks: &Token, pos: &i64) -> i32 {
+    let t = toks[pos[0]].type
+    pos[0] = pos[0] + 1
+    ; Strip pointer prefix &
+    if t == TOK_AMP {
+        t = toks[pos[0]].type
+        pos[0] = pos[0] + 1
+    }
+    if t == TOK_I64   { ret TYPE_I64 }
+    if t == TOK_I32   { ret TYPE_I32 }
+    if t == TOK_I8    { ret TYPE_I8 }
+    if t == TOK_F64   { ret TYPE_F64 }
+    if t == TOK_IDENT { ret TYPE_PTR }   ; named struct / pointer type
+    ret TYPE_VOID
+}
+
+fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
+    let lhs = parse_expr(toks, pos)
+    ; assignment: ident = expr
+    if toks[pos[0]].type == TOK_EQ {
+        pos[0] = pos[0] + 1
+        let rhs = parse_expr(toks, pos)
+        let n = Node{}
+        n.node_type = NODE_LET
+        n.token     = lhs.token
+        n.child0    = rhs
+        ret n
+    }
+    ret lhs
+}
 
 ; ============================================================
 ; 4. PARSER
@@ -213,17 +427,16 @@ fn parse_fn(toks: &Token, pos: &i64, out: &Node) -> i32 {
     expect(toks, pos, TOK_IDENT)
     expect(toks, pos, TOK_LPAREN)
 
-    let params = Node[16]
+    let params  = Node[16]
     let param_cnt = 0
 
-    ; Parse parameter list: name: type, ...
     loop toks[pos[0]].type != TOK_RPAREN {
         let p_name = toks[pos[0]]
         expect(toks, pos, TOK_IDENT)
         expect(toks, pos, TOK_COLON)
         let p_type = parse_type(toks, pos)
-        params[param_cnt].type = NODE_IDENT
-        params[param_cnt].token = p_name
+        params[param_cnt].node_type = NODE_IDENT
+        params[param_cnt].token     = p_name
         params[param_cnt].data_type = p_type
         param_cnt = param_cnt + 1
         if toks[pos[0]].type == TOK_COMMA {
@@ -232,7 +445,6 @@ fn parse_fn(toks: &Token, pos: &i64, out: &Node) -> i32 {
     }
     expect(toks, pos, TOK_RPAREN)
 
-    ; Optional return type: -> type
     let ret_type = TYPE_VOID
     if toks[pos[0]].type == TOK_ARROW {
         pos[0] = pos[0] + 1
@@ -241,11 +453,11 @@ fn parse_fn(toks: &Token, pos: &i64, out: &Node) -> i32 {
 
     let body = parse_block(toks, pos)
 
-    out.node_type   = NODE_FN
-    out.token       = name_tok
-    out.param_cnt   = param_cnt
-    out.ret_type    = ret_type
-    out.child0      = body
+    out.node_type = NODE_FN
+    out.token     = name_tok
+    out.param_cnt = param_cnt
+    out.ret_type  = ret_type
+    out.child0    = body
     ret ok(0)
 }
 
@@ -267,11 +479,11 @@ fn parse_block(toks: &Token, pos: &i64) -> &Node {
 
 fn parse_stmt(toks: &Token, pos: &i64) -> Node {
     let t = toks[pos[0]].type
-    if t == TOK_LET    { ret parse_let(toks, pos) }
-    if t == TOK_IF     { ret parse_if(toks, pos) }
-    if t == TOK_LOOP   { ret parse_loop(toks, pos) }
-    if t == TOK_RET    { ret parse_ret(toks, pos) }
-    if t == TOK_PRINT  { ret parse_print(toks, pos) }
+    if t == TOK_LET   { ret parse_let(toks, pos) }
+    if t == TOK_IF    { ret parse_if(toks, pos) }
+    if t == TOK_LOOP  { ret parse_loop(toks, pos) }
+    if t == TOK_RET   { ret parse_ret(toks, pos) }
+    if t == TOK_PRINT { ret parse_print(toks, pos) }
     ret parse_expr_stmt(toks, pos)
 }
 
@@ -290,7 +502,7 @@ fn parse_let(toks: &Token, pos: &i64) -> Node {
 
 fn parse_if(toks: &Token, pos: &i64) -> Node {
     expect(toks, pos, TOK_IF)
-    let cond = parse_expr(toks, pos)
+    let cond   = parse_expr(toks, pos)
     let then_b = parse_block(toks, pos)
     let else_b = Node{}
     if toks[pos[0]].type == TOK_ELSE {
@@ -340,11 +552,11 @@ fn parse_expr(toks: &Token, pos: &i64) -> Node {
     ret parse_binop(toks, pos, 0)
 }
 
-; Pratt-style operator precedence parser
+; Pratt-style precedence climbing
 fn parse_binop(toks: &Token, pos: &i64, min_prec: i32) -> Node {
     let left = parse_primary(toks, pos)
     loop {
-        let op = toks[pos[0]].type
+        let op   = toks[pos[0]].type
         let prec = op_precedence(op)
         if prec < min_prec { ret left }
         pos[0] = pos[0] + 1
@@ -360,10 +572,10 @@ fn parse_binop(toks: &Token, pos: &i64, min_prec: i32) -> Node {
 }
 
 fn op_precedence(op: i32) -> i32 {
-    if op == TOK_STAR or op == TOK_SLASH { ret 6 }
-    if op == TOK_PLUS or op == TOK_MINUS { ret 5 }
-    if op == TOK_LT   or op == TOK_GT   { ret 4 }
-    if op == TOK_EQEQ or op == TOK_NEQ  { ret 3 }
+    if op == TOK_STAR  or op == TOK_SLASH { ret 6 }
+    if op == TOK_PLUS  or op == TOK_MINUS { ret 5 }
+    if op == TOK_LT    or op == TOK_GT    { ret 4 }
+    if op == TOK_EQEQ  or op == TOK_NEQ  { ret 3 }
     ret -1
 }
 
@@ -385,11 +597,9 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
     }
     if t.type == TOK_IDENT {
         pos[0] = pos[0] + 1
-        ; Check if call: ident(
         if toks[pos[0]].type == TOK_LPAREN {
             ret parse_call_rest(toks, pos, t)
         }
-        ; Field access: ident.field
         if toks[pos[0]].type == TOK_DOT {
             pos[0] = pos[0] + 1
             let field = toks[pos[0]]
@@ -414,7 +624,6 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
         expect(toks, pos, TOK_RPAREN)
         ret inner
     }
-    ; Error: unexpected token
     print("Parse error: unexpected token")
     ret Node{}
 }
@@ -422,7 +631,7 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
 fn parse_call_rest(toks: &Token, pos: &i64, name: Token) -> Node {
     expect(toks, pos, TOK_LPAREN)
     let args = Node[16]
-    let cnt = 0
+    let cnt  = 0
     loop toks[pos[0]].type != TOK_RPAREN {
         args[cnt] = parse_expr(toks, pos)
         cnt = cnt + 1
@@ -460,10 +669,146 @@ fn parse_syscall(toks: &Token, pos: &i64) -> Node {
 }
 
 ; ============================================================
-; 5. JIR CODE GENERATOR
+; 5. JIR EMISSION HELPERS
 ; ============================================================
-; Lowers AST -> JIR instructions.
-; Each expression returns an SSA value id.
+
+fn new_block(jfn: &JirFunction) -> i64 {
+    let id = jfn.block_cnt
+    jfn.blocks[id].id        = id
+    jfn.blocks[id].instr_cnt = 0
+    jfn.blocks[id].label_off = -1
+    jfn.block_cnt = jfn.block_cnt + 1
+    ret id
+}
+
+fn emit(jfn: &JirFunction, bb: i64, ins: Instr) -> i64 {
+    let slot = jfn.blocks[bb].instr_cnt
+    jfn.blocks[bb].instrs[slot]    = ins
+    jfn.blocks[bb].instrs[slot].id = jfn.next_id
+    jfn.next_id = jfn.next_id + 1
+    jfn.blocks[bb].instr_cnt = slot + 1
+    ret jfn.blocks[bb].instrs[slot].id
+}
+
+fn emit_const(jfn: &JirFunction, bb: i64, itype: i32, imm: i64) -> i64 {
+    let ins = Instr{}
+    ins.op    = OP_CONST
+    ins.itype = itype
+    ins.imm   = imm
+    ret emit(jfn, bb, ins)
+}
+
+fn emit_binop(jfn: &JirFunction, bb: i64, op: i32, a: i64, b: i64) -> i64 {
+    let ins = Instr{}
+    ins.op       = op
+    ins.itype    = TYPE_I64
+    ins.operand0 = a
+    ins.operand1 = b
+    ret emit(jfn, bb, ins)
+}
+
+fn emit_br(jfn: &JirFunction, bb: i64, cond: i64, then_bb: i64, else_bb: i64) {
+    let ins = Instr{}
+    ins.op         = OP_BR
+    ins.operand0   = cond
+    ins.bb_target0 = then_bb
+    ins.bb_target1 = else_bb
+    emit(jfn, bb, ins)
+}
+
+fn emit_jmp(jfn: &JirFunction, bb: i64, target: i64) {
+    let ins = Instr{}
+    ins.op         = OP_JMP
+    ins.bb_target0 = target
+    emit(jfn, bb, ins)
+}
+
+fn emit_strlit(jfn: &JirFunction, bb: i64, tok: Token) -> i64 {
+    ; Copy string bytes into jfn.strtab and record offset
+    let off = jfn.strtab_pos
+    let i = 0
+    loop i < tok.str_len {
+        jfn.strtab[jfn.strtab_pos] = jfn.src[tok.str_start + i]
+        jfn.strtab_pos = jfn.strtab_pos + 1
+        i = i + 1
+    }
+    jfn.strtab[jfn.strtab_pos] = 0   ; null terminator
+    jfn.strtab_pos = jfn.strtab_pos + 1
+
+    let ins = Instr{}
+    ins.op        = OP_STRLIT
+    ins.str_start = off
+    ins.str_len   = tok.str_len
+    ret emit(jfn, bb, ins)
+}
+
+fn emit_strlen(jfn: &JirFunction, bb: i64, str_id: i64) -> i64 {
+    let ins = Instr{}
+    ins.op       = OP_STRLEN
+    ins.operand0 = str_id
+    ret emit(jfn, bb, ins)
+}
+
+fn emit_syscall3(jfn: &JirFunction, bb: i64, nr: i64, a0: i64, a1: i64, a2: i64) -> i64 {
+    let nr_id = emit_const(jfn, bb, TYPE_I64, nr)
+    ret emit_syscall_raw(jfn, bb, nr_id, a0, a1, a2)
+}
+
+fn emit_syscall_raw(jfn: &JirFunction, bb: i64, nr: i64, a0: i64, a1: i64, a2: i64) -> i64 {
+    let ins = Instr{}
+    ins.op       = OP_SYSCALL
+    ins.operand0 = nr
+    ins.operand1 = a0
+    ins.operand2 = a1
+    ins.operand3 = a2
+    ret emit(jfn, bb, ins)
+}
+
+fn bind(jfn: &JirFunction, tok: Token, val_id: i64) {
+    let idx = jfn.var_cnt
+    jfn.vars[idx].name_start = tok.str_start
+    jfn.vars[idx].name_len   = tok.str_len
+    jfn.vars[idx].val_id     = val_id
+    jfn.var_cnt = jfn.var_cnt + 1
+}
+
+fn lookup(jfn: &JirFunction, tok: Token) -> i64 {
+    ; Walk backwards so innermost binding wins
+    let i = jfn.var_cnt - 1
+    loop i >= 0 {
+        let ve = jfn.vars[i]
+        if ve.name_len == tok.str_len {
+            if streq(jfn.src, tok.str_start, tok.str_len,
+                     jfn.src + ve.name_start) {
+                ret ve.val_id
+            }
+        }
+        i = i - 1
+    }
+    ret -1   ; undefined: caller should error
+}
+
+fn codegen_call(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
+    let arg_ids = i64[16]
+    let i = 0
+    loop i < node.child_cnt {
+        arg_ids[i] = codegen_expr(node.children[i], jfn, bb)
+        i = i + 1
+    }
+    let ins = Instr{}
+    ins.op        = OP_CALL
+    ins.operand0  = arg_ids[0]
+    ins.operand1  = arg_ids[1]
+    ins.operand2  = arg_ids[2]
+    ins.operand3  = node.child_cnt
+    ins.str_start = node.token.str_start
+    ins.str_len   = node.token.str_len
+    ret emit(jfn, bb, ins)
+}
+
+; ============================================================
+; 6. JIR CODE GENERATOR
+; ============================================================
 
 fn codegen_fn(fn_node: &Node, jfn: &JirFunction) {
     let entry_bb = new_block(jfn)
@@ -489,11 +834,11 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) {
         emit(jfn, bb, Instr{ op: OP_RET, operand0: val_id })
     }
     if node.node_type == NODE_PRINT {
-        ; print(str) -> syscall(SYS_WRITE=1, 1, str_ptr, str_len)
+        ; print(str) → SYS_WRITE(1, str_ptr, str_len)
         let str_id = codegen_expr(node.child0, jfn, bb)
-        let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)       ; stdout
+        let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)        ; stdout fd
         let len_id = emit_strlen(jfn, bb, str_id)
-        emit_syscall3(jfn, bb, 1, fd_id, str_id, len_id)    ; SYS_WRITE
+        emit_syscall3(jfn, bb, 1, fd_id, str_id, len_id)     ; SYS_WRITE=1
     }
     if node.node_type == NODE_IF {
         codegen_if(node, jfn, bb)
@@ -517,8 +862,8 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         ret lookup(jfn, node.token)
     }
     if node.node_type == NODE_BINOP {
-        let a = codegen_expr(node.child0, jfn, bb)
-        let b = codegen_expr(node.child1, jfn, bb)
+        let a  = codegen_expr(node.child0, jfn, bb)
+        let b  = codegen_expr(node.child1, jfn, bb)
         let op = tok_to_jir_op(node.op)
         ret emit_binop(jfn, bb, op, a, b)
     }
@@ -569,70 +914,179 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_MINUS { ret OP_SUB }
     if tok == TOK_STAR  { ret OP_MUL }
     if tok == TOK_SLASH { ret OP_DIV }
+    if tok == TOK_EQEQ  { ret OP_CMP_EQ }
+    if tok == TOK_NEQ   { ret OP_CMP_NE }
+    if tok == TOK_LT    { ret OP_CMP_LT }
+    if tok == TOK_GT    { ret OP_CMP_GT }
     ret -1
 }
 
 ; ============================================================
-; 6. X86-64 CODE GENERATOR (JIR -> machine code)
+; 7. OPTIMISATION PASSES
 ; ============================================================
-; Lowers JIR instructions to x86-64 byte sequences.
-; Output is an array of bytes (the raw .text section).
 
-fn lower_fn(jfn: &JirFunction, out: &i8, out_len: &i64) {
+fn find_const(jfn: &JirFunction, val_id: i64) -> ConstVal {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let ins = jfn.blocks[bi].instrs[ii]
+            if ins.id == val_id and ins.op == OP_CONST {
+                let cv = ConstVal{}
+                cv.found = 1
+                cv.val   = ins.imm
+                ret cv
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+    let cv = ConstVal{}
+    cv.found = 0
+    ret cv
+}
+
+fn fold_constants(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let ins = jfn.blocks[bi].instrs[ii]
+            if ins.op == OP_ADD or ins.op == OP_SUB or
+               ins.op == OP_MUL or ins.op == OP_DIV {
+                let ca = find_const(jfn, ins.operand0)
+                let cb = find_const(jfn, ins.operand1)
+                if ca.found == 1 and cb.found == 1 {
+                    let result = 0
+                    if ins.op == OP_ADD { result = ca.val + cb.val }
+                    if ins.op == OP_SUB { result = ca.val - cb.val }
+                    if ins.op == OP_MUL { result = ca.val * cb.val }
+                    if ins.op == OP_DIV and cb.val != 0 {
+                        result = ca.val / cb.val
+                    }
+                    jfn.blocks[bi].instrs[ii].op  = OP_CONST
+                    jfn.blocks[bi].instrs[ii].imm = result
+                }
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+fn dce(jfn: &JirFunction) {
+    let used = i32[4096]
+    let bi = 0
+    ; Mark all consumed operands and side-effecting ops
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let ins = jfn.blocks[bi].instrs[ii]
+            if ins.operand0 >= 0 { used[ins.operand0] = 1 }
+            if ins.operand1 >= 0 { used[ins.operand1] = 1 }
+            if ins.operand2 >= 0 { used[ins.operand2] = 1 }
+            if ins.operand3 >= 0 { used[ins.operand3] = 1 }
+            if ins.op == OP_RET     { used[ins.id] = 1 }
+            if ins.op == OP_BR      { used[ins.id] = 1 }
+            if ins.op == OP_JMP     { used[ins.id] = 1 }
+            if ins.op == OP_SYSCALL { used[ins.id] = 1 }
+            if ins.op == OP_CALL    { used[ins.id] = 1 }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+    ; Mark unused instructions dead
+    bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            if used[jfn.blocks[bi].instrs[ii].id] == 0 {
+                jfn.blocks[bi].instrs[ii].dead = 1
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+; ============================================================
+; 8. GREEDY REGISTER ALLOCATOR
+; ============================================================
+; Pool: rax rcx rdx rbx rsi rdi r10 r11
+
+fn regalloc_init(ra: &RegAlloc) {
+    ra.pool[0] = PHYS_RAX
+    ra.pool[1] = PHYS_RCX
+    ra.pool[2] = PHYS_RDX
+    ra.pool[3] = PHYS_RBX
+    ra.pool[4] = PHYS_RSI
+    ra.pool[5] = PHYS_RDI
+    ra.pool[6] = PHYS_R10
+    ra.pool[7] = PHYS_R11
     let i = 0
-    loop i < jfn.block_cnt {
-        lower_block(jfn.blocks[i], out, out_len)
+    loop i < N_ALLOC_REGS {
+        ra.reg2val[i] = -1
         i = i + 1
     }
+    let j = 0
+    loop j < 4096 {
+        ra.val2reg[j]   = -1
+        ra.spill_off[j] = -1
+        j = j + 1
+    }
+    ra.sp_top = 0
 }
 
-fn lower_block(bb: &BasicBlock, out: &i8, pos: &i64) {
+fn regalloc_alloc(ra: &RegAlloc, val_id: i64) -> i32 {
     let i = 0
-    loop i < bb.instr_cnt {
-        let instr = bb.instrs[i]
-        if instr.dead == 1 {
-            i = i + 1
+    loop i < N_ALLOC_REGS {
+        if ra.reg2val[i] == -1 {
+            ra.reg2val[i]      = val_id
+            ra.val2reg[val_id] = i
+            ret ra.pool[i]
         }
-        else {
-            lower_instr(instr, out, pos)
-            i = i + 1
-        }
+        i = i + 1
     }
+    ; Spill pool[0] (oldest)
+    let victim = ra.reg2val[0]
+    ra.sp_top = ra.sp_top + 8
+    ra.spill_off[victim]  = ra.sp_top
+    ra.val2reg[victim]    = -1
+    ra.reg2val[0]         = val_id
+    ra.val2reg[val_id]    = 0
+    ret ra.pool[0]
 }
 
-fn lower_instr(instr: &Instr, out: &i8, pos: &i64) {
-    if instr.op == OP_CONST {
-        ; mov rax, imm64  =>  48 B8 <imm64>
-        emit_byte(out, pos, 0x48)
-        emit_byte(out, pos, 0xB8)
-        emit_i64(out, pos, instr.imm)
-    }
-    if instr.op == OP_ADD {
-        ; Using rax and rbx convention (register allocator needed for full impl)
-        ; add rax, rbx  =>  48 01 D8
-        emit_byte(out, pos, 0x48)
-        emit_byte(out, pos, 0x01)
-        emit_byte(out, pos, 0xD8)
-    }
-    if instr.op == OP_MUL {
-        ; imul rax, rbx  =>  48 0F AF C3
-        emit_byte(out, pos, 0x48)
-        emit_byte(out, pos, 0x0F)
-        emit_byte(out, pos, 0xAF)
-        emit_byte(out, pos, 0xC3)
-    }
-    if instr.op == OP_RET {
-        ; ret  =>  C3
-        emit_byte(out, pos, 0xC3)
-    }
+fn regalloc_get(ra: &RegAlloc, val_id: i64) -> i32 {
+    let idx = ra.val2reg[val_id]
+    if idx == -1 { ret -1 }
+    ret ra.pool[idx]
 }
+
+fn regalloc_free(ra: &RegAlloc, val_id: i64) {
+    let idx = ra.val2reg[val_id]
+    if idx == -1 { ret ok(0) }
+    ra.reg2val[idx]    = -1
+    ra.val2reg[val_id] = -1
+}
+
+; ============================================================
+; 9. X86-64 EMISSION HELPERS
+; ============================================================
 
 fn emit_byte(out: &i8, pos: &i64, b: i8) {
     out[pos[0]] = b
     pos[0] = pos[0] + 1
 }
 
-fn emit_i64(out: &i8, pos: &i64, val: i64) {
+fn emit_i32_le(out: &i8, pos: &i64, val: i64) {
+    emit_byte(out, pos, val & 0xFF)
+    emit_byte(out, pos, (val >> 8)  & 0xFF)
+    emit_byte(out, pos, (val >> 16) & 0xFF)
+    emit_byte(out, pos, (val >> 24) & 0xFF)
+}
+
+fn emit_i64_le(out: &i8, pos: &i64, val: i64) {
     let i = 0
     loop i < 8 {
         emit_byte(out, pos, val & 0xFF)
@@ -641,41 +1095,672 @@ fn emit_i64(out: &i8, pos: &i64, val: i64) {
     }
 }
 
+; REX prefix: 0100WRXB
+fn rex_byte(w: i32, r: i32, x: i32, b: i32) -> i8 {
+    ret 0x40 | (w << 3) | (r << 2) | (x << 1) | b
+}
+
+; ModRM byte for reg-reg: mod=11
+fn modrm_rr(reg: i32, rm: i32) -> i8 {
+    ret 0xC0 | ((reg & 7) << 3) | (rm & 7)
+}
+
+; Emit REX.W for two registers (sets R if reg>=8, B if rm>=8)
+fn emit_rex_w_rr(out: &i8, pos: &i64, reg: i32, rm: i32) {
+    let r = 0
+    let b = 0
+    if reg >= 8 { r = 1 }
+    if rm  >= 8 { b = 1 }
+    emit_byte(out, pos, rex_byte(1, r, 0, b))
+}
+
+; MOV r64, r/m64 (copy rm -> reg):  REX.W 8B /r
+fn emit_mov_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
+    emit_rex_w_rr(out, pos, dst, src)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, modrm_rr(dst, src))
+}
+
+; MOV r64, imm64:  REX.W B8+rd imm64
+fn emit_mov_imm64(out: &i8, pos: &i64, dst: i32, imm: i64) {
+    let b = 0
+    if dst >= 8 { b = 1 }
+    emit_byte(out, pos, rex_byte(1, 0, 0, b))
+    emit_byte(out, pos, 0xB8 + (dst & 7))
+    emit_i64_le(out, pos, imm)
+}
+
+; ADD r/m64, r64:  REX.W 01 /r
+fn emit_add_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
+    emit_rex_w_rr(out, pos, src, dst)
+    emit_byte(out, pos, 0x01)
+    emit_byte(out, pos, modrm_rr(src, dst))
+}
+
+; SUB r/m64, r64:  REX.W 29 /r
+fn emit_sub_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
+    emit_rex_w_rr(out, pos, src, dst)
+    emit_byte(out, pos, 0x29)
+    emit_byte(out, pos, modrm_rr(src, dst))
+}
+
+; IMUL r64, r/m64:  REX.W 0F AF /r
+fn emit_imul_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
+    emit_rex_w_rr(out, pos, dst, src)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xAF)
+    emit_byte(out, pos, modrm_rr(dst, src))
+}
+
+; CQO: sign-extend rax into rdx:rax  (48 99)
+fn emit_cqo(out: &i8, pos: &i64) {
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x99)
+}
+
+; IDIV r/m64:  REX.W F7 /7
+fn emit_idiv_r(out: &i8, pos: &i64, divisor: i32) {
+    let b = 0
+    if divisor >= 8 { b = 1 }
+    emit_byte(out, pos, rex_byte(1, 0, 0, b))
+    emit_byte(out, pos, 0xF7)
+    emit_byte(out, pos, modrm_rr(7, divisor))
+}
+
+; CMP r/m64, r64:  REX.W 39 /r
+fn emit_cmp_rr(out: &i8, pos: &i64, a: i32, b: i32) {
+    emit_rex_w_rr(out, pos, b, a)
+    emit_byte(out, pos, 0x39)
+    emit_byte(out, pos, modrm_rr(b, a))
+}
+
+; CMP r64, 0:  REX.W 83 /7 00
+fn emit_cmp_zero(out: &i8, pos: &i64, r: i32) {
+    let b = 0
+    if r >= 8 { b = 1 }
+    emit_byte(out, pos, rex_byte(1, 0, 0, b))
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, modrm_rr(7, r))
+    emit_byte(out, pos, 0x00)
+}
+
+; PUSH r64
+fn emit_push_r(out: &i8, pos: &i64, r: i32) {
+    if r >= 8 {
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x50 + (r & 7))
+    } else {
+        emit_byte(out, pos, 0x50 + r)
+    }
+}
+
+; POP r64
+fn emit_pop_r(out: &i8, pos: &i64, r: i32) {
+    if r >= 8 {
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x58 + (r & 7))
+    } else {
+        emit_byte(out, pos, 0x58 + r)
+    }
+}
+
+; RET
+fn emit_ret_instr(out: &i8, pos: &i64) {
+    emit_byte(out, pos, 0xC3)
+}
+
+; JMP rel32
+fn emit_jmp_rel32(out: &i8, pos: &i64, rel: i64) {
+    emit_byte(out, pos, 0xE9)
+    emit_i32_le(out, pos, rel)
+}
+
+; JE rel32
+fn emit_je_rel32(out: &i8, pos: &i64, rel: i64) {
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x84)
+    emit_i32_le(out, pos, rel)
+}
+
+; JNE rel32
+fn emit_jne_rel32(out: &i8, pos: &i64, rel: i64) {
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x85)
+    emit_i32_le(out, pos, rel)
+}
+
+; JL rel32
+fn emit_jl_rel32(out: &i8, pos: &i64, rel: i64) {
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8C)
+    emit_i32_le(out, pos, rel)
+}
+
+; JG rel32
+fn emit_jg_rel32(out: &i8, pos: &i64, rel: i64) {
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8F)
+    emit_i32_le(out, pos, rel)
+}
+
+; SYSCALL
+fn emit_syscall_instr(out: &i8, pos: &i64) {
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x05)
+}
+
+; CALL rel32  (E8 rel32)
+fn emit_call_rel32(out: &i8, pos: &i64, rel: i64) {
+    emit_byte(out, pos, 0xE8)
+    emit_i32_le(out, pos, rel)
+}
+
+; LEA r64, [rip + rel32]  (RIP-relative load of address)
+fn emit_lea_rip(out: &i8, pos: &i64, dst: i32, rel: i64) {
+    let r_ext = 0
+    if dst >= 8 { r_ext = 1 }
+    emit_byte(out, pos, rex_byte(1, r_ext, 0, 0))
+    emit_byte(out, pos, 0x8D)
+    ; ModRM: mod=00, reg=dst, rm=101 (RIP+disp32)
+    emit_byte(out, pos, ((dst & 7) << 3) | 5)
+    emit_i32_le(out, pos, rel)
+}
+
+; MOV r64, [rbp - disp]  (load spilled value)
+fn emit_load_spill(out: &i8, pos: &i64, dst: i32, off: i64) {
+    ; REX.W 8B /r  [rbp - off]
+    let r_ext = 0
+    if dst >= 8 { r_ext = 1 }
+    emit_byte(out, pos, rex_byte(1, r_ext, 0, 0))
+    emit_byte(out, pos, 0x8B)
+    ; mod=10 (disp32), reg=dst, rm=101 (rbp)
+    emit_byte(out, pos, 0x80 | ((dst & 7) << 3) | 5)
+    emit_i32_le(out, pos, 0 - off)
+}
+
+; MOV [rbp - disp], r64  (store to spill slot)
+fn emit_store_spill(out: &i8, pos: &i64, off: i64, src: i32) {
+    let r_ext = 0
+    if src >= 8 { r_ext = 1 }
+    emit_byte(out, pos, rex_byte(1, r_ext, 0, 0))
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x80 | ((src & 7) << 3) | 5)
+    emit_i32_le(out, pos, 0 - off)
+}
+
+; SETNE al / SETE al after CMP, then MOVZX rax, al
+fn emit_setcc_rax(out: &i8, pos: &i64, cc: i32) {
+    ; SETCC al:  0F 9x C0
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x90 | cc)
+    emit_byte(out, pos, 0xC0)
+    ; MOVZX rax, al:  48 0F B6 C0
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xB6)
+    emit_byte(out, pos, 0xC0)
+}
+
 ; ============================================================
-; 7. ENTRY POINT
+; 10. X86-64 LOWERING  (JIR → machine code)
+; ============================================================
+
+fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
+    let r = regalloc_get(ra, val_id)
+    if r != -1 { ret r }
+    ; Value was spilled: allocate a new register and reload
+    let new_r = regalloc_alloc(ra, val_id)
+    emit_load_spill(out, pos, new_r, ra.spill_off[val_id])
+    ret new_r
+}
+
+fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
+               out: &i8, pos: &i64) {
+    if ins.op == OP_CONST {
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        emit_mov_imm64(out, pos, dst, ins.imm)
+        ret ok(0)
+    }
+
+    if ins.op == OP_STRLIT {
+        ; The string is in jfn.strtab at offset ins.str_start.
+        ; Emit LEA dst, [rip + rel] — rel patched at write_elf time.
+        ; For now emit a placeholder; the strtab base address will be
+        ; filled in by write_elf using the fixup recorded here.
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        ; Record fixup: code_off points to the rel32 inside the LEA
+        let fix_idx = ctx.fix_cnt
+        ctx.fixups[fix_idx].code_off  = pos[0] + 4   ; after 3-byte prefix + 1 ModRM
+        ctx.fixups[fix_idx].target_bb = ins.str_start ; reuse target_bb as strtab offset
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_lea_rip(out, pos, dst, 0)               ; rel32 = 0, patched later
+        ret ok(0)
+    }
+
+    if ins.op == OP_STRLEN {
+        ; Walk strtab from str_id to first 0 byte and return count.
+        ; At runtime the pointer is in the register for operand0.
+        ; We emit an inline strlen loop.
+        let ptr_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let dst   = regalloc_alloc(&ctx.ra, ins.id)
+        ; xor dst, dst   (counter = 0)
+        emit_rex_w_rr(out, pos, dst, dst)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, modrm_rr(dst, dst))
+        ; loop: cmp byte [ptr_r + dst], 0 / je done / inc dst / jmp loop
+        ; Simplified: emit as a call-like sequence using CX
+        ; For Stage 1 purposes, inline the pattern:
+        ;   .loop: cmp [ptr+cnt], 0; je .done; inc cnt; jmp .loop; .done:
+        let loop_off = pos[0]
+        ; CMP byte [ptr_r + dst], 0
+        emit_byte(out, pos, 0x42)   ; REX (extends both ptr_r and dst if needed)
+        emit_byte(out, pos, 0x80)   ; CMP r/m8, imm8
+        emit_byte(out, pos, 0x04 | ((ptr_r & 7) << 3) | (dst & 7))
+        emit_byte(out, pos, 0)      ; imm8 = 0
+        ; JE +3 (skip inc + jmp)
+        let je_off = pos[0]
+        emit_je_rel32(out, pos, 0)  ; placeholder
+        ; INC dst:  REX.W FF /0
+        let b = 0
+        if dst >= 8 { b = 1 }
+        emit_byte(out, pos, rex_byte(1, 0, 0, b))
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, modrm_rr(0, dst))
+        ; JMP back to loop_off
+        let jmp_rel = loop_off - (pos[0] + 5)
+        emit_jmp_rel32(out, pos, jmp_rel)
+        ; Patch JE to here
+        let done_off = pos[0]
+        let je_rel = done_off - (je_off + 6)
+        out[je_off + 2] = je_rel & 0xFF
+        out[je_off + 3] = (je_rel >> 8) & 0xFF
+        out[je_off + 4] = (je_rel >> 16) & 0xFF
+        out[je_off + 5] = (je_rel >> 24) & 0xFF
+        ret ok(0)
+    }
+
+    if ins.op == OP_ADD {
+        let a   = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let b   = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        emit_mov_rr(out, pos, dst, a)
+        emit_add_rr(out, pos, dst, b)
+        ret ok(0)
+    }
+
+    if ins.op == OP_SUB {
+        let a   = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let b   = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        emit_mov_rr(out, pos, dst, a)
+        emit_sub_rr(out, pos, dst, b)
+        ret ok(0)
+    }
+
+    if ins.op == OP_MUL {
+        let a   = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let b   = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        emit_mov_rr(out, pos, dst, a)
+        emit_imul_rr(out, pos, dst, b)
+        ret ok(0)
+    }
+
+    if ins.op == OP_DIV {
+        ; IDIV clobbers rdx:rax  — move dividend to rax, sign-extend, divide
+        let a = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let b = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        emit_mov_rr(out, pos, PHYS_RAX, a)
+        emit_cqo(out, pos)
+        emit_idiv_r(out, pos, b)
+        ; Quotient in rax — allocate result there
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        if dst != PHYS_RAX {
+            emit_mov_rr(out, pos, dst, PHYS_RAX)
+        }
+        ret ok(0)
+    }
+
+    if ins.op == OP_CMP_EQ or ins.op == OP_CMP_NE or
+       ins.op == OP_CMP_LT or ins.op == OP_CMP_GT {
+        let a = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let b = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        emit_cmp_rr(out, pos, a, b)
+        let cc = 4  ; JE   (cc nibble for SETCC: 4=E 5=NE C=L F=G)
+        if ins.op == OP_CMP_NE { cc = 5 }
+        if ins.op == OP_CMP_LT { cc = 0xC }
+        if ins.op == OP_CMP_GT { cc = 0xF }
+        emit_setcc_rax(out, pos, cc)
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        if dst != PHYS_RAX {
+            emit_mov_rr(out, pos, dst, PHYS_RAX)
+        }
+        ret ok(0)
+    }
+
+    if ins.op == OP_RET {
+        ; Move result to rax, restore frame, return
+        let src_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        if src_r != PHYS_RAX {
+            emit_mov_rr(out, pos, PHYS_RAX, src_r)
+        }
+        ; Epilogue: mov rsp, rbp; pop rbp; ret
+        emit_byte(out, pos, 0x48)   ; REX.W
+        emit_byte(out, pos, 0x89)   ; MOV r/m64, r64
+        emit_byte(out, pos, 0xEC)   ; mov rsp, rbp
+        emit_pop_r(out, pos, PHYS_RBP)
+        emit_ret_instr(out, pos)
+        ret ok(0)
+    }
+
+    if ins.op == OP_JMP {
+        ; Unconditional jump to target basic block
+        let fix_idx = ctx.fix_cnt
+        ctx.fixups[fix_idx].code_off  = pos[0] + 1   ; after opcode byte
+        ctx.fixups[fix_idx].target_bb = ins.bb_target0
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_jmp_rel32(out, pos, 0)                   ; rel32 patched later
+        ret ok(0)
+    }
+
+    if ins.op == OP_BR {
+        ; Conditional branch: cmp cond_reg, 0; je else_bb; jmp then_bb
+        let cond_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        emit_cmp_zero(out, pos, cond_r)
+        ; JE → else_bb
+        let fix_else = ctx.fix_cnt
+        ctx.fixups[fix_else].code_off  = pos[0] + 2
+        ctx.fixups[fix_else].target_bb = ins.bb_target1
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_je_rel32(out, pos, 0)
+        ; JMP → then_bb
+        let fix_then = ctx.fix_cnt
+        ctx.fixups[fix_then].code_off  = pos[0] + 1
+        ctx.fixups[fix_then].target_bb = ins.bb_target0
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_jmp_rel32(out, pos, 0)
+        ret ok(0)
+    }
+
+    if ins.op == OP_SYSCALL {
+        ; Linux x86-64 syscall ABI: nr→rax, a0→rdi, a1→rsi, a2→rdx
+        let nr_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let a0_r = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        let a1_r = get_or_load(&ctx.ra, out, pos, ins.operand2)
+        let a2_r = get_or_load(&ctx.ra, out, pos, ins.operand3)
+        if nr_r != PHYS_RAX { emit_mov_rr(out, pos, PHYS_RAX, nr_r) }
+        if a0_r != PHYS_RDI { emit_mov_rr(out, pos, PHYS_RDI, a0_r) }
+        if a1_r != PHYS_RSI { emit_mov_rr(out, pos, PHYS_RSI, a1_r) }
+        if a2_r != PHYS_RDX { emit_mov_rr(out, pos, PHYS_RDX, a2_r) }
+        emit_syscall_instr(out, pos)
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        if dst != PHYS_RAX {
+            emit_mov_rr(out, pos, dst, PHYS_RAX)
+        }
+        ret ok(0)
+    }
+
+    if ins.op == OP_CALL {
+        ; Save caller-saved regs, place args in rdi/rsi/rdx, emit CALL rel32
+        ; Simplified: push all allocatable regs, set up args, call, pop, move result
+        let i = 0
+        loop i < N_ALLOC_REGS {
+            if ctx.ra.reg2val[i] != -1 {
+                emit_push_r(out, pos, ctx.ra.pool[i])
+            }
+            i = i + 1
+        }
+        ; Arg 0 → rdi, arg 1 → rsi, arg 2 → rdx
+        if ins.operand3 >= 1 {
+            let a0_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
+            if a0_r != PHYS_RDI { emit_mov_rr(out, pos, PHYS_RDI, a0_r) }
+        }
+        if ins.operand3 >= 2 {
+            let a1_r = get_or_load(&ctx.ra, out, pos, ins.operand1)
+            if a1_r != PHYS_RSI { emit_mov_rr(out, pos, PHYS_RSI, a1_r) }
+        }
+        if ins.operand3 >= 3 {
+            let a2_r = get_or_load(&ctx.ra, out, pos, ins.operand2)
+            if a2_r != PHYS_RDX { emit_mov_rr(out, pos, PHYS_RDX, a2_r) }
+        }
+        ; CALL rel32 — placeholder, patched by linker/fixup
+        let fix_idx = ctx.fix_cnt
+        ctx.fixups[fix_idx].code_off  = pos[0] + 1
+        ctx.fixups[fix_idx].target_bb = ins.str_start   ; reuse as name offset
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_call_rel32(out, pos, 0)
+        ; Restore caller-saved regs (in reverse)
+        let j = N_ALLOC_REGS - 1
+        loop j >= 0 {
+            if ctx.ra.reg2val[j] != -1 {
+                emit_pop_r(out, pos, ctx.ra.pool[j])
+            }
+            j = j - 1
+        }
+        let dst = regalloc_alloc(&ctx.ra, ins.id)
+        if dst != PHYS_RAX {
+            emit_mov_rr(out, pos, dst, PHYS_RAX)
+        }
+        ret ok(0)
+    }
+}
+
+fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
+               out: &i8, pos: &i64) {
+    bb.label_off = pos[0]
+    let i = 0
+    loop i < bb.instr_cnt {
+        if jfn.blocks[bb.id].instrs[i].dead == 0 {
+            lower_instr(&jfn.blocks[bb.id].instrs[i], ctx, jfn, out, pos)
+        }
+        i = i + 1
+    }
+}
+
+fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; Function prologue: push rbp; mov rbp, rsp; sub rsp, frame_size
+    emit_push_r(out, pos, PHYS_RBP)
+    ; MOV rbp, rsp:  48 89 E5
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0xE5)
+    ; SUB rsp, 256  (placeholder frame size — enough for spills)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x81)
+    emit_byte(out, pos, 0xEC)
+    emit_i32_le(out, pos, 256)
+
+    let i = 0
+    loop i < jfn.block_cnt {
+        lower_block(&jfn.blocks[i], ctx, jfn, out, pos)
+        i = i + 1
+    }
+
+    ; Second pass: patch all recorded jump fixups
+    let fi = 0
+    loop fi < ctx.fix_cnt {
+        let fix    = ctx.fixups[fi]
+        let target = jfn.blocks[fix.target_bb].label_off
+        if target >= 0 {
+            let rel = target - (fix.code_off + 4)
+            out[fix.code_off]     = rel & 0xFF
+            out[fix.code_off + 1] = (rel >> 8) & 0xFF
+            out[fix.code_off + 2] = (rel >> 16) & 0xFF
+            out[fix.code_off + 3] = (rel >> 24) & 0xFF
+        }
+        fi = fi + 1
+    }
+}
+
+; ============================================================
+; 11. ELF64 WRITER
+; ============================================================
+; Produces a minimal static ELF64 executable:
+;   - ELF header (64 bytes)
+;   - 1 × PT_LOAD program header (56 bytes)
+;   - .text  (machine code)
+;   - .rodata (string table)
+
+fn write_elf(out_fd: i64, code: &i8, code_len: i64,
+             strtab: &i8, strtab_len: i64) {
+    let buf = alloc_pages(2)
+    let pos = 0
+
+    let load_va   = 0x400000
+    let hdr_size  = 120          ; ELF(64) + 1 phdr(56)
+    let code_va   = load_va + hdr_size
+    let total     = hdr_size + code_len + strtab_len
+
+    ; ---- ELF header (64 bytes) ----
+    ; e_ident
+    emit_byte(buf, &pos, 0x7F)
+    emit_byte(buf, &pos, 0x45)   ; E
+    emit_byte(buf, &pos, 0x4C)   ; L
+    emit_byte(buf, &pos, 0x46)   ; F
+    emit_byte(buf, &pos, 2)      ; ELFCLASS64
+    emit_byte(buf, &pos, 1)      ; ELFDATA2LSB
+    emit_byte(buf, &pos, 1)      ; EV_CURRENT
+    emit_byte(buf, &pos, 0)      ; ELFOSABI_NONE
+    let pi = 0
+    loop pi < 8 { emit_byte(buf, &pos, 0)   pi = pi + 1 }   ; padding
+    ; e_type = ET_EXEC
+    emit_byte(buf, &pos, 2)    emit_byte(buf, &pos, 0)
+    ; e_machine = EM_X86_64 (0x3E)
+    emit_byte(buf, &pos, 0x3E) emit_byte(buf, &pos, 0)
+    ; e_version = 1
+    emit_i32_le(buf, &pos, 1)
+    ; e_entry
+    emit_i64_le(buf, &pos, code_va)
+    ; e_phoff = 64
+    emit_i64_le(buf, &pos, 64)
+    ; e_shoff = 0
+    emit_i64_le(buf, &pos, 0)
+    ; e_flags = 0
+    emit_i32_le(buf, &pos, 0)
+    ; e_ehsize = 64
+    emit_byte(buf, &pos, 64)   emit_byte(buf, &pos, 0)
+    ; e_phentsize = 56
+    emit_byte(buf, &pos, 56)   emit_byte(buf, &pos, 0)
+    ; e_phnum = 1
+    emit_byte(buf, &pos, 1)    emit_byte(buf, &pos, 0)
+    ; e_shentsize = 64
+    emit_byte(buf, &pos, 64)   emit_byte(buf, &pos, 0)
+    ; e_shnum = 0
+    emit_byte(buf, &pos, 0)    emit_byte(buf, &pos, 0)
+    ; e_shstrndx = 0
+    emit_byte(buf, &pos, 0)    emit_byte(buf, &pos, 0)
+
+    ; ---- Program header: PT_LOAD (56 bytes) ----
+    emit_i32_le(buf, &pos, 1)          ; p_type  = PT_LOAD
+    emit_i32_le(buf, &pos, 5)          ; p_flags = PF_R | PF_X
+    emit_i64_le(buf, &pos, 0)          ; p_offset = 0 (load from file start)
+    emit_i64_le(buf, &pos, load_va)    ; p_vaddr
+    emit_i64_le(buf, &pos, load_va)    ; p_paddr
+    emit_i64_le(buf, &pos, total)      ; p_filesz
+    emit_i64_le(buf, &pos, total)      ; p_memsz
+    emit_i64_le(buf, &pos, 0x200000)   ; p_align
+
+    ; Write header section
+    syscall(1, out_fd, buf, pos)       ; SYS_WRITE(fd, buf, pos)
+    ; Write machine code
+    syscall(1, out_fd, code, code_len)
+    ; Write string table
+    if strtab_len > 0 {
+        syscall(1, out_fd, strtab, strtab_len)
+    }
+}
+
+; ============================================================
+; 12. BOOTSTRAP HELPERS
+; ============================================================
+
+; Allocate n × 4096-byte pages via mmap anonymous
+fn alloc_pages(n: i64) -> &i8 {
+    ; mmap(NULL, n*4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0)
+    ; SYS_MMAP = 9
+    ; PROT_READ|PROT_WRITE = 3
+    ; MAP_PRIVATE|MAP_ANONYMOUS = 0x22
+    let size = n * 4096
+    ret syscall(9, 0, size, 3, 0x22, -1, 0)
+}
+
+; Access process argv: the stack layout on entry is:
+;   [rsp]    = argc
+;   [rsp+8]  = argv[0]   (program name)
+;   [rsp+16] = argv[1]   (first argument)
+; We expose argv as a global pointer set by main().
+let argv_ptr = 0   ; set to rsp+8 at startup via inline asm
+
+fn get_argv(n: i64) -> &i8 {
+    ; argv_ptr[n] is the nth argument string pointer
+    let base = argv_ptr
+    ret base[n]
+}
+
+; ============================================================
+; 13. ENTRY POINT
 ; ============================================================
 
 fn main() {
-    ; Read source file (argv[1]) via syscall
-    let src_fd  = syscall(2, argv[1], 0, 0)    ; open(path, O_RDONLY)
-    let src_buf = alloc_pages(1)                ; mmap one page
-    let src_len = syscall(0, src_fd, src_buf, 4096)  ; read
+    ; Grab argv from the kernel-provided stack frame
+    asm { out argv_ptr = rsi }   ; Stage 0 passes argv in rsi on entry
+
+    ; Open source file: argv[1]
+    let src_path = get_argv(1)
+    let src_fd   = syscall(2, src_path, 0, 0)    ; open(path, O_RDONLY)
+    let src_buf  = alloc_pages(8)                ; up to 32 KB source
+    let src_len  = syscall(0, src_fd, src_buf, 32768)
+    syscall(3, src_fd, 0, 0)                     ; close
 
     ; Lex
-    let toks    = alloc_pages(1)
+    let toks    = alloc_pages(4)                 ; token array
     let tok_cnt = 0
     lex(src_buf, src_len, toks, &tok_cnt)
 
-    ; Parse
+    ; Parse top-level function
     let ast = Node{}
     let pos = 0
     parse_fn(toks, &pos, &ast)
 
-    ; Constant fold + DCE on JIR
+    ; JIR codegen
     let jfn = JirFunction{}
+    jfn.src = src_buf
     codegen_fn(&ast, &jfn)
+
+    ; Optimise
     fold_constants(&jfn)
     dce(&jfn)
 
-    ; Emit machine code
-    let code_buf = alloc_pages(1)
+    ; Lower JIR → x86-64
+    let ctx      = LowerCtx{}
+    let code_buf = alloc_pages(8)                ; up to 32 KB code
     let code_len = 0
-    lower_fn(&jfn, code_buf, &code_len)
+    regalloc_init(&ctx.ra)
+    lower_fn(&jfn, &ctx, code_buf, &code_len)
 
-    ; Write ELF output (argv[2])
-    let out_fd = syscall(2, argv[2], 577, 493)  ; open(path, O_WRONLY|O_CREAT|O_TRUNC, 0755)
-    write_elf(out_fd, code_buf, code_len)
-    syscall(3, out_fd, 0, 0)                    ; close
+    ; Patch strtab RIP-relative references now that code_len is known
+    ; strtab starts at: load_va + hdr_size(120) + code_len
+    let strtab_va = 0x400000 + 120 + code_len
+    let fi = 0
+    loop fi < ctx.fix_cnt {
+        let fix = ctx.fixups[fi]
+        ; If target_bb < 0x400000 it's a strtab fixup, not a branch fixup
+        if fix.target_bb < 0x400000 {
+            let str_va = strtab_va + fix.target_bb
+            let rel    = str_va - (0x400000 + 120 + fix.code_off + 4)
+            code_buf[fix.code_off]     = rel & 0xFF
+            code_buf[fix.code_off + 1] = (rel >> 8) & 0xFF
+            code_buf[fix.code_off + 2] = (rel >> 16) & 0xFF
+            code_buf[fix.code_off + 3] = (rel >> 24) & 0xFF
+        }
+        fi = fi + 1
+    }
+
+    ; Write ELF output: argv[2]
+    let out_path = get_argv(2)
+    let out_fd   = syscall(2, out_path, 577, 493)  ; open(O_WRONLY|O_CREAT|O_TRUNC, 0755)
+    write_elf(out_fd, code_buf, code_len, &jfn.strtab, jfn.strtab_pos)
+    syscall(3, out_fd, 0, 0)                       ; close
 
     print("jda1: compiled successfully")
 }

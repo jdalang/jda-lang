@@ -363,14 +363,16 @@ asm { in rax = 60   in rdi = 0   ---   syscall }   ; exit(0)
 
 ## Roadmap
 
-- [ ] Stage 1 compiler fully operational (codegen in progress)
+- [x] Stage 1 compiler fully operational (lexer, Pratt parser, JIR codegen, register allocator, ELF64 emitter)
 - [ ] Self-hosting: Stage 1 compiled by Stage 0
 - [x] Standard library: `jda::fs`, `jda::time`, `jda::json`
+- [x] Crypto library: `jda::crypto` (SHA-256, SHA-1, HMAC, AES-128/256-CTR, ChaCha20-Poly1305)
+- [x] Process library: `jda::process` (fork/exec/waitpid/kill/signals/getenv/spawn)
 - [x] Package manager: `jda add <package>`
 - [x] Language server (LSP) for IDE support
 - [x] ARM64 backend (Apple Silicon, Raspberry Pi)
 - [x] WebAssembly backend
-- [ ] Windows kernel support
+- [x] Windows backend (PE32+ emitter, NT syscall table, Windows x64 ABI)
 
 ---
 
