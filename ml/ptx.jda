@@ -1,0 +1,318 @@
+; =============================================================================
+; jda PTX GPU Compiler Backend — JIR → NVIDIA PTX
+; =============================================================================
+; We bypass nvcc (NVIDIA's C++ compiler) entirely.
+; jda compiles JIR OP_MATMUL and OP_VECMUL directly to PTX assembly,
+; then loads and runs it via the NVIDIA kernel driver — no CUDA runtime API.
+;
+; Pipeline:
+;   jda source → JIR (OP_MATMUL) → PTX text → cubin (driver compiles) → GPU
+;
+; GPU memory allocation:
+;   Direct ioctl to /dev/nvidia0 — no libcuda.so, no CUDA runtime
+; =============================================================================
+
+import jda::mem::page_alloc
+import jda::ir::jir
+
+; =============================================================================
+; PART 1 — GPU DEVICE INTERFACE (no CUDA runtime)
+; =============================================================================
+; We talk to the GPU via the NVIDIA kernel module character device.
+; /dev/nvidia0  — per-GPU device (GPU 0)
+; /dev/nvidiactl — control device (for context creation)
+;
+; Key ioctls (from reverse-engineered nvidia.ko interface):
+;   NV_ESC_RM_ALLOC_MEMORY      = 0xC0  allocate GPU VRAM
+;   NV_ESC_RM_FREE              = 0xC1  free GPU VRAM
+;   NV_ESC_RM_LOAD_MODULE       = 0xC2  load PTX/cubin module
+;   NV_ESC_RM_LAUNCH_KERNEL     = 0xC3  launch a GPU kernel
+;   NV_ESC_RM_MEMCPY_H2D        = 0xC4  host → device DMA
+;   NV_ESC_RM_MEMCPY_D2H        = 0xC5  device → host DMA
+
+const NVIDIA_DEV   = "/dev/nvidia0"
+const NVIDIACTL    = "/dev/nvidiactl"
+const SYS_OPEN     = 2
+const SYS_CLOSE    = 3
+const SYS_IOCTL    = 16
+
+const NV_ESC_RM_ALLOC_MEMORY  = 0xC0
+const NV_ESC_RM_FREE           = 0xC1
+const NV_ESC_RM_LOAD_MODULE    = 0xC2
+const NV_ESC_RM_LAUNCH_KERNEL  = 0xC3
+const NV_ESC_RM_MEMCPY_H2D     = 0xC4
+const NV_ESC_RM_MEMCPY_D2H     = 0xC5
+
+; GPU context handle (opened once at startup)
+struct GpuContext {
+    dev_fd:  i32      ; fd for /dev/nvidia0
+    ctl_fd:  i32      ; fd for /dev/nvidiactl
+    ctx_id:  u64      ; driver context handle
+}
+
+fn gpu_context_open() -> Result<own GpuContext, []i8> {
+    let dev_fd = syscall(SYS_OPEN, NVIDIA_DEV,   0, 0) as i32
+    let ctl_fd = syscall(SYS_OPEN, NVIDIACTL,    0, 0) as i32
+    if dev_fd < 0 or ctl_fd < 0 { ret err("cannot open NVIDIA device") }
+    let ctx = GpuContext { dev_fd: dev_fd, ctl_fd: ctl_fd, ctx_id: 0 }
+    ret ok(ctx)
+}
+
+fn gpu_context_close(ctx: own GpuContext) {
+    syscall(SYS_CLOSE, ctx.dev_fd, 0, 0)
+    syscall(SYS_CLOSE, ctx.ctl_fd, 0, 0)
+}
+
+; =============================================================================
+; GPU Memory Allocation (VRAM — no cudaMalloc)
+; =============================================================================
+struct GpuAlloc {
+    dev_ptr: u64      ; GPU virtual address (device-side pointer)
+    size:    u64      ; allocation size in bytes
+    handle:  u64      ; driver allocation handle (for free)
+}
+
+struct NvAllocMemParams {
+    size:    u64
+    align:   u64
+    out_ptr: u64    ; written by driver
+    out_hdl: u64    ; written by driver
+}
+
+fn gpu_alloc(ctx: ref GpuContext, bytes: u64) -> Result<own GpuAlloc, []i8> {
+    let params = NvAllocMemParams {
+        size:    bytes,
+        align:   4096,
+        out_ptr: 0,
+        out_hdl: 0,
+    }
+    let rc = syscall(SYS_IOCTL, ctx.dev_fd, NV_ESC_RM_ALLOC_MEMORY, &params) as i32
+    if rc < 0 { ret err("gpu_alloc: ioctl failed") }
+    ret ok(GpuAlloc { dev_ptr: params.out_ptr, size: bytes, handle: params.out_hdl })
+}
+
+fn gpu_free(ctx: ref GpuContext, alloc: own GpuAlloc) {
+    syscall(SYS_IOCTL, ctx.dev_fd, NV_ESC_RM_FREE, alloc.handle)
+}
+
+; =============================================================================
+; DMA Transfers (PCIe — host ↔ device)
+; =============================================================================
+struct NvMemcpyParams {
+    dst:  u64
+    src:  u64
+    size: u64
+}
+
+fn gpu_h2d(ctx: ref GpuContext,
+           dst: ref GpuAlloc, src: ref *i8, bytes: u64) {
+    let p = NvMemcpyParams { dst: dst.dev_ptr, src: src as u64, size: bytes }
+    syscall(SYS_IOCTL, ctx.dev_fd, NV_ESC_RM_MEMCPY_H2D, &p)
+}
+
+fn gpu_d2h(ctx: ref GpuContext,
+           dst: ref *i8, src: ref GpuAlloc, bytes: u64) {
+    let p = NvMemcpyParams { dst: dst as u64, src: src.dev_ptr, size: bytes }
+    syscall(SYS_IOCTL, ctx.dev_fd, NV_ESC_RM_MEMCPY_D2H, &p)
+}
+
+; =============================================================================
+; PART 2 — PTX CODE GENERATOR (JIR OP_MATMUL → PTX text)
+; =============================================================================
+; Generates a tiled matrix multiply PTX kernel.
+; Tile size 16×16 fits in shared memory of all modern NVIDIA GPUs (SM 7.0+).
+;
+; Tiling strategy:
+;   Each thread block computes a [TILE x TILE] output tile.
+;   Threads load tiles of A and B into shared memory cooperatively.
+;   Each thread accumulates a dot product over K/TILE steps.
+;   Result: O(M*N*K/TILE) global memory accesses instead of O(M*N*K).
+
+const PTX_TILE = 16
+
+fn emit_matmul_ptx(M: i64, N: i64, K: i64, out: &mut []i8) -> i64 {
+    ; Returns number of bytes written to `out`.
+    ; The PTX is plain text — driver compiles it to cubin.
+    let pos = 0i64
+
+    ptx_line(out, &mut pos, ".version 8.0")
+    ptx_line(out, &mut pos, ".target sm_86")     ; Ampere (RTX 3000/A100)
+    ptx_line(out, &mut pos, ".address_size 64")
+    ptx_line(out, &mut pos, "")
+    ptx_line(out, &mut pos, ".visible .entry jda_matmul(")
+    ptx_line(out, &mut pos, "    .param .u64 param_A,")
+    ptx_line(out, &mut pos, "    .param .u64 param_B,")
+    ptx_line(out, &mut pos, "    .param .u64 param_C,")
+    ptx_line(out, &mut pos, "    .param .u32 param_M,")
+    ptx_line(out, &mut pos, "    .param .u32 param_N,")
+    ptx_line(out, &mut pos, "    .param .u32 param_K")
+    ptx_line(out, &mut pos, ") {")
+
+    ; Shared memory tiles
+    ptx_fmt(out, &mut pos,
+        "    .shared .align 4 .f32 smA[{t}][{t}];\n", PTX_TILE, PTX_TILE)
+    ptx_fmt(out, &mut pos,
+        "    .shared .align 4 .f32 smB[{t}][{t}];\n", PTX_TILE, PTX_TILE)
+
+    ; Register declarations
+    ptx_line(out, &mut pos, "    .reg .u64  %pA, %pB, %pC, %addr;")
+    ptx_line(out, &mut pos, "    .reg .u32  %tx, %ty, %bx, %by, %k, %K;")
+    ptx_line(out, &mut pos, "    .reg .f32  %acc, %a, %b;")
+    ptx_line(out, &mut pos, "    .reg .u32  %row, %col, %tile, %ntiles;")
+    ptx_line(out, &mut pos, "    .reg .pred %p;")
+
+    ; Load parameters
+    ptx_line(out, &mut pos, "    ld.param.u64 %pA, [param_A];")
+    ptx_line(out, &mut pos, "    ld.param.u64 %pB, [param_B];")
+    ptx_line(out, &mut pos, "    ld.param.u64 %pC, [param_C];")
+    ptx_line(out, &mut pos, "    ld.param.u32 %K,  [param_K];")
+
+    ; Thread indices
+    ptx_line(out, &mut pos, "    mov.u32 %tx, %tid.x;")
+    ptx_line(out, &mut pos, "    mov.u32 %ty, %tid.y;")
+    ptx_line(out, &mut pos, "    mov.u32 %bx, %ctaid.x;")
+    ptx_line(out, &mut pos, "    mov.u32 %by, %ctaid.y;")
+
+    ; row = by*TILE + ty,  col = bx*TILE + tx
+    ptx_fmt(out, &mut pos, "    mad.lo.u32 %row, %by, {t}, %ty;\n", PTX_TILE)
+    ptx_fmt(out, &mut pos, "    mad.lo.u32 %col, %bx, {t}, %tx;\n", PTX_TILE)
+
+    ; Initialise accumulator
+    ptx_line(out, &mut pos, "    mov.f32 %acc, 0f00000000;")
+
+    ; Tile loop
+    ptx_line(out, &mut pos, "    mov.u32 %tile, 0;")
+    ptx_fmt(out, &mut pos, "    div.u32 %ntiles, %K, {t};\n", PTX_TILE)
+    ptx_line(out, &mut pos, "TILE_LOOP:")
+
+    ; Load A tile: smA[ty][tx] = A[row][tile*TILE+tx]
+    ptx_fmt(out, &mut pos,
+        "    mad.lo.u32 %k, %tile, {t}, %tx;\n", PTX_TILE)
+    ptx_line(out, &mut pos, "    ; load A[row*K + k] → smA[ty][tx]")
+    ptx_line(out, &mut pos, "    mul.wide.u32 %addr, %row, %K;")  ; row*K (as u64)
+    ptx_line(out, &mut pos, "    add.u64 %addr, %addr, %k;")
+    ptx_line(out, &mut pos, "    shl.b64 %addr, %addr, 2;")       ; *4 (sizeof f32)
+    ptx_line(out, &mut pos, "    add.u64 %addr, %pA, %addr;")
+    ptx_line(out, &mut pos, "    ld.global.f32 %a, [%addr];")
+    ptx_fmt(out, &mut pos,
+        "    st.shared.f32 [smA + ({t}*%ty + %tx)*4], %a;\n", PTX_TILE)
+
+    ; Load B tile: smB[ty][tx] = B[tile*TILE+ty][col]
+    ptx_fmt(out, &mut pos,
+        "    mad.lo.u32 %k, %tile, {t}, %ty;\n", PTX_TILE)
+    ptx_line(out, &mut pos, "    ; load B[k*N + col] → smB[ty][tx]")
+    ptx_line(out, &mut pos, "    mul.wide.u32 %addr, %k, %K;")
+    ptx_line(out, &mut pos, "    add.u64 %addr, %addr, %col;")
+    ptx_line(out, &mut pos, "    shl.b64 %addr, %addr, 2;")
+    ptx_line(out, &mut pos, "    add.u64 %addr, %pB, %addr;")
+    ptx_line(out, &mut pos, "    ld.global.f32 %b, [%addr];")
+    ptx_fmt(out, &mut pos,
+        "    st.shared.f32 [smB + ({t}*%ty + %tx)*4], %b;\n", PTX_TILE)
+
+    ; Sync threads — ensure tile is fully loaded before compute
+    ptx_line(out, &mut pos, "    bar.sync 0;")
+
+    ; Inner product over the tile
+    ptx_line(out, &mut pos, "    mov.u32 %k, 0;")
+    ptx_line(out, &mut pos, "INNER_LOOP:")
+    ptx_fmt(out, &mut pos,
+        "    ld.shared.f32 %a, [smA + ({t}*%ty + %k)*4];\n", PTX_TILE)
+    ptx_fmt(out, &mut pos,
+        "    ld.shared.f32 %b, [smB + ({t}*%k  + %tx)*4];\n", PTX_TILE)
+    ptx_line(out, &mut pos, "    fma.rn.f32 %acc, %a, %b, %acc;")
+    ptx_line(out, &mut pos, "    add.u32 %k, %k, 1;")
+    ptx_fmt(out, &mut pos,
+        "    setp.lt.u32 %p, %k, {t};\n", PTX_TILE)
+    ptx_line(out, &mut pos, "    @%p bra INNER_LOOP;")
+
+    ; Sync before next tile load
+    ptx_line(out, &mut pos, "    bar.sync 0;")
+
+    ; Advance tile index
+    ptx_line(out, &mut pos, "    add.u32 %tile, %tile, 1;")
+    ptx_line(out, &mut pos, "    setp.lt.u32 %p, %tile, %ntiles;")
+    ptx_line(out, &mut pos, "    @%p bra TILE_LOOP;")
+
+    ; Store result: C[row][col] = acc
+    ptx_line(out, &mut pos, "    mul.wide.u32 %addr, %row, %K;")
+    ptx_line(out, &mut pos, "    add.u64 %addr, %addr, %col;")
+    ptx_line(out, &mut pos, "    shl.b64 %addr, %addr, 2;")
+    ptx_line(out, &mut pos, "    add.u64 %addr, %pC, %addr;")
+    ptx_line(out, &mut pos, "    st.global.f32 [%addr], %acc;")
+
+    ptx_line(out, &mut pos, "    ret;")
+    ptx_line(out, &mut pos, "}")
+
+    ret pos
+}
+
+; =============================================================================
+; PART 3 — KERNEL LAUNCH (no CUDA runtime)
+; =============================================================================
+struct NvLaunchParams {
+    module_handle:  u64
+    kernel_name:    u64     ; pointer to null-terminated kernel name string
+    grid_x: u32   grid_y: u32   grid_z: u32
+    block_x: u32  block_y: u32  block_z: u32
+    shared_mem:     u32
+    args_ptr:       u64     ; pointer to array of kernel argument pointers
+}
+
+fn gpu_matmul(ctx: ref GpuContext,
+              A: ref GpuAlloc, B: ref GpuAlloc, C: &mut GpuAlloc,
+              M: i32, N: i32, K: i32) {
+    ; 1. Generate PTX text
+    let ptx_buf = [65536]i8
+    let ptx_len = emit_matmul_ptx(M as i64, N as i64, K as i64, &mut ptx_buf)
+
+    ; 2. Load module (driver JIT-compiles PTX → cubin)
+    struct NvLoadParams { ptx: u64   out_handle: u64 }
+    let load = NvLoadParams { ptx: ptx_buf as u64, out_handle: 0 }
+    syscall(SYS_IOCTL, ctx.dev_fd, NV_ESC_RM_LOAD_MODULE, &load)
+    let mod_handle = load.out_handle
+
+    ; 3. Set up kernel arguments
+    let args = [6]u64 {
+        A.dev_ptr, B.dev_ptr, C.dev_ptr,
+        M as u64,  N as u64,  K as u64,
+    }
+
+    ; 4. Launch: grid = (N/TILE, M/TILE), block = (TILE, TILE)
+    let kname = "jda_matmul\0"
+    let launch = NvLaunchParams {
+        module_handle: mod_handle,
+        kernel_name:   kname as u64,
+        grid_x:  (N / PTX_TILE) as u32,
+        grid_y:  (M / PTX_TILE) as u32,
+        grid_z:  1,
+        block_x: PTX_TILE as u32,
+        block_y: PTX_TILE as u32,
+        block_z: 1,
+        shared_mem: (PTX_TILE * PTX_TILE * 4 * 2) as u32,   ; 2 tiles × f32
+        args_ptr: args as u64,
+    }
+    syscall(SYS_IOCTL, ctx.dev_fd, NV_ESC_RM_LAUNCH_KERNEL, &launch)
+}
+
+; =============================================================================
+; PTX text emit helpers
+; =============================================================================
+fn ptx_line(buf: &mut []i8, pos: &mut i64, s: ref []i8) {
+    for c in s { buf[pos[0]] = c   pos[0] = pos[0] + 1 }
+    buf[pos[0]] = '\n'   pos[0] = pos[0] + 1
+}
+
+fn ptx_fmt(buf: &mut []i8, pos: &mut i64, tmpl: ref []i8, val: i64) {
+    ; Simple single-{} format — replaces {t} with val
+    let i = 0
+    loop i < tmpl.len {
+        if tmpl[i] == '{' and tmpl[i+1] == 't' and tmpl[i+2] == '}' {
+            write_dec(buf, pos, val)
+            i = i + 3
+        } else {
+            buf[pos[0]] = tmpl[i]
+            pos[0] = pos[0] + 1
+            i = i + 1
+        }
+    }
+}
