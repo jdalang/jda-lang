@@ -1,0 +1,716 @@
+; =============================================================================
+; jda::fmt — String Formatting & Compiler Diagnostics
+; =============================================================================
+; Two concerns in one module:
+;
+;   1. General-purpose string formatting  (fmt!, write_fmt, fmt_str)
+;      "Hello {name}, you are {age} years old"
+;      Supports: {}, {:d}, {:f}, {:x}, {:b}, {:s}, {:.2f}, {:>10}, {:<10}
+;
+;   2. Compiler diagnostic emitter  (DiagEmitter)
+;      error[E001]: use of moved value `x`
+;        --> src/main.jda:12:5
+;         |
+;      12 |     let y = x
+;         |             ^ value used after move
+;         |
+;      note: `x` was moved here on line 8
+;
+; Both are J-Thread safe (write to caller-supplied buffers, no global state).
+; =============================================================================
+
+; =============================================================================
+; Section 1 — General-purpose formatting
+; =============================================================================
+
+; Severity levels (also used by the diagnostic emitter)
+enum Level {
+    Error
+    Warning
+    Note
+    Help
+    Info
+}
+
+; ---- write_fmt ---------------------------------------------------------------
+; Formats a template string with positional args into buf.
+; Returns number of bytes written.
+;
+; Template syntax:
+;   {}        next arg, default format
+;   {:d}      integer decimal
+;   {:x}      integer hex (lowercase)
+;   {:X}      integer hex (uppercase)
+;   {:b}      integer binary
+;   {:o}      integer octal
+;   {:f}      float (default 6 decimal places)
+;   {:.2f}    float with 2 decimal places
+;   {:e}      float scientific notation
+;   {:s}      string (same as {})
+;   {:>10}    right-align in field of width 10
+;   {:<10}    left-align in field of width 10
+;   {:^10}    centre-align in field of width 10
+;   {:>010}   right-align with zero fill
+;   {{        literal {
+;   }}        literal }
+;
+; Args are passed as a slice of FmtArg (tagged union).
+; =============================================================================
+
+enum FmtArg {
+    ArgI64(i64)
+    ArgF64(f64)
+    ArgStr([]i8)
+    ArgBool(bool)
+    ArgChar(i8)
+    ArgUint(u64)
+}
+
+struct FmtSpec {
+    align:    i8      ; '<' '>' '^'  or 0
+    fill:     i8      ; fill character (default ' ')
+    width:    i64     ; minimum field width (0 = none)
+    prec:     i64     ; precision for floats (-1 = default)
+    kind:     i8      ; 'd' 'x' 'X' 'b' 'o' 'f' 'e' 's' 0=default
+    upper:    bool    ; uppercase hex
+}
+
+fn write_fmt(tmpl: ref []i8, args: ref []FmtArg,
+             buf: []mut i8, buf_len: i64) -> i64 {
+    let pos    = 0i64
+    let arg_i  = 0i64
+    let t      = 0i64
+
+    loop t < tmpl.len {
+        let c = tmpl[t]
+        if c == '{' {
+            if t + 1 < tmpl.len and tmpl[t+1] == '{' {
+                buf[pos] = '{'   pos = pos + 1   t = t + 2   continue
+            }
+            ; parse format spec until '}'
+            t = t + 1
+            let spec = FmtSpec { align: 0, fill: ' ', width: 0,
+                                 prec: -1, kind: 0, upper: false }
+            t = parse_fmt_spec(tmpl, t, &mut spec)
+            ; render arg
+            if arg_i < args.len {
+                pos = render_arg(&args[arg_i], &spec, buf, pos, buf_len)
+                arg_i = arg_i + 1
+            }
+        } else if c == '}' and t + 1 < tmpl.len and tmpl[t+1] == '}' {
+            buf[pos] = '}'   pos = pos + 1   t = t + 2   continue
+        } else {
+            if pos < buf_len { buf[pos] = c   pos = pos + 1 }
+            t = t + 1
+        }
+    }
+    ret pos
+}
+
+fn parse_fmt_spec(tmpl: ref []i8, start: i64,
+                  spec: &mut FmtSpec) -> i64 {
+    let i = start
+    ; alignment + fill
+    if i + 1 < tmpl.len and
+       (tmpl[i+1] == '<' or tmpl[i+1] == '>' or tmpl[i+1] == '^') {
+        spec.fill  = tmpl[i]
+        spec.align = tmpl[i+1]
+        i = i + 2
+    } else if i < tmpl.len and
+              (tmpl[i] == '<' or tmpl[i] == '>' or tmpl[i] == '^') {
+        spec.align = tmpl[i]
+        i = i + 1
+    }
+    ; zero fill
+    if i < tmpl.len and tmpl[i] == '0' {
+        spec.fill = '0'
+        if spec.align == 0 { spec.align = '>' }
+        i = i + 1
+    }
+    ; width
+    loop i < tmpl.len and tmpl[i] >= '0' and tmpl[i] <= '9' {
+        spec.width = spec.width * 10 + (tmpl[i] - '0') as i64
+        i = i + 1
+    }
+    ; precision
+    if i < tmpl.len and tmpl[i] == '.' {
+        i = i + 1
+        spec.prec = 0
+        loop i < tmpl.len and tmpl[i] >= '0' and tmpl[i] <= '9' {
+            spec.prec = spec.prec * 10 + (tmpl[i] - '0') as i64
+            i = i + 1
+        }
+    }
+    ; kind
+    if i < tmpl.len and tmpl[i] != '}' {
+        spec.kind = tmpl[i]
+        if tmpl[i] == 'X' { spec.upper = true   spec.kind = 'x' }
+        i = i + 1
+    }
+    ; skip to '}'
+    loop i < tmpl.len and tmpl[i] != '}' { i = i + 1 }
+    if i < tmpl.len { i = i + 1 }   ; skip '}'
+    ret i
+}
+
+fn render_arg(arg: ref FmtArg, spec: ref FmtSpec,
+              buf: []mut i8, pos: i64, cap: i64) -> i64 {
+    let tmp = [128]i8
+    let n   = 0i64
+    match arg {
+        ArgI64(v)  => n = render_i64(v, spec, tmp, 128)
+        ArgUint(v) => n = render_u64(v, spec, tmp, 128)
+        ArgF64(v)  => n = render_f64(v, spec, tmp, 128)
+        ArgStr(s)  => n = render_str(s, spec, tmp, 128)
+        ArgBool(b) => {
+            let lit = if b { "true" } else { "false" }
+            n = render_str(lit, spec, tmp, 128)
+        }
+        ArgChar(c) => {
+            tmp[0] = c   n = 1
+        }
+    }
+    ret write_padded(tmp, n, spec, buf, pos, cap)
+}
+
+fn write_padded(src: ref []i8, src_len: i64, spec: ref FmtSpec,
+                buf: []mut i8, pos: i64, cap: i64) -> i64 {
+    let pad = if spec.width > src_len { spec.width - src_len } else { 0 }
+    let p = pos
+
+    if pad > 0 and spec.align == '>' {
+        loop i in 0..pad {
+            if p < cap { buf[p] = spec.fill   p = p + 1 }
+        }
+    } else if pad > 0 and spec.align == '^' {
+        let left = pad / 2
+        loop i in 0..left {
+            if p < cap { buf[p] = spec.fill   p = p + 1 }
+        }
+    }
+
+    loop i in 0..src_len {
+        if p < cap { buf[p] = src[i]   p = p + 1 }
+    }
+
+    if pad > 0 and spec.align == '<' {
+        loop i in 0..pad {
+            if p < cap { buf[p] = spec.fill   p = p + 1 }
+        }
+    } else if pad > 0 and spec.align == '^' {
+        let right = pad - pad / 2
+        loop i in 0..right {
+            if p < cap { buf[p] = spec.fill   p = p + 1 }
+        }
+    }
+    ret p
+}
+
+; ---- integer formatters ------------------------------------------------------
+fn render_i64(v: i64, spec: ref FmtSpec, buf: []mut i8, cap: i64) -> i64 {
+    let tmp = [64]i8
+    let n   = 0i64
+    let neg = v < 0
+    let u   = if neg { (0 - v) as u64 } else { v as u64 }
+    match spec.kind {
+        'x' => n = fmt_u64_base(u, 16, spec.upper, tmp, 64)
+        'b' => n = fmt_u64_base(u, 2,  false,      tmp, 64)
+        'o' => n = fmt_u64_base(u, 8,  false,      tmp, 64)
+        _   => {
+            n = fmt_u64_base(u, 10, false, tmp, 64)
+            if neg and n < cap { ; prepend '-'
+                loop i in n..0 step -1 { tmp[i] = tmp[i-1] }
+                tmp[0] = '-'
+                n = n + 1
+            }
+        }
+    }
+    loop i in 0..n { buf[i] = tmp[i] }
+    ret n
+}
+
+fn render_u64(v: u64, spec: ref FmtSpec, buf: []mut i8, cap: i64) -> i64 {
+    let tmp = [64]i8
+    let n = 0i64
+    match spec.kind {
+        'x' => n = fmt_u64_base(v, 16, spec.upper, tmp, 64)
+        'b' => n = fmt_u64_base(v, 2,  false,      tmp, 64)
+        'o' => n = fmt_u64_base(v, 8,  false,      tmp, 64)
+        _   => n = fmt_u64_base(v, 10, false, tmp, 64)
+    }
+    loop i in 0..n { buf[i] = tmp[i] }
+    ret n
+}
+
+fn fmt_u64_base(v: u64, base: u64, upper: bool,
+                buf: []mut i8, cap: i64) -> i64 {
+    if v == 0 { buf[0] = '0'   ret 1 }
+    let tmp = [64]i8
+    let n   = 0i64
+    let x   = v
+    loop x > 0 {
+        let digit = (x % base) as i64
+        let c = if digit < 10 {
+            ('0' as i64 + digit) as i8
+        } else if upper {
+            ('A' as i64 + digit - 10) as i8
+        } else {
+            ('a' as i64 + digit - 10) as i8
+        }
+        tmp[n] = c   n = n + 1
+        x = x / base
+    }
+    ; reverse
+    loop i in 0..n / 2 {
+        let t = tmp[i]   tmp[i] = tmp[n-1-i]   tmp[n-1-i] = t
+    }
+    loop i in 0..n { buf[i] = tmp[i] }
+    ret n
+}
+
+; ---- float formatters --------------------------------------------------------
+fn render_f64(v: f64, spec: ref FmtSpec, buf: []mut i8, cap: i64) -> i64 {
+    let prec = if spec.prec >= 0 { spec.prec } else { 6 }
+    if spec.kind == 'e' {
+        ret fmt_f64_sci(v, prec, buf, cap)
+    }
+    ret fmt_f64_fixed(v, prec, buf, cap)
+}
+
+fn fmt_f64_fixed(v: f64, prec: i64, buf: []mut i8, cap: i64) -> i64 {
+    let pos = 0i64
+    if v < 0.0 {
+        buf[pos] = '-'   pos = pos + 1
+        v = 0.0 - v
+    }
+    let int_part  = v as i64
+    let frac_part = v - int_part as f64
+
+    ; integer digits
+    let tmp = [32]i8
+    let n = fmt_u64_base(int_part as u64, 10, false, tmp, 32)
+    loop i in 0..n { if pos < cap { buf[pos] = tmp[i]   pos = pos + 1 } }
+
+    if prec > 0 {
+        if pos < cap { buf[pos] = '.'   pos = pos + 1 }
+        loop d in 0..prec {
+            frac_part = frac_part * 10.0
+            let digit = frac_part as i64
+            if pos < cap {
+                buf[pos] = ('0' as i64 + digit) as i8
+                pos = pos + 1
+            }
+            frac_part = frac_part - digit as f64
+        }
+    }
+    ret pos
+}
+
+fn fmt_f64_sci(v: f64, prec: i64, buf: []mut i8, cap: i64) -> i64 {
+    let pos = 0i64
+    if v < 0.0 {
+        buf[pos] = '-'   pos = pos + 1
+        v = 0.0 - v
+    }
+    let exp = 0i64
+    if v != 0.0 {
+        loop v >= 10.0  { v = v / 10.0    exp = exp + 1 }
+        loop v < 1.0 and v != 0.0 { v = v * 10.0    exp = exp - 1 }
+    }
+    let n = fmt_f64_fixed(v, prec, buf[pos..cap], cap - pos)
+    pos = pos + n
+    if pos < cap { buf[pos] = 'e'   pos = pos + 1 }
+    if exp < 0 {
+        if pos < cap { buf[pos] = '-'   pos = pos + 1 }
+        exp = 0 - exp
+    } else {
+        if pos < cap { buf[pos] = '+'   pos = pos + 1 }
+    }
+    let tmp = [16]i8
+    let en = fmt_u64_base(exp as u64, 10, false, tmp, 16)
+    loop i in 0..en { if pos < cap { buf[pos] = tmp[i]   pos = pos + 1 } }
+    ret pos
+}
+
+fn render_str(s: ref []i8, spec: ref FmtSpec, buf: []mut i8, cap: i64) -> i64 {
+    let n = s.len
+    if spec.prec >= 0 and spec.prec < n { n = spec.prec }
+    loop i in 0..n { if i < cap { buf[i] = s[i] } }
+    ret n
+}
+
+; ---- fmt_str — convenience wrapper ------------------------------------------
+; Returns a []i8 slice into a static 4 KB buffer.
+; NOT reentrant — use write_fmt for concurrent code.
+fn fmt_str(tmpl: ref []i8, args: ref []FmtArg) -> []i8 {
+    let buf = [4096]i8
+    let n = write_fmt(tmpl, args, buf, 4096)
+    ret buf[0..n]
+}
+
+; =============================================================================
+; Section 2 — Compiler Diagnostic Emitter
+; =============================================================================
+; Produces coloured terminal output matching rustc-style diagnostics.
+;
+;   error[E042]: use of moved value `x`
+;     --> src/main.jda:12:5
+;      |
+;   12 |     let y = x
+;      |             ^ value used after move
+;      |
+;
+; Colour codes (ANSI escape sequences):
+;   BOLD  = "\x1b[1m"
+;   RED   = "\x1b[31m"
+;   YELLOW= "\x1b[33m"
+;   BLUE  = "\x1b[34m"
+;   CYAN  = "\x1b[36m"
+;   RESET = "\x1b[0m"
+; =============================================================================
+
+const ANSI_BOLD   = "\x1b[1m"
+const ANSI_RESET  = "\x1b[0m"
+const ANSI_RED    = "\x1b[1;31m"
+const ANSI_YELLOW = "\x1b[1;33m"
+const ANSI_BLUE   = "\x1b[1;34m"
+const ANSI_CYAN   = "\x1b[1;36m"
+const ANSI_GREEN  = "\x1b[1;32m"
+const ANSI_WHITE  = "\x1b[1;37m"
+
+; A source location: file + 1-based line/column
+struct Span {
+    file:  []i8
+    line:  i64
+    col:   i64
+    len:   i64     ; length of the highlighted region (chars)
+}
+
+; A secondary label attached to a span ("moved here", "defined here", etc.)
+struct Label {
+    span:  Span
+    msg:   []i8
+    is_primary: bool
+}
+
+; One complete diagnostic
+struct Diag {
+    level:   Level
+    code:    []i8       ; "E001", "W003", etc.  empty = no code
+    msg:     []i8       ; main message
+    labels:  []Label    ; primary + secondary annotations
+    note:    []i8       ; optional "note:" footer
+    help:    []i8       ; optional "help:" footer
+}
+
+; DiagEmitter holds the output buffer and formatting options
+struct DiagEmitter {
+    buf:    []mut i8
+    cap:    i64
+    pos:    i64
+    colour: bool    ; emit ANSI colour codes
+    src:    []i8    ; full source text (for line extraction)
+}
+
+impl DiagEmitter {
+    fn new(buf: []mut i8, cap: i64, src: ref []i8) -> own DiagEmitter {
+        ret DiagEmitter { buf: buf, cap: cap, pos: 0,
+                          colour: true, src: src }
+    }
+
+    ; ---- emit a full diagnostic -----------------------------------------------
+    fn emit(self, d: ref Diag) {
+        self.emit_header(d)
+        if d.labels.len > 0 {
+            self.emit_location(&d.labels[0].span)
+            self.emit_source_window(d)
+        }
+        if d.note.len > 0 { self.emit_footer("note", ANSI_CYAN,  d.note) }
+        if d.help.len > 0 { self.emit_footer("help", ANSI_GREEN, d.help) }
+        self.write_char('\n')
+    }
+
+    ; "error[E001]: message"
+    fn emit_header(self, d: ref Diag) {
+        match d.level {
+            Level::Error   => {
+                self.ansi(ANSI_RED)
+                self.write_str("error")
+            }
+            Level::Warning => {
+                self.ansi(ANSI_YELLOW)
+                self.write_str("warning")
+            }
+            Level::Note    => {
+                self.ansi(ANSI_CYAN)
+                self.write_str("note")
+            }
+            Level::Help    => {
+                self.ansi(ANSI_GREEN)
+                self.write_str("help")
+            }
+            Level::Info    => {
+                self.ansi(ANSI_BLUE)
+                self.write_str("info")
+            }
+        }
+        if d.code.len > 0 {
+            self.write_char('[')
+            self.write_str(d.code)
+            self.write_char(']')
+        }
+        self.ansi(ANSI_RESET)
+        self.ansi(ANSI_WHITE)
+        self.write_str(": ")
+        self.write_str(d.msg)
+        self.ansi(ANSI_RESET)
+        self.write_char('\n')
+    }
+
+    ; "  --> src/main.jda:12:5"
+    fn emit_location(self, span: ref Span) {
+        self.ansi(ANSI_BLUE)
+        self.write_str("  --> ")
+        self.ansi(ANSI_RESET)
+        self.write_str(span.file)
+        self.write_char(':')
+        self.write_i64(span.line)
+        self.write_char(':')
+        self.write_i64(span.col)
+        self.write_char('\n')
+    }
+
+    ; Source code window with caret annotations
+    fn emit_source_window(self, d: ref Diag) {
+        if d.labels.len == 0 { ret }
+        let primary = &d.labels[0]
+
+        ; compute line gutter width
+        let max_line = primary.span.line
+        loop i in 0..d.labels.len {
+            if d.labels[i].span.line > max_line {
+                max_line = d.labels[i].span.line
+            }
+        }
+        let gutter = digits(max_line)
+
+        ; blank gutter line  " |"
+        self.emit_gutter_blank(gutter)
+        self.write_char('\n')
+
+        ; for simplicity emit only the primary span's source line
+        let line_text = self.extract_line(primary.span.line)
+        self.emit_gutter_num(primary.span.line, gutter)
+        self.write_str(line_text)
+        self.write_char('\n')
+
+        ; caret line
+        self.emit_gutter_blank(gutter)
+        loop i in 0..(primary.span.col - 1) { self.write_char(' ') }
+
+        match d.level {
+            Level::Error   => self.ansi(ANSI_RED)
+            Level::Warning => self.ansi(ANSI_YELLOW)
+            _              => self.ansi(ANSI_BLUE)
+        }
+        let caret_len = if primary.span.len > 0 { primary.span.len } else { 1 }
+        loop i in 0..caret_len { self.write_char('^') }
+        self.write_char(' ')
+        self.write_str(primary.msg)
+        self.ansi(ANSI_RESET)
+        self.write_char('\n')
+
+        ; secondary labels
+        loop i in 1..d.labels.len {
+            let lab = &d.labels[i]
+            if lab.span.line == primary.span.line {
+                self.emit_gutter_blank(gutter)
+                loop j in 0..(lab.span.col - 1) { self.write_char(' ') }
+                self.ansi(ANSI_BLUE)
+                loop j in 0..lab.span.len { self.write_char('-') }
+                self.write_char(' ')
+                self.write_str(lab.msg)
+                self.ansi(ANSI_RESET)
+                self.write_char('\n')
+            } else {
+                ; different line — emit its own window
+                self.emit_gutter_num(lab.span.line, gutter)
+                self.write_str(self.extract_line(lab.span.line))
+                self.write_char('\n')
+                self.emit_gutter_blank(gutter)
+                loop j in 0..(lab.span.col - 1) { self.write_char(' ') }
+                self.ansi(ANSI_BLUE)
+                loop j in 0..lab.span.len { self.write_char('-') }
+                self.write_char(' ')
+                self.write_str(lab.msg)
+                self.ansi(ANSI_RESET)
+                self.write_char('\n')
+            }
+        }
+
+        ; closing blank gutter
+        self.emit_gutter_blank(gutter)
+        self.write_char('\n')
+    }
+
+    fn emit_footer(self, label: ref []i8, colour: ref []i8, msg: ref []i8) {
+        self.ansi(colour)
+        self.write_str("  = ")
+        self.write_str(label)
+        self.ansi(ANSI_RESET)
+        self.write_str(": ")
+        self.write_str(msg)
+        self.write_char('\n')
+    }
+
+    ; ---- gutter helpers -------------------------------------------------------
+    fn emit_gutter_num(self, line: i64, width: i64) {
+        let tmp = [16]i8
+        let n = fmt_u64_base(line as u64, 10, false, tmp, 16)
+        let pad = width - n
+        loop i in 0..pad { self.write_char(' ') }
+        self.ansi(ANSI_BLUE)
+        loop i in 0..n { self.write_char(tmp[i]) }
+        self.write_str(" | ")
+        self.ansi(ANSI_RESET)
+    }
+
+    fn emit_gutter_blank(self, width: i64) {
+        loop i in 0..(width + 1) { self.write_char(' ') }
+        self.ansi(ANSI_BLUE)
+        self.write_str("| ")
+        self.ansi(ANSI_RESET)
+    }
+
+    ; ---- source line extraction -----------------------------------------------
+    ; Returns the text of 1-based line number `n` from self.src
+    fn extract_line(self, n: i64) -> []i8 {
+        let cur_line = 1i64
+        let i        = 0i64
+        loop i < self.src.len and cur_line < n {
+            if self.src[i] == '\n' { cur_line = cur_line + 1 }
+            i = i + 1
+        }
+        let start = i
+        loop i < self.src.len and self.src[i] != '\n' { i = i + 1 }
+        ret self.src[start..i]
+    }
+
+    ; ---- low-level write helpers ----------------------------------------------
+    fn write_char(self, c: i8) {
+        if self.pos < self.cap {
+            self.buf[self.pos] = c
+            self.pos = self.pos + 1
+        }
+    }
+    fn write_str(self, s: ref []i8) {
+        for c in s { self.write_char(c) }
+    }
+    fn write_i64(self, v: i64) {
+        let tmp = [20]i8
+        let spec = FmtSpec { align: 0, fill: ' ', width: 0, prec: -1,
+                              kind: 'd', upper: false }
+        let n = render_i64(v, &spec, tmp, 20)
+        loop i in 0..n { self.write_char(tmp[i]) }
+    }
+    fn ansi(self, code: ref []i8) {
+        if self.colour { self.write_str(code) }
+    }
+
+    ; Return final output as a slice
+    fn as_slice(self) -> []i8 { ret self.buf[0..self.pos] }
+}
+
+; ---- digits(n) — number of decimal digits in a positive i64 -----------------
+fn digits(n: i64) -> i64 {
+    if n < 10        { ret 1 }
+    if n < 100       { ret 2 }
+    if n < 1000      { ret 3 }
+    if n < 10000     { ret 4 }
+    if n < 100000    { ret 5 }
+    if n < 1000000   { ret 6 }
+    ret 7
+}
+
+; =============================================================================
+; Section 3 — Standard compiler error codes
+; =============================================================================
+; These constants match the error code table in mem/ownership.jda and
+; the diagnostic messages emitted by the Stage 1 compiler (jda1.jda).
+; =============================================================================
+
+const E_MOVED_VALUE         = "E001"   ; use of moved value
+const E_BORROW_AFTER_MOVE   = "E002"   ; cannot borrow after move
+const E_DOUBLE_FREE         = "E003"   ; value freed twice
+const E_LIFETIME_TOO_SHORT  = "E004"   ; reference outlives owner
+const E_MUT_BORROW_CONFLICT = "E005"   ; cannot borrow as mutable (already borrowed)
+const E_UNDEFINED_VAR       = "E010"   ; undefined variable
+const E_TYPE_MISMATCH       = "E020"   ; type mismatch
+const E_SHAPE_MISMATCH      = "E030"   ; tensor shape mismatch
+const E_INDEX_OUT_OF_BOUNDS = "E040"   ; index out of bounds (compile-time)
+const E_MISSING_RETURN      = "E050"   ; function missing return in all paths
+const E_UNKNOWN_FIELD       = "E060"   ; no field `x` on struct `Y`
+const E_PRIVATE_FIELD       = "E061"   ; field `x` is private
+const E_MISSING_TRAIT       = "E070"   ; type does not implement trait
+const E_ARITY_MISMATCH      = "E080"   ; wrong number of arguments
+
+const W_UNUSED_VAR          = "W001"   ; unused variable
+const W_UNUSED_IMPORT       = "W002"   ; unused import
+const W_UNREACHABLE         = "W010"   ; unreachable code
+const W_INTEGER_OVERFLOW    = "W020"   ; integer constant overflow
+
+; =============================================================================
+; Section 4 — Usage examples
+; =============================================================================
+;
+; ── String formatting ─────────────────────────────────────────────────────────
+;
+;   let buf = [256]i8
+;   let n = write_fmt("Hello {}, you are {:d} years old!",
+;                     [FmtArg::ArgStr("Alice"), FmtArg::ArgI64(30)],
+;                     buf, 256)
+;   ; → "Hello Alice, you are 30 years old!"
+;
+;   let hex = fmt_str("0x{:08x}", [FmtArg::ArgI64(255)])
+;   ; → "0x000000ff"
+;
+;   let sci = fmt_str("{:.3e}", [FmtArg::ArgF64(1234567.89)])
+;   ; → "1.235e+06"
+;
+; ── Diagnostic emission ───────────────────────────────────────────────────────
+;
+;   let src = "fn main() {\n    let x = 42\n    drop(x)\n    let y = x\n}\n"
+;   let out = [4096]i8
+;   let em  = DiagEmitter::new(out, 4096, &src)
+;
+;   em.emit(&Diag {
+;       level: Level::Error,
+;       code:  E_MOVED_VALUE,
+;       msg:   "use of moved value `x`",
+;       labels: [
+;           Label {
+;               span: Span { file: "main.jda", line: 4, col: 13, len: 1 },
+;               msg:  "value used after move",
+;               is_primary: true,
+;           },
+;           Label {
+;               span: Span { file: "main.jda", line: 3, col: 5, len: 7 },
+;               msg:  "`x` moved here",
+;               is_primary: false,
+;           },
+;       ],
+;       note: "`x` has type `i64` which does not implement `Copy`",
+;       help: "consider cloning the value: `x.clone()`",
+;   })
+;
+;   ; Output:
+;   ; error[E001]: use of moved value `x`
+;   ;   --> main.jda:4:13
+;   ;    |
+;   ;  4 |     let y = x
+;   ;    |             ^ value used after move
+;   ;  3 |     drop(x)
+;   ;    |     ------- `x` moved here
+;   ;    |
+;   ;   = note: `x` has type `i64` which does not implement `Copy`
+;   ;   = help: consider cloning the value: `x.clone()`
