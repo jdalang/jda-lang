@@ -1,0 +1,96 @@
+; =============================================================================
+; jda::mem::page_alloc — Kernel-Level Page Allocator
+; =============================================================================
+; Direct OS page allocator. No libc, no malloc.
+; Uses Linux mmap/munmap syscalls directly.
+;
+; API:
+;   pages_alloc(n: i64) -> own *i8   ; allocate n pages (n * 4096 bytes)
+;   pages_free(ptr: own *i8, n: i64) ; release n pages back to OS
+;   page_size() -> i64               ; always 4096 on x86-64
+;
+; Ownership rule: pages_alloc returns an `own` pointer.
+; The caller is the sole owner. Passing it transfers ownership.
+; Compiler enforces: you cannot use a pointer after pages_free().
+; =============================================================================
+
+; Linux syscall numbers
+let SYS_MMAP   = 9
+let SYS_MUNMAP = 11
+
+; mmap flags
+let PROT_READ    = 1
+let PROT_WRITE   = 2
+let MAP_PRIVATE  = 2
+let MAP_ANON     = 32
+let MAP_FAILED   = -1
+
+let PAGE_SIZE = 4096
+
+; ------------------------------------------------------------
+; page_size() -> i64
+; Returns the system page size (always 4096 on x86-64).
+; ------------------------------------------------------------
+fn page_size() -> i64 {
+    ret PAGE_SIZE
+}
+
+; ------------------------------------------------------------
+; pages_alloc(n: i64) -> own *i8
+;
+; Allocates n contiguous pages via mmap(2).
+; Returns an owned pointer. Caller must eventually call pages_free().
+;
+; Syscall: mmap(NULL, n*4096, PROT_READ|PROT_WRITE,
+;               MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
+;   rax = 9       SYS_MMAP
+;   rdi = 0       addr hint (NULL — let kernel choose)
+;   rsi = size    n * PAGE_SIZE
+;   rdx = 3       PROT_READ | PROT_WRITE
+;   r10 = 34      MAP_PRIVATE | MAP_ANONYMOUS
+;   r8  = -1      fd (anonymous)
+;   r9  = 0       offset
+; ------------------------------------------------------------
+fn pages_alloc(n: i64) -> own *i8 {
+    let size = n * PAGE_SIZE
+    let ptr  = syscall(SYS_MMAP, 0, size, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANON, -1, 0)
+    if ptr == MAP_FAILED {
+        ret err("pages_alloc: mmap failed")
+    }
+    ret ok(ptr as own *i8)
+}
+
+; ------------------------------------------------------------
+; pages_free(ptr: own *i8, n: i64)
+;
+; Releases n pages back to the OS via munmap(2).
+; Takes ownership of ptr — caller cannot use it after this call.
+; Compiler enforces this at compile time (use-after-free = error).
+;
+; Syscall: munmap(ptr, n * PAGE_SIZE)
+;   rax = 11
+;   rdi = ptr
+;   rsi = size
+; ------------------------------------------------------------
+fn pages_free(ptr: own *i8, n: i64) {
+    let size = n * PAGE_SIZE
+    syscall(SYS_MUNMAP, ptr, size, 0, 0, 0, 0)
+    ; ptr is consumed here. Compiler marks it as dead.
+    ; Any further use of ptr is a compile-time error.
+}
+
+; ------------------------------------------------------------
+; pages_zero(ptr: ref *i8, n: i64)
+;
+; Zeroes n pages at ptr. Takes a ref (borrow), not ownership.
+; Uses rep stosq for speed (zeroes 8 bytes per iteration).
+; ------------------------------------------------------------
+fn pages_zero(ptr: ref *i8, n: i64) {
+    let size = n * PAGE_SIZE
+    let i    = 0
+    loop i < size {
+        ptr[i] = 0
+        i = i + 1
+    }
+}

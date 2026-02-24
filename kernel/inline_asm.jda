@@ -1,0 +1,217 @@
+; =============================================================================
+; jda Inline Assembly & CPU Register Access — Language Design Spec
+; =============================================================================
+; Target: OS kernel developers who need bare-metal control with Ruby clarity.
+;
+; Design goals:
+;   1. As readable as Ruby — no cryptic AT&T syntax clutter
+;   2. Explicit I/O bindings — no hidden register clobbering
+;   3. Safe by default — compiler enforces clobber declarations
+;   4. First-class register access — registers are typed values
+; =============================================================================
+
+; =============================================================================
+; SYNTAX 1 — Basic asm block
+; =============================================================================
+; Use `asm { }` for inline assembly with no inputs or outputs.
+; Whitespace-sensitive, NASM syntax inside.
+
+fn halt_cpu() {
+    asm {
+        cli         ; disable interrupts
+        hlt         ; halt the processor
+    }
+}
+
+fn memory_barrier() {
+    asm {
+        mfence      ; full memory fence (all loads/stores complete)
+    }
+}
+
+fn cpu_pause() {
+    asm {
+        pause       ; hint to CPU: we are in a spin-wait loop
+    }
+}
+
+; =============================================================================
+; SYNTAX 2 — asm with outputs: `out reg = varname`
+; =============================================================================
+; Binds the value of a register AFTER execution to a jda variable.
+; The variable is declared with the type of the register.
+
+fn read_rsp() -> i64 {
+    let sp: i64
+    asm {
+        out rax = sp
+        ---
+        mov rax, rsp
+    }
+    ret sp
+}
+
+fn read_rbp() -> i64 {
+    let bp: i64
+    asm {
+        out rax = bp
+        ---
+        mov rax, rbp
+    }
+    ret bp
+}
+
+fn rdtsc() -> i64 {
+    ; Read the CPU time-stamp counter (cycle count since boot)
+    let hi: i64
+    let lo: i64
+    asm {
+        out rdx = hi
+        out rax = lo
+        ---
+        rdtsc           ; result: edx:eax (upper:lower 32 bits)
+    }
+    ret (hi << 32) | lo
+}
+
+; =============================================================================
+; SYNTAX 3 — asm with inputs: `in reg = expr`
+; =============================================================================
+; Loads a jda expression into a register before the asm block executes.
+; The expression is evaluated first, then placed in the named register.
+
+fn write_stdout(buf: ref *i8, len: i64) {
+    asm {
+        in rax = 1          ; SYS_WRITE
+        in rdi = 1          ; fd = stdout
+        in rsi = buf        ; buffer pointer
+        in rdx = len        ; byte count
+        ---
+        syscall
+    }
+}
+
+fn exit_process(code: i64) {
+    asm {
+        in rax = 60         ; SYS_EXIT
+        in rdi = code
+        ---
+        syscall
+    }
+}
+
+; =============================================================================
+; SYNTAX 4 — asm with both inputs and outputs
+; =============================================================================
+; Full form: declare inputs, then outputs, then `---`, then instructions.
+
+fn add_fast(a: i64, b: i64) -> i64 {
+    let result: i64
+    asm {
+        in  rdi = a
+        in  rsi = b
+        out rax = result
+        ---
+        mov rax, rdi
+        add rax, rsi
+    }
+    ret result
+}
+
+fn count_leading_zeros(x: i64) -> i64 {
+    let n: i64
+    asm {
+        in  rdi = x
+        out rax = n
+        ---
+        lzcnt rax, rdi      ; LZCNT instruction (BSR equivalent)
+    }
+    ret n
+}
+
+; =============================================================================
+; SYNTAX 5 — clobber declarations
+; =============================================================================
+; Tell the compiler which registers are destroyed by the asm block.
+; The compiler saves/restores these around the block automatically.
+; `volatile` prevents the compiler from reordering or eliminating the block.
+
+fn cpuid_vendor(out_buf: &mut *i8) {
+    asm volatile {
+        in  rax = 0         ; CPUID leaf 0
+        clobbers rbx, rcx, rdx
+        ---
+        cpuid
+        ; ebx:edx:ecx = 12-char vendor string
+        mov [rdi],     ebx
+        mov [rdi + 4], edx
+        mov [rdi + 8], ecx
+    }
+}
+
+; =============================================================================
+; SYNTAX 6 — CPU Register Access (first-class typed values)
+; =============================================================================
+; Control registers, segment registers, and MSRs are accessed via
+; the `cpu::` namespace. No raw asm required for common operations.
+;
+; Registers are typed:
+;   cpu::cr0  — u64  (control register 0: protected mode, WP, paging enable)
+;   cpu::cr2  — u64  (page fault linear address)
+;   cpu::cr3  — u64  (page table base physical address)
+;   cpu::cr4  — u64  (PAE, PSE, OSFXSR, etc.)
+;   cpu::rflags — u64
+;   cpu::cs / ds / ss / es / fs / gs — u16 (segment selectors)
+;   cpu::msr(id: u32) — u64 (model-specific registers via rdmsr/wrmsr)
+
+fn enable_protected_mode() {
+    let cr0 = cpu::cr0::read()
+    cpu::cr0::write(cr0 | 0x1)     ; set PE bit
+}
+
+fn enable_paging(page_table_phys: u64) {
+    cpu::cr3::write(page_table_phys)    ; load page table base
+    let cr0 = cpu::cr0::read()
+    cpu::cr0::write(cr0 | 0x80000000)  ; set PG bit
+}
+
+fn get_page_fault_addr() -> u64 {
+    ret cpu::cr2::read()    ; CR2 holds the faulting virtual address
+}
+
+fn enable_sse() {
+    let cr4 = cpu::cr4::read()
+    cpu::cr4::write(cr4 | 0x600)    ; set OSFXSR | OSXMMEXCPT
+}
+
+fn read_apic_base() -> u64 {
+    ret cpu::msr(0x1B)      ; IA32_APIC_BASE MSR
+}
+
+fn set_kernel_gs_base(addr: u64) {
+    cpu::msr_write(0xC0000102, addr)    ; KERNEL_GS_BASE MSR
+}
+
+; =============================================================================
+; SYNTAX 7 — SIMD / AVX-512 intrinsics as typed operations
+; =============================================================================
+; AVX-512 registers (zmm0–zmm31) are first-class values of type vec512f32.
+; No need to drop into raw asm for vectorized math.
+
+fn vector_add(a: vec512f32, b: vec512f32) -> vec512f32 {
+    ret a + b               ; compiler emits: vaddps zmm0, zmm1, zmm2
+}
+
+fn vector_mul_add(a: vec512f32, b: vec512f32, c: vec512f32) -> vec512f32 {
+    ret a * b + c           ; compiler emits: vfmadd213ps zmm0, zmm1, zmm2
+}
+
+; For raw zmm access when needed:
+fn raw_avx512_example() {
+    let v: vec512f32
+    asm {
+        out zmm0 = v
+        ---
+        vpxord zmm0, zmm0, zmm0     ; zero all 16 floats
+    }
+}
