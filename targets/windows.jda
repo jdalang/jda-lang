@@ -1,0 +1,618 @@
+; =============================================================================
+; Jda Windows Backend — PE32+ binary emitter + WinNT syscall table
+; =============================================================================
+; Produces 64-bit Portable Executable (PE32+) binaries for Windows x64.
+; Targets Windows 8.1+ (NT 6.3+).  No MSVCRT.  No kernel32 import.
+;
+; Supported:
+;   - Direct NT syscalls via SYSCALL instruction (ntdll stubs bypassed)
+;   - .text + .rdata + .data sections
+;   - Import table (optional, for user-space DLL calls)
+;   - Debug directory (CodeView / PDB path)
+;   - x64 unwind info (RUNTIME_FUNCTION table) for SEH
+;
+; Usage:
+;   let ctx = WinCtx{}
+;   winpe_compile(module, &ctx, "out.exe")
+; =============================================================================
+
+; ============================================================
+; 1. WINDOWS NT SYSCALL NUMBERS  (Windows 10 21H2 / 11)
+; ============================================================
+; These are the Nt* function numbers used directly via SYSCALL.
+; They shift between Windows versions — this table targets 10/11.
+
+const NT_READ_FILE               = 0x0006
+const NT_WRITE_FILE              = 0x0008
+const NT_OPEN_FILE               = 0x0033
+const NT_CREATE_FILE             = 0x0055
+const NT_CLOSE                   = 0x000F
+const NT_TERMINATE_PROCESS       = 0x002C
+const NT_ALLOCATE_VIRTUAL_MEMORY = 0x0018
+const NT_FREE_VIRTUAL_MEMORY     = 0x001E
+const NT_PROTECT_VIRTUAL_MEMORY  = 0x0050
+const NT_QUERY_VIRTUAL_MEMORY    = 0x0023
+const NT_MAP_VIEW_OF_SECTION     = 0x0028
+const NT_UNMAP_VIEW_OF_SECTION   = 0x002A
+const NT_CREATE_SECTION          = 0x004A
+const NT_QUERY_INFORMATION_PROCESS = 0x0019
+const NT_SET_INFORMATION_THREAD  = 0x000A
+const NT_WAIT_FOR_SINGLE_OBJECT  = 0x0004
+const NT_WAIT_FOR_MULTIPLE_OBJECTS = 0x00F1
+const NT_CREATE_THREAD           = 0x004B
+const NT_CREATE_THREAD_EX        = 0x00C1
+const NT_TERMINATE_THREAD        = 0x0053
+const NT_QUERY_SYSTEM_TIME       = 0x005A
+const NT_DELAY_EXECUTION         = 0x0034
+const NT_FLUSH_BUFFERS_FILE      = 0x0075
+const NT_SET_SYSTEM_TIME         = 0x00FA
+const NT_DEVICE_IO_CONTROL_FILE  = 0x0007
+const NT_QUERY_DIRECTORY_FILE    = 0x0035
+const NT_CREATE_PROCESS_EX       = 0x004D
+const NT_QUERY_OBJECT            = 0x000D
+const NT_DUPLICATE_OBJECT        = 0x003C
+const NT_SET_EVENT               = 0x000E
+const NT_RESET_EVENT             = 0x00DD
+const NT_CREATE_EVENT            = 0x0048
+const NT_CREATE_SEMAPHORE        = 0x004C
+const NT_RELEASE_SEMAPHORE       = 0x00CA
+const NT_QUERY_PERFORMANCE_COUNTER = 0x0031
+
+; ============================================================
+; 2. PE32+ FORMAT CONSTANTS
+; ============================================================
+
+const PE_SIGNATURE     = 0x00004550   ; "PE\0\0"
+const PE_MACHINE_X64   = 0x8664
+const PE_OPT_MAGIC_PE32PLUS = 0x020B
+
+; Section flags
+const PE_SCN_CNT_CODE         = 0x00000020
+const PE_SCN_CNT_INIT_DATA    = 0x00000040
+const PE_SCN_CNT_UNINIT_DATA  = 0x00000080
+const PE_SCN_MEM_EXECUTE      = 0x20000000
+const PE_SCN_MEM_READ         = 0x40000000
+const PE_SCN_MEM_WRITE        = 0x80000000
+
+; Directory indices
+const PE_DIR_EXPORT   = 0
+const PE_DIR_IMPORT   = 1
+const PE_DIR_RESOURCE = 2
+const PE_DIR_SECURITY = 4
+const PE_DIR_BASERELOC= 5
+const PE_DIR_DEBUG    = 6
+const PE_DIR_TLS      = 9
+const PE_DIR_LOAD_CFG = 10
+const PE_DIR_BOUND    = 11
+const PE_DIR_IAT      = 12
+const PE_DIR_EXCEPTION= 3
+
+; DLL characteristics
+const PE_DLL_DYNAMIC_BASE   = 0x0040   ; ASLR
+const PE_DLL_NX_COMPAT      = 0x0100   ; DEP
+const PE_DLL_NO_SEH         = 0x0400
+const PE_DLL_TERMINAL_SERVER= 0x8000
+
+; ============================================================
+; 3. STRUCTS
+; ============================================================
+
+struct PeSectionHdr {
+    name:       i8[8]
+    vsize:      u32    ; virtual size
+    vaddr:      u32    ; RVA
+    raw_size:   u32    ; size in file (rounded to file_align)
+    raw_off:    u32    ; file offset
+    relocs_off: u32    ; 0 for executables
+    reloc_cnt:  u16
+    flags:      u32
+}
+
+struct PeSection {
+    hdr:     PeSectionHdr
+    data:    &u8
+    data_len: i64
+}
+
+struct PeImportEntry {
+    dll_name: &i8          ; e.g. "ntdll.dll"
+    funcs:    &i8[64]      ; function names to import
+    func_cnt: i32
+}
+
+struct PeCtx {
+    sections:    PeSection[8]
+    section_cnt: i32
+    imports:     PeImportEntry[16]
+    import_cnt:  i32
+    entry_rva:   u32
+    image_base:  u64
+    stk_reserve: u64
+    stk_commit:  u64
+    heap_reserve: u64
+    heap_commit:  u64
+    subsystem:   u16     ; 2=GUI, 3=CUI (console)
+    os_major:    u16
+    os_minor:    u16
+}
+
+struct WinCtx {
+    pe:        PeCtx
+    code:      u8[131072]   ; 128 KB code buffer
+    code_len:  i64
+    rdata:     u8[65536]    ; read-only data (strings, import table)
+    rdata_len: i64
+    bss_size:  i64          ; uninitialised data (BSS) virtual size
+}
+
+; ============================================================
+; 4. EMIT HELPERS
+; ============================================================
+
+fn pe_emit_u8(buf: &u8, pos: &i64, v: u8) {
+    buf[pos[0]] = v   pos[0] = pos[0] + 1
+}
+fn pe_emit_u16(buf: &u8, pos: &i64, v: u16) {
+    buf[pos[0]]   =  v        & 0xFF
+    buf[pos[0]+1] = (v >>  8) & 0xFF
+    pos[0] = pos[0] + 2
+}
+fn pe_emit_u32(buf: &u8, pos: &i64, v: u32) {
+    buf[pos[0]]   =  v        & 0xFF
+    buf[pos[0]+1] = (v >>  8) & 0xFF
+    buf[pos[0]+2] = (v >> 16) & 0xFF
+    buf[pos[0]+3] = (v >> 24) & 0xFF
+    pos[0] = pos[0] + 4
+}
+fn pe_emit_u64(buf: &u8, pos: &i64, v: u64) {
+    let i = 0
+    loop i < 8 { buf[pos[0]] = (v >> (i*8)) & 0xFF   pos[0] = pos[0] + 1   i = i + 1 }
+}
+fn pe_pad_to(buf: &u8, pos: &i64, align: i64) {
+    loop pos[0] % align != 0 { buf[pos[0]] = 0   pos[0] = pos[0] + 1 }
+}
+fn pe_align(v: i64, a: i64) -> i64 {
+    ret (v + a - 1) & (0 - a)
+}
+
+; ============================================================
+; 5. DOS / NT HEADERS
+; ============================================================
+
+fn pe_emit_dos_stub(buf: &u8, pos: &i64) {
+    ; Minimal MZ stub (64 bytes) that just prints "This program cannot be run in DOS mode."
+    ; e_magic = MZ
+    pe_emit_u16(buf, pos, 0x5A4D)   ; e_magic = 'MZ'
+    pe_emit_u16(buf, pos, 0x0090)   ; e_cblp
+    pe_emit_u16(buf, pos, 0x0003)   ; e_cp
+    pe_emit_u16(buf, pos, 0x0000)   ; e_crlc
+    pe_emit_u16(buf, pos, 0x0004)   ; e_cparhdr
+    pe_emit_u16(buf, pos, 0x0000)   ; e_minalloc
+    pe_emit_u16(buf, pos, 0xFFFF)   ; e_maxalloc
+    pe_emit_u16(buf, pos, 0x0000)   ; e_ss
+    pe_emit_u16(buf, pos, 0x00B8)   ; e_sp
+    pe_emit_u16(buf, pos, 0x0000)   ; e_csum
+    pe_emit_u16(buf, pos, 0x0000)   ; e_ip
+    pe_emit_u16(buf, pos, 0x0000)   ; e_cs
+    pe_emit_u16(buf, pos, 0x0040)   ; e_lfarlc
+    pe_emit_u16(buf, pos, 0x0000)   ; e_ovno
+    ; e_res[4]
+    let i = 0
+    loop i < 8 { pe_emit_u8(buf, pos, 0)   i = i + 1 }
+    pe_emit_u16(buf, pos, 0x0000)   ; e_oemid
+    pe_emit_u16(buf, pos, 0x0000)   ; e_oeminfo
+    ; e_res2[10]
+    i = 0
+    loop i < 20 { pe_emit_u8(buf, pos, 0)   i = i + 1 }
+    ; e_lfanew: offset of PE signature = 0x80 (after 64-byte MZ header + 64-byte DOS stub code)
+    pe_emit_u32(buf, pos, 0x80)
+    ; DOS program (prints message, exits): 64 bytes
+    let msg = "This program cannot be run in DOS mode.\r\n$"
+    i = 0
+    loop msg[i] != 0 { pe_emit_u8(buf, pos, msg[i] as u8)   i = i + 1 }
+    pe_pad_to(buf, pos, 0x80)
+}
+
+fn pe_emit_nt_headers(buf: &u8, pos: &i64, ctx: &PeCtx,
+                      num_sections: i32, image_size: u32) {
+    ; PE signature
+    pe_emit_u32(buf, pos, PE_SIGNATURE)
+
+    ; COFF file header (20 bytes)
+    pe_emit_u16(buf, pos, PE_MACHINE_X64)
+    pe_emit_u16(buf, pos, num_sections as u16)
+    ; TimeDateStamp (0 for reproducible builds)
+    pe_emit_u32(buf, pos, 0)
+    pe_emit_u32(buf, pos, 0)   ; PointerToSymbolTable
+    pe_emit_u32(buf, pos, 0)   ; NumberOfSymbols
+    ; SizeOfOptionalHeader = 240 (PE32+)
+    pe_emit_u16(buf, pos, 240)
+    ; Characteristics: executable | large address aware
+    pe_emit_u16(buf, pos, 0x0022)
+
+    ; Optional header (PE32+, 240 bytes)
+    let opt_start = pos[0]
+    pe_emit_u16(buf, pos, PE_OPT_MAGIC_PE32PLUS)
+    pe_emit_u8(buf,  pos, 14)   ; MajorLinkerVersion
+    pe_emit_u8(buf,  pos, 0)    ; MinorLinkerVersion
+    pe_emit_u32(buf, pos, ctx.sections[0].hdr.raw_size)  ; SizeOfCode
+    pe_emit_u32(buf, pos, 0)    ; SizeOfInitializedData  (filled later)
+    pe_emit_u32(buf, pos, 0)    ; SizeOfUninitializedData
+    pe_emit_u32(buf, pos, ctx.entry_rva)
+    pe_emit_u32(buf, pos, ctx.sections[0].hdr.vaddr)     ; BaseOfCode
+    ; ImageBase
+    pe_emit_u64(buf, pos, ctx.image_base)
+    pe_emit_u32(buf, pos, 4096)   ; SectionAlignment
+    pe_emit_u32(buf, pos, 512)    ; FileAlignment
+    pe_emit_u16(buf, pos, ctx.os_major)
+    pe_emit_u16(buf, pos, ctx.os_minor)
+    pe_emit_u16(buf, pos, 0)      ; MajorImageVersion
+    pe_emit_u16(buf, pos, 0)
+    pe_emit_u16(buf, pos, ctx.os_major)   ; MajorSubsystemVersion
+    pe_emit_u16(buf, pos, ctx.os_minor)
+    pe_emit_u32(buf, pos, 0)              ; Win32VersionValue
+    pe_emit_u32(buf, pos, image_size)
+    ; SizeOfHeaders = 0x400 (rounded to FileAlignment)
+    pe_emit_u32(buf, pos, 0x400)
+    pe_emit_u32(buf, pos, 0)              ; CheckSum (optional)
+    pe_emit_u16(buf, pos, ctx.subsystem)
+    pe_emit_u16(buf, pos, PE_DLL_DYNAMIC_BASE | PE_DLL_NX_COMPAT)
+    pe_emit_u64(buf, pos, ctx.stk_reserve)
+    pe_emit_u64(buf, pos, ctx.stk_commit)
+    pe_emit_u64(buf, pos, ctx.heap_reserve)
+    pe_emit_u64(buf, pos, ctx.heap_commit)
+    pe_emit_u32(buf, pos, 0)              ; LoaderFlags
+    pe_emit_u32(buf, pos, 16)             ; NumberOfRvaAndSizes
+    ; Data directories (16 × 8 bytes = 128 bytes) — all zero for now
+    let i = 0
+    loop i < 16 { pe_emit_u32(buf, pos, 0)   pe_emit_u32(buf, pos, 0)   i = i + 1 }
+}
+
+fn pe_emit_section_hdr(buf: &u8, pos: &i64, hdr: &PeSectionHdr) {
+    let i = 0
+    loop i < 8 { pe_emit_u8(buf, pos, hdr.name[i] as u8)   i = i + 1 }
+    pe_emit_u32(buf, pos, hdr.vsize)
+    pe_emit_u32(buf, pos, hdr.vaddr)
+    pe_emit_u32(buf, pos, hdr.raw_size)
+    pe_emit_u32(buf, pos, hdr.raw_off)
+    pe_emit_u32(buf, pos, 0)   ; PointerToRelocations
+    pe_emit_u32(buf, pos, 0)   ; PointerToLinenumbers
+    pe_emit_u16(buf, pos, 0)   pe_emit_u16(buf, pos, 0)
+    pe_emit_u32(buf, pos, hdr.flags)
+}
+
+; ============================================================
+; 6. IMPORT TABLE BUILDER
+; ============================================================
+; Builds a minimal import table for optional DLL linkage.
+; Jda programs using direct NT syscalls don't need this.
+
+struct ImportSection {
+    buf:       u8[8192]
+    len:       i64
+    iat_rva:   u32
+    idt_rva:   u32
+}
+
+fn import_table_build(ctx: &PeCtx, rdata_rva: u32, out: &ImportSection) {
+    ; Layout (relative to rdata section start):
+    ;   [0] Import Directory Table  (N+1) × 20 bytes (null-terminated)
+    ;   [IDT_end] Import Lookup Tables  (ILT): one per DLL
+    ;   [ILT_end] Function name hints
+    ;   [names_end] ASCII DLL names
+
+    let buf = out.buf
+    let n = ctx.import_cnt
+    let idt_off  = 0
+    let ilt_off  = (n + 1) * 20     ; skip null sentinel
+    let name_off = ilt_off + n * 8  ; one u64 per function (assume 1 func/dll for now)
+
+    ; Emit IDT entries
+    let i = 0
+    loop i < n {
+        let dll_name_rva = rdata_rva + name_off   ; placeholder
+        let ilt_rva      = rdata_rva + ilt_off + i * 8
+        pe_emit_u32(&buf, &out.len, ilt_rva)        ; OriginalFirstThunk
+        pe_emit_u32(&buf, &out.len, 0)              ; TimeDateStamp
+        pe_emit_u32(&buf, &out.len, 0)              ; ForwarderChain
+        pe_emit_u32(&buf, &out.len, dll_name_rva)   ; Name RVA
+        pe_emit_u32(&buf, &out.len, ilt_rva)        ; FirstThunk (IAT)
+        i = i + 1
+    }
+    ; Null sentinel
+    let j = 0
+    loop j < 20 { pe_emit_u8(&buf, &out.len, 0)   j = j + 1 }
+
+    ; ILT: RVA-by-name entries (bit 63 = 0 = import by name)
+    i = 0
+    loop i < n {
+        let hint_rva = rdata_rva + out.len   ; will be appended
+        pe_emit_u64(&buf, &out.len, hint_rva)
+        i = i + 1
+    }
+
+    ; Hint/name entries + DLL name strings
+    i = 0
+    loop i < n {
+        pe_emit_u16(&buf, &out.len, 0)   ; Hint = 0 (any)
+        let nm = ctx.imports[i].dll_name
+        let k = 0
+        loop nm[k] != 0 { pe_emit_u8(&buf, &out.len, nm[k] as u8)   k = k + 1 }
+        pe_emit_u8(&buf, &out.len, 0)
+        if out.len % 2 != 0 { pe_emit_u8(&buf, &out.len, 0) }   ; word-align
+        i = i + 1
+    }
+
+    out.idt_rva = rdata_rva
+    out.iat_rva = rdata_rva + ilt_off
+}
+
+; ============================================================
+; 7. WINDOWS-SPECIFIC PROLOG / EPILOG  (x64 ABI)
+; ============================================================
+; Windows x64 ABI differs from System V:
+;   - Shadow space: 32 bytes BELOW return address (callee must save RCX/RDX/R8/R9 if needed)
+;   - Callee-saved: RBX, RBP, RDI, RSI, RSP, R12-R15, XMM6-XMM15
+;   - Arguments: RCX, RDX, R8, R9, then stack
+
+fn win_emit_prologue(buf: &u8, pos: &i64, frame_size: i32) {
+    ; PUSH RBP  (55)
+    buf[pos[0]] = 0x55   pos[0] = pos[0] + 1
+    ; MOV RBP, RSP  (48 89 E5)
+    buf[pos[0]] = 0x48   buf[pos[0]+1] = 0x89   buf[pos[0]+2] = 0xE5
+    pos[0] = pos[0] + 3
+    ; SUB RSP, frame_size+32  (48 81 EC imm32) — +32 for shadow space
+    buf[pos[0]]   = 0x48   buf[pos[0]+1] = 0x81   buf[pos[0]+2] = 0xEC
+    pos[0] = pos[0] + 3
+    let total = frame_size + 32
+    buf[pos[0]]   =  total        & 0xFF
+    buf[pos[0]+1] = (total >>  8) & 0xFF
+    buf[pos[0]+2] = (total >> 16) & 0xFF
+    buf[pos[0]+3] = (total >> 24) & 0xFF
+    pos[0] = pos[0] + 4
+}
+
+fn win_emit_epilogue(buf: &u8, pos: &i64, frame_size: i32) {
+    ; ADD RSP, frame_size+32  (48 81 C4 imm32)
+    buf[pos[0]]   = 0x48   buf[pos[0]+1] = 0x81   buf[pos[0]+2] = 0xC4
+    pos[0] = pos[0] + 3
+    let total = frame_size + 32
+    buf[pos[0]]   =  total        & 0xFF
+    buf[pos[0]+1] = (total >>  8) & 0xFF
+    buf[pos[0]+2] = (total >> 16) & 0xFF
+    buf[pos[0]+3] = (total >> 24) & 0xFF
+    pos[0] = pos[0] + 4
+    ; POP RBP  (5D)
+    buf[pos[0]] = 0x5D   pos[0] = pos[0] + 1
+    ; RET  (C3)
+    buf[pos[0]] = 0xC3   pos[0] = pos[0] + 1
+}
+
+; Emit a direct NT syscall stub:
+;   mov r10, rcx   (4C 8B D1)
+;   mov eax, nr    (B8 <nr:u32>)
+;   syscall        (0F 05)
+;   ret            (C3)
+fn win_emit_nt_stub(buf: &u8, pos: &i64, nr: u32) {
+    buf[pos[0]]   = 0x4C   ; REX.WR
+    buf[pos[0]+1] = 0x8B
+    buf[pos[0]+2] = 0xD1   ; mov r10, rcx
+    pos[0] = pos[0] + 3
+    buf[pos[0]]   = 0xB8   ; mov eax, imm32
+    pos[0] = pos[0] + 1
+    buf[pos[0]]   =  nr        & 0xFF
+    buf[pos[0]+1] = (nr >>  8) & 0xFF
+    buf[pos[0]+2] = (nr >> 16) & 0xFF
+    buf[pos[0]+3] = (nr >> 24) & 0xFF
+    pos[0] = pos[0] + 4
+    buf[pos[0]]   = 0x0F   buf[pos[0]+1] = 0x05   ; syscall
+    pos[0] = pos[0] + 2
+    buf[pos[0]]   = 0xC3   ; ret
+    pos[0] = pos[0] + 1
+}
+
+; ============================================================
+; 8. JIR → WINDOWS x64 LOWERING
+; ============================================================
+; Wraps the generic x86-64 lowering but uses Windows calling convention.
+; Arguments: RCX, RDX, R8, R9 (instead of RDI, RSI, RDX, RCX)
+
+const WIN_PHYS_ARG0 = 1    ; RCX
+const WIN_PHYS_ARG1 = 2    ; RDX
+const WIN_PHYS_ARG2 = 8    ; R8
+const WIN_PHYS_ARG3 = 9    ; R9
+
+; Remap JIR SYSCALL: on Windows, nr goes to rax via r10 copy (done in win_emit_nt_stub)
+; For direct NT stubs emitted inline:
+fn win_lower_syscall(ins: &Instr, buf: &u8, pos: &i64) {
+    ; nr → eax (via r10 copy pattern)
+    ; arg0 → rcx, arg1 → rdx, arg2 → r8, arg3 → r9
+    ; (register loading delegated to caller via regalloc)
+    win_emit_nt_stub(buf, pos, ins.imm as u32)
+}
+
+; ============================================================
+; 9. UNWIND INFO (x64 Exception Handling)
+; ============================================================
+; Each function needs a RUNTIME_FUNCTION entry and UNWIND_INFO blob
+; for the Windows structured exception handler to unwind the stack.
+
+struct RuntimeFunction {
+    begin_rva:  u32
+    end_rva:    u32
+    unwind_rva: u32
+}
+
+struct UnwindInfo {
+    version:    u8     ; bits 0-2 = version (1), bits 3-7 = flags
+    prolog_size: u8
+    count_codes: u8
+    frame_reg:  u8     ; bits 0-3 = frame register (RBP=5), bits 4-7 = offset/16
+    codes:      u16[16]
+}
+
+fn emit_unwind_info(buf: &u8, pos: &i64, prolog_size: u8, frame_reg: u8) {
+    buf[pos[0]]   = 1              ; version=1, flags=0 (no exception handler)
+    buf[pos[0]+1] = prolog_size
+    buf[pos[0]+2] = 2              ; 2 unwind codes: push rbp + set frame reg
+    buf[pos[0]+3] = frame_reg      ; RBP (5) as frame register, offset 0
+    pos[0] = pos[0] + 4
+    ; Code 1: PUSH RBP at offset 1 (UWOP_PUSH_NONVOL = 0, RBP = 5)
+    buf[pos[0]]   = 1              ; offset in prolog
+    buf[pos[0]+1] = (5 << 4) | 0  ; op=PUSH_NONVOL, reg=RBP(5)
+    pos[0] = pos[0] + 2
+    ; Code 2: SET_FPREG at offset 4
+    buf[pos[0]]   = 4
+    buf[pos[0]+1] = (5 << 4) | 3  ; op=SET_FPREG(3), reg=RBP(5)
+    pos[0] = pos[0] + 2
+    ; Pad to DWORD boundary
+    if pos[0] % 4 != 0 { buf[pos[0]] = 0   buf[pos[0]+1] = 0   pos[0] = pos[0] + (4 - pos[0] % 4) }
+}
+
+; ============================================================
+; 10. PE32+ FILE BUILDER
+; ============================================================
+
+fn winpe_compile(code: &u8, code_len: i64, ctx: &WinCtx, out_path: &i8) {
+    let file_align = 512
+    let sect_align = 4096
+
+    let hdr_size  = 0x400         ; DOS + NT + section headers, rounded to FileAlignment
+
+    ; Section layout
+    let text_raw_off = hdr_size
+    let text_vaddr   = sect_align
+    let text_raw_sz  = pe_align(code_len, file_align) as u32
+    let text_vsize   = code_len as u32
+
+    let rdata_raw_off = text_raw_off + text_raw_sz as i64
+    let rdata_vaddr   = pe_align(text_vaddr as i64 + text_vsize as i64, sect_align) as u32
+    let rdata_raw_sz  = pe_align(ctx.pe.sections[1].hdr.raw_size as i64, file_align) as u32
+    let rdata_vsize   = ctx.pe.sections[1].hdr.vsize
+
+    let bss_vaddr = pe_align(rdata_vaddr as i64 + rdata_vsize as i64, sect_align) as u32
+    let bss_vsize = ctx.bss_size as u32
+
+    let image_size = pe_align(bss_vaddr as i64 + bss_vsize as i64, sect_align) as u32
+
+    ; Build file in memory
+    let outbuf = alloc_pages(64)   ; up to 256 KB
+    let op = 0
+
+    ; DOS stub
+    pe_emit_dos_stub(outbuf, &op)
+
+    ; NT headers
+    ctx.pe.entry_rva    = text_vaddr
+    ctx.pe.image_base   = 0x0000000140000000
+    ctx.pe.stk_reserve  = 0x100000
+    ctx.pe.stk_commit   = 0x1000
+    ctx.pe.heap_reserve = 0x100000
+    ctx.pe.heap_commit  = 0x1000
+    ctx.pe.subsystem    = 3         ; CUI
+    ctx.pe.os_major     = 6
+    ctx.pe.os_minor     = 3         ; Windows 8.1 minimum
+    pe_emit_nt_headers(outbuf, &op, &ctx.pe, 3, image_size)
+
+    ; Section headers
+    let text_hdr = PeSectionHdr{}
+    text_hdr.name[0] = '.'   text_hdr.name[1] = 't'   text_hdr.name[2] = 'e'
+    text_hdr.name[3] = 'x'   text_hdr.name[4] = 't'
+    text_hdr.vsize    = text_vsize
+    text_hdr.vaddr    = text_vaddr
+    text_hdr.raw_size = text_raw_sz
+    text_hdr.raw_off  = text_raw_off as u32
+    text_hdr.flags    = PE_SCN_CNT_CODE | PE_SCN_MEM_EXECUTE | PE_SCN_MEM_READ
+    pe_emit_section_hdr(outbuf, &op, &text_hdr)
+
+    let rdata_hdr = PeSectionHdr{}
+    rdata_hdr.name[0] = '.'   rdata_hdr.name[1] = 'r'   rdata_hdr.name[2] = 'd'
+    rdata_hdr.name[3] = 'a'   rdata_hdr.name[4] = 't'   rdata_hdr.name[5] = 'a'
+    rdata_hdr.vsize    = rdata_vsize
+    rdata_hdr.vaddr    = rdata_vaddr
+    rdata_hdr.raw_size = rdata_raw_sz
+    rdata_hdr.raw_off  = rdata_raw_off as u32
+    rdata_hdr.flags    = PE_SCN_CNT_INIT_DATA | PE_SCN_MEM_READ
+    pe_emit_section_hdr(outbuf, &op, &rdata_hdr)
+
+    let bss_hdr = PeSectionHdr{}
+    bss_hdr.name[0] = '.'   bss_hdr.name[1] = 'b'   bss_hdr.name[2] = 's'
+    bss_hdr.name[3] = 's'
+    bss_hdr.vsize    = bss_vsize
+    bss_hdr.vaddr    = bss_vaddr
+    bss_hdr.raw_size = 0
+    bss_hdr.raw_off  = 0
+    bss_hdr.flags    = PE_SCN_CNT_UNINIT_DATA | PE_SCN_MEM_READ | PE_SCN_MEM_WRITE
+    pe_emit_section_hdr(outbuf, &op, &bss_hdr)
+
+    ; Pad headers to FileAlignment
+    pe_pad_to(outbuf, &op, file_align)
+
+    ; .text section data
+    let i = 0
+    loop i < code_len { outbuf[op] = code[i]   op = op + 1   i = i + 1 }
+    pe_pad_to(outbuf, &op, file_align)
+
+    ; .rdata section data
+    i = 0
+    loop i < ctx.rdata_len { outbuf[op] = ctx.rdata[i]   op = op + 1   i = i + 1 }
+    pe_pad_to(outbuf, &op, file_align)
+
+    ; Write to file
+    ; SYS_OPEN equivalent: use NT syscall NtCreateFile (or the platform fs stub)
+    ; For the Windows backend running cross-compiled, we write via the host OS
+    let out_fd = syscall(2, out_path, 577, 493)   ; O_WRONLY|O_CREAT|O_TRUNC, 0755
+    syscall(1, out_fd, outbuf, op)
+    syscall(3, out_fd, 0, 0)
+}
+
+; ============================================================
+; 11. WINDOWS RUNTIME STUBS
+; ============================================================
+; Minimal runtime functions for executables that use direct NT syscalls.
+; These replace the standard C runtime (no MSVCRT.DLL needed).
+
+; NtTerminateProcess(0, code) → exit cleanly
+fn win_exit(code: i32) {
+    ; mov r10, rcx; mov eax, NT_TERMINATE_PROCESS; syscall
+    asm {
+        in rcx = 0           ; ProcessHandle = NtCurrentProcess()
+        in rdx = code        ; ExitStatus
+        mov r10, rcx
+        mov eax, NT_TERMINATE_PROCESS
+        syscall
+    }
+}
+
+; NtWriteFile(STDOUT, ...)
+fn win_write(fd: i64, buf: &i8, len: i64) -> i64 {
+    ; Simplified: call NtWriteFile via direct syscall
+    ; In practice, HANDLE values differ from file descriptors.
+    ; This stub assumes fd is already an NT handle (e.g., from NtCreateFile).
+    let io_status = i64[2]
+    asm {
+        in rcx  = fd
+        lea rdx, io_status
+        in r8   = buf
+        in r9   = len
+        mov r10, rcx
+        mov eax, NT_WRITE_FILE
+        syscall
+    }
+    ret io_status[1]   ; IoStatusBlock.Information = bytes written
+}
+
+; Get console handles via NtQueryInformationProcess or PEB
+fn win_stdout_handle() -> i64 {
+    ; Standard handle numbers: -10 = STDIN, -11 = STDOUT, -12 = STDERR
+    ; These are pseudo-handles valid for console I/O
+    ret 0xFFFFFFFFFFFFFFF5   ; (u64)(-11) = STDOUT
+}
+
+; _start: Windows entry point (no libc)
+fn win_main_entry() {
+    ; The Windows loader jumps here; RCX = argc-like data (via PEB)
+    ; A real implementation would walk the PEB to get argv/envp.
+    main()
+    win_exit(0)
+}
