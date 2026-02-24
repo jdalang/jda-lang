@@ -1,0 +1,413 @@
+; =============================================================================
+; jda::ml::data — DataLoader & Dataset Primitives
+; =============================================================================
+; Provides the training-loop infrastructure that wraps tensor data into
+; mini-batches, applies shuffling, and splits datasets — all with zero
+; dynamic allocation per batch (slices into a pre-allocated region).
+;
+; Core types:
+;   Dataset<X, Y>    — a pair of (features, labels) tensors + row count
+;   Sampler          — index permutation generator (sequential or shuffled)
+;   DataLoader<X, Y> — iterator that yields (batch_X, batch_Y) slices
+;
+; Usage:
+;   let ds   = Dataset::from_tensors(X, y)       ; wrap your data
+;   let ds   = ds.normalise()                     ; zero-mean, unit-variance
+;   let (train, val) = ds.split(0.8)             ; 80/20 split
+;
+;   let loader = DataLoader::new(&train, 32, shuffle: true)
+;   loop batch in loader {
+;       let pred  = model.forward(batch.x)
+;       let loss  = mse_loss(pred, batch.y)
+;       ...
+;   }
+; =============================================================================
+
+import jda::ml::nn::{ Tensor }
+
+; =============================================================================
+; Dataset — pair of feature / label tensors
+; =============================================================================
+struct Dataset {
+    x:     Tensor        ; shape [N x D_in]
+    y:     Tensor        ; shape [N x D_out]  (or [N] for classification)
+    n:     i64           ; number of samples (== x.shape[0])
+    x_dim: i64           ; feature dimension
+    y_dim: i64           ; label dimension
+}
+
+impl Dataset {
+    ; Wrap pre-existing tensors — no allocation
+    fn from_tensors(x: Tensor, y: Tensor) -> own Dataset {
+        ret Dataset {
+            x:     x,
+            y:     y,
+            n:     x.shape[0],
+            x_dim: if x.rank > 1 { x.shape[1] } else { 1 },
+            y_dim: if y.rank > 1 { y.shape[1] } else { 1 },
+        }
+    }
+
+    ; ---- normalise -----------------------------------------------------------
+    ; Standardise each feature column: x' = (x - μ) / σ
+    ; Mutates in place and returns self (fluent API)
+    fn normalise(self) -> own Dataset {
+        loop d in 0..self.x_dim {
+            let col   = self.x.col(d)      ; slice of length n
+            let mu    = col.mean()
+            let sigma = col.std()
+            if sigma < 1e-8 { continue }
+            loop i in 0..self.n {
+                self.x[i, d] = (self.x[i, d] - mu) / sigma
+            }
+        }
+        ret self
+    }
+
+    ; ---- min-max normalise ---------------------------------------------------
+    fn min_max(self) -> own Dataset {
+        loop d in 0..self.x_dim {
+            let col = self.x.col(d)
+            let mn  = col.min()
+            let mx  = col.max()
+            let rng = mx - mn
+            if rng < 1e-8 { continue }
+            loop i in 0..self.n {
+                self.x[i, d] = (self.x[i, d] - mn) / rng
+            }
+        }
+        ret self
+    }
+
+    ; ---- train / validation / test split ------------------------------------
+    ; Returns (train, val) with `ratio` fraction going to train.
+    ; Uses the first `n*ratio` rows — shuffle first if needed.
+    fn split(self, ratio: f32) -> (own Dataset, own Dataset) {
+        let split_at = (self.n as f32 * ratio) as i64
+        let train = Dataset::from_tensors(
+            self.x.rows(0, split_at),
+            self.y.rows(0, split_at),
+        )
+        let val = Dataset::from_tensors(
+            self.x.rows(split_at, self.n),
+            self.y.rows(split_at, self.n),
+        )
+        ret (train, val)
+    }
+
+    ; Three-way split: train / val / test
+    fn split3(self, train_r: f32, val_r: f32)
+             -> (own Dataset, own Dataset, own Dataset) {
+        let n1 = (self.n as f32 * train_r) as i64
+        let n2 = n1 + (self.n as f32 * val_r) as i64
+        let train = Dataset::from_tensors(
+            self.x.rows(0,  n1),    self.y.rows(0,  n1))
+        let val   = Dataset::from_tensors(
+            self.x.rows(n1, n2),    self.y.rows(n1, n2))
+        let test  = Dataset::from_tensors(
+            self.x.rows(n2, self.n), self.y.rows(n2, self.n))
+        ret (train, val, test)
+    }
+}
+
+; =============================================================================
+; Sampler — produces index permutations for batching
+; =============================================================================
+struct Sampler {
+    indices: []i64
+    pos:     i64
+    n:       i64
+}
+
+impl Sampler {
+    fn new(n: i64) -> own Sampler {
+        let idx = [n]i64
+        loop i in 0..n { idx[i] = i }
+        ret Sampler { indices: idx, pos: 0, n: n }
+    }
+
+    ; Fisher-Yates in-place shuffle using xorshift64 PRNG
+    fn shuffle(self, seed: u64) {
+        let s = seed
+        loop i in (self.n - 1)..0 step -1 {
+            ; xorshift64
+            s = s ^ (s << 13)
+            s = s ^ (s >> 7)
+            s = s ^ (s << 17)
+            let j = (s % (i + 1) as u64) as i64
+            let t = self.indices[i]
+            self.indices[i] = self.indices[j]
+            self.indices[j] = t
+        }
+        self.pos = 0
+    }
+
+    fn reset(self) { self.pos = 0 }
+
+    fn has_next(self) -> bool { ret self.pos < self.n }
+
+    ; Return next batch of `size` indices (may be shorter at epoch end)
+    fn next_batch(self, size: i64) -> []i64 {
+        let end = self.pos + size
+        if end > self.n { end = self.n }
+        let batch = self.indices[self.pos..end]
+        self.pos = end
+        ret batch
+    }
+}
+
+; =============================================================================
+; Batch — what the DataLoader yields each iteration
+; =============================================================================
+struct Batch {
+    x:    Tensor     ; [B x D_in]
+    y:    Tensor     ; [B x D_out]
+    size: i64        ; actual batch size (may be < requested at epoch end)
+}
+
+; =============================================================================
+; DataLoader — mini-batch iterator over a Dataset
+; =============================================================================
+struct DataLoader {
+    ds:         ref Dataset
+    sampler:    own Sampler
+    batch_size: i64
+    shuffle:    bool
+    drop_last:  bool     ; skip final incomplete batch
+    epoch:      i64
+    seed:       u64
+}
+
+impl DataLoader {
+    fn new(ds: ref Dataset, batch_size: i64,
+           shuffle: bool, drop_last: bool) -> own DataLoader {
+        let s = Sampler::new(ds.n)
+        let seed: u64 = 0xDEADBEEF_CAFEF00D
+        if shuffle { s.shuffle(seed) }
+        ret DataLoader {
+            ds:         ds,
+            sampler:    s,
+            batch_size: batch_size,
+            shuffle:    shuffle,
+            drop_last:  drop_last,
+            epoch:      0,
+            seed:       seed,
+        }
+    }
+
+    ; Reset for a new epoch — re-shuffle if needed
+    fn reset_epoch(self) {
+        self.epoch = self.epoch + 1
+        ; advance seed to get a different permutation each epoch
+        self.seed = self.seed ^ (self.epoch as u64 * 0x9E3779B97F4A7C15)
+        self.sampler.reset()
+        if self.shuffle { self.sampler.shuffle(self.seed) }
+    }
+
+    ; Check if there are more batches this epoch
+    fn has_next(self) -> bool {
+        if not self.sampler.has_next() { ret false }
+        if self.drop_last {
+            ret self.sampler.n - self.sampler.pos >= self.batch_size
+        }
+        ret true
+    }
+
+    ; Fetch the next batch — gathers rows from ds by index
+    fn next(self) -> Batch {
+        let idx   = self.sampler.next_batch(self.batch_size)
+        let bsize = idx.len
+        let bx    = Tensor::gather(self.ds.x, idx)   ; [bsize x D_in]
+        let by    = Tensor::gather(self.ds.y, idx)   ; [bsize x D_out]
+        ret Batch { x: bx, y: by, size: bsize }
+    }
+
+    ; Number of batches per epoch
+    fn num_batches(self) -> i64 {
+        if self.drop_last {
+            ret self.ds.n / self.batch_size
+        }
+        ret (self.ds.n + self.batch_size - 1) / self.batch_size
+    }
+}
+
+; =============================================================================
+; Tensor helpers used by Dataset / DataLoader
+; =============================================================================
+
+impl Tensor {
+    ; Return a slice of rows [start..end) — zero copy (same backing buffer)
+    fn rows(self, start: i64, end: i64) -> Tensor {
+        ; Assumes row-major layout — returns a view, not a copy
+        let row_stride = self.strides[0]
+        ret Tensor {
+            data:    self.data[start * row_stride .. end * row_stride],
+            shape:   [end - start, self.shape[1]],
+            strides: self.strides,
+            rank:    self.rank,
+        }
+    }
+
+    ; Return column d as a flat slice (copies to contiguous buf — simple impl)
+    fn col(self, d: i64) -> []f32 {
+        let buf = [self.shape[0]]f32
+        loop i in 0..self.shape[0] { buf[i] = self[i, d] }
+        ret buf
+    }
+
+    ; Gather rows by index array — used by DataLoader
+    fn gather(src: ref Tensor, idx: ref []i64) -> own Tensor {
+        let bsize   = idx.len
+        let ncols   = src.shape[1]
+        let out     = Tensor::zeros([bsize, ncols])
+        loop b in 0..bsize {
+            let row = idx[b]
+            loop d in 0..ncols {
+                out[b, d] = src[row, d]
+            }
+        }
+        ret out
+    }
+
+    fn mean(self) -> f32 {
+        let s = 0.0f32
+        for v in self.data { s = s + v }
+        ret s / self.data.len as f32
+    }
+
+    fn std(self) -> f32 {
+        let mu = self.mean()
+        let s  = 0.0f32
+        for v in self.data { s = s + (v - mu) * (v - mu) }
+        ret sqrt(s / self.data.len as f32)
+    }
+
+    fn min(self) -> f32 {
+        let m = self.data[0]
+        for v in self.data { if v < m { m = v } }
+        ret m
+    }
+
+    fn max(self) -> f32 {
+        let m = self.data[0]
+        for v in self.data { if v > m { m = v } }
+        ret m
+    }
+}
+
+; =============================================================================
+; Utility — one-hot encode a class-index tensor
+; =============================================================================
+; classes: [N]i64 of class indices   n_classes: number of classes
+; Returns: [N x n_classes]f32 one-hot matrix
+fn one_hot(classes: ref []i64, n_classes: i64) -> Tensor {
+    let n   = classes.len
+    let out = Tensor::zeros([n, n_classes])
+    loop i in 0..n {
+        let c = classes[i]
+        if c >= 0 and c < n_classes {
+            out[i, c] = 1.0
+        }
+    }
+    ret out
+}
+
+; =============================================================================
+; CSV loader — read a plain CSV into a Dataset
+; =============================================================================
+; Assumes:
+;   - First row is a header (skipped)
+;   - Last `label_cols` columns are labels; remainder are features
+;   - All values are f32-parseable
+;
+; Usage:
+;   let ds = csv_load("/data/iris.csv", label_cols: 1)
+fn csv_load(path: ref []i8, label_cols: i64) -> Result<own Dataset, []i8> {
+    let raw = file_read(path)?     ; []i8 — entire file in one syscall
+    let rows = csv_count_rows(raw)
+    let cols = csv_count_cols(raw)
+    let feat = cols - label_cols
+
+    let x_buf = [rows * feat]f32
+    let y_buf = [rows * label_cols]f32
+    let pos   = 0i64
+    let row   = 0i64
+
+    ; skip header line
+    loop pos < raw.len and raw[pos] != '\n' { pos = pos + 1 }
+    pos = pos + 1
+
+    loop row < rows and pos < raw.len {
+        loop col in 0..cols {
+            let (val, next) = parse_csv_f32(raw, pos)
+            pos = next
+            if col < feat {
+                x_buf[row * feat + col] = val
+            } else {
+                y_buf[row * label_cols + (col - feat)] = val
+            }
+        }
+        row = row + 1
+    }
+
+    let x = Tensor::from_buf(x_buf, [rows, feat])
+    let y = Tensor::from_buf(y_buf, [rows, label_cols])
+    ret ok(Dataset::from_tensors(x, y))
+}
+
+fn csv_count_rows(src: ref []i8) -> i64 {
+    let n = 0i64
+    for c in src { if c == '\n' { n = n + 1 } }
+    ret if n > 0 { n - 1 } else { 0 }   ; subtract header
+}
+
+fn csv_count_cols(src: ref []i8) -> i64 {
+    let n = 1i64
+    let i = 0i64
+    ; scan first non-header line
+    loop i < src.len and src[i] != '\n' { i = i + 1 }
+    i = i + 1
+    loop i < src.len and src[i] != '\n' {
+        if src[i] == ',' { n = n + 1 }
+        i = i + 1
+    }
+    ret n
+}
+
+fn parse_csv_f32(src: ref []i8, pos: i64) -> (f32, i64) {
+    let start = pos
+    let p     = pos
+    loop p < src.len and src[p] != ',' and src[p] != '\n' { p = p + 1 }
+    let tok = src[start..p]
+    let v   = parse_f32(tok)
+    if p < src.len and src[p] == ',' { p = p + 1 }
+    ret (v, p)
+}
+
+; =============================================================================
+; Example — full supervised training loop
+; =============================================================================
+;
+;   import jda::ml::data::{ csv_load, DataLoader }
+;   import jda::ml::nn::{ Linear, ReLU, mse_loss, Adam }
+;
+;   let ds               = csv_load("/data/boston.csv", label_cols: 1).unwrap()
+;   let ds               = ds.normalise()
+;   let (train, val)     = ds.split(0.8)
+;
+;   let l1   = Linear<13, 64>::new()
+;   let l2   = Linear<64,  1>::new()
+;   let relu = ReLU {}
+;   let opt  = Adam::new(lr: 0.001)
+;
+;   loop epoch in 0..100 {
+;       let loader = DataLoader::new(&train, 32, shuffle: true, drop_last: false)
+;       loop loader.has_next() {
+;           let batch = loader.next()
+;           let pred  = l2.forward(relu.forward(l1.forward(batch.x)))
+;           let loss  = mse_loss(pred, batch.y)
+;           ; ... backward + opt.step() ...
+;       }
+;       loader.reset_epoch()
+;       if epoch % 10 == 0 { print("epoch {epoch}  loss {loss}") }
+;   }
