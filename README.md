@@ -190,6 +190,18 @@ jda-lang/
 │   ├── mlp.jda          # 10-line MLP training (vs 30-line PyTorch)
 │   └── transformer.jda  # Decoder-only transformer / tiny language model
 │
+├── stdlib/
+│   ├── fs.jda           # File system: open/read/write/stat/dir_list/path_join
+│   └── time.jda         # Clocks: Instant, Duration, WallClock, Timer, Stopwatch
+│
+├── tools/
+│   ├── pkg.jda          # Package manager: jda add/remove/update/list, SemVer, SHA-256
+│   └── lsp.jda          # Language Server (LSP 3.17): hover, completion, diagnostics
+│
+├── targets/
+│   ├── arm64.jda        # AArch64 backend: instruction encoder, reg alloc, ELF64
+│   └── wasm.jda         # WebAssembly backend: binary format emitter, WASI shim
+│
 └── docker/
     └── Dockerfile       # Linux x86-64 build environment (NASM + binutils)
 ```
@@ -289,6 +301,18 @@ Tensors, autograd, and GPU execution as language primitives. No Python. No C++.
 | Metrics | `stdlib/ml/metrics.jda` | Accuracy, F1 (macro/micro/weighted), AUC-ROC, MAE, RMSE, R², Huber |
 | Transformer | `examples/transformer.jda` | Decoder-only transformer: MHA, GELU FFN, LayerNorm, char-level LM |
 
+### Phase 5 — Tooling, Ecosystem & Cross-Platform ✅
+Standard library, IDE support, package manager, and new compilation targets.
+
+| Step | File | Description |
+|------|------|-------------|
+| File System | `stdlib/fs.jda` | `File` open/read/write/stat, dir_list, dir_walk, path utilities, temp files |
+| Time | `stdlib/time.jda` | `Instant`, `Duration`, `WallClock` (ISO 8601), `Timer`, `Stopwatch`, `RateLimiter` |
+| Package Manager | `tools/pkg.jda` | `jda add/remove/list/update`, SemVer, VersionReq, SHA-256, tar extract |
+| Language Server | `tools/lsp.jda` | LSP 3.17 over JSON-RPC: hover, completion, go-to-def, diagnostics, formatting |
+| ARM64 Backend | `targets/arm64.jda` | AArch64 instruction encoder, linear-scan reg alloc, NEON SIMD, ELF64 emitter |
+| WASM Backend | `targets/wasm.jda` | WebAssembly binary format, LEB128, WASI shim, JS/HTML loader generator |
+
 ---
 
 ## Jda vs the World
@@ -339,13 +363,13 @@ asm { in rax = 60   in rdi = 0   ---   syscall }   ; exit(0)
 
 ## Roadmap
 
-- [ ] Stage 1 compiler fully operational (currently specified, codegen in progress)
+- [ ] Stage 1 compiler fully operational (codegen in progress)
 - [ ] Self-hosting: Stage 1 compiled by Stage 0
-- [ ] Standard library: `jda::fs`, `jda::time`, `jda::json`
-- [ ] Package manager: `jda add <package>`
-- [ ] Language server (LSP) for IDE support
-- [ ] ARM64 backend (Apple Silicon, Raspberry Pi)
-- [ ] WebAssembly backend
+- [x] Standard library: `jda::fs`, `jda::time`, `jda::json`
+- [x] Package manager: `jda add <package>`
+- [x] Language server (LSP) for IDE support
+- [x] ARM64 backend (Apple Silicon, Raspberry Pi)
+- [x] WebAssembly backend
 - [ ] Windows kernel support
 
 ---
