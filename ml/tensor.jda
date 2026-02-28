@@ -1,0 +1,257 @@
+; =============================================================================
+; jda::ml::tensor — Native Tensor Primitives
+; =============================================================================
+; Tensors are FIRST-CLASS language primitives in jda — not library types.
+; The compiler understands tensor shapes, dtypes, and operations natively.
+; Shape errors are caught at COMPILE TIME. Zero runtime shape checks.
+;
+; Python/PyTorch:  a = torch.zeros(1024, 1024)   # runtime allocation
+; jda:             tensor A = [1024 x 1024]f32    # compiler-known shape
+;
+; Key differences from PyTorch:
+;   - Shape is part of the type: Tensor<[1024, 1024], f32>
+;   - No dynamic shapes unless you explicitly opt in with `dyn`
+;   - No Python GIL, no C++ boundary, no object overhead
+;   - matmul compiles to AVX-512 on CPU or PTX on GPU directly
+; =============================================================================
+
+; =============================================================================
+; 1. TENSOR TYPE SYNTAX
+; =============================================================================
+
+; --- Declaration ---
+; tensor <name> = [D0 x D1 x ... x Dn]<dtype>
+;
+; Dtype options:
+;   f16  f32  f64   — IEEE floats
+;   i8   i16  i32   i64
+;   bf16            — bfloat16 (used in ML training)
+
+; 1D — vector of 512 f32 values
+tensor v = [512]f32
+
+; 2D — matrix
+tensor A = [1024 x 1024]f32
+tensor B = [1024 x 512]f32
+
+; 3D — batch of matrices (batch_size=32, seq_len=128, d_model=768)
+tensor X = [32 x 128 x 768]f32
+
+; 4D — convolutional feature maps (N, C, H, W)
+tensor feat = [8 x 64 x 224 x 224]f32
+
+; Scalar (rank-0 tensor)
+tensor loss = []f32
+
+; --- With initializer ---
+tensor W = [768 x 768]f32::zeros()      ; all zeros
+tensor b = [768]f32::ones()             ; all ones
+tensor I = [512 x 512]f32::eye()        ; identity matrix
+tensor R = [256 x 256]f32::randn()      ; standard normal random
+tensor U = [128 x 128]f32::rand(0.0, 1.0)  ; uniform [0, 1)
+
+; --- From literal (small tensors) ---
+tensor row  = [3]f32 { 1.0, 2.0, 3.0 }
+tensor mat2 = [2 x 2]f32 { 1.0, 0.0,
+                            0.0, 1.0 }
+
+; --- Type annotation form (used in function signatures) ---
+; Tensor<[M, N], f32>  — static shape
+; Tensor<[dyn, N], f32> — first dim dynamic (checked at runtime)
+; Tensor<dyn, f32>      — fully dynamic (escape hatch, PyTorch compat)
+
+; =============================================================================
+; 2. SHAPE AS PART OF THE TYPE — COMPILE-TIME CHECKING
+; =============================================================================
+; The compiler tracks tensor shapes as type parameters.
+; Shape mismatches are compile errors — no runtime panics.
+
+fn matmul_example() {
+    tensor A = [512 x 768]f32::randn()
+    tensor B = [768 x 256]f32::randn()
+
+    tensor C = A @ B     ; OK — (512,768) @ (768,256) = (512,256)
+    ;                      compiler knows C has shape [512 x 256]
+
+    ; tensor D = B @ A   ; COMPILE ERROR:
+    ;                    ;   cannot matmul [768 x 256] @ [512 x 768]
+    ;                    ;   inner dims mismatch: 256 ≠ 512
+}
+
+; =============================================================================
+; 3. TENSOR OPERATIONS
+; =============================================================================
+
+; --- Element-wise arithmetic ---
+; Standard operators work element-wise when shapes match.
+tensor A = [1024 x 1024]f32::randn()
+tensor B = [1024 x 1024]f32::randn()
+
+tensor C = A + B        ; element-wise add
+tensor D = A - B        ; element-wise subtract
+tensor E = A * B        ; element-wise multiply (Hadamard)
+tensor F = A / B        ; element-wise divide
+tensor G = A ^ 2.0      ; element-wise power
+
+; --- Matrix multiplication: @ operator ---
+tensor W1 = [768 x 256]f32::randn()
+tensor x  = [32 x 768]f32::randn()    ; batch of 32 vectors
+tensor y  = x @ W1                    ; [32 x 256]f32
+
+; --- Scalar operations ---
+tensor scaled = A * 0.001             ; scale all elements
+tensor shifted = A + 1.0              ; shift all elements
+
+; --- Reduction operations ---
+let total   = A.sum()                         ; sum all elements → f32
+let row_sum = A.sum(dim: 1)                   ; sum along dim 1 → [1024]f32
+let col_max = A.max(dim: 0)                   ; max along dim 0 → [1024]f32
+let mean    = A.mean()                        ; mean of all elements → f32
+let norm    = A.norm(p: 2)                    ; L2 norm
+
+; --- Transpose ---
+tensor AT = A.T                        ; [1024 x 1024] → [1024 x 1024] (same here)
+tensor BT = B.T                        ; [1024 x 768] → [768 x 1024]
+
+; --- Reshape (zero-copy when contiguous) ---
+tensor flat  = A.reshape([1048576])           ; [1024 x 1024] → [1048576]
+tensor cube  = flat.reshape([64 x 128 x 128]) ; → [64 x 128 x 128]
+
+; --- View (alias, zero-copy — must be same total elements) ---
+tensor view  = A.view([2 x 512 x 1024])
+
+; --- Contiguous check (needed before some operations) ---
+tensor cont  = A.T.contiguous()        ; makes a contiguous copy of transpose
+
+; --- Concat and stack ---
+tensor rows = [A, B].concat(dim: 0)    ; stack on row axis
+tensor cols = [A, B].concat(dim: 1)    ; stack on column axis
+
+; =============================================================================
+; 4. SLICING & INDEXING
+; =============================================================================
+; jda slice syntax: tensor[dim0_range, dim1_range, ...]
+; Ranges: a..b (exclusive), a..=b (inclusive), : (all), ::S (stride S)
+
+tensor M = [512 x 768]f32::randn()
+
+; Row slice — rows 0..128
+tensor top_rows = M[0..128, :]          ; [128 x 768]f32
+
+; Column slice
+tensor left_cols = M[:, 0..256]         ; [512 x 256]f32
+
+; Sub-matrix
+tensor block = M[64..128, 128..256]     ; [64 x 128]f32
+
+; Single row (returns a 1D tensor)
+tensor row0 = M[0, :]                   ; [768]f32
+
+; Strided slice (every other row)
+tensor even_rows = M[::2, :]            ; [256 x 768]f32
+
+; Batch slicing on 3D tensor
+tensor X = [32 x 128 x 768]f32::randn()
+tensor batch0 = X[0, :, :]             ; [128 x 768]f32 — first sample
+tensor heads  = X[:, :, 0..64]         ; [32 x 128 x 64]f32
+
+; =============================================================================
+; 5. BROADCASTING
+; =============================================================================
+; Broadcasting follows NumPy rules — but checked AT COMPILE TIME.
+; No silent shape surprises at runtime.
+
+tensor A = [32 x 768]f32::randn()      ; batch of 32 vectors
+tensor b = [768]f32::zeros()           ; bias vector
+
+; Add bias to every row in the batch
+tensor out = A + b                     ; broadcasts [768] → [32 x 768]
+;             compiler verifies: [32, 768] + [768] → [32, 768]
+
+; Scale each row by a different factor
+tensor scales = [32]f32::randn()
+tensor scaled = A * scales.unsqueeze(1)  ; [32,1] * [32,768] → [32,768]
+
+; Broadcasting rules (compile-time verified):
+;   dims align from the RIGHT
+;   each dim must be equal OR one of them must be 1
+;   [32, 1, 768] + [1, 128, 768] → [32, 128, 768]  ✓
+;   [32, 64]     + [32, 128]     → COMPILE ERROR     ✗ (64 ≠ 128, neither is 1)
+
+; =============================================================================
+; 6. TENSOR IN FUNCTION SIGNATURES
+; =============================================================================
+
+; Static shapes — compiler checks at call site
+fn linear<const M: i64, const N: i64, const K: i64>(
+    x: ref Tensor<[M, K], f32>,
+    W: ref Tensor<[K, N], f32>,
+    b: ref Tensor<[N], f32>
+) -> Tensor<[M, N], f32> {
+    ret x @ W + b     ; shape: [M,K]@[K,N] + [N] = [M,N] — verified at compile time
+}
+
+; Dynamic inner dim (e.g. variable sequence length)
+fn embed<const B: i64, const V: i64, const D: i64>(
+    ids:    ref Tensor<[B, dyn], i32>,
+    weight: ref Tensor<[V, D], f32>
+) -> Tensor<[B, dyn, D], f32> {
+    ret weight[ids]    ; gather rows — output seq_len inherits from ids
+}
+
+; GPU-targeted function (compiler routes to PTX backend)
+@gpu
+fn matmul_gpu<const M: i64, const K: i64, const N: i64>(
+    A: ref Tensor<[M, K], f32>,
+    B: ref Tensor<[K, N], f32>
+) -> Tensor<[M, N], f32> {
+    ret A @ B    ; compiler emits PTX tiled matmul kernel
+}
+
+; =============================================================================
+; 7. MEMORY LAYOUT & DEVICE PLACEMENT
+; =============================================================================
+
+; CPU (default) — uses AVX-512 codegen
+tensor cpu_mat = [1024 x 1024]f32::randn()
+
+; GPU — allocated in VRAM, ops emit PTX
+@gpu tensor gpu_mat = [1024 x 1024]f32::randn()
+
+; Transfer CPU → GPU (PCIe DMA, no CUDA runtime)
+tensor on_gpu = cpu_mat.to_gpu()
+
+; Transfer GPU → CPU
+tensor on_cpu = gpu_mat.to_cpu()
+
+; Pinned memory (faster DMA transfers)
+@pinned tensor fast = [4096 x 4096]f32::zeros()
+
+; Memory layout
+tensor row_major = [512 x 512]f32::zeros()         ; default: C-order (row-major)
+tensor col_major = [512 x 512]f32::zeros(order: :F) ; Fortran-order (column-major)
+
+; =============================================================================
+; 8. COMPILE-TIME SHAPE ERRORS (examples)
+; =============================================================================
+
+; fn bad_matmul() {
+;     tensor A = [3 x 4]f32::randn()
+;     tensor B = [5 x 3]f32::randn()
+;     tensor C = A @ B
+;     ; COMPILE ERROR:
+;     ;   matmul shape mismatch
+;     ;   left:  [3 x 4]  — inner dim = 4
+;     ;   right: [5 x 3]  — inner dim = 5
+;     ;   4 ≠ 5
+; }
+;
+; fn bad_add() {
+;     tensor A = [32 x 64]f32::randn()
+;     tensor B = [32 x 128]f32::randn()
+;     tensor C = A + B
+;     ; COMPILE ERROR:
+;     ;   element-wise op shape mismatch
+;     ;   [32, 64] vs [32, 128]
+;     ;   dim 1: 64 ≠ 128, neither is 1 (not broadcastable)
+; }
