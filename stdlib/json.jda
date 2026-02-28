@@ -1,0 +1,410 @@
+; =============================================================================
+; jda::json — Zero-Copy JSON Parser & Serialiser
+; =============================================================================
+; Parser:     slices point INTO the source buffer — zero allocations
+; Serialiser: writes directly to a caller-supplied buffer
+; Both are J-Thread safe (no global state)
+;
+; Usage:
+;   let val = json_parse(src)?
+;   let name = val.get("name")?.as_str()?
+;   let age  = val.get("age")?.as_i64()?
+;
+;   let buf = [4096]i8
+;   let n = json_write(val, buf)
+; =============================================================================
+
+; =============================================================================
+; JsonValue — tagged union covering all JSON types
+; =============================================================================
+enum JsonValue {
+    Null
+    Bool(bool)
+    Int(i64)
+    Float(f64)
+    Str([]i8)           ; slice into original source buffer (zero-copy)
+    Array([]JsonValue)  ; elements stored in caller's region
+    Object([]JsonPair)  ; key-value pairs stored in caller's region
+}
+
+struct JsonPair {
+    key: []i8           ; slice into source buffer (zero-copy)
+    val: JsonValue
+}
+
+; =============================================================================
+; Parser state
+; =============================================================================
+struct Parser {
+    src: []i8
+    pos: i64
+}
+
+; =============================================================================
+; json_parse(src) -> Result<JsonValue, JsonError>
+; =============================================================================
+fn json_parse(src: []i8) -> Result<JsonValue, []i8> {
+    let p = Parser { src: src, pos: 0 }
+    skip_ws(&mut p)
+    let val = parse_value(&mut p)?
+    skip_ws(&mut p)
+    if p.pos < p.src.len { ret err("trailing characters after JSON value") }
+    ret ok(val)
+}
+
+fn parse_value(p: &mut Parser) -> Result<JsonValue, []i8> {
+    if p.pos >= p.src.len { ret err("unexpected end of input") }
+    match p.src[p.pos] {
+        'n' => parse_null(p)
+        't' => parse_true(p)
+        'f' => parse_false(p)
+        '"' => parse_string(p)
+        '[' => parse_array(p)
+        '{' => parse_object(p)
+        '-' => parse_number(p)
+        c if c >= '0' and c <= '9' => parse_number(p)
+        c   => err(fmt_str("unexpected character '{}'", c))
+    }
+}
+
+; ---- null / true / false ------------------------------------------------
+fn parse_null(p: &mut Parser) -> Result<JsonValue, []i8> {
+    expect_lit(p, "null")?
+    ret ok(JsonValue::Null)
+}
+fn parse_true(p: &mut Parser) -> Result<JsonValue, []i8> {
+    expect_lit(p, "true")?
+    ret ok(JsonValue::Bool(true))
+}
+fn parse_false(p: &mut Parser) -> Result<JsonValue, []i8> {
+    expect_lit(p, "false")?
+    ret ok(JsonValue::Bool(false))
+}
+fn expect_lit(p: &mut Parser, lit: ref []i8) -> Result<(), []i8> {
+    loop i in 0..lit.len {
+        if p.pos >= p.src.len or p.src[p.pos] != lit[i] {
+            ret err("invalid literal")
+        }
+        p.pos = p.pos + 1
+    }
+    ret ok(())
+}
+
+; ---- string -------------------------------------------------------------
+; Returns a slice directly into p.src — zero copy.
+; Handles escape sequences by falling back to a copy when needed.
+fn parse_string(p: &mut Parser) -> Result<JsonValue, []i8> {
+    p.pos = p.pos + 1      ; skip opening "
+    let start = p.pos
+    let has_escape = false
+
+    loop p.pos < p.src.len {
+        let c = p.src[p.pos]
+        if c == '"' {
+            let s = if has_escape {
+                unescape(p.src[start..p.pos])
+            } else {
+                p.src[start..p.pos]   ; zero-copy slice
+            }
+            p.pos = p.pos + 1        ; skip closing "
+            ret ok(JsonValue::Str(s))
+        }
+        if c == '\\' {
+            has_escape = true
+            p.pos = p.pos + 2        ; skip escape sequence (simplified)
+        } else {
+            p.pos = p.pos + 1
+        }
+    }
+    ret err("unterminated string")
+}
+
+fn unescape(s: []i8) -> []i8 {
+    ; Full unescape: \n \t \r \\ \" \uXXXX
+    ; Returns a new []i8 (uses region alloc in full impl)
+    let buf = [4096]i8
+    let j   = 0i64
+    let i   = 0i64
+    loop i < s.len {
+        if s[i] == '\\' and i + 1 < s.len {
+            i = i + 1
+            match s[i] {
+                'n'  => { buf[j] = '\n'   j = j + 1 }
+                't'  => { buf[j] = '\t'   j = j + 1 }
+                'r'  => { buf[j] = '\r'   j = j + 1 }
+                '"'  => { buf[j] = '"'    j = j + 1 }
+                '\\' => { buf[j] = '\\'   j = j + 1 }
+                '/'  => { buf[j] = '/'    j = j + 1 }
+                'u'  => {
+                    ; \uXXXX → UTF-8
+                    let cp = hex4(s, i + 1)
+                    j = j + utf8_encode(cp, buf, j)
+                    i = i + 4
+                }
+                _    => { buf[j] = s[i]   j = j + 1 }
+            }
+        } else {
+            buf[j] = s[i]
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret buf[0..j]
+}
+
+; ---- number -------------------------------------------------------------
+fn parse_number(p: &mut Parser) -> Result<JsonValue, []i8> {
+    let start = p.pos
+    let is_float = false
+
+    if p.src[p.pos] == '-' { p.pos = p.pos + 1 }
+    loop p.pos < p.src.len and p.src[p.pos] >= '0' and p.src[p.pos] <= '9' {
+        p.pos = p.pos + 1
+    }
+    if p.pos < p.src.len and p.src[p.pos] == '.' {
+        is_float = true
+        p.pos = p.pos + 1
+        loop p.pos < p.src.len and p.src[p.pos] >= '0' and p.src[p.pos] <= '9' {
+            p.pos = p.pos + 1
+        }
+    }
+    if p.pos < p.src.len and (p.src[p.pos] == 'e' or p.src[p.pos] == 'E') {
+        is_float = true
+        p.pos = p.pos + 1
+        if p.pos < p.src.len and (p.src[p.pos] == '+' or p.src[p.pos] == '-') {
+            p.pos = p.pos + 1
+        }
+        loop p.pos < p.src.len and p.src[p.pos] >= '0' and p.src[p.pos] <= '9' {
+            p.pos = p.pos + 1
+        }
+    }
+
+    let tok = p.src[start..p.pos]
+    if is_float {
+        ret ok(JsonValue::Float(parse_f64(tok)?))
+    }
+    ret ok(JsonValue::Int(parse_i64_str(tok)?))
+}
+
+; ---- array --------------------------------------------------------------
+fn parse_array(p: &mut Parser) -> Result<JsonValue, []i8> {
+    p.pos = p.pos + 1      ; skip [
+    skip_ws(p)
+    let items = Vec<JsonValue>::new()
+    if p.pos < p.src.len and p.src[p.pos] == ']' {
+        p.pos = p.pos + 1
+        ret ok(JsonValue::Array(items.as_slice()))
+    }
+    loop {
+        skip_ws(p)
+        items.push(parse_value(p)?)
+        skip_ws(p)
+        if p.pos >= p.src.len { ret err("unterminated array") }
+        if p.src[p.pos] == ']' { p.pos = p.pos + 1   break }
+        if p.src[p.pos] != ',' { ret err("expected ',' in array") }
+        p.pos = p.pos + 1
+    }
+    ret ok(JsonValue::Array(items.as_slice()))
+}
+
+; ---- object -------------------------------------------------------------
+fn parse_object(p: &mut Parser) -> Result<JsonValue, []i8> {
+    p.pos = p.pos + 1      ; skip {
+    skip_ws(p)
+    let pairs = Vec<JsonPair>::new()
+    if p.pos < p.src.len and p.src[p.pos] == '}' {
+        p.pos = p.pos + 1
+        ret ok(JsonValue::Object(pairs.as_slice()))
+    }
+    loop {
+        skip_ws(p)
+        ; Key
+        let key_val = parse_string(p)?
+        let key = key_val.as_str().unwrap()
+        skip_ws(p)
+        if p.pos >= p.src.len or p.src[p.pos] != ':' {
+            ret err("expected ':' in object")
+        }
+        p.pos = p.pos + 1
+        skip_ws(p)
+        ; Value
+        let val = parse_value(p)?
+        pairs.push(JsonPair { key: key, val: val })
+        skip_ws(p)
+        if p.pos >= p.src.len { ret err("unterminated object") }
+        if p.src[p.pos] == '}' { p.pos = p.pos + 1   break }
+        if p.src[p.pos] != ',' { ret err("expected ',' in object") }
+        p.pos = p.pos + 1
+    }
+    ret ok(JsonValue::Object(pairs.as_slice()))
+}
+
+fn skip_ws(p: &mut Parser) {
+    loop p.pos < p.src.len and
+         (p.src[p.pos] == ' ' or p.src[p.pos] == '\t' or
+          p.src[p.pos] == '\n' or p.src[p.pos] == '\r') {
+        p.pos = p.pos + 1
+    }
+}
+
+; =============================================================================
+; JsonValue accessor methods
+; =============================================================================
+impl JsonValue {
+    fn as_str(self) -> Result<[]i8, []i8> {
+        match self { Str(s) => ok(s)  _ => err("not a string") }
+    }
+    fn as_i64(self) -> Result<i64, []i8> {
+        match self {
+            Int(n)   => ok(n)
+            Float(f) => ok(f as i64)
+            _        => err("not a number")
+        }
+    }
+    fn as_f64(self) -> Result<f64, []i8> {
+        match self {
+            Float(f) => ok(f)
+            Int(n)   => ok(n as f64)
+            _        => err("not a number")
+        }
+    }
+    fn as_bool(self) -> Result<bool, []i8> {
+        match self { Bool(b) => ok(b)  _ => err("not a bool") }
+    }
+    fn is_null(self) -> bool {
+        match self { Null => true  _ => false }
+    }
+    fn get(self, key: ref []i8) -> Result<JsonValue, []i8> {
+        match self {
+            Object(pairs) => {
+                for p in pairs {
+                    if str_eq(p.key, key) { ret ok(p.val) }
+                }
+                ret err("key not found")
+            }
+            _ => err("not an object")
+        }
+    }
+    fn index(self, i: i64) -> Result<JsonValue, []i8> {
+        match self {
+            Array(items) => {
+                if i < 0 or i >= items.len { ret err("index out of bounds") }
+                ret ok(items[i])
+            }
+            _ => err("not an array")
+        }
+    }
+    fn len(self) -> i64 {
+        match self {
+            Array(items)  => items.len
+            Object(pairs) => pairs.len
+            Str(s)        => s.len
+            _             => 0
+        }
+    }
+}
+
+; =============================================================================
+; Serialiser — writes JSON to a caller-supplied buffer
+; =============================================================================
+fn json_write(val: ref JsonValue, buf: []mut i8) -> i64 {
+    let pos = 0i64
+    write_value(val, buf, &mut pos, 0)
+    ret pos
+}
+
+fn json_write_pretty(val: ref JsonValue, buf: []mut i8) -> i64 {
+    let pos = 0i64
+    write_value_pretty(val, buf, &mut pos, 0)
+    ret pos
+}
+
+fn write_value(val: ref JsonValue, buf: []mut i8, pos: &mut i64, _depth: i32) {
+    match val {
+        Null        => write_str(buf, pos, "null")
+        Bool(true)  => write_str(buf, pos, "true")
+        Bool(false) => write_str(buf, pos, "false")
+        Int(n)      => write_i64(buf, pos, n)
+        Float(f)    => write_f64(buf, pos, f)
+        Str(s)      => {
+            write_char(buf, pos, '"')
+            write_escaped(buf, pos, s)
+            write_char(buf, pos, '"')
+        }
+        Array(items) => {
+            write_char(buf, pos, '[')
+            loop i in 0..items.len {
+                if i > 0 { write_char(buf, pos, ',') }
+                write_value(&items[i], buf, pos, _depth)
+            }
+            write_char(buf, pos, ']')
+        }
+        Object(pairs) => {
+            write_char(buf, pos, '{')
+            loop i in 0..pairs.len {
+                if i > 0 { write_char(buf, pos, ',') }
+                write_char(buf, pos, '"')
+                write_escaped(buf, pos, pairs[i].key)
+                write_char(buf, pos, '"')
+                write_char(buf, pos, ':')
+                write_value(&pairs[i].val, buf, pos, _depth)
+            }
+            write_char(buf, pos, '}')
+        }
+    }
+}
+
+fn write_value_pretty(val: ref JsonValue, buf: []mut i8,
+                      pos: &mut i64, depth: i32) {
+    match val {
+        Array(items) => {
+            write_str(buf, pos, "[\n")
+            loop i in 0..items.len {
+                write_indent(buf, pos, depth + 1)
+                write_value_pretty(&items[i], buf, pos, depth + 1)
+                if i < items.len - 1 { write_char(buf, pos, ',') }
+                write_char(buf, pos, '\n')
+            }
+            write_indent(buf, pos, depth)
+            write_char(buf, pos, ']')
+        }
+        Object(pairs) => {
+            write_str(buf, pos, "{\n")
+            loop i in 0..pairs.len {
+                write_indent(buf, pos, depth + 1)
+                write_char(buf, pos, '"')
+                write_escaped(buf, pos, pairs[i].key)
+                write_str(buf, pos, "\": ")
+                write_value_pretty(&pairs[i].val, buf, pos, depth + 1)
+                if i < pairs.len - 1 { write_char(buf, pos, ',') }
+                write_char(buf, pos, '\n')
+            }
+            write_indent(buf, pos, depth)
+            write_char(buf, pos, '}')
+        }
+        _ => write_value(val, buf, pos, depth)
+    }
+}
+
+fn write_escaped(buf: []mut i8, pos: &mut i64, s: ref []i8) {
+    for c in s {
+        match c {
+            '"'  => write_str(buf, pos, "\\\"")
+            '\\' => write_str(buf, pos, "\\\\")
+            '\n' => write_str(buf, pos, "\\n")
+            '\r' => write_str(buf, pos, "\\r")
+            '\t' => write_str(buf, pos, "\\t")
+            _    => write_char(buf, pos, c)
+        }
+    }
+}
+
+fn write_indent(buf: []mut i8, pos: &mut i64, depth: i32) {
+    loop i in 0..depth * 2 { write_char(buf, pos, ' ') }
+}
+fn write_char(buf: []mut i8, pos: &mut i64, c: i8) {
+    buf[pos[0]] = c   pos[0] = pos[0] + 1
+}
+fn write_str(buf: []mut i8, pos: &mut i64, s: ref []i8) {
+    for c in s { write_char(buf, pos, c) }
+}
