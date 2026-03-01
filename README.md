@@ -1,3 +1,5 @@
+Resume this session with:
+claude --resume 7627b7af-13c4-4e12-8cd6-cd1973a75044
 # Jda
 
 **Ruby-readable. Machine-code fast. Zero dependencies.**
@@ -235,7 +237,7 @@ Hello Bare Metal
 
 ### Manual (inside the Docker container)
 ```bash
-docker run --rm -it -v $(PWD):/jda jda-build bash
+docker run --rm -it --platform=linux/amd64 -v $(PWD):/jda jda-build bash
 
 # Inside container:
 cd /jda/bootstrap/stage0
