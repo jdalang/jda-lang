@@ -51,10 +51,11 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ---
 
-### 6. Fix `ptr[idx] = struct_val` large copy
+### 6. Fix `ptr[idx] = struct_val` large copy [DONE ✅]
 **File:** `p2_loop` / global variable handling
 **Symptom:** `jda1.jda` has `let argv_ptr = 0` at top level (outside any function).
 **Fix:** Ensure pass 2 main loop handles top-level `let` by adding to `glb_tbl` and emitting initialisation into the data/bss section rather than generating stack code.
+**Implementation:** Added .p1_let handler in Pass 1 to recognize and register top-level `let` statements in glb_tbl.
 
 ---
 
@@ -115,7 +116,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 - `else if` chain compilation support (recursive call in `.gs_if`)
 - Compound `or`/`and` conditions with precedence and short-circuiting (restructured `gen_expr`)
 - `ptr[0] = val` deref-write fix (fixed pop order and `lv_*` clobbering)
-- Top-level `let` support in Pass 1 (required for `argv_ptr`)
+- Top-level `let` support in Pass 1 (`.p1_let` handler registers globals in `glb_tbl`)
 
                                                                                                                           
 ⏺ Sure. Let me enumerate all remaining issues based on what we know:                                                        
@@ -135,7 +136,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
   │ 36  │ Fix ptr[0] = val deref-write                           │ DONE            │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 37  │ Fix ptr[idx] = struct_val large copy                   │ Pending         │ 
+  │ 37  │ Fix ptr[idx] = struct_val large copy                   │ DONE         │ 
                                         
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                      
   │ 38  │ Fix inline asm asm { out var = reg }                   │ Pending         │                                        
