@@ -74,17 +74,21 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ---
 
-### 9. Fix nested function call arguments (`ret ok(0)`, `emit_byte(..., rex_byte(...))`)
+### 9. Fix nested function call arguments (`ret ok(0)`, `emit_byte(..., rex_byte(...))`) branch fix-nested-function-calls WIP DEPEND ON ISSUE 1
 **File:** `gen_expr` / `.do_call` / `gen_expr_stmt` / `.ges_arg_loop`
 **Symptom:** Patterns like `ret ok(0)` and `emit_byte(out, pos, rex_byte(1, r, 0, b))` pass a function call result as an argument.
 **Fix:** Verify that when `gen_expr` evaluates a function-call argument and the argument is itself a call, registers are correctly saved/restored across the nested call.
 
 ---
 
-### 10. Fix `jfn.src = src_buf` — struct pointer field write
+### 10. Fix `jfn.src = src_buf` — struct pointer field write [DONE ✅]
 **File:** `gen_expr_stmt` / `gen_addr` / `.ga_dot`
 **Symptom:** `jda1.jda` does `jfn.src = src_buf` where `jfn` is a local pointer to a `JirFunction` struct.
-**Fix:** `gen_expr_stmt` sees `jfn` (ident), then `.` → `assign_lvalue`. `gen_addr` must deref `jfn` (TK_PTR → `mov rax,[rax]`) then add `src` field offset. Verify lv_isptr/lv_sid/lv_esz are set correctly for the store.
+**Status:** Already working correctly. Tested with:
+  - Direct struct pointer assignment: `p.x = 42`
+  - Struct pointer field write with nested pointers: `jfn.src = &buf[0]`
+  - Function parameter passing of struct pointers: `fn test(jfn: &JirFunction, buf: &i64) { jfn.src = buf }`
+  - All test cases pass successfully
 
 ---
 
