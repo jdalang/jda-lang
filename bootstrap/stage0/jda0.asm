@@ -3406,11 +3406,21 @@ gen_addr:
     call    emit4
 
 .ga_post:
-    ; if it was a pointer local/global, we need to load the pointer value from the address in rax
+    ; For pointer locals (lv_isptr=1): always deref to load the pointer value for navigation/read.
+    ; For struct locals (lv_sid != -1): skip deref, navigate from stack address.
+    ; For plain scalar locals (lv_isptr=0, lv_sid=-1): only deref if navigation (.[) follows;
+    ; otherwise gen_expr emits the correct-width load from the stack address returned.
     cmp     qword [lv_isptr], 0
     jne     .ga_post_do_deref
     cmp     qword [lv_sid], -1
     jne     .ga_post_loop       ; struct local (stored as ptr but lv_sid is set)
+    ; scalar: only deref if navigation (. or [) follows
+    call    cur_tok_type
+    cmp     rax, TOK_DOT
+    je      .ga_post_do_deref
+    cmp     rax, TOK_LBRACK
+    je      .ga_post_do_deref
+    jmp     .ga_post_loop       ; plain scalar: return stack addr; gen_expr loads the value
 .ga_post_do_deref:
     ; emit: mov rax, [rax]
     mov     rdi, 0x48
@@ -3565,10 +3575,8 @@ gen_addr:
     mov     rdi, 0xD8
     call    emit1
     call    adv_tok         ; skip ']'
-    ; If we indexed into a scalar pointer, the result address should be treated as a pointer lvalue
-    cmp     qword [lv_sid], -1
-    jne     .ga_idx_done
-    mov     qword [lv_isptr], 1
+    ; lv_esz already carries the element size; lv_isptr stays 0 so
+    ; the caller (gen_expr / gen_expr_stmt) uses the esz-based load/store path.
 .ga_idx_done:
     jmp     .ga_post_loop
 
@@ -4244,12 +4252,10 @@ gen_stmt:
     call    get_cur_tok_ptr
     mov     r12, [rax+8]
     mov     r13, [rax+16]
-    ; compare with "out"
-    lea     rbx, [kw_out]
-    mov     r8, r12
-    mov     r9, r13
-    ; strncmp_src: rbx=nul-term string, r8=start, r9=len -> rax=1/0
-    mov     rdx, rbx
+    ; compare with "out": strncmp_src(rbx=src_offset, rcx=len, rdx=ref_string)
+    mov     rbx, r12        ; rbx = name_start (offset into src_buf)
+    mov     rcx, r13        ; rcx = name_len
+    lea     rdx, [kw_out]   ; rdx = "out\0"
     call    strncmp_src
     cmp     rax, 1
     jne     .gs_asm_check_in
@@ -4857,12 +4863,12 @@ p2_gen:
     call    emit1
     mov     rdi, 0xC7
     call    emit1
-    ; pass argv to main: lea rdi, [rsp+8]
+    ; pass argv to main: lea rsi, [rsp+8]  (rsi = pointer to argv array)
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x8D
     call    emit1
-    mov     rdi, 0x7C
+    mov     rdi, 0x74         ; reg=6=rsi, rm=4(SIB), mod=01 -> 0x74
     call    emit1
     mov     rdi, 0x24
     call    emit1

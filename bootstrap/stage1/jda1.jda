@@ -285,10 +285,20 @@ fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
 fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
     let pos   = 0
     let count = 0
+    print("lex: entered, src_len=")
+    print(src_len)
+    print("\n")
 
     loop pos < src_len {
         let c = src[pos]
         let next_ok = pos + 1 < src_len
+        if pos < 3 {
+            print("lex: pos=")
+            print(pos)
+            print(" c=")
+            print(c)
+            print("\n")
+        }
 
         ; Skip whitespace
         if c == ' ' or c == '\t' or c == '\n' or c == '\r' {
@@ -1708,22 +1718,35 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
 ; 13. ENTRY POINT
 ; ============================================================
 
-fn main(argc: i64, argv: &i8[]) {
+fn main() {
+    ; Capture argv FIRST before any calls clobber rsi
+    let argv_ptr = 0
+    asm { out argv_ptr = rsi }
+
     print("jda1: start\n")
     let src_buf  = alloc_pages(8)
     let toks    = alloc_pages(4)
     let code_buf = alloc_pages(8)
-    
-    asm { out argv_ptr = rsi }
-    let src_path = get_argv(1)
-    let out_path = get_argv(2)
-    
+
+    let src_path = get_argv(argv_ptr, 1)
+    let out_path = get_argv(argv_ptr, 2)
+
     let src_fd = syscall(2, src_path, 0, 0)
+    print("src_fd=")
+    print(src_fd)
+    print("\n")
     let src_len = syscall(0, src_fd, src_buf, 32768)
+    print("src_len=")
+    print(src_len)
+    print("\n")
     syscall(3, src_fd, 0, 0)
-    
+
     let tok_cnt = 0
+    print("before lex\n")
     lex(src_buf, src_len, toks, &tok_cnt)
+    print("tok_cnt=")
+    print(tok_cnt)
+    print("\n")
     
     let ast = Node{}
     let pos = 0
@@ -1762,8 +1785,7 @@ fn main(argc: i64, argv: &i8[]) {
     }
     print("jda1: writing elf\n")
 
-    ; Write ELF output: argv[2]
-    let out_path = get_argv(argv, 2)
+    ; Write ELF output: out_path already captured above
     let out_fd   = syscall(2, out_path, 577, 493)  ; open(O_WRONLY|O_CREAT|O_TRUNC, 0755)
     write_elf(out_fd, code_buf, code_len, &jfn.strtab, jfn.strtab_pos)
     syscall(3, out_fd, 0, 0)                       ; close
