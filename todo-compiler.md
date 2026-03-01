@@ -35,10 +35,11 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ---
 
-### 4. Fix compound `or`/`and` conditions in loop/if
+### 4. Fix compound `or`/`and` conditions in loop/if [DONE ✅]
 **File:** `gen_expr` / `.do_and` / `.do_or`
 **Symptom:** `jda1.jda` uses `c == ' ' or c == '\t' or c == '\n' or c == '\r'` as `if` conditions and `pos < src_len and src[pos] != '\n'` in `loop` conditions.
-**Fix:** Verify chained short-circuit `or`/`and` produces correct 0/1 and that `test rax,rax; jz` handles multi-condition chains correctly.
+**Fix:** Restructured `gen_expr` into multiple precedence levels (`gen_expr` for `or`, `gen_expr_and` for `and`, `gen_expr_cmp` for comparisons, `gen_expr_base` for arithmetic/primary). Implemented short-circuit evaluation using `rel32` jumps to support long chains. Added normalization to 0/1 for `and`/`or` results.
+**Test:** `if A or B or C` without parentheses.
 
 ---
 
@@ -111,6 +112,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 - `lv_esz` / `lv_sid` save/restore in `.ga_index`
 - `let` inside loop body local accumulation fix (save/restore in `gen_block_body`)
 - `else if` chain compilation support (recursive call in `.gs_if`)
+- Compound `or`/`and` conditions with precedence and short-circuiting (restructured `gen_expr`)
 
                                                                                                                           
 ⏺ Sure. Let me enumerate all remaining issues based on what we know:                                                        
@@ -126,10 +128,10 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
   │ 34  │ Fix else if chain compilation                          │ DONE            │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 35  │ Fix compound or/and conditions                         │ Pending         │ 
+  │ 35  │ Fix compound or/and conditions                         │ DONE            │ 
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
+  │ 36  │ Fix ptr[0] = val deref-write                           │ Pending         │ 
                                         
-  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 36  │ Fix ptr[0] = val deref-write                           │ Pending         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
   │ 37  │ Fix top-level global let                               │ Pending         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                      
