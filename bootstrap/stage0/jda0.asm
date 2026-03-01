@@ -1834,7 +1834,227 @@ lookup_global:
 ; Handles: INT, CHAR, STR, IDENT (local/global/const/fn-call), unary-, &, binary ops
 ; Note: complex LHS.field and x[i] are handled by gen_lvalue/gen_field
 ; =============================================================================
+; =============================================================================
+; gen_expr — evaluate expression into rax (TOP LEVEL: handles 'or')
+; =============================================================================
 gen_expr:
+    push    rbp
+    mov     rbp, rsp
+    push    r14
+    call    gen_expr_and
+.lp:
+    call    cur_tok_type
+    cmp     rax, TOK_OR
+    jne     .done
+    call    adv_tok
+    ; short circuit: if rax!=0 skip rhs
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x85
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; test rax,rax
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x85
+    call    emit1
+    mov     r14, [cod_len]
+    mov     rdi, 0
+    call    emit4  ; placeholder rel32
+    call    gen_expr_and
+    ; patch
+    mov     rax, [cod_len]
+    sub     rax, r14
+    sub     rax, 4
+    lea     rbx, [cod_buf]
+    add     rbx, r14
+    mov     [rbx], eax
+    ; normalize result to 0/1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x85
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; test rax,rax
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x95
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; setnz al
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; movzx rax, al
+    jmp     .lp
+.done:
+    pop     r14
+    leave
+    ret
+
+; =============================================================================
+; gen_expr_and — handles 'and'
+; =============================================================================
+gen_expr_and:
+    push    rbp
+    mov     rbp, rsp
+    push    r14
+    call    gen_expr_cmp
+.lp:
+    call    cur_tok_type
+    cmp     rax, TOK_AND
+    jne     .done
+    call    adv_tok
+    ; short circuit: if rax==0 skip rhs
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x85
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; test rax,rax
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x84
+    call    emit1
+    mov     r14, [cod_len]
+    mov     rdi, 0
+    call    emit4  ; placeholder rel32
+    call    gen_expr_cmp
+    ; patch
+    mov     rax, [cod_len]
+    sub     rax, r14
+    sub     rax, 4
+    lea     rbx, [cod_buf]
+    add     rbx, r14
+    mov     [rbx], eax
+    ; normalize result to 0/1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x85
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; test rax,rax
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x95
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; setnz al
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; movzx rax, al
+    jmp     .lp
+.done:
+    pop     r14
+    leave
+    ret
+
+; =============================================================================
+; gen_expr_cmp — handles ==, !=, <, >, <=, >=
+; =============================================================================
+gen_expr_cmp:
+    push    rbp
+    mov     rbp, rsp
+    push    r12
+    call    gen_expr_base
+.lp:
+    call    cur_tok_type
+    mov     r12, rax        ; r12 = operator
+    cmp     rax, TOK_EQEQ
+    je      .do_cmp
+    cmp     rax, TOK_NEQ
+    je      .do_cmp
+    cmp     rax, TOK_LT
+    je      .do_cmp
+    cmp     rax, TOK_GT
+    je      .do_cmp
+    cmp     rax, TOK_LTEQ
+    je      .do_cmp
+    cmp     rax, TOK_GTEQ
+    je      .do_cmp
+    jmp     .done
+.do_cmp:
+    call    adv_tok
+    mov     rdi, 0x50       ; push rax (LHS)
+    call    emit1
+    call    gen_expr_base
+    mov     rdi, 0x5B       ; pop rbx (LHS)
+    call    emit1
+    ; cmp rbx, rax
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x39
+    call    emit1
+    mov     rdi, 0xC3
+    call    emit1
+    ; setCC al
+    mov     rax, r12
+    cmp     rax, TOK_EQEQ
+    je      .eq
+    cmp     rax, TOK_NEQ
+    je      .ne
+    cmp     rax, TOK_LT
+    je      .lt
+    cmp     rax, TOK_GT
+    je      .gt
+    cmp     rax, TOK_LTEQ
+    je      .le
+    cmp     rax, TOK_GTEQ
+    je      .ge
+.eq:
+    mov rdi, 0x94
+    jmp .sc
+.ne:
+    mov rdi, 0x95
+    jmp .sc
+.lt:
+    mov rdi, 0x9C
+    jmp .sc
+.gt:
+    mov rdi, 0x9F
+    jmp .sc
+.le:
+    mov rdi, 0x9E
+    jmp .sc
+.ge:
+    mov rdi, 0x9D
+    jmp .sc
+.sc:
+    push    rdi
+    mov     rdi, 0x0F
+    call    emit1
+    pop     rdi
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1   ; setCC al
+    ; movzx rax, al
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    jmp     .lp
+.done:
+    pop     r12
+    leave
+    ret
+
+; =============================================================================
+; gen_expr_base — handles arithmetic, bitwise, literals, idents, parens, unary
+; =============================================================================
+gen_expr_base:
     push    rbp
     mov     rbp, rsp
     push    r12
@@ -1962,7 +2182,7 @@ gen_expr:
     cmp     rax, TOK_MINUS
     jne     .not_neg
     call    adv_tok
-    call    gen_expr
+    call    gen_expr_base   ; unary minus binds tighter than binary ops
     ; emit: neg rax
     mov     rdi, 0x48
     call    emit1
@@ -1994,7 +2214,7 @@ gen_expr:
     cmp     rax, TOK_LPAREN
     jne     .not_lparen
     call    adv_tok             ; skip '('
-    call    gen_expr            ; evaluate inner expr → rax
+    call    gen_expr            ; evaluate inner expr → rax (TOP LEVEL)
     call    adv_tok             ; skip ')'
     jmp     .maybe_binary
 .not_lparen:
@@ -2108,25 +2328,19 @@ gen_expr:
 .do_call:
     ; fn call: NAME(arg0, arg1, ...) — up to 6 args
     call    adv_tok         ; skip '('
-    ; push args in reverse... simplified: collect up to 6 args
-    ; Save our state
     push    r12
     push    r13
-    ; collect arguments: gen each, push to stack
-    ; Then pop into registers rdi, rsi, rdx, rcx, r8, r9
     xor     r14, r14        ; arg count
-    ; First, emit a sub rsp alignment later — for now just generate args
 .call_arg_loop:
     call    cur_tok_type
     cmp     rax, TOK_RPAREN
     je      .call_done_args
     cmp     rax, TOK_EOF
     je      .call_done_args
-    call    gen_expr
-    ; emit: push rax (50)
-    mov     rdi, 0x50
+    call    gen_expr        ; TOP LEVEL
+    mov     rdi, 0x50       ; push rax
     call    emit1
-    inc     r14             ; arg_count++
+    inc     r14
     call    cur_tok_type
     cmp     rax, TOK_COMMA
     jne     .call_arg_loop
@@ -2136,115 +2350,59 @@ gen_expr:
     call    adv_tok         ; skip ')'
     pop     r13
     pop     r12
-    ; pop args into arg registers in order (r14 = count)
-    ; args are on stack in reverse: top of stack = last arg
-    ; we need: rdi=arg0, rsi=arg1, rdx=arg2, rcx=arg3, r8=arg4, r9=arg5
-    ; So pop in reverse from [r14-1] down to 0, assign to regs
-    ; Simplification: pop all into regs in reverse order
-    ; pop last arg first = pop into last reg, pop first arg last = pop into rdi
-    ; Emit: pop r9, pop r8, pop rcx, pop rdx, pop rsi, pop rdi (up to r14 times)
-    ; The arg regs reversed: r9,r8,rcx,rdx,rsi,rdi
-    push    r14
-    ; For each arg (from count-1 down to 0):
-    ; But we don't know count at NASM generation time (it's a runtime value!)
-    ; This is the key challenge: we need to generate code at compile time
-    ; Workaround: always emit pop for 6 regs, unused pops are harmless if we
-    ; also emit sub rsp back after. Actually: always pop exactly 6 args
-    ; (the caller padded with zeros if < 6 args). This is wrong.
-    ; Better approach: use a loop to pop, but that requires runtime logic.
-    ;
-    ; For a COMPILER generating code, we know arg count at COMPILE time!
-    ; The issue is gen_expr generates code for arguments as it sees them.
-    ; At runtime of jda0 generating code for jda1.jda, r14 is the arg count.
-    ;
-    ; So we emit a runtime conditional pop sequence.
-    ; Simplification: emit pop for up to 6 args using the runtime r14 value
-    ; This requires emitting code that checks r14 at RUNTIME of generated binary.
-    ;
-    ; This is getting too complex. Use a fixed-arity approach:
-    ; Emit code that:
-    ;   if count >= 1: pop rdi
-    ;   if count >= 2: pop rsi  ... etc.
-    ; But the generated code needs this logic!
-    ;
-    ; CORRECT APPROACH: Since jda0 is COMPILING, not interpreting,
-    ; jda0 processes each function call and KNOWS the arg count at compile time.
-    ; At the point we're generating code for "fn_call(a,b,c)",
-    ; jda0 has parsed 3 args. So r14=3 at jda0 runtime during compilation.
-    ; We can emit the EXACT right number of pop instructions.
-    pop     r14
-    ; r14 = actual arg count at jda0 compile time
-    ; Emit pop instructions: for arg0 last, ..., for argN-1 first
-    ; Stack layout (top=top): argN-1, ..., arg1, arg0
-    ; Need in regs: rdi=arg0, rsi=arg1, ...
-    ; So emit: pop rdi (if r14>=1), pop rsi (if r14>=2), ...
-    ; But we emit at JDA0 COMPILE TIME so just use r14 comparisons:
-    ; emit pops in REVERSE arg order: highest reg first, rdi last
-    ; args pushed left-to-right, so top of stack = last arg
-    ; to get rdi=arg0: must pop highest regs first
+    ; pop into arg regs (rdi, rsi, rdx, rcx, r8, r9)
     cmp     r14, 6
     jl      .cpop5
-    ; pop r9 = 41 59
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x59
-    call    emit1
+    call    emit1 ; pop r9
 .cpop5:
     cmp     r14, 5
     jl      .cpop4
-    ; pop r8 = 41 58
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x58
-    call    emit1
+    call    emit1 ; pop r8
 .cpop4:
     cmp     r14, 4
     jl      .cpop3
-    mov     rdi, 0x59       ; pop rcx
-    call    emit1
+    mov     rdi, 0x59
+    call    emit1 ; pop rcx
 .cpop3:
     cmp     r14, 3
     jl      .cpop2
-    mov     rdi, 0x5A       ; pop rdx
-    call    emit1
+    mov     rdi, 0x5A
+    call    emit1 ; pop rdx
 .cpop2:
     cmp     r14, 2
     jl      .cpop1
-    mov     rdi, 0x5E       ; pop rsi
-    call    emit1
+    mov     rdi, 0x5E
+    call    emit1 ; pop rsi
 .cpop1:
     cmp     r14, 1
     jl      .call_emit_done
-    mov     rdi, 0x5F       ; pop rdi (last: gets arg0)
-    call    emit1
+    mov     rdi, 0x5F
+    call    emit1 ; pop rdi
 .call_emit_done:
-    ; stack alignment: if r14 is odd, rsp is now misaligned by 8
-    ; (caller had pushed r14 args, each 8 bytes; before call rsp must be 16-aligned)
-    ; We just emit `and rsp, -16` before call + restore after
-    ; But this is complex. Use sub/add rsp for alignment.
-    ; For now, emit: call rel32 (E8 XX XX XX XX)
-    ; Look up fn label in fn_tbl
     push    r12
     push    r13
     push    r14
     mov     r8, r12
     mov     r9, r13
     call    lookup_fn
-    mov     r11, rax        ; save fn entry before emit1 clobbers rax
+    mov     r11, rax
     pop     r14
     pop     r13
     pop     r12
-    ; emit call E8 rel32 (placeholder 0, add to fixup)
     mov     rdi, 0xE8
     call    emit1
     cmp     r11, 0
     je      .call_unknown
-    ; fn found: if code_off != -1 we can compute rel32
-    mov     rbx, r11        ; fn entry ptr (saved before emit1)
+    mov     rbx, r11
     cmp     qword [rbx+40], -1
     je      .call_unknown
-    ; compute rel32 = fn_code_off - (cod_len + 4)
-    mov     r15, [rbx+40]   ; fn code_off
+    mov     r15, [rbx+40]
     mov     rax, [cod_len]
     add     rax, 4
     sub     r15, rax
@@ -2252,16 +2410,15 @@ gen_expr:
     call    emit4
     jmp     .call_emit_ret
 .call_unknown:
-    ; add to call fixup table
     mov     rax, [fix_cnt]
     imul    rax, rax, 32
-    lea     rbx, [fix_buf+8192]  ; call fixups at offset 8192
+    lea     rbx, [fix_buf+8192]
     add     rbx, rax
     mov     rax, [cod_len]
-    mov     [rbx], rax          ; patch_off
-    mov     [rbx+8], r12        ; fn name_start
-    mov     [rbx+16], r13       ; fn name_len
-    mov     qword [rbx+24], 1   ; type=1 (call fixup)
+    mov     [rbx], rax
+    mov     [rbx+8], r12
+    mov     [rbx+16], r13
+    mov     qword [rbx+24], 1
     inc     qword [fix_cnt]
     mov     rdi, 0
     call    emit4
@@ -2269,14 +2426,8 @@ gen_expr:
     jmp     .maybe_binary
 
 .do_syscall_expr:
-    call    adv_tok         ; skip 'syscall' (already consumed ident)
-    ; actually tok was already advanced in .do_ident path... wait no.
-    ; If we reached .do_syscall_expr, rax was TOK_SYSCALL before adv_tok in .do_ident
-    ; But .do_ident was not taken for TOK_SYSCALL. Let me recheck...
-    ; Actually TOK_SYSCALL is checked separately, adv_tok NOT called yet.
     call    adv_tok         ; skip 'syscall'
     call    adv_tok         ; skip '('
-    ; gen args 0..5, push each
     xor     r14, r14
 .sc_arg_loop:
     call    cur_tok_type
@@ -2295,191 +2446,49 @@ gen_expr:
     jmp     .sc_arg_loop
 .sc_done_args:
     call    adv_tok         ; skip ')'
-    ; pop args: syscall(nr, a1..a6)
-    ; nr=arg0 -> rax, a1=arg1->rdi, a2->rsi, a3->rdx, a4->r10, a5->r8, a6->r9
-    ; Stack (top first): aN, ..., a1, nr
-    ; Pop in order: pop rax, pop rdi, pop rsi, pop rdx, pop r10, pop r8, pop r9
     cmp     r14, 1
     jl      .sc_emit_done
-    mov     rdi, 0x58       ; pop rax  (syscall nr)
-    call    emit1
+    mov     rdi, 0x58
+    call    emit1 ; pop rax (nr)
     cmp     r14, 2
     jl      .sc_call
-    mov     rdi, 0x5F       ; pop rdi (arg1)
-    call    emit1
+    mov     rdi, 0x5F
+    call    emit1 ; pop rdi
     cmp     r14, 3
     jl      .sc_call
-    mov     rdi, 0x5E       ; pop rsi (arg2)
-    call    emit1
+    mov     rdi, 0x5E
+    call    emit1 ; pop rsi
     cmp     r14, 4
     jl      .sc_call
-    mov     rdi, 0x5A       ; pop rdx (arg3)
-    call    emit1
+    mov     rdi, 0x5A
+    call    emit1 ; pop rdx
     cmp     r14, 5
     jl      .sc_call
-    ; pop r10 = 41 5A
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x5A
-    call    emit1
+    call    emit1 ; pop r10
     cmp     r14, 6
     jl      .sc_call
-    ; pop r8 = 41 58
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x58
-    call    emit1
+    call    emit1 ; pop r8
     cmp     r14, 7
     jl      .sc_call
-    ; pop r9 = 41 59
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x59
-    call    emit1
+    call    emit1 ; pop r9
 .sc_call:
-    ; emit syscall: 0F 05
     mov     rdi, 0x0F
     call    emit1
     mov     rdi, 0x05
-    call    emit1
+    call    emit1 ; syscall
 .sc_emit_done:
     jmp     .maybe_binary
 
-.do_field_access:
-    ; x.field — rax already loaded (local/global looked up above would have jumped to maybe_binary)
-    ; We need to backtrack... this is tricky.
-    ; For now: assume x was loaded as pointer in rax, then access field
-    ; x is already loaded by the ident path above... but we jumped to .do_field_access
-    ; BEFORE emitting x. The ident path emitted x only if no '.' followed.
-    ; So here, we haven't emitted x yet. We need to emit x AS A POINTER.
-    ; Load x ptr
-    mov     r8, r12
-    mov     r9, r13
-    call    lookup_local
-    cmp     rax, 0
-    je      .ff_try_global
-    ; emit: mov rbx, [rbp-off]  (load pointer)
-    mov     r15, [rax+16]   ; rbp_offset
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x8B
-    call    emit1
-    mov     rdi, 0x9D
-    call    emit1   ; rbx = [rbp - off]
-    neg     r15
-    mov     rdi, r15
-    call    emit4
-    ; get struct_id from local entry
-    push    r8
-    push    r9
-    mov     r8, r12
-    mov     r9, r13
-    call    lookup_local
-    pop     r9
-    pop     r8
-    mov     r15, [rax+32]   ; struct_id
-    jmp     .ff_got_ptr
-.ff_try_global:
-    ; for global, r15 offset
-    mov     r8, r12
-    mov     r9, r13
-    call    lookup_global
-    cmp     rax, 0
-    je      .ff_done
-    mov     r12, [rax+16]   ; r15_offset
-    ; emit: mov rbx, [r15+off]
-    mov     rdi, 0x49
-    call    emit1
-    mov     rdi, 0x8B
-    call    emit1
-    mov     rdi, 0x9F
-    call    emit1
-    mov     rdi, r12
-    call    emit4
-    mov     r15, -1         ; struct_id unknown (simplified)
-.ff_got_ptr:
-    ; skip '.'
-    call    adv_tok
-    ; get field name
-    call    get_cur_tok_ptr
-    mov     r12, [rax+8]    ; field name_start
-    mov     r13, [rax+16]   ; field name_len
-    call    adv_tok
-    ; find field offset in struct r15
-    cmp     r15, -1
-    je      .ff_done
-    mov     rdi, r15
-    mov     r8, r12
-    mov     r9, r13
-    call    find_field
-    cmp     rax, 0
-    je      .ff_done
-    ; rax = field entry ptr
-    mov     r14, [rax+16]   ; field offset
-    ; check array access [i]
-    push    r14
-    push    rax
-    call    cur_tok_type
-    pop     rax             ; discard old field entry ptr
-    pop     r14             ; restore field offset
-    ; simplified: just load field value
-    ; emit: mov rax, [rbx + field_off]
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x8B
-    call    emit1
-    mov     rdi, 0x83
-    call    emit1
-    mov     rdi, r14
-    call    emit4
-.ff_done:
-    jmp     .maybe_binary
-
-.do_array_access:
-    ; x[i]: simplified implementation
-    ; Load x (as pointer or base address)
-    mov     r8, r12
-    mov     r9, r13
-    call    lookup_local
-    cmp     rax, 0
-    je      .aa_done
-    mov     r15, [rax+16]   ; rbp_offset
-    ; emit: mov rbx, [rbp-off]
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x8B
-    call    emit1
-    mov     rdi, 0x9D
-    call    emit1
-    neg     r15
-    mov     rdi, r15
-    call    emit4
-    ; skip '['
-    call    adv_tok
-    ; gen index expr -> rax
-    push    rbx
-    call    gen_expr
-    ; pop rbx (base ptr)
-    ; emit: pop rbx... wait we pushed rbx
-    ; actually we pushed rbx before calling gen_expr
-    pop     rbx
-    ; rax = index, rbx = base ptr
-    ; emit: mov rax, [rbx + rax*1]  (simplified: stride=1, needs stride info)
-    ; 48 8B 04 03 = mov rax, [rbx+rax]
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x8B
-    call    emit1
-    mov     rdi, 0x04
-    call    emit1
-    mov     rdi, 0x03
-    call    emit1
-    call    adv_tok         ; skip ']'
-.aa_done:
-    jmp     .maybe_binary
-
 .literal_done:
-    ; Unknown token — skip and emit 0
     call    adv_tok
     mov     rdi, 0x48
     call    emit1
@@ -2489,7 +2498,6 @@ gen_expr:
     call    emit1
 
 .maybe_binary:
-    ; Check for binary operator
     call    cur_tok_type
     cmp     rax, TOK_PLUS
     je      .do_add
@@ -2499,22 +2507,6 @@ gen_expr:
     je      .do_mul
     cmp     rax, TOK_SLASH
     je      .do_div
-    cmp     rax, TOK_EQEQ
-    je      .do_cmp_eq
-    cmp     rax, TOK_NEQ
-    je      .do_cmp_ne
-    cmp     rax, TOK_LT
-    je      .do_cmp_lt
-    cmp     rax, TOK_GT
-    je      .do_cmp_gt
-    cmp     rax, TOK_LTEQ
-    je      .do_cmp_le
-    cmp     rax, TOK_GTEQ
-    je      .do_cmp_ge
-    cmp     rax, TOK_AND
-    je      .do_and
-    cmp     rax, TOK_OR
-    je      .do_or
     cmp     rax, TOK_PIPE
     je      .do_bitor
     cmp     rax, TOK_AMP
@@ -2527,11 +2519,9 @@ gen_expr:
 
 .do_add:
     call    adv_tok
-    ; emit: push rax
     mov     rdi, 0x50
     call    emit1
-    call    gen_expr
-    ; emit: pop rbx; add rax, rbx
+    call    gen_expr_base
     mov     rdi, 0x5B
     call    emit1
     mov     rdi, 0x48
@@ -2541,13 +2531,11 @@ gen_expr:
     mov     rdi, 0xD8
     call    emit1
     jmp     .maybe_binary
-
 .do_sub:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
-    call    gen_expr
-    ; emit: pop rbx; sub rbx, rax; mov rax, rbx
+    call    gen_expr_base
     mov     rdi, 0x5B
     call    emit1
     mov     rdi, 0x48
@@ -2556,7 +2544,6 @@ gen_expr:
     call    emit1
     mov     rdi, 0xC3
     call    emit1
-    ; mov rax, rbx
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x89
@@ -2564,13 +2551,11 @@ gen_expr:
     mov     rdi, 0xD8
     call    emit1
     jmp     .maybe_binary
-
 .do_mul:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
-    call    gen_expr
-    ; emit: pop rbx; imul rax, rbx
+    call    gen_expr_base
     mov     rdi, 0x5B
     call    emit1
     mov     rdi, 0x48
@@ -2582,268 +2567,37 @@ gen_expr:
     mov     rdi, 0xC3
     call    emit1
     jmp     .maybe_binary
-
 .do_div:
     call    adv_tok
     mov     rdi, 0x50
-    call    emit1           ; push rax (lhs)
-    call    gen_expr        ; rhs -> rax
-    ; move rhs to rbx, lhs to rax
+    call    emit1
+    call    gen_expr_base
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x89
     call    emit1
     mov     rdi, 0xC3
-    call    emit1           ; mov rbx, rax
+    call    emit1 ; mov rbx, rax
     mov     rdi, 0x58
-    call    emit1           ; pop rax (lhs)
-    ; cqo
+    call    emit1 ; pop rax
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x99
-    call    emit1
-    ; idiv rbx
+    call    emit1 ; cqo
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0xF7
     call    emit1
     mov     rdi, 0xFB
-    call    emit1
+    call    emit1 ; idiv rbx
     jmp     .maybe_binary
-
-.do_cmp_eq:
-    call    adv_tok
-    mov     rdi, 0x50
-    call    emit1
-    call    gen_expr
-    mov     rdi, 0x5B
-    call    emit1
-    ; cmp rbx, rax; sete al; movzx rax, al
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x39
-    call    emit1
-    mov     rdi, 0xC3
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0x94
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0xB6
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    jmp     .maybe_binary
-
-.do_cmp_ne:
-    call    adv_tok
-    mov     rdi, 0x50
-    call    emit1
-    call    gen_expr
-    mov     rdi, 0x5B
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x39
-    call    emit1
-    mov     rdi, 0xC3
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0x95
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0xB6
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    jmp     .maybe_binary
-
-.do_cmp_lt:
-    call    adv_tok
-    mov     rdi, 0x50
-    call    emit1
-    call    gen_expr
-    mov     rdi, 0x5B
-    call    emit1
-    ; cmp rbx, rax; setl al; movzx rax, al
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x39
-    call    emit1
-    mov     rdi, 0xC3
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0x9C
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0xB6
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    jmp     .maybe_binary
-
-.do_cmp_gt:
-    call    adv_tok
-    mov     rdi, 0x50
-    call    emit1
-    call    gen_expr
-    mov     rdi, 0x5B
-    call    emit1
-    ; cmp rbx, rax; setg al
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x39
-    call    emit1
-    mov     rdi, 0xC3
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0x9F
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0xB6
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    jmp     .maybe_binary
-
-.do_cmp_le:
-    call    adv_tok
-    mov     rdi, 0x50
-    call    emit1
-    call    gen_expr
-    mov     rdi, 0x5B
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x39
-    call    emit1
-    mov     rdi, 0xC3
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0x9E
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0xB6
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    jmp     .maybe_binary
-
-.do_cmp_ge:
-    call    adv_tok
-    mov     rdi, 0x50
-    call    emit1
-    call    gen_expr
-    mov     rdi, 0x5B
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x39
-    call    emit1
-    mov     rdi, 0xC3
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0x9D
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0xB6
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    jmp     .maybe_binary
-
-.do_and:
-    ; short circuit: if rax==0 skip rhs
-    call    adv_tok
-    ; emit: test rax,rax; jz skip; eval rhs; skip:
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x85
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1  ; test rax,rax
-    mov     rdi, 0x74
-    call    emit1  ; jz rel8
-    mov     r14, [cod_len]
-    mov     rdi, 0
-    call    emit1  ; placeholder rel8
-    call    gen_expr
-    ; patch rel8
-    mov     rax, [cod_len]
-    sub     rax, r14
-    dec     rax
-    lea     rbx, [cod_buf]
-    add     rbx, r14
-    mov     [rbx], al
-    jmp     .maybe_binary
-
-.do_or:
-    call    adv_tok
-    ; emit: test rax,rax; jnz skip; eval rhs; skip:
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x85
-    call    emit1
-    mov     rdi, 0xC0
-    call    emit1
-    mov     rdi, 0x75
-    call    emit1
-    mov     r14, [cod_len]
-    mov     rdi, 0
-    call    emit1
-    call    gen_expr
-    mov     rax, [cod_len]
-    sub     rax, r14
-    dec     rax
-    lea     rbx, [cod_buf]
-    add     rbx, r14
-    mov     [rbx], al
-    jmp     .maybe_binary
-
 .do_bitor:
     call    adv_tok
     mov     rdi, 0x50
-    call    emit1               ; push rax (lhs)
-    call    gen_expr            ; rhs → rax
+    call    emit1
+    call    gen_expr_base
     mov     rdi, 0x5B
-    call    emit1               ; pop rbx
-    ; or rax, rbx: 48 0B C3
+    call    emit1
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x0B
@@ -2851,15 +2605,13 @@ gen_expr:
     mov     rdi, 0xC3
     call    emit1
     jmp     .maybe_binary
-
 .do_bitand:
     call    adv_tok
     mov     rdi, 0x50
-    call    emit1               ; push rax (lhs)
-    call    gen_expr            ; rhs → rax
+    call    emit1
+    call    gen_expr_base
     mov     rdi, 0x5B
-    call    emit1               ; pop rbx
-    ; and rax, rbx: 48 23 C3
+    call    emit1
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x23
@@ -2867,53 +2619,45 @@ gen_expr:
     mov     rdi, 0xC3
     call    emit1
     jmp     .maybe_binary
-
 .do_shl:
     call    adv_tok
     mov     rdi, 0x50
-    call    emit1               ; push rax (lhs)
-    call    gen_expr            ; rhs (shift count) → rax
-    ; mov rcx, rax: 48 89 C1
+    call    emit1
+    call    gen_expr_base
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x89
     call    emit1
     mov     rdi, 0xC1
-    call    emit1
-    ; pop rax (lhs): 58
+    call    emit1 ; mov rcx, rax
     mov     rdi, 0x58
-    call    emit1
-    ; shl rax, cl: 48 D3 E0
+    call    emit1 ; pop rax
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0xD3
     call    emit1
     mov     rdi, 0xE0
-    call    emit1
+    call    emit1 ; shl rax, cl
     jmp     .maybe_binary
-
 .do_shr:
     call    adv_tok
     mov     rdi, 0x50
-    call    emit1               ; push rax (lhs)
-    call    gen_expr            ; rhs (shift count) → rax
-    ; mov rcx, rax: 48 89 C1
+    call    emit1
+    call    gen_expr_base
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x89
     call    emit1
     mov     rdi, 0xC1
-    call    emit1
-    ; pop rax (lhs): 58
+    call    emit1 ; mov rcx, rax
     mov     rdi, 0x58
-    call    emit1
-    ; shr rax, cl: 48 D3 E8
+    call    emit1 ; pop rax
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0xD3
     call    emit1
     mov     rdi, 0xE8
-    call    emit1
+    call    emit1 ; shr rax, cl
     jmp     .maybe_binary
 
 .expr_done:
@@ -2924,7 +2668,6 @@ gen_expr:
     pop     r12
     leave
     ret
-
 ; =============================================================================
 ; gen_addr — generate address of next identifier/field into rax
 ; =============================================================================
