@@ -59,10 +59,11 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ---
 
-### 7. Fix inline asm `asm { out argv_ptr = rsi }`
+### 7. Fix inline asm `asm { out argv_ptr = rsi }` [DONE ✅]
 **File:** `gen_stmt` / `.gs_asm`
 **Symptom:** `jda1.jda`'s `main()` uses `asm { out argv_ptr = rsi }` to capture the argv pointer passed in `rsi` at program entry.
-**Fix:** Parse `out VARNAME = REGNAME`, emit `mov [rbp-off], rsi` (or appropriate register) for the named variable.
+**Fix:** Parse `out VARNAME = REGNAME`, emit `mov [rbp-off], <reg>` (or appropriate register) for the named variable.
+**Implementation:** Added parse_reg_name function to map register names to x86-64 codes, updated .gs_asm handler to support any register.
 
 ---
 
@@ -117,6 +118,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 - Compound `or`/`and` conditions with precedence and short-circuiting (restructured `gen_expr`)
 - `ptr[0] = val` deref-write fix (fixed pop order and `lv_*` clobbering)
 - Top-level `let` support in Pass 1 (`.p1_let` handler registers globals in `glb_tbl`)
+- Inline asm `out var = reg` support (parse_reg_name function for all registers, not just rsi)
 
                                                                                                                           
 ⏺ Sure. Let me enumerate all remaining issues based on what we know:                                                        
@@ -139,7 +141,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   │ 37  │ Fix ptr[idx] = struct_val large copy                   │ DONE         │ 
                                         
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                      
-  │ 38  │ Fix inline asm asm { out var = reg }                   │ Pending         │                                        
+  │ 38  │ Fix inline asm asm { out var = reg }                   │ DONE         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
   │ 39  │ Fix struct literal init let x = Struct{}               │ Pending         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
