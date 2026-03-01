@@ -102,6 +102,7 @@ section .bss
     loc_tbl resb 12288
     loc_cnt resb 8
     loc_rbp resb 8
+    loc_max_rbp resb 8
     lv_sid resb 8
     lv_esz resb 8
     lv_isptr resb 8
@@ -1733,6 +1734,10 @@ find_field:
 add_local:
     add     qword [loc_rbp], 8
     mov     rax, [loc_rbp]      ; rbp_offset = loc_rbp (positive, use [rbp-rax])
+    cmp     rax, [loc_max_rbp]
+    jbe     .al_skip_max
+    mov     [loc_max_rbp], rax
+.al_skip_max:
     mov     rcx, [loc_cnt]
     imul    rcx, rcx, LOC_SZ
     lea     rbx, [loc_tbl]
@@ -4018,6 +4023,8 @@ gen_expr_stmt:
 gen_block_body:
     push    rbp
     mov     rbp, rsp
+    push    qword [loc_cnt]
+    push    qword [loc_rbp]
 .gbb_loop:
     call    cur_tok_type
     cmp     rax, TOK_RBRACE
@@ -4028,6 +4035,8 @@ gen_block_body:
     jmp     .gbb_loop
 .gbb_done:
     call    adv_tok         ; skip '}'
+    pop     qword [loc_rbp]
+    pop     qword [loc_cnt]
     leave
     ret
 
@@ -4091,6 +4100,7 @@ gen_fn:
     ; copy params to locals
     mov     qword [loc_cnt], 0
     mov     qword [loc_rbp], 0
+    mov     qword [loc_max_rbp], 0
     ; store the 6 arg registers as the first params
     mov     rax, [r14+24]
     mov     [prm_cnt_bss], rax   ; param count in BSS (all regs clobbered in loop)
@@ -4234,8 +4244,8 @@ gen_fn:
     mov     rdi, 0xC3
     call    emit1           ; ret
 
-    ; patch frame size: loc_rbp rounded up to 16
-    mov     rax, [loc_rbp]
+    ; patch frame size: loc_max_rbp rounded up to 16
+    mov     rax, [loc_max_rbp]
     add     rax, 15
     and     rax, -16
     lea     rbx, [cod_buf]
