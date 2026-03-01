@@ -1702,34 +1702,41 @@ fn get_argv(n: i64) -> &i8 {
 ; ============================================================
 
 fn main() {
+    print("jda1: starting\n")
     ; Grab argv from the kernel-provided stack frame
     asm { out argv_ptr = rsi }   ; Stage 0 passes argv in rsi on entry
 
     ; Open source file: argv[1]
     let src_path = get_argv(1)
+    print("jda1: opening source\n")
     let src_fd   = syscall(2, src_path, 0, 0)    ; open(path, O_RDONLY)
     let src_buf  = alloc_pages(8)                ; up to 32 KB source
     let src_len  = syscall(0, src_fd, src_buf, 32768)
     syscall(3, src_fd, 0, 0)                     ; close
+    print("jda1: lexing\n")
 
     ; Lex
     let toks    = alloc_pages(4)                 ; token array
     let tok_cnt = 0
     lex(src_buf, src_len, toks, &tok_cnt)
+    print("jda1: parsing\n")
 
     ; Parse top-level function
     let ast = Node{}
     let pos = 0
     parse_fn(toks, &pos, &ast)
+    print("jda1: jir codegen\n")
 
     ; JIR codegen
     let jfn = JirFunction{}
     jfn.src = src_buf
     codegen_fn(&ast, &jfn)
+    print("jda1: optimising\n")
 
     ; Optimise
     fold_constants(&jfn)
     dce(&jfn)
+    print("jda1: lowering\n")
 
     ; Lower JIR → x86-64
     let ctx      = LowerCtx{}
@@ -1737,6 +1744,7 @@ fn main() {
     let code_len = 0
     regalloc_init(&ctx.ra)
     lower_fn(&jfn, &ctx, code_buf, &code_len)
+    print("jda1: patching\n")
 
     ; Patch strtab RIP-relative references now that code_len is known
     ; strtab starts at: load_va + hdr_size(120) + code_len
@@ -1755,6 +1763,7 @@ fn main() {
         }
         fi = fi + 1
     }
+    print("jda1: writing elf\n")
 
     ; Write ELF output: argv[2]
     let out_path = get_argv(2)
@@ -1762,5 +1771,5 @@ fn main() {
     write_elf(out_fd, code_buf, code_len, &jfn.strtab, jfn.strtab_pos)
     syscall(3, out_fd, 0, 0)                       ; close
 
-    print("jda1: compiled successfully")
+    print("jda1: compiled successfully\n")
 }
