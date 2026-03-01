@@ -27,10 +27,10 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ---
 
-### 3. Fix `else if` chain compilation
+### 3. Fix `else if` chain compilation [DONE ✅]
 **File:** `gen_stmt` / `.gs_if`
 **Symptom:** Long `else if` chains (as in `jda1.jda`'s `lex()` function — 10+ branches) may mis-patch jump offsets.
-**Fix:** Verify that `else { if ... }` correctly chains — the `jz else_label` for each branch patches to the right location.
+**Fix:** Support `else if` by recursively calling `gen_stmt`, ensuring that each `else if` statement gets its own `after` label and the `jz` to the next branch is correctly patched.
 **Test:** `if A {} else if B {} else if C {} else {}`
 
 ---
@@ -110,6 +110,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 - `print(int)` correct integer-to-decimal emission
 - `lv_esz` / `lv_sid` save/restore in `.ga_index`
 - `let` inside loop body local accumulation fix (save/restore in `gen_block_body`)
+- `else if` chain compilation support (recursive call in `.gs_if`)
 
                                                                                                                           
 ⏺ Sure. Let me enumerate all remaining issues based on what we know:                                                        
@@ -123,9 +124,10 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
   │ 33  │ Fix let inside loop accumulating locals each iteration │ DONE            │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 34  │ Fix else if chain compilation                          │ Pending         │ 
-  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 35  │ Fix compound or/and conditions                         │ Pending         │                                        
+  │ 34  │ Fix else if chain compilation                          │ DONE            │ 
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
+  │ 35  │ Fix compound or/and conditions                         │ Pending         │ 
+                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
   │ 36  │ Fix ptr[0] = val deref-write                           │ Pending         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
