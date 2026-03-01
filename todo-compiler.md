@@ -5,17 +5,18 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ## Current State
 - All 88 functions in `jda1.jda` compile without crash ✓
-- `jda1` binary starts, opens file, begins lexing — then segfaults
-- Root cause: struct array field access (`arr[i].field`) is broken
+- `jda1` binary starts, opens file, begins lexing ✓
+- Full end-to-end bootstrap successful ✓
 
 ---
 
 ## Bug Fixes Required
 
-### 1. Fix `arr[i].field` struct array field read/write
+### 1. Fix `arr[i].field` struct array field read/write [DONE ✅]
 **File:** `bootstrap/stage0/jda0.asm` — `gen_addr` / `.ga_index` + `.ga_dot`
 **Symptom:** `buf[0].ttype` returns garbage stack address (~140737...) instead of stored value.
-**Root cause:** TBD — `lv_esz` save/restore was applied but the wrong value is still returned. Likely the address emitted by `lea rax,[rbp-off]` + deref + scale + field offset is landing in the wrong place.
+**Root cause:** Clolbering of global `lv_*` variables during recursive `gen_expr` calls in `.ga_index`, and missing initial pointer dereference in `gen_addr`.
+**Fix:** Added save/restore of `lv_sid`, `lv_esz`, `lv_isptr` around `gen_expr` in `.ga_index`. Centralized pointer dereferencing in `.ga_post`.
 **Test:** `struct Tok { ttype: i32  val: i64 }` — write 99, read back, expect 99.
 
 ---
@@ -67,14 +68,14 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ---
 
-### 8. Fix struct literal init `let x = Struct{}`
+### 8. Fix struct literal init `let x = Struct{}` [DONE ✅]
 **File:** `gen_stmt` / `.gs_let_struct`
 **Symptom:** `jda1.jda` zero-inits large structs: `let ast = Node{}`, `let jfn = JirFunction{}`, `let ctx = LowerCtx{}`.
 **Fix:** Confirm `gs_let_struct` allocates via `mmap` (already zeroed by Linux), stores pointer correctly, and the struct size computed in pass 1 is accurate for all nested structs.
 
 ---
 
-### 9. Fix nested function call arguments (`ret ok(0)`, `emit_byte(..., rex_byte(...))`) branch fix-nested-function-calls WIP DEPEND ON ISSUE 1
+### 9. Fix nested function call arguments (`ret ok(0)`, `emit_byte(..., rex_byte(...))`) [DONE ✅]
 **File:** `gen_expr` / `.do_call` / `gen_expr_stmt` / `.ges_arg_loop`
 **Symptom:** Patterns like `ret ok(0)` and `emit_byte(out, pos, rex_byte(1, r, 0, b))` pass a function call result as an argument.
 **Fix:** Verify that when `gen_expr` evaluates a function-call argument and the argument is itself a call, registers are correctly saved/restored across the nested call.
@@ -94,7 +95,7 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ## Final Gate
 
-### 11. End-to-end bootstrap test
+### 11. End-to-end bootstrap test [DONE ✅]
 Run the full chain:
 ```
 jda0 bootstrap/stage1/jda1.jda jda1_bin   # stage 0 compiles stage 1
@@ -123,36 +124,34 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 - `ptr[0] = val` deref-write fix (fixed pop order and `lv_*` clobbering)
 - Top-level `let` support in Pass 1 (`.p1_let` handler registers globals in `glb_tbl`)
 - Inline asm `out var = reg` support (parse_reg_name function for all registers, not just rsi)
+- Native `alloc_pages(n)` support in `jda0` via `mmap` syscall emission.
 
                                                                                                                           
-⏺ Sure. Let me enumerate all remaining issues based on what we know:                                                        
-                                                                                                                            
-⏺ Here's the full TODO list:                                                                                                
+⏺ Full TODO list status:                                                                                                
                                                                                                                           
   ┌─────┬────────────────────────────────────────────────────────┬─────────────────┐                                        
   │  #  │                          Task                          │     Status      │                                      
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 32  │ Fix arr[i].field struct array field read/write         │ Current blocker │                                        
+  │ 32  │ Fix arr[i].field struct array field read/write         │ DONE ✅         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 33  │ Fix let inside loop accumulating locals each iteration │ DONE            │ 
+  │ 33  │ Fix let inside loop accumulating locals each iteration │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 34  │ Fix else if chain compilation                          │ DONE            │ 
+  │ 34  │ Fix else if chain compilation                          │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 35  │ Fix compound or/and conditions                         │ DONE            │ 
+  │ 35  │ Fix compound or/and conditions                         │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 36  │ Fix ptr[0] = val deref-write                           │ DONE            │ 
+  │ 36  │ Fix ptr[0] = val deref-write                           │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 37  │ Fix ptr[idx] = struct_val large copy                   │ DONE         │ 
+  │ 37  │ Fix ptr[idx] = struct_val large copy                   │ DONE ✅         │ 
                                         
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                      
-  │ 38  │ Fix inline asm asm { out var = reg }                   │ DONE         │                                        
+  │ 38  │ Fix inline asm asm { out var = reg }                   │ DONE ✅         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 39  │ Fix struct literal init let x = Struct{}               │ Pending         │
+  │ 39  │ Fix struct literal init let x = Struct{}               │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 40  │ Fix nested function call arguments                     │ Pending         │
+  │ 40  │ Fix nested function call arguments                     │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 41  │ Fix jfn.src = val struct-pointer field write           │ Pending         │
+  │ 41  │ Fix jfn.src = val struct-pointer field write           │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 42  │ End-to-end jda1 bootstrap test                         │ Final gate      │
+  │ 42  │ End-to-end jda1 bootstrap test                         │ DONE ✅         │
   └─────┴────────────────────────────────────────────────────────┴─────────────────┘
-
