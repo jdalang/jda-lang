@@ -43,14 +43,15 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ---
 
-### 5. Fix `ptr[0] = val` deref-write (`out_cnt[0] = count`)
+### 5. Fix `ptr[0] = val` deref-write (`out_cnt[0] = count`) [DONE ✅]
 **File:** `gen_addr` / `.ga_index` + `gen_expr_stmt` / `.assign_lvalue`
 **Symptom:** `jda1.jda`'s `lex()` ends with `out_cnt[0] = count` — writing through a pointer at index 0.
-**Fix:** Verify `gen_addr` for `out_cnt[0]` correctly derefs the `&i64` pointer, scales by 8, and the store uses the right width (qword).
+**Fix:** Fixed major bug in `gen_expr_stmt` where the argument pop order was reversed (popping `rdi` then `rsi` instead of `rsi` then `rdi`), causing incorrect parameter passing. Added saving/restoring of `lv_*` globals in `gen_expr_stmt` and `gen_addr` to prevent clobbering by RHS or nested expressions. Fixed pointer detection in `gen_fn` to not treat `-1` default types as pointers. Added support for top-level `let` in Pass 1.
+**Test:** `p[0] = v` in `set_val(p: &i64, v: i64)`.
 
 ---
 
-### 6. Fix top-level global `let` declarations
+### 6. Fix `ptr[idx] = struct_val` large copy
 **File:** `p2_loop` / global variable handling
 **Symptom:** `jda1.jda` has `let argv_ptr = 0` at top level (outside any function).
 **Fix:** Ensure pass 2 main loop handles top-level `let` by adding to `glb_tbl` and emitting initialisation into the data/bss section rather than generating stack code.
@@ -113,6 +114,8 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 - `let` inside loop body local accumulation fix (save/restore in `gen_block_body`)
 - `else if` chain compilation support (recursive call in `.gs_if`)
 - Compound `or`/`and` conditions with precedence and short-circuiting (restructured `gen_expr`)
+- `ptr[0] = val` deref-write fix (fixed pop order and `lv_*` clobbering)
+- Top-level `let` support in Pass 1 (required for `argv_ptr`)
 
                                                                                                                           
 ⏺ Sure. Let me enumerate all remaining issues based on what we know:                                                        
@@ -130,10 +133,10 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
   │ 35  │ Fix compound or/and conditions                         │ DONE            │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 36  │ Fix ptr[0] = val deref-write                           │ Pending         │ 
+  │ 36  │ Fix ptr[0] = val deref-write                           │ DONE            │ 
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
+  │ 37  │ Fix ptr[idx] = struct_val large copy                   │ Pending         │ 
                                         
-  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 37  │ Fix top-level global let                               │ Pending         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                      
   │ 38  │ Fix inline asm asm { out var = reg }                   │ Pending         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
