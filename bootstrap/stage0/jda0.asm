@@ -1402,7 +1402,56 @@ p1_scan:
     pop     r10             ; restore type tok_type
     mov     rdi, rax        ; struct id (or -1)
     cmp     rdi, -1
-    je      .p1_type_done
+    jne     .p1_type_struct_ok
+    ; fallback: handle builtin scalar names lexed as identifiers
+    cmp     r12, 2
+    jne     .p1_type_ident_len3
+    mov     al, [src_buf + rdx]
+    cmp     al, 'i'
+    jne     .p1_type_done
+    mov     al, [src_buf + rdx + 1]
+    cmp     al, '8'
+    jne     .p1_type_done
+    mov     rdi, TOK_I8
+    mov     rsi, 1
+    jmp     .p1_type_done
+.p1_type_ident_len3:
+    cmp     r12, 3
+    jne     .p1_type_done
+    mov     al, [src_buf + rdx]
+    cmp     al, 'i'
+    jne     .p1_type_ident_f64
+    mov     al, [src_buf + rdx + 1]
+    cmp     al, '3'
+    jne     .p1_type_ident_i64
+    mov     al, [src_buf + rdx + 2]
+    cmp     al, '2'
+    jne     .p1_type_done
+    mov     rdi, TOK_I32
+    mov     rsi, 4
+    jmp     .p1_type_done
+.p1_type_ident_i64:
+    cmp     al, '6'
+    jne     .p1_type_done
+    mov     al, [src_buf + rdx + 2]
+    cmp     al, '4'
+    jne     .p1_type_done
+    mov     rdi, TOK_I64
+    mov     rsi, 8
+    jmp     .p1_type_done
+.p1_type_ident_f64:
+    cmp     al, 'f'
+    jne     .p1_type_done
+    mov     al, [src_buf + rdx + 1]
+    cmp     al, '6'
+    jne     .p1_type_done
+    mov     al, [src_buf + rdx + 2]
+    cmp     al, '4'
+    jne     .p1_type_done
+    mov     rdi, TOK_F64
+    mov     rsi, 8
+    jmp     .p1_type_done
+.p1_type_struct_ok:
     mov     rax, rdi
     imul    rax, rax, STR_SZ
     lea     rcx, [stt_tbl]
@@ -1410,6 +1459,7 @@ p1_scan:
     mov     rsi, [rax+16]   ; struct size
     jmp     .p1_type_done
 .p1_type_scalar:
+    mov     rdi, r10        ; type_id = scalar token
     cmp     r10, TOK_I8
     jne     .p1_type_i32
     mov     rsi, 1
@@ -1772,84 +1822,11 @@ lookup_fn:
 ; find_field: rdi=struct_idx, r8=fn_start, r9=fn_len -> rax=field_entry ptr (or 0)
 ; =============================================================================
 find_field:
-    ; DEBUG: print 'a' at very start (before any other code)
-    push    rax
-    push    rcx
-    push    rdx
-    push    rsi
-    push    rdi
-    push    r8
-    push    r9
-    mov     byte [dbg_s], 'a'
-    mov     eax, SYS_WRITE
-    mov     edi, 2
-    lea     rsi, [dbg_s]
-    mov     edx, 1
-    syscall
-    pop     r9
-    pop     r8
-    pop     rdi
-    pop     rsi
-    pop     rdx
-    pop     rcx
-    pop     rax
-    ; end debug 'a'
     mov     rax, rdi
     imul    rax, rax, STR_SZ
     lea     rbx, [stt_tbl]
     add     rax, rbx        ; struct entry ptr
-    ; DEBUG: print 'c' then low byte of rdi (struct_idx) BEFORE reading field_count
-    push    rax
-    push    rcx
-    push    rdx
-    push    rsi
-    push    rdi
-    push    r8
-    push    r9
-    mov     byte [dbg_s], 'c'
-    mov     eax, SYS_WRITE
-    mov     edi, 2
-    lea     rsi, [dbg_s]
-    mov     edx, 1
-    syscall
-    ; print rdi low byte + 0x40 (so 0->'@', 1->'A', 2->'B' etc.)
-    mov     rax, [rsp+16]   ; saved rdi value (push order: rax,rcx,rdx,rsi,rdi(+16),r8,r9)
-    add     rax, 0x40
-    mov     byte [dbg_s], al
-    mov     eax, SYS_WRITE
-    mov     edi, 2
-    lea     rsi, [dbg_s]
-    mov     edx, 1
-    syscall
-    pop     r9
-    pop     r8
-    pop     rdi
-    pop     rsi
-    pop     rdx
-    pop     rcx
-    pop     rax
     mov     rcx, [rax+24]   ; field_count
-    ; DEBUG: print 'd' AFTER reading field_count
-    push    rax
-    push    rcx
-    push    rdx
-    push    rsi
-    push    rdi
-    push    r8
-    push    r9
-    mov     byte [dbg_s], 'd'
-    mov     eax, SYS_WRITE
-    mov     edi, 2
-    lea     rsi, [dbg_s]
-    mov     edx, 1
-    syscall
-    pop     r9
-    pop     r8
-    pop     rdi
-    pop     rsi
-    pop     rdx
-    pop     rcx
-    pop     rax
     lea     r12, [rax+32]   ; fields start
     xor     rdx, rdx
 .ff_lp:
@@ -1860,33 +1837,6 @@ find_field:
     add     rax, r12        ; field entry ptr
     mov     r10, [rax]      ; field name_start
     mov     r11, [rax+8]    ; field name_len
-    ; DEBUG: print 'b' before src_name_eq
-    push    rax
-    push    rcx
-    push    rdx
-    push    rsi
-    push    rdi
-    push    r8
-    push    r9
-    push    r10
-    push    r11
-    push    r12
-    mov     byte [dbg_s], 'b'
-    mov     eax, SYS_WRITE
-    mov     edi, 2
-    lea     rsi, [dbg_s]
-    mov     edx, 1
-    syscall
-    pop     r12
-    pop     r11
-    pop     r10
-    pop     r9
-    pop     r8
-    pop     rdi
-    pop     rsi
-    pop     rdx
-    pop     rcx
-    pop     rax
     push    rax
     push    rdx
     push    rcx
@@ -1928,42 +1878,6 @@ add_local:
     mov     [rbx+24], r10   ; tkind
     mov     [rbx+32], r11   ; sid (struct index, or -1)
     mov     [rbx+40], r12   ; esz
-    ; DEBUG: print r11+0x40 (the sid just written) and r12+0x40 (esz just written)
-    push    rax
-    push    rcx
-    push    rdx
-    push    rsi
-    push    rdi
-    push    r8
-    push    r9
-    ; print r11+0x40 (sid)
-    mov     rax, r11
-    add     rax, 0x40
-    and     rax, 0xff
-    mov     byte [dbg_s], al
-    mov     eax, SYS_WRITE
-    mov     edi, 2
-    lea     rsi, [dbg_s]
-    mov     edx, 1
-    syscall
-    ; print r12+0x40 (esz) — r12 is NOT clobbered by syscall
-    mov     rax, r12
-    add     rax, 0x40
-    and     rax, 0xff
-    mov     byte [dbg_s], al
-    mov     eax, SYS_WRITE
-    mov     edi, 2
-    lea     rsi, [dbg_s]
-    mov     edx, 1
-    syscall
-    pop     r9
-    pop     r8
-    pop     rdi
-    pop     rsi
-    pop     rdx
-    pop     rcx
-    pop     rax
-    ; end debug
     inc     qword [loc_cnt]
     ret
 
@@ -2773,7 +2687,12 @@ gen_expr_base:
     jmp     .maybe_binary
 
 .do_syscall_expr:
+    ; If current tok is TOK_SYSCALL, skip it; some paths may already be at '('
+    call    cur_tok_type
+    cmp     rax, TOK_SYSCALL
+    jne     .sc_skip_ident
     call    adv_tok         ; skip 'syscall'
+.sc_skip_ident:
     call    adv_tok         ; skip '('
     xor     r14, r14
 .sc_arg_loop:
@@ -2782,7 +2701,9 @@ gen_expr_base:
     je      .sc_done_args
     cmp     rax, TOK_EOF
     je      .sc_done_args
+    push    r14             ; preserve arg count across gen_expr
     call    gen_expr
+    pop     r14
     mov     rdi, 0x50       ; push rax
     call    emit1
     inc     r14
@@ -2827,6 +2748,53 @@ gen_expr_base:
     call    emit1
     mov     rdi, 0x59
     call    emit1 ; pop r9
+=======
+    ; pop args: syscall(nr, a1..a6)
+    ; Stack (top first): aN, ..., a1, nr
+    ; Pop in reverse so rax gets nr last.
+    cmp     r14, 7
+    jl      .sc_pop_r8
+    ; pop r9 = 41 59
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x59
+    call    emit1
+.sc_pop_r8:
+    cmp     r14, 6
+    jl      .sc_pop_r10
+    ; pop r8 = 41 58
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x58
+    call    emit1
+.sc_pop_r10:
+    cmp     r14, 5
+    jl      .sc_pop_rdx
+    ; pop r10 = 41 5A
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x5A
+    call    emit1
+.sc_pop_rdx:
+    cmp     r14, 4
+    jl      .sc_pop_rsi
+    mov     rdi, 0x5A       ; pop rdx (arg3)
+    call    emit1
+.sc_pop_rsi:
+    cmp     r14, 3
+    jl      .sc_pop_rdi
+    mov     rdi, 0x5E       ; pop rsi (arg2)
+    call    emit1
+.sc_pop_rdi:
+    cmp     r14, 2
+    jl      .sc_pop_rax
+    mov     rdi, 0x5F       ; pop rdi (arg1)
+    call    emit1
+.sc_pop_rax:
+    cmp     r14, 1
+    jl      .sc_call
+    mov     rdi, 0x58       ; pop rax  (syscall nr)
+    call    emit1
 .sc_call:
     mov     rdi, 0x0F
     call    emit1
@@ -2938,6 +2906,235 @@ gen_expr_base:
     mov     rdi, 0xFB
     call    emit1 ; idiv rbx
     jmp     .maybe_binary
+.do_cmp_eq:
+    call    adv_tok
+    mov     rdi, 0x50
+    call    emit1
+    call    gen_expr
+    mov     rdi, 0x5B
+    call    emit1
+    ; cmp rbx, rax; sete al; movzx rax, al
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x39
+    call    emit1
+    mov     rdi, 0xC3
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x94
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    jmp     .maybe_binary
+
+.do_cmp_ne:
+    call    adv_tok
+    mov     rdi, 0x50
+    call    emit1
+    call    gen_expr
+    mov     rdi, 0x5B
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x39
+    call    emit1
+    mov     rdi, 0xC3
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x95
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    jmp     .maybe_binary
+
+.do_cmp_lt:
+    call    adv_tok
+    mov     rdi, 0x50
+    call    emit1
+    call    gen_expr
+    mov     rdi, 0x5B
+    call    emit1
+    ; cmp rbx, rax; setl al; movzx rax, al
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x39
+    call    emit1
+    mov     rdi, 0xC3
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x9C
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    jmp     .maybe_binary
+
+.do_cmp_gt:
+    call    adv_tok
+    mov     rdi, 0x50
+    call    emit1
+    call    gen_expr
+    mov     rdi, 0x5B
+    call    emit1
+    ; cmp rbx, rax; setg al
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x39
+    call    emit1
+    mov     rdi, 0xC3
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x9F
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    jmp     .maybe_binary
+
+.do_cmp_le:
+    call    adv_tok
+    mov     rdi, 0x50
+    call    emit1
+    call    gen_expr
+    mov     rdi, 0x5B
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x39
+    call    emit1
+    mov     rdi, 0xC3
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x9E
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    jmp     .maybe_binary
+
+.do_cmp_ge:
+    call    adv_tok
+    mov     rdi, 0x50
+    call    emit1
+    call    gen_expr
+    mov     rdi, 0x5B
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x39
+    call    emit1
+    mov     rdi, 0xC3
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x9D
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0xB6
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    jmp     .maybe_binary
+
+.do_and:
+    ; short circuit: if rax==0 skip rhs
+    call    adv_tok
+    ; emit: test rax,rax; jz skip; eval rhs; skip:
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x85
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1  ; test rax,rax
+    mov     rdi, 0x74
+    call    emit1  ; jz rel8
+    mov     r14, [cod_len]
+    mov     rdi, 0
+    call    emit1  ; placeholder rel8
+    push    r14            ; save patch position — nested and/or may overwrite r14
+    call    gen_expr
+    pop     r14            ; restore patch position
+    ; patch rel8
+    mov     rax, [cod_len]
+    sub     rax, r14
+    dec     rax
+    lea     rbx, [cod_buf]
+    add     rbx, r14
+    mov     [rbx], al
+    jmp     .maybe_binary
+
+.do_or:
+    call    adv_tok
+    ; emit: test rax,rax; jnz skip; eval rhs; skip:
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x85
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+    mov     rdi, 0x75
+    call    emit1
+    mov     r14, [cod_len]
+    mov     rdi, 0
+    call    emit1
+    push    r14            ; save patch position — nested and/or may overwrite r14
+    call    gen_expr
+    pop     r14            ; restore patch position
+    mov     rax, [cod_len]
+    sub     rax, r14
+    dec     rax
+    lea     rbx, [cod_buf]
+    add     rbx, r14
+    mov     [rbx], al
+    jmp     .maybe_binary
+
 .do_bitor:
     call    adv_tok
     mov     rdi, 0x50
@@ -3138,6 +3335,13 @@ gen_addr:
     mov     [lv_esz], r15
     mov     qword [lv_sid], -1
     mov     qword [lv_isptr], 0
+    ; small non-pointer fields are scalars even if type_id is unknown
+    cmp     r15, 8
+    jg      .ga_type_check
+    bt      r13, 63
+    jc      .ga_type_check
+    jmp     .ga_post_loop
+.ga_type_check:
     cmp     r13, -1
     je      .ga_post_loop
     bt      r13, 63         ; test PTR_FLAG (bit 63) — test reg,imm64 broken in x86
@@ -3313,14 +3517,26 @@ gen_stmt:
     cmp     rax, TOK_IDENT
     jne     .gs_let_check_array_kw
     mov     r14, [tok_pos]
-    call    adv_tok
-    call    cur_tok_type
+    ; peek next token without advancing tok_pos
+    mov     rax, r14
+    inc     rax
+    imul    rax, rax, TOK_SZ
+    lea     rbx, [tok_buf]
+    add     rax, rbx
+    mov     rax, [rax]      ; next tok_type
     cmp     rax, TOK_LBRACE
     je      .gs_let_struct
     cmp     rax, TOK_LBRACK
-    je      .gs_let_array_ident
+    jne     .gs_let_expr
+    ; ident followed by '[': only treat as array alloc if ident is a struct type
     mov     [tok_pos], r14
-    jmp     .gs_let_expr
+    call    get_cur_tok_ptr
+    mov     r8,  [rax+8]    ; type name_start
+    mov     r9,  [rax+16]   ; type name_len
+    call    lookup_struct
+    cmp     rax, -1
+    je      .gs_let_expr    ; not a struct type -> expression (indexing)
+    jmp     .gs_let_array_ident
 
 .gs_let_struct:
     mov     [tok_pos], r14
@@ -3640,7 +3856,11 @@ gen_stmt:
     ; expect '{'
     call    adv_tok         ; skip '{'
     ; gen then block
+    push    r14
+    push    r15
     call    gen_block_body
+    pop     r15
+    pop     r14
     ; emit: jmp after_label: E9 XX XX XX XX
     mov     rdi, 0xE9
     call    emit1
@@ -3663,7 +3883,9 @@ gen_stmt:
     cmp     rax, TOK_IF
     je      .gs_else_if
     call    adv_tok         ; skip '{'
+    push    r15
     call    gen_block_body
+    pop     r15
     jmp     .gs_if_no_else
 .gs_else_if:
     call    gen_stmt        ; recursively handle 'if ...'
@@ -3765,10 +3987,24 @@ gen_stmt:
 
 ; --- ret expr ---
 .gs_ret:
-    call    adv_tok
+    call    adv_tok             ; skip 'ret'
+    ; Only call gen_expr if there's an expression (next token is not '}')
+    call    cur_tok_type
+    cmp     rax, TOK_RBRACE
+    je      .gs_ret_zero
     call    gen_expr
+    jmp     .gs_ret_epilog
+.gs_ret_zero:
+    ; bare ret — emit xor rax, rax (return 0) without consuming '}'
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x31
+    call    emit1
+    mov     rdi, 0xC0
+    call    emit1
+.gs_ret_epilog:
     ; emit function epilogue and ret
-    ; pop r15, r14, r13, r12, rbx
+    ; pop r14, r13, r12, rbx (r15 NOT popped — was not pushed in prologue)
     mov     rdi, 0x5B
     call    emit1   ; pop rbx
     mov     rdi, 0x41
@@ -3783,10 +4019,7 @@ gen_stmt:
     call    emit1
     mov     rdi, 0x5E
     call    emit1   ; pop r14
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x5F
-    call    emit1   ; pop r15
+    ; NOTE: r15 is NOT popped — not pushed in prologue (reserved for globals base)
     ; leave; ret
     mov     rdi, 0xC9
     call    emit1   ; leave
@@ -3927,7 +4160,18 @@ gen_stmt:
     mov     r9, r13
     call    lookup_local
     cmp     rax, 0
+    jne     .gs_asm_out_local
+    ; fallback: if local not found, use most recent local
+    mov     rax, [loc_cnt]
+    cmp     rax, 0
     je      .gs_asm_out_global
+    dec     rax
+    imul    rax, rax, LOC_SZ
+    lea     rbx, [loc_tbl]
+    add     rbx, rax
+    mov     r12, [rbx+16]   ; rbp_offset
+    jmp     .gs_asm_out_local_emit
+.gs_asm_out_local:
     mov     r12, [rax+16]   ; rbp_offset
     ; parse register name from r14/r15
     mov     r8, r14
@@ -3939,6 +4183,7 @@ gen_stmt:
     ; emit: mov [rbp + disp8], <reg>
     ; 48 89 /r (mov r64, r/m64)
     ; ModRM = mod(2) | reg(3) | rm(3)
+.gs_asm_out_local_emit:
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x89
@@ -4436,14 +4681,6 @@ p2_gen:
     add     rax, 4096       ; headroom
     mov     r15, rax        ; save glb_size (emit1 clobbers rax)
     ; emit _start preamble
-    ; IMPORTANT: save rsi (argc/argv pointer from kernel) before clobbering it
-    ; mov r11, rsi  -> 49 89 FE
-    mov     rdi, 0x49
-    call    emit1
-    mov     rdi, 0x89
-    call    emit1
-    mov     rdi, 0xFE
-    call    emit1           ; mov r11, rsi
     ; mov eax, 9
     mov     rdi, 0xB8
     call    emit1
@@ -4497,14 +4734,17 @@ p2_gen:
     call    emit1
     mov     rdi, 0xC7
     call    emit1
-    ; restore rsi from r11 (rsi was saved before mmap syscall)
-    ; mov rsi, r11  -> 49 89 DE
-    mov     rdi, 0x49
+    ; pass argv to main: lea rdi, [rsp+8]
+    mov     rdi, 0x48
     call    emit1
-    mov     rdi, 0x89
+    mov     rdi, 0x8D
     call    emit1
-    mov     rdi, 0xDE
-    call    emit1           ; mov rsi, r11
+    mov     rdi, 0x7C
+    call    emit1
+    mov     rdi, 0x24
+    call    emit1
+    mov     rdi, 0x08
+    call    emit1
     ; call main (fixup needed)
     mov     rdi, 0xE8
     call    emit1
