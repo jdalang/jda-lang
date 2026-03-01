@@ -1,0 +1,47 @@
+name: Stage0 CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  quality-matrix:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run formatting/lint/docs quality checks
+        run: make quality
+
+  stage0-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: make docker-build
+
+      - name: Run Stage 0 smoke tests
+        run: make ci-stage0
+
+      - name: Run Stage 0 conformance tests
+        run: make ci-stage0-conformance
+
+      - name: Run self-hosting smoke path
+        run: make selfhost-stage1
+
+      - name: Run self-hosting roundtrip gate
+        run: make ci-selfhost-roundtrip
+
+      - name: Run Stage 1 conformance tests
+        run: make ci-stage1-conformance
