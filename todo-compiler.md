@@ -78,7 +78,15 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 ### 9. Fix nested function call arguments (`ret ok(0)`, `emit_byte(..., rex_byte(...))`) [DONE ✅]
 **File:** `gen_expr` / `.do_call` / `gen_expr_stmt` / `.ges_arg_loop`
 **Symptom:** Patterns like `ret ok(0)` and `emit_byte(out, pos, rex_byte(1, r, 0, b))` pass a function call result as an argument.
-**Fix:** Verify that when `gen_expr` evaluates a function-call argument and the argument is itself a call, registers are correctly saved/restored across the nested call.
+**Fix (PARTIAL):**
+- **Fixed:** ModRM byte in `.ga_idx_add` (0xD8 → 0xC3) for correct `add rax, rbx` instruction encoding. This fixes single-parameter pointer array dereference.
+- **Verified Working:** Nested function calls in arguments actually work correctly (tested `outer(5, inner(10))` successfully).
+- **New Issue Found:** Pointer parameter array dereference fails when function has 2+ parameters.
+  - ✅ Works: single pointer param: `fn test(p: &i64) { p[0] = 5 }`
+  - ✅ Works: reading params with 2+: `fn test(a: i64, b: i64) { let z = a }`
+  - ✅ Works: struct field access: `fn test(p: &Point, v: i64) { let z = p.x }`
+  - ❌ Fails: array deref with 2+ params: `fn test(p: &i64, v: i64) { let z = p[0] }`
+  - Root Cause: Unknown, requires deeper analysis of gen_addr stack frame handling when multiple parameters present.
 
 ---
 
