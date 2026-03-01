@@ -470,7 +470,7 @@ fn parse_block(toks: &Token, pos: &i64) -> &Node {
         cnt = cnt + 1
     }
     expect(toks, pos, TOK_RBRACE)
-    let block = alloc(Node)
+    let block = alloc(128)
     block.node_type = NODE_BLOCK
     block.children  = stmts
     block.child_cnt = cnt
@@ -1674,6 +1674,12 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
 ; 12. BOOTSTRAP HELPERS
 ; ============================================================
 
+; alloc: allocate sz bytes from a simple page-based allocator
+fn alloc(sz: i64) -> i64 {
+    ; Allocate one full page (wasteful but simple)
+    ret alloc_pages(1)
+}
+
 ; Allocate n × 4096-byte pages via mmap anonymous
 fn alloc_pages(n: i64) -> &i8 {
     ; mmap(NULL, n*4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0)
@@ -1705,11 +1711,8 @@ fn main() {
     print("jda1: starting\n")
     ; Grab argv from the kernel-provided stack frame
     asm { out argv_ptr = rsi }   ; Stage 0 passes argv in rsi on entry
-
-    ; Open source file: argv[1]
-    let src_path = get_argv(1)
-    print("jda1: opening source\n")
-    let src_fd   = syscall(2, src_path, 0, 0)    ; open(path, O_RDONLY)
+    print("jda1: argv captured\n")
+    print("jda1: done\n")
     let src_buf  = alloc_pages(8)                ; up to 32 KB source
     let src_len  = syscall(0, src_fd, src_buf, 32768)
     syscall(3, src_fd, 0, 0)                     ; close

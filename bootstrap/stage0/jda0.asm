@@ -1563,7 +1563,9 @@ p1_scan:
     mov     r12, [rax+16]   ; name_len
     call    adv_tok         ; skip type keyword/ident
     ; check array suffix (array params treated as pointer)
+    push    r10             ; save tok_type — cur_tok_type clobbers r10 via get_cur_tok_ptr
     call    cur_tok_type
+    pop     r10             ; restore tok_type
     cmp     rax, TOK_LBRACK
     jne     .p1_p_no_arr
     mov     r13, 1
@@ -1578,9 +1580,13 @@ p1_scan:
     jne     .p1_p_type_scalar
     ; struct type: always treat params as pointer
     mov     r13, 1
+    push    r8              ; save param name_start (r8/r9 clobbered by lookup_struct args)
+    push    r9              ; save param name_len
     mov     r8, r11
     mov     r9, r12
     call    lookup_struct
+    pop     r9              ; restore param name_len
+    pop     r8              ; restore param name_start
     mov     rdx, rax        ; struct id (or -1)
     cmp     rdx, -1
     jne     .p1_p_type_struct_ok
@@ -1635,8 +1641,8 @@ p1_scan:
 .p1_p_type_struct_ok:
     mov     rax, rdx
     imul    rax, rax, STR_SZ
-    lea     rbx, [stt_tbl]
-    add     rax, rbx
+    lea     rcx, [stt_tbl]
+    add     rax, rcx
     mov     rsi, [rax+16]   ; struct size
     jmp     .p1_p_type_done
 .p1_p_type_scalar:
@@ -1766,11 +1772,84 @@ lookup_fn:
 ; find_field: rdi=struct_idx, r8=fn_start, r9=fn_len -> rax=field_entry ptr (or 0)
 ; =============================================================================
 find_field:
+    ; DEBUG: print 'a' at very start (before any other code)
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    push    r8
+    push    r9
+    mov     byte [dbg_s], 'a'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
+    ; end debug 'a'
     mov     rax, rdi
     imul    rax, rax, STR_SZ
     lea     rbx, [stt_tbl]
     add     rax, rbx        ; struct entry ptr
+    ; DEBUG: print 'c' then low byte of rdi (struct_idx) BEFORE reading field_count
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    push    r8
+    push    r9
+    mov     byte [dbg_s], 'c'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    ; print rdi low byte + 0x40 (so 0->'@', 1->'A', 2->'B' etc.)
+    mov     rax, [rsp+16]   ; saved rdi value (push order: rax,rcx,rdx,rsi,rdi(+16),r8,r9)
+    add     rax, 0x40
+    mov     byte [dbg_s], al
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     mov     rcx, [rax+24]   ; field_count
+    ; DEBUG: print 'd' AFTER reading field_count
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    push    r8
+    push    r9
+    mov     byte [dbg_s], 'd'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     lea     r12, [rax+32]   ; fields start
     xor     rdx, rdx
 .ff_lp:
@@ -1781,6 +1860,33 @@ find_field:
     add     rax, r12        ; field entry ptr
     mov     r10, [rax]      ; field name_start
     mov     r11, [rax+8]    ; field name_len
+    ; DEBUG: print 'b' before src_name_eq
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    push    r8
+    push    r9
+    push    r10
+    push    r11
+    push    r12
+    mov     byte [dbg_s], 'b'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     r12
+    pop     r11
+    pop     r10
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     push    rax
     push    rdx
     push    rcx
@@ -1822,6 +1928,42 @@ add_local:
     mov     [rbx+24], r10   ; tkind
     mov     [rbx+32], r11   ; sid (struct index, or -1)
     mov     [rbx+40], r12   ; esz
+    ; DEBUG: print r11+0x40 (the sid just written) and r12+0x40 (esz just written)
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    push    r8
+    push    r9
+    ; print r11+0x40 (sid)
+    mov     rax, r11
+    add     rax, 0x40
+    and     rax, 0xff
+    mov     byte [dbg_s], al
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    ; print r12+0x40 (esz) — r12 is NOT clobbered by syscall
+    mov     rax, r12
+    add     rax, 0x40
+    and     rax, 0xff
+    mov     byte [dbg_s], al
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
+    ; end debug
     inc     qword [loc_cnt]
     ret
 
@@ -2899,11 +3041,83 @@ gen_addr:
     call    lookup_local
     cmp     rax, 0
     je      .ga_global
+    ; DEBUG: print rbp_off+0x40, tkind+0x40, sid+0x40 from loc entry
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    push    r8
+    push    r9
+    ; rbp_offset = [rax+16]
+    mov     rcx, [rax+16]
+    add     rcx, 0x40
+    and     rcx, 0xff
+    mov     byte [dbg_s], cl
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    ; tkind = [rax+24]
+    mov     rax, [rsp+48]   ; restore original rax (saved first = at offset 6*8=48)
+    mov     rcx, [rax+24]
+    add     rcx, 0x40
+    and     rcx, 0xff
+    mov     byte [dbg_s], cl
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    ; sid = [rax+32]
+    mov     rax, [rsp+48]
+    mov     rcx, [rax+32]
+    add     rcx, 0x40
+    and     rcx, 0xff
+    mov     byte [dbg_s], cl
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
+    ; end debug
     mov     r14, [rax+16]   ; rbp_offset
     mov     r15, [rax+24]   ; tkind
     mov     rdx, [rax+32]   ; sid
     mov     rcx, [rax+40]   ; esz
     mov     [lv_sid], rdx
+    ; DEBUG: print rdx low byte +0x40 right after writing lv_sid
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    push    r8
+    push    r9
+    mov     rax, rdx
+    add     rax, 0x40
+    mov     byte [dbg_s], al
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
+    ; end debug print
     mov     [lv_esz], rcx
     cmp     r15, TK_PTR
     jne     .ga_local_addr
@@ -2958,32 +3172,140 @@ gen_addr:
     ; if current value is a pointer, deref to base
     cmp     qword [lv_isptr], 0
     je      .ga_dot_base
-    ; emit: mov rax, [rax]
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x8B
-    call    emit1
-    mov     rdi, 0x00
-    call    emit1
+    ; emit: mov rax, [rax]  (48 8B 00) — inlined to avoid call stack issues
+    mov     rax, [cod_len]
+    lea     rbx, [cod_buf]
+    mov     byte [rbx+rax],   0x48
+    mov     byte [rbx+rax+1], 0x8B
+    mov     byte [rbx+rax+2], 0x00
+    add     qword [cod_len], 3
     mov     qword [lv_isptr], 0
 .ga_dot_base:
+    ; DEBUG: print 'D' to stderr
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     byte [dbg_s], 'D'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     call    adv_tok         ; skip '.'
+    ; DEBUG: print 'E'
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     byte [dbg_s], 'E'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     call    get_cur_tok_ptr
     mov     r12, [rax+8]
     mov     r13, [rax+16]
     call    adv_tok
+    ; DEBUG: print 'G'
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     byte [dbg_s], 'G'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     mov     rdx, [lv_sid]
     cmp     rdx, -1
     je      .ga_post_loop
+    ; DEBUG: print 'H' before find_field
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    push    r8
+    push    r9
+    mov     byte [dbg_s], 'H'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     r9
+    pop     r8
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     mov     rdi, rdx
     mov     r8, r12
     mov     r9, r13
     call    find_field
+    ; DEBUG: print 'I' after find_field
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     byte [dbg_s], 'I'
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     cmp     rax, 0
     je      .ga_post_loop
     mov     r14, [rax+16]   ; field offset
     mov     r15, [rax+24]   ; elem_size
-    mov     rbx, [rax+40]   ; type_id
+    mov     r13, [rax+40]   ; type_id (use r13 — emit1 clobbers rbx!)
+    ; DEBUG: print r13 low byte + 0x40 (type_id of found field)
+    push    rax
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     rax, r13
+    add     rax, 0x40
+    mov     byte [dbg_s], al
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_s]
+    mov     edx, 1
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rax
     ; emit: add rax, field_off
     mov     rdi, 0x48
     call    emit1
@@ -2996,13 +3318,13 @@ gen_addr:
     mov     [lv_esz], r15
     mov     qword [lv_sid], -1
     mov     qword [lv_isptr], 0
-    cmp     rbx, -1
+    cmp     r13, -1
     je      .ga_post_loop
-    bt      rbx, 63
+    bt      r13, 63         ; test PTR_FLAG (bit 63) — test reg,imm64 broken in x86
     jnc     .ga_dot_struct
     ; pointer field
     mov     qword [lv_isptr], 1
-    mov     rdx, rbx
+    mov     rdx, r13
     shl     rdx, 1
     shr     rdx, 1          ; clear PTR_FLAG
     cmp     rdx, TOK_I8
@@ -3033,21 +3355,26 @@ gen_addr:
     jmp     .ga_post_loop
 .ga_dot_struct:
     ; non-pointer field: only structs carry a valid sid
-    cmp     rbx, TOK_I8
+    cmp     r13, TOK_I8
     je      .ga_post_loop
-    cmp     rbx, TOK_I32
+    cmp     r13, TOK_I32
     je      .ga_post_loop
-    cmp     rbx, TOK_I64
+    cmp     r13, TOK_I64
     je      .ga_post_loop
-    cmp     rbx, TOK_F64
+    cmp     r13, TOK_F64
     je      .ga_post_loop
-    mov     [lv_sid], rbx
+    mov     [lv_sid], r13
     jmp     .ga_post_loop
 
 .ga_index:
-    ; if current value is a pointer, deref to base
+    ; deref if: explicit pointer (lv_isptr=1) OR scalar-as-pointer (lv_isptr=0, lv_sid=-1)
+    ; Do NOT deref if: struct array base after .ga_dot (lv_isptr=0, lv_sid!=-1)
     cmp     qword [lv_isptr], 0
-    je      .ga_idx_base
+    jne     .ga_idx_do_deref    ; explicit ptr → deref
+    cmp     qword [lv_sid], -1
+    jne     .ga_idx_base        ; struct array type → skip deref (rax already IS the base)
+.ga_idx_do_deref:
+    ; emit: mov rax, [rax]  — load pointer value from current address
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x8B
@@ -3057,6 +3384,10 @@ gen_addr:
     mov     qword [lv_isptr], 0
 .ga_idx_base:
     call    adv_tok         ; skip '['
+    ; --- Save state because gen_expr might call gen_addr recursively ---
+    push    qword [lv_sid]
+    push    qword [lv_esz]
+    push    qword [lv_isptr]
     ; push base
     mov     rdi, 0x50
     call    emit1
@@ -3077,6 +3408,10 @@ gen_addr:
     ; pop base into rbx
     mov     rdi, 0x5B
     call    emit1
+    ; --- Restore state ---
+    pop     qword [lv_isptr]
+    pop     qword [lv_esz]
+    pop     qword [lv_sid]
     ; scale index by elem_size
     mov     r14, [lv_esz]
     cmp     r14, 1
@@ -4099,10 +4434,8 @@ gen_fn:
     call    emit1
     mov     rdi, 0x56
     call    emit1           ; push r14
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x57
-    call    emit1           ; push r15
+    ; NOTE: r15 is reserved for globals base and must NOT be pushed/popped
+    ; as it contains the globals memory pointer needed throughout the function
 
     ; setup locals: parameters are in rdi,rsi,rdx,rcx,r8,r9
     ; copy params to locals
@@ -4129,7 +4462,7 @@ gen_fn:
     mov     r11, -1
     mov     r12, [r13+16]   ; elem_size
     mov     r15, [r13+24]   ; type_id
-    bt      r15, 63
+    bt      r15, 63         ; test PTR_FLAG (bit 63) — test r15,imm64 broken in x86
     jnc     .gf_param_type_done
     mov     r10, TK_PTR
     mov     rax, r15
@@ -4247,10 +4580,7 @@ gen_fn:
     call    emit1
     mov     rdi, 0x5E
     call    emit1           ; pop r14
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x5F
-    call    emit1           ; pop r15
+    ; NOTE: r15 is not popped since it's reserved for globals base (was not pushed)
     mov     rdi, 0xC9
     call    emit1           ; leave
     mov     rdi, 0xC3
@@ -4292,6 +4622,14 @@ p2_gen:
     add     rax, 4096       ; headroom
     mov     r15, rax        ; save glb_size (emit1 clobbers rax)
     ; emit _start preamble
+    ; IMPORTANT: save rsi (argc/argv pointer from kernel) before clobbering it
+    ; mov r11, rsi  -> 49 89 FE
+    mov     rdi, 0x49
+    call    emit1
+    mov     rdi, 0x89
+    call    emit1
+    mov     rdi, 0xFE
+    call    emit1           ; mov r11, rsi
     ; mov eax, 9
     mov     rdi, 0xB8
     call    emit1
@@ -4345,6 +4683,14 @@ p2_gen:
     call    emit1
     mov     rdi, 0xC7
     call    emit1
+    ; restore rsi from r11 (rsi was saved before mmap syscall)
+    ; mov rsi, r11  -> 49 89 DE
+    mov     rdi, 0x49
+    call    emit1
+    mov     rdi, 0x89
+    call    emit1
+    mov     rdi, 0xDE
+    call    emit1           ; mov rsi, r11
     ; call main (fixup needed)
     mov     rdi, 0xE8
     call    emit1
