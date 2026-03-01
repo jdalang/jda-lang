@@ -89,24 +89,24 @@ TK_PTR           equ 2
 PTR_FLAG         equ 0x8000000000000000
 
 section .bss
-    src_buf resb 65536
+    src_buf resb 1048576
     tok_buf resb 1048576
     tok_cnt resb 8
     tok_pos resb 8
-    cst_tbl resb 16384
+    cst_tbl resb 65536
     cst_cnt resb 8
-    stt_tbl resb 198656
+    stt_tbl resb 262144
     stt_cnt resb 8
-    fn_tbl resb 73728
-    fn_cnt resb 8
-    loc_tbl resb 12288
+    fn_tbl  resb 262144
+    fn_cnt  resb 8
+    loc_tbl resb 65536
     loc_cnt resb 8
     loc_rbp resb 8
     loc_max_rbp resb 8
     lv_sid resb 8
     lv_esz resb 8
     lv_isptr resb 8
-    glb_tbl resb 4096
+    glb_tbl resb 32768
     glb_cnt resb 8
     glb_r15 resb 8
     cod_buf resb 4194304
@@ -1265,36 +1265,8 @@ p1_scan:
     je      .p1_struct
     cmp     rax, TOK_FN
     je      .p1_fn
-    cmp     rax, TOK_LET
-    je      .p1_let_global
     ; unknown token, skip
     call    adv_tok
-    jmp     .p1_loop
-
-.p1_let_global:
-    call    adv_tok         ; skip 'let'
-    call    get_cur_tok_ptr
-    mov     r8,  [rax+8]    ; ns
-    mov     r9,  [rax+16]   ; nl
-    call    adv_tok         ; skip NAME
-    ; skip until next statement (simplified: skip until next let/fn/struct/const)
-.p1_lg_skip:
-    call    cur_tok_type
-    cmp     rax, TOK_LET
-    je      .p1_lg_done
-    cmp     rax, TOK_FN
-    je      .p1_lg_done
-    cmp     rax, TOK_STRUCT
-    je      .p1_lg_done
-    cmp     rax, TOK_CONST
-    je      .p1_lg_done
-    cmp     rax, TOK_EOF
-    je      .p1_lg_done
-    call    adv_tok
-    jmp     .p1_lg_skip
-.p1_lg_done:
-    mov     r10, TK_SCALAR  ; globals are always scalar pointers/vals for now
-    call    add_global
     jmp     .p1_loop
 
 ; --- const NAME = VALUE ---
@@ -1487,6 +1459,26 @@ p1_scan:
 
 ; --- fn NAME(params) -> type { body } ---
 .p1_fn:
+    ; debug: print "F"
+    push    rax
+    push    rbx
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     al, 'F'
+    mov     [dbg_f], al
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_f]
+    mov     edx, 1
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rax
     call    adv_tok         ; skip 'fn'
     call    get_cur_tok_ptr
     mov     r12, [rax+8]    ; fn name_start
@@ -1567,7 +1559,56 @@ p1_scan:
     call    lookup_struct
     mov     rdx, rax        ; struct id (or -1)
     cmp     rdx, -1
-    je      .p1_p_type_done
+    jne     .p1_p_type_struct_ok
+    ; fallback: handle builtin scalar names lexed as identifiers
+    cmp     r12, 2
+    jne     .p1_p_type_ident_len3
+    mov     al, [src_buf + r11]
+    cmp     al, 'i'
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11 + 1]
+    cmp     al, '8'
+    jne     .p1_p_type_done
+    mov     rdx, TOK_I8
+    mov     rsi, 1
+    jmp     .p1_p_type_done
+.p1_p_type_ident_len3:
+    cmp     r12, 3
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11]
+    cmp     al, 'i'
+    jne     .p1_p_type_ident_f64
+    mov     al, [src_buf + r11 + 1]
+    cmp     al, '3'
+    jne     .p1_p_type_ident_i64
+    mov     al, [src_buf + r11 + 2]
+    cmp     al, '2'
+    jne     .p1_p_type_done
+    mov     rdx, TOK_I32
+    mov     rsi, 4
+    jmp     .p1_p_type_done
+.p1_p_type_ident_i64:
+    cmp     al, '6'
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11 + 2]
+    cmp     al, '4'
+    jne     .p1_p_type_done
+    mov     rdx, TOK_I64
+    mov     rsi, 8
+    jmp     .p1_p_type_done
+.p1_p_type_ident_f64:
+    cmp     al, 'f'
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11 + 1]
+    cmp     al, '6'
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11 + 2]
+    cmp     al, '4'
+    jne     .p1_p_type_done
+    mov     rdx, TOK_F64
+    mov     rsi, 8
+    jmp     .p1_p_type_done
+.p1_p_type_struct_ok:
     mov     rax, rdx
     imul    rax, rax, STR_SZ
     lea     rbx, [stt_tbl]
@@ -1575,6 +1616,7 @@ p1_scan:
     mov     rsi, [rax+16]   ; struct size
     jmp     .p1_p_type_done
 .p1_p_type_scalar:
+    mov     rdx, r10        ; scalar type_id
     cmp     r10, TOK_I8
     jne     .p1_p_type_i32
     mov     rsi, 1
@@ -1836,6 +1878,12 @@ lookup_global:
     xor     eax, eax
     ret
 
+
+; =============================================================================
+; gen_expr — evaluate expression into rax; advances tok_pos
+; Handles: INT, CHAR, STR, IDENT (local/global/const/fn-call), unary-, &, binary ops
+; Note: complex LHS.field and x[i] are handled by gen_lvalue/gen_field
+; =============================================================================
 ; =============================================================================
 ; gen_expr — evaluate expression into rax (TOP LEVEL: handles 'or')
 ; =============================================================================
@@ -2117,7 +2165,7 @@ gen_expr_base:
     je      .sdt_cp_done
     ; handle escape sequences
     mov     al, [rbx]
-    cmp     al, '\\'
+    cmp     al, '\'
     jne     .sdt_plain
     inc     rbx
     dec     r13
@@ -2448,55 +2496,45 @@ gen_expr_base:
     jmp     .sc_arg_loop
 .sc_done_args:
     call    adv_tok         ; skip ')'
-    ; pop args: syscall(nr, a1..a6)
-    ; stack is [aN, ..., a1, nr]
-    ; pop order: pop r9 (if r14>=7), pop r8 (if r14>=6), pop r10 (if r14>=5), pop rdx, pop rsi, pop rdi, pop rax
-    cmp     r14, 7
-    jl      .spop6
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x59
-    call    emit1 ; pop r9
-.spop6:
-    cmp     r14, 6
-    jl      .spop5
-    mov     rdi, 0x41
-    call    emit1
+    cmp     r14, 1
+    jl      .sc_emit_done
     mov     rdi, 0x58
-    call    emit1 ; pop r8
-.spop5:
+    call    emit1 ; pop rax (nr)
+    cmp     r14, 2
+    jl      .sc_call
+    mov     rdi, 0x5F
+    call    emit1 ; pop rdi
+    cmp     r14, 3
+    jl      .sc_call
+    mov     rdi, 0x5E
+    call    emit1 ; pop rsi
+    cmp     r14, 4
+    jl      .sc_call
+    mov     rdi, 0x5A
+    call    emit1 ; pop rdx
     cmp     r14, 5
-    jl      .spop4
+    jl      .sc_call
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x5A
     call    emit1 ; pop r10
-.spop4:
-    cmp     r14, 4
-    jl      .spop3
-    mov     rdi, 0x5A
-    call    emit1 ; pop rdx
-.spop3:
-    cmp     r14, 3
-    jl      .spop2
-    mov     rdi, 0x5E
-    call    emit1 ; pop rsi
-.spop2:
-    cmp     r14, 2
-    jl      .spop1
-    mov     rdi, 0x5F
-    call    emit1 ; pop rdi
-.spop1:
-    cmp     r14, 1
+    cmp     r14, 6
     jl      .sc_call
+    mov     rdi, 0x41
+    call    emit1
     mov     rdi, 0x58
-    call    emit1 ; pop rax (nr)
+    call    emit1 ; pop r8
+    cmp     r14, 7
+    jl      .sc_call
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x59
+    call    emit1 ; pop r9
 .sc_call:
-    ; emit syscall: 0F 05
     mov     rdi, 0x0F
     call    emit1
     mov     rdi, 0x05
-    call    emit1
+    call    emit1 ; syscall
 .sc_emit_done:
     jmp     .maybe_binary
 
@@ -2805,8 +2843,8 @@ gen_addr:
     mov     qword [lv_isptr], 0
     cmp     rbx, -1
     je      .ga_post_loop
-    test    rbx, PTR_FLAG
-    jz      .ga_dot_struct
+    bt      rbx, 63
+    jnc     .ga_dot_struct
     ; pointer field
     mov     qword [lv_isptr], 1
     mov     rdx, rbx
@@ -2839,6 +2877,15 @@ gen_addr:
     mov     qword [lv_esz], 8
     jmp     .ga_post_loop
 .ga_dot_struct:
+    ; non-pointer field: only structs carry a valid sid
+    cmp     rbx, TOK_I8
+    je      .ga_post_loop
+    cmp     rbx, TOK_I32
+    je      .ga_post_loop
+    cmp     rbx, TOK_I64
+    je      .ga_post_loop
+    cmp     rbx, TOK_F64
+    je      .ga_post_loop
     mov     [lv_sid], rbx
     jmp     .ga_post_loop
 
@@ -2858,16 +2905,20 @@ gen_addr:
     ; push base
     mov     rdi, 0x50
     call    emit1
-    ; save lv_* (clobbered by index gen_expr)
-    push    qword [lv_isptr]
-    push    qword [lv_sid]
-    push    qword [lv_esz]
     ; index expr
+    mov     rax, [lv_sid]
+    push    rax
+    mov     rax, [lv_esz]
+    push    rax
+    mov     rax, [lv_isptr]
+    push    rax
     call    gen_expr
-    ; restore lv_*
-    pop     qword [lv_esz]
-    pop     qword [lv_sid]
-    pop     qword [lv_isptr]
+    pop     rax
+    mov     [lv_isptr], rax
+    pop     rax
+    mov     [lv_esz], rax
+    pop     rax
+    mov     [lv_sid], rax
     ; pop base into rbx
     mov     rdi, 0x5B
     call    emit1
@@ -3664,41 +3715,35 @@ gen_expr_stmt:
     jmp     .ges_arg_loop
 .ges_args_done:
     call    adv_tok
-    ; pop into arg regs (rdi, rsi, rdx, rcx, r8, r9)
-    ; highest reg first: stack is [argN-1, ..., arg0]
-    cmp     r14, 6
-    jl      .gpop5
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x59
-    call    emit1 ; pop r9
-.gpop5:
-    cmp     r14, 5
-    jl      .gpop4
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x58
-    call    emit1 ; pop r8
-.gpop4:
-    cmp     r14, 4
-    jl      .gpop3
-    mov     rdi, 0x59
-    call    emit1 ; pop rcx
-.gpop3:
-    cmp     r14, 3
-    jl      .gpop2
-    mov     rdi, 0x5A
-    call    emit1 ; pop rdx
-.gpop2:
-    cmp     r14, 2
-    jl      .gpop1
-    mov     rdi, 0x5E
-    call    emit1 ; pop rsi
-.gpop1:
+    ; pop into arg regs
     cmp     r14, 1
     jl      .ges_call
     mov     rdi, 0x5F
-    call    emit1 ; pop rdi
+    call    emit1
+    cmp     r14, 2
+    jl      .ges_call
+    mov     rdi, 0x5E
+    call    emit1
+    cmp     r14, 3
+    jl      .ges_call
+    mov     rdi, 0x5A
+    call    emit1
+    cmp     r14, 4
+    jl      .ges_call
+    mov     rdi, 0x59
+    call    emit1
+    cmp     r14, 5
+    jl      .ges_call
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x58
+    call    emit1
+    cmp     r14, 6
+    jl      .ges_call
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x59
+    call    emit1
 .ges_call:
     ; emit call with fixup
     mov     rdi, 0xE8
@@ -3748,16 +3793,20 @@ gen_expr_stmt:
     ; push address
     mov     rdi, 0x50
     call    emit1
-    ; save lv_* (clobbered by RHS gen_expr)
-    push    qword [lv_isptr]
-    push    qword [lv_sid]
-    push    qword [lv_esz]
     ; rhs expr -> rax
+    mov     rax, [lv_sid]
+    push    rax
+    mov     rax, [lv_esz]
+    push    rax
+    mov     rax, [lv_isptr]
+    push    rax
     call    gen_expr
-    ; restore lv_*
-    pop     qword [lv_esz]
-    pop     qword [lv_sid]
-    pop     qword [lv_isptr]
+    pop     rax
+    mov     [lv_isptr], rax
+    pop     rax
+    mov     [lv_esz], rax
+    pop     rax
+    mov     [lv_sid], rax
     ; pop address into rbx
     mov     rdi, 0x5B
     call    emit1
@@ -3904,11 +3953,8 @@ gen_fn:
     mov     r11, -1
     mov     r12, [r13+16]   ; elem_size
     mov     r15, [r13+24]   ; type_id
-    cmp     r15, -1
-    je      .gf_param_type_done
-    mov     rax, PTR_FLAG
-    test    r15, rax
-    jz      .gf_param_type_done
+    bt      r15, 63
+    jnc     .gf_param_type_done
     mov     r10, TK_PTR
     mov     rax, r15
     shl     rax, 1
@@ -3922,6 +3968,10 @@ gen_fn:
     je      .gf_param_type_done
     cmp     rax, TOK_F64
     je      .gf_param_type_done
+    ; only accept valid struct ids
+    mov     rbx, [stt_cnt]
+    cmp     rax, rbx
+    jae     .gf_param_type_done
     mov     r11, rax        ; struct id
 .gf_param_type_done:
     push    r12
