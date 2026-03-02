@@ -124,6 +124,7 @@ section .bss
     out_fd resb 8
     frm_patch_off resb 8    ; frame size placeholder offset (gen_fn, r15 not safe)
     prm_cnt_bss  resb 8    ; param count during gen_fn loop (all regs clobbered)
+    prec_stop    resb 1    ; 0=normal, 1=stop-before-or, 2=stop-before-or-and
 
 section .data
     m_usage db `Usage: jda0 <src.jda> <out>\n`,0
@@ -2475,7 +2476,10 @@ gen_expr_base:
     cmp     rax, TOK_LPAREN
     jne     .not_lparen
     call    adv_tok             ; skip '('
-    call    gen_expr            ; evaluate inner expr → rax (TOP LEVEL)
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 0 ; inside parens: allow all ops
+    call    gen_expr            ; evaluate inner expr → rax
+    mov     byte [prec_stop], r13b ; restore
     call    adv_tok             ; skip ')'
     jmp     .maybe_binary
 .not_lparen:
@@ -2822,6 +2826,30 @@ gen_expr_base:
     je      .do_mul
     cmp     rax, TOK_SLASH
     je      .do_div
+    cmp     rax, TOK_EQEQ
+    je      .do_cmp_eq
+    cmp     rax, TOK_NEQ
+    je      .do_cmp_ne
+    cmp     rax, TOK_LT
+    je      .do_cmp_lt
+    cmp     rax, TOK_GT
+    je      .do_cmp_gt
+    cmp     rax, TOK_LTEQ
+    je      .do_cmp_le
+    cmp     rax, TOK_GTEQ
+    je      .do_cmp_ge
+    cmp     rax, TOK_AND
+    jne     .chk_or_prec
+    cmp     byte [prec_stop], 2   ; stop-before-and: don't consume 'and'
+    jge     .expr_done
+    jmp     .do_and
+.chk_or_prec:
+    cmp     rax, TOK_OR
+    jne     .chk_pipe_prec
+    cmp     byte [prec_stop], 1   ; stop-before-or: don't consume 'or'
+    jge     .expr_done
+    jmp     .do_or
+.chk_pipe_prec:
     cmp     rax, TOK_PIPE
     je      .do_bitor
     cmp     rax, TOK_AMP
@@ -2910,7 +2938,10 @@ gen_expr_base:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 2  ; RHS of == must not consume or/and
     call    gen_expr
+    mov     byte [prec_stop], r13b
     mov     rdi, 0x5B
     call    emit1
     ; cmp rbx, rax; sete al; movzx rax, al
@@ -2940,7 +2971,10 @@ gen_expr_base:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 2
     call    gen_expr
+    mov     byte [prec_stop], r13b
     mov     rdi, 0x5B
     call    emit1
     mov     rdi, 0x48
@@ -2969,7 +3003,10 @@ gen_expr_base:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 2
     call    gen_expr
+    mov     byte [prec_stop], r13b
     mov     rdi, 0x5B
     call    emit1
     ; cmp rbx, rax; setl al; movzx rax, al
@@ -2999,7 +3036,10 @@ gen_expr_base:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 2
     call    gen_expr
+    mov     byte [prec_stop], r13b
     mov     rdi, 0x5B
     call    emit1
     ; cmp rbx, rax; setg al
@@ -3029,7 +3069,10 @@ gen_expr_base:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 2
     call    gen_expr
+    mov     byte [prec_stop], r13b
     mov     rdi, 0x5B
     call    emit1
     mov     rdi, 0x48
@@ -3058,7 +3101,10 @@ gen_expr_base:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 2
     call    gen_expr
+    mov     byte [prec_stop], r13b
     mov     rdi, 0x5B
     call    emit1
     mov     rdi, 0x48
@@ -3086,53 +3132,64 @@ gen_expr_base:
 .do_and:
     ; short circuit: if rax==0 skip rhs
     call    adv_tok
-    ; emit: test rax,rax; jz skip; eval rhs; skip:
+    ; emit: test rax,rax; jz rel32 skip; eval rhs; skip:
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x85
     call    emit1
     mov     rdi, 0xC0
     call    emit1  ; test rax,rax
-    mov     rdi, 0x74
-    call    emit1  ; jz rel8
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x84
+    call    emit1  ; jz rel32 (2-byte opcode)
     mov     r14, [cod_len]
     mov     rdi, 0
-    call    emit1  ; placeholder rel8
-    push    r14            ; save patch position — nested and/or may overwrite r14
+    call    emit4  ; 4-byte placeholder rel32
+    push    r14            ; save patch position
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 2  ; RHS of 'and': stop before or/and
     call    gen_expr
+    mov     byte [prec_stop], r13b
     pop     r14            ; restore patch position
-    ; patch rel8
+    ; patch rel32: offset = cod_len - (patch_pos + 4)
     mov     rax, [cod_len]
     sub     rax, r14
-    dec     rax
+    sub     rax, 4
     lea     rbx, [cod_buf]
     add     rbx, r14
-    mov     [rbx], al
+    mov     [rbx], eax     ; store 32-bit offset
     jmp     .maybe_binary
 
 .do_or:
     call    adv_tok
-    ; emit: test rax,rax; jnz skip; eval rhs; skip:
+    ; emit: test rax,rax; jnz rel32 skip; eval rhs; skip:
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x85
     call    emit1
     mov     rdi, 0xC0
+    call    emit1  ; test rax,rax
+    mov     rdi, 0x0F
     call    emit1
-    mov     rdi, 0x75
-    call    emit1
+    mov     rdi, 0x85
+    call    emit1  ; jnz rel32 (2-byte opcode)
     mov     r14, [cod_len]
     mov     rdi, 0
-    call    emit1
-    push    r14            ; save patch position — nested and/or may overwrite r14
+    call    emit4  ; 4-byte placeholder rel32
+    push    r14            ; save patch position
+    movzx   r13, byte [prec_stop]
+    mov     byte [prec_stop], 1  ; RHS of 'or': stop before or, allow and
     call    gen_expr
+    mov     byte [prec_stop], r13b
     pop     r14            ; restore patch position
+    ; patch rel32: offset = cod_len - (patch_pos + 4)
     mov     rax, [cod_len]
     sub     rax, r14
-    dec     rax
+    sub     rax, 4
     lea     rbx, [cod_buf]
     add     rbx, r14
-    mov     [rbx], al
+    mov     [rbx], eax     ; store 32-bit offset
     jmp     .maybe_binary
 
 .do_bitor:
