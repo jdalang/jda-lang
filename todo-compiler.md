@@ -288,8 +288,20 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 **Depends on:** Fixes #12–#19
 
 **Known limitations (future work):**
-  - [ ] DCE disabled — needs proper array allocation (`let x = type[N]`) in jda0
+  - [x] DCE disabled — root cause was struct-by-value bug (`let ins = ...` copies 8 bytes), NOT array allocation. Fixed by accessing Instr fields directly through chain expression. Re-enabled. → Bug #21
   - [ ] `print(int)` in loops breaks subsequent statements — jda0 gen_print integer bug
   - [ ] Branch fixup loop disabled — needed for multi-block programs (if/else, loops)
   - [ ] Debug prints still in jda1.jda — remove after bootstrap is stable
   - [ ] fold_constants uses struct-by-value `ConstVal` — may need `&ConstVal` treatment
+
+---
+
+### 21. Re-enable DCE — struct-by-value bug in `dce()` [DONE ✅]
+**File:** `bootstrap/stage1/jda1.jda` — `dce()` function (~line 1083)
+**Symptom:** DCE was disabled because it marked ALL instructions (except #0) as dead, preventing code emission. Originally blamed on `let used = i32[4096]` array allocation being broken in jda0.
+**Root cause:** `let ins = jfn.blocks[bi].instrs[ii]` copies only 8 bytes (struct-by-value limitation in jda0). Fields like `ins.operand0`, `ins.op`, `ins.id` all read garbage from the wrong memory offsets. Since operands read as garbage (large negative values), `if o0 >= 0` was always false → no instruction was marked as used → everything marked dead.
+**Fix:** Replaced local struct copy with direct field access through the chain expression:
+  - `let o0 = jfn.blocks[bi].instrs[ii].operand0` (reads correct field at correct offset)
+  - Same for `o1`, `o2`, `o3`, `op`, `id`
+  - Array allocation (`let used = i32[4096]`) was NOT the problem — works correctly in jda0 via mmap
+**Test:** `./jda1 ../../examples/hello.jda hello_s1 && ./hello_s1` → prints "Hello Bare Metal" ✅
