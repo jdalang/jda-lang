@@ -1,486 +1,557 @@
-# Jda Language — Post-Bootstrap Roadmap
+# Jda Language — Roadmap
 
-**Goal:** Take Jda from a working bootstrap compiler to a complete, installable, documented language that developers can use on Linux, macOS, and Windows.
+**Build command:**
+```
+docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 jda-dev make clean all test stage1
+```
 
-**Current state:** jda0 (NASM) → compiles jda1.jda → jda1 binary → compiles hello.jda + if/else programs. Self-hosting bootstrap chain works end-to-end on Linux x86-64.
+**Current state (March 2026):**
+- jda0 (5200+ lines NASM x86-64) → compiles jda1.jda → jda1 binary
+- jda1 compiles: hello.jda, if/else programs, loop programs ✅
+- Full pipeline: jda0 → jda1 → working ELF binaries on Linux x86-64
+- 23 compiler bugs found and fixed (see `todo-compiler.md`)
+- CI: Stage 0 smoke tests, conformance tests (24 pass / 2 fail), quality checks, self-host roundtrip gate
+
+**What's working in jda0 (Stage 0 compiler):**
+- [x] Struct definitions and struct arrays with field access
+- [x] Let bindings, loops, if/else/else-if chains
+- [x] Compound or/and conditions with short-circuit evaluation
+- [x] Pointer deref read/write, address-of operator
+- [x] Nested function calls (e.g., `emit_byte(out, pos, rex_byte(...))`)
+- [x] Inline asm blocks
+- [x] Struct literal init (`let x = Struct{}`)
+- [x] 6-argument function calls (System V ABI)
+- [x] mmap-based memory allocation for arrays
+
+**What's working in jda1 (Stage 1 compiler):**
+- [x] Lexer (all tokens, string/int literals, keywords)
+- [x] Parser (fn, let, if/else, loop, print, return, expressions, assignment)
+- [x] JIR codegen (SSA instructions, basic blocks, branch/jump)
+- [x] DCE (dead code elimination)
+- [x] Constant folding
+- [x] Register allocator (simple pool-based, spill to stack)
+- [x] x86-64 lowering (MOV, ADD, SUB, MUL, CMP, JMP, Jcc, SETCC, PUSH/POP, CALL, SYSCALL)
+- [x] Branch fixup patching (forward and backward jumps)
+- [x] ELF64 writer (header + PT_LOAD + .text + .rodata)
+- [x] String handling (inline strlen loop, strtab with RIP-relative LEA)
+- [x] Loop variable mutation via stack slots (OP_STORE/OP_LOAD)
 
 ---
 
-## Phase 1: Complete the Compiler (Self-Hosting Parity)
+## Phase 1: Self-Hosting (jda1 compiles jda1.jda)
 
-These items are required before jda1 can compile itself (full self-hosting).
+jda1 must support every feature used in its own source code (~1900 lines).
 
-### 1. Loop variable mutation — SSA stack-slot approach
+### 1. Multi-function programs
 **Status:** [ ] TODO
-**File:** `bootstrap/stage1/jda1.jda`
-**What:** `i = i + 1` inside loops crashes because jda1 uses SSA without phi nodes. Need to switch mutable variables from SSA registers to stack-slot based OP_STORE/OP_LOAD.
-**Why:** Loops are fundamental — no useful program works without them.
-**Ref:** todo-compiler.md Bug #23
+**What:** jda1 currently compiles only `fn main()`. Need:
+  - [ ] Parse multiple `fn` definitions
+  - [ ] Emit separate function prologue/epilogue for each
+  - [ ] Lower OP_CALL → x86-64 `call rel32` instruction
+  - [ ] Argument passing: rdi, rsi, rdx, rcx, r8, r9 (System V ABI)
+  - [ ] Return value in rax
+  - [ ] Function symbol table for call target resolution
+**Why:** jda1.jda has 88+ functions.
 
 ---
 
-### 2. Function calls (multi-function programs)
-**Status:** [ ] TODO
-**File:** `bootstrap/stage1/jda1.jda` — OP_CALL lowering
-**What:** jda1 currently only compiles single-function programs (`fn main()`). Need to:
-  - Lower OP_CALL to x86-64 `call` instruction
-  - Emit function prologues/epilogues for each function
-  - Handle argument passing (System V ABI: rdi, rsi, rdx, rcx, r8, r9)
-  - Handle return values (rax)
-**Why:** Self-hosting requires jda1 to call its own functions (parse, codegen, lower, etc.)
-
----
-
-### 3. Struct support in jda1
-**Status:** [ ] TODO
-**What:** jda1 needs to parse and codegen struct definitions, field access, and struct-as-arguments.
-  - [ ] Parse `struct Name { field: type ... }`
-  - [ ] Calculate struct layout (field offsets, total size)
-  - [ ] Codegen field access (`s.field` → load from base+offset)
-  - [ ] Pass structs by reference (`&Struct`)
-**Why:** jda1.jda itself uses 10+ structs (Token, Node, Instr, BasicBlock, etc.)
-
----
-
-### 4. Array support in jda1
-**Status:** [ ] TODO
-**What:** jda1 needs to handle array declarations and indexing.
-  - [ ] Parse `let arr = Type[size]` (mmap allocation)
-  - [ ] Codegen `arr[i]` read/write
-  - [ ] Codegen `arr[i].field` for struct arrays
-**Why:** jda1.jda uses arrays everywhere (Token[4096], Instr[256], etc.)
-
----
-
-### 5. String handling improvements
-**Status:** [ ] TODO
-**What:**
-  - [ ] Escape sequences (`\n`, `\t`, `\\`) in string literals
-  - [ ] String concatenation or formatting
-  - [ ] print(int) — emit integer-to-string conversion at runtime
-**Why:** Debugging output and user-facing programs need formatted strings.
-
----
-
-### 6. Pointer/reference support in jda1
+### 2. Struct definitions and field access
 **Status:** [ ] TODO
 **What:**
-  - [ ] Parse `&expr` (address-of)
-  - [ ] Parse `ptr[0]` (deref with index)
-  - [ ] Parse `&Type` in function parameter types
-  - [ ] Codegen LEA for address-of, MOV for dereference
-**Why:** jda1.jda passes most structs and arrays by pointer.
+  - [ ] Parse `struct Name { field1: type  field2: type ... }`
+  - [ ] Calculate struct layout (field offsets, each field 8 bytes in jda)
+  - [ ] `s.field` → load from `base + offset`
+  - [ ] `s.field = val` → store to `base + offset`
+  - [ ] `arr[i].field` → base + (i * struct_size) + field_offset
+  - [ ] `&s` → address-of (LEA)
+  - [ ] Pass structs by reference (`fn foo(s: &Struct)`)
+**Why:** jda1.jda uses 10+ structs: Token, Node, Instr, BasicBlock, JirFunction, RegAlloc, LowerCtx, Fixup, VarEntry, etc.
 
 ---
 
-### 7. Re-enable and verify fold_constants
-**Status:** [ ] TODO
-**What:** fold_constants struct-by-value was fixed but the function is still disabled. Uncomment, test, verify no regressions.
-**Why:** Constant folding is needed for performance and correctness of compiled programs.
-
----
-
-### 8. Self-hosting roundtrip: jda1 compiles jda1.jda
-**Status:** [ ] TODO — MILESTONE
-**What:** jda1 binary successfully compiles its own source code, producing jda1-gen2, which also compiles hello.jda correctly. Binary hashes of gen1 and gen2 should match (deterministic output).
-**Depends on:** Items 1–6 above
-**Why:** This is the primary bootstrap goal. Once achieved, Jda no longer depends on NASM/x86 assembly.
-
----
-
-## Phase 2: Cross-Platform Support
-
-### 9. Linux x86-64 installer
+### 3. Array declarations and indexing
 **Status:** [ ] TODO
 **What:**
-  - [ ] Shell install script: `curl -sSf https://jda-lang.org/install.sh | sh`
-  - [ ] Downloads prebuilt jda binary to `~/.jda/bin/`
-  - [ ] Adds to PATH via `.bashrc` / `.zshrc`
-  - [ ] `jda --version` works out of the box
-  - [ ] Tarball release on GitHub Releases
-**Why:** Primary development platform. Must be friction-free.
+  - [ ] Parse `let arr = Type[size]` → mmap allocation
+  - [ ] Parse `let arr = i64[size]` / `let arr = i32[size]` / `let arr = i8[size]`
+  - [ ] `arr[i]` read → base + (i * element_size)
+  - [ ] `arr[i] = val` write
+  - [ ] `arr[i].field` for struct arrays
+  - [ ] Stack-allocated small arrays vs mmap for large
+**Why:** jda1.jda uses arrays everywhere (Token[4096], Instr[256], BasicBlock[64], etc.)
 
 ---
 
-### 10. macOS support (arm64 + x86-64)
+### 4. Pointer and reference support
 **Status:** [ ] TODO
 **What:**
-  - [ ] arm64 backend in jda1 (Apple Silicon is dominant now)
-  - [ ] Mach-O binary format emission (replace ELF)
-  - [ ] macOS syscall ABI (different numbers, different conventions)
-  - [ ] Universal binary or separate arm64/x86-64 builds
-  - [ ] Homebrew formula: `brew install jda`
+  - [ ] Parse `&expr` (address-of) → LEA
+  - [ ] Parse `ptr[index]` (deref + index) → MOV from [base + index*stride]
+  - [ ] Parse `ptr[0] = val` (deref + store)
+  - [ ] Parse `&Type` in function signatures for pass-by-reference
+  - [ ] Pointer arithmetic
+**Why:** jda1.jda passes almost everything by pointer/reference.
+
+---
+
+### 5. String escape sequences
+**Status:** [ ] TODO
+**What:**
+  - [ ] `\n` → newline (0x0A)
+  - [ ] `\t` → tab (0x09)
+  - [ ] `\\` → backslash (0x5C)
+  - [ ] `\"` → quote (0x22)
+  - [ ] Process escapes during lexing or when copying to strtab
+**Why:** jda1.jda uses `\n` in print statements everywhere.
+
+---
+
+### 6. print(int) — integer to string conversion
+**Status:** [ ] TODO
+**What:**
+  - [ ] Emit runtime int-to-decimal-string conversion
+  - [ ] Handle negative numbers
+  - [ ] Output via SYS_WRITE
+**Why:** jda1.jda uses `print(variable)` for debug output of integer values.
+
+---
+
+### 7. Else-if chains
+**Status:** [ ] TODO
+**What:**
+  - [ ] Parse `if ... { } else if ... { } else { }` chains
+  - [ ] Codegen cascading conditional branches
+**Why:** jda1.jda uses many else-if chains (tokenizer keyword classification, op dispatch, etc.)
+
+---
+
+### 8. Constants (`const NAME = value`)
+**Status:** [ ] TODO
+**What:**
+  - [ ] Parse `const NAME = int_literal`
+  - [ ] Store in compile-time constant table
+  - [ ] Resolve at codegen time (emit OP_CONST with stored value)
+**Why:** jda1.jda has 40+ constants (TOK_*, NODE_*, OP_*, TYPE_*, PHYS_*, N_ALLOC_REGS, etc.)
+
+---
+
+### 9. Logical operators in expressions
+**Status:** [ ] TODO
+**What:**
+  - [ ] `and` / `or` in if/loop conditions with short-circuit evaluation
+  - [ ] `!= null` null comparison
+  - [ ] Chained conditions: `a >= '0' and a <= '9'`
+**Why:** jda1.jda uses compound conditions in loops and if statements.
+
+---
+
+### 10. Self-hosting roundtrip
+**Status:** [ ] TODO — MILESTONE 🎯
+**What:** jda1 compiles jda1.jda → jda1-gen2 → compiles hello.jda → runs correctly. Binary hashes match.
+**Depends on:** Items 1–9
+**Why:** Once achieved, Jda compiler has zero external dependencies. The language bootstraps itself.
+
+---
+
+## Phase 2: Cross-Platform Installation
+
+### 11. Linux x86-64 installer
+**Status:** [ ] TODO
+**What:**
+  - [ ] Shell script: `curl -sSf https://jda-lang.org/install.sh | sh`
+  - [ ] Downloads prebuilt `jda` binary to `~/.jda/bin/`
+  - [ ] Adds to PATH via shell profile
+  - [ ] `jda --version`, `jda build file.jda`, `jda run file.jda`
+  - [ ] GitHub Releases with tarball
+  - [ ] Optional: `.deb` and `.rpm` packages
+**Why:** Primary platform. Must be one command to install.
+
+---
+
+### 12. macOS installer (arm64 + x86-64)
+**Status:** [ ] TODO
+**What:**
+  - [ ] ARM64 code generation backend (Apple Silicon)
+  - [ ] Mach-O binary format (replace ELF)
+  - [ ] macOS syscall numbers and ABI
+  - [ ] `brew install jda` (Homebrew formula)
   - [ ] Shell installer for macOS
-**Ref:** `targets/arm64.jda` exists but needs integration with jda1
-**Why:** Large developer population on macOS.
+  - [ ] Universal binary or architecture detection
+**Ref:** `targets/arm64.jda` has initial spec
+**Why:** Majority of developers use macOS.
 
 ---
 
-### 11. Windows support
+### 13. Windows installer
 **Status:** [ ] TODO
 **What:**
-  - [ ] PE/COFF binary format emission (replace ELF)
-  - [ ] Windows syscall ABI (Win32 API or NT syscalls)
-  - [ ] Windows calling convention (rcx, rdx, r8, r9 — different from SysV)
-  - [ ] MSI or scoop/winget installer
+  - [ ] PE/COFF binary format (replace ELF)
+  - [ ] Windows calling convention (rcx, rdx, r8, r9)
+  - [ ] Win32 API or NT syscalls
+  - [ ] `winget install jda` or `scoop install jda`
+  - [ ] MSI installer
   - [ ] PowerShell install script
-**Ref:** `targets/windows.jda` exists but needs integration with jda1
-**Why:** Huge user base. Enterprise adoption requires Windows support.
+**Ref:** `targets/windows.jda` has initial spec
+**Why:** Enterprise adoption requires Windows.
 
 ---
 
-### 12. WebAssembly target
+### 14. WebAssembly target
 **Status:** [ ] TODO
 **What:**
-  - [ ] WASM binary emission from jda1
-  - [ ] WASI support for filesystem/networking
-  - [ ] Browser-runnable Jda programs
-  - [ ] `jda build --target wasm` flag
-**Ref:** `targets/wasm.jda` exists but needs integration
-**Why:** Web deployment, serverless edge computing, playground.
+  - [ ] WASM binary emission
+  - [ ] WASI support for I/O
+  - [ ] `jda build --target wasm`
+  - [ ] Browser playground on website
+**Ref:** `targets/wasm.jda` has initial spec
+**Why:** Web deployment, serverless, browser playground for learning.
 
 ---
 
 ## Phase 3: Language Features (Competitive Parity)
 
-What C/Go/Rust/Python developers expect from a modern language.
-
-### 13. Type system and type checking
+### 15. Type system and type checking
 **Status:** [ ] TODO
 **What:**
   - [ ] Type inference for `let` bindings
-  - [ ] Function signature type checking (params + return)
+  - [ ] Function parameter and return type checking
   - [ ] Struct field type checking
   - [ ] Pointer/reference type tracking
-  - [ ] Clear error messages for type mismatches
-**Why:** Every modern language has type checking. Without it, programs silently produce wrong results.
+  - [ ] Clear error messages with source location
+**Why:** Without type checking, programs silently produce wrong results.
 
 ---
 
-### 14. Ownership and borrow checking
+### 16. Enums and pattern matching
 **Status:** [ ] TODO
 **What:**
-  - [ ] Track ownership of heap allocations
-  - [ ] Enforce single-owner rule at compile time
-  - [ ] Borrow checker: no aliased mutable references
-  - [ ] Lifetime annotations for references
-**Ref:** `mem/` has the model spec'd; needs compiler enforcement
-**Why:** Jda's value proposition is "safe like Rust" — must deliver on this.
-
----
-
-### 15. Enums and pattern matching
-**Status:** [ ] TODO
-**What:**
-  - [ ] Parse `enum Name { Variant1(types) Variant2 ... }`
-  - [ ] Parse `match expr { Pattern => body ... }`
+  - [ ] `enum Shape { Circle(f64)  Rect(f64, f64) }`
+  - [ ] `match expr { Pattern => body ... }`
   - [ ] Exhaustiveness checking
-  - [ ] Codegen for tagged unions
-**Ref:** Already in syntax spec and README examples
-**Why:** Core language feature promised in docs. Used for error handling (Result<T, E>).
+  - [ ] Tagged union codegen
+**Why:** Advertised in README. Used for Result<T,E> error handling.
 
 ---
 
-### 16. Error handling (Result type)
+### 17. Result<T,E> error handling
 **Status:** [ ] TODO
 **What:**
   - [ ] Built-in `Result<T, E>` type
-  - [ ] `?` operator for early return on error
   - [ ] `ok(val)` and `err(msg)` constructors
+  - [ ] `?` operator for early return on error
   - [ ] No exceptions — errors are values
-**Why:** Every Jda function signature in jda1.jda uses `-> Result` or returns error codes.
+**Why:** Jda's error model. Every stdlib function should return Result.
 
 ---
 
-### 17. Generics / parametric polymorphism
+### 18. Generics (parametric polymorphism)
 **Status:** [ ] TODO
 **What:**
-  - [ ] Parse `fn foo<T>(x: T) -> T`
+  - [ ] `fn foo<T>(x: T) -> T`
+  - [ ] `struct Vec<T> { ... }`
   - [ ] Monomorphization (one copy per concrete type)
-  - [ ] Generic structs: `struct Vec<T> { ... }`
-**Why:** Required for generic data structures (Vec, HashMap, Result, Option).
+**Why:** Required for generic containers (Vec, HashMap, Option, Result).
 
 ---
 
-### 18. impl blocks and methods
+### 19. impl blocks and methods
 **Status:** [ ] TODO
 **What:**
-  - [ ] Parse `impl StructName { fn method(self, ...) ... }`
-  - [ ] Method call syntax: `obj.method(args)`
+  - [ ] `impl Struct { fn method(self, ...) ... }`
+  - [ ] Method call: `obj.method(args)`
   - [ ] `self` as implicit first parameter
-**Why:** In syntax spec and README examples. Core OOP-like ergonomic.
+**Why:** In syntax spec and README. Core ergonomic.
 
 ---
 
-### 19. Traits / interfaces
+### 20. Traits / interfaces
 **Status:** [ ] TODO
 **What:**
-  - [ ] Parse `trait Name { fn method(self, ...) ... }`
+  - [ ] `trait Name { fn method(self, ...) ... }`
   - [ ] `impl Trait for Struct { ... }`
-  - [ ] Trait bounds on generics: `fn foo<T: Display>(x: T)`
-  - [ ] Dynamic dispatch via vtables (optional)
-**Why:** Required for polymorphism. Rust/Go both have this.
+  - [ ] Trait bounds: `fn foo<T: Display>(x: T)`
+  - [ ] Optional vtable-based dynamic dispatch
+**Why:** Required for polymorphism, operator overloading, standard traits (Display, Iterator, etc.)
 
 ---
 
-### 20. Standard library — core modules
-**Status:** [ ] PARTIAL (spec files exist, no compiled implementation)
+### 21. Ownership and borrow checking
+**Status:** [ ] TODO
 **What:**
-  - [ ] `fmt` — string formatting, print with args: `fmt("x = {}", x)`
-  - [ ] `fs` — file read/write/seek/stat
-  - [ ] `net` — TCP/UDP sockets, HTTP client/server
-  - [ ] `json` — parse and emit JSON
-  - [ ] `time` — timestamps, durations, sleep
-  - [ ] `crypto` — hashing (SHA256, etc.)
-  - [ ] `process` — spawn, pipe, exec
-  - [ ] `collections` — Vec, HashMap, HashSet, Queue
-  - [ ] `io` — buffered reader/writer
-  - [ ] `regex` — regular expressions
-  - [ ] `math` — sqrt, sin, cos, pow, log, etc.
-**Ref:** `stdlib/` has .jda spec files for many of these
-**Why:** A language without a usable stdlib is a toy.
+  - [ ] Track heap allocation ownership at compile time
+  - [ ] Enforce single-owner rule
+  - [ ] Borrow checker: no aliased mutable references
+  - [ ] Lifetime annotations
+  - [ ] Automatic drop/deallocation at scope exit
+**Ref:** `mem/` has the model designed
+**Why:** "Safe like Rust" is Jda's core promise. Must be enforced by compiler.
 
 ---
 
-## Phase 4: Developer Tooling
+## Phase 4: Standard Library
 
-### 21. Package manager (`jda pkg`)
+### 22. Core standard library
+**Status:** [ ] TODO (spec .jda files exist in `stdlib/`)
+**What:**
+  - [ ] `fmt` — string formatting: `fmt("x = {}", x)`
+  - [ ] `fs` — file read/write/stat/mkdir
+  - [ ] `io` — buffered reader/writer, stdin/stdout
+  - [ ] `collections` — Vec, HashMap, HashSet, Queue, Stack
+  - [ ] `math` — sqrt, sin, cos, pow, log, abs, min, max
+  - [ ] `strings` — split, trim, contains, replace, to_upper/lower
+  - [ ] `net` — TCP/UDP sockets, HTTP client and server
+  - [ ] `json` — parse and emit JSON
+  - [ ] `time` — timestamps, duration, sleep, timer
+  - [ ] `crypto` — SHA256, HMAC, random
+  - [ ] `process` — spawn, pipe, exec, env vars
+  - [ ] `regex` — regular expression matching
+  - [ ] `os` — platform detection, args, exit
+**Why:** A language without stdlib is unusable for real work.
+
+---
+
+## Phase 5: Developer Tooling
+
+### 23. CLI interface (`jda` command)
+**Status:** [ ] TODO
+**What:**
+  - [ ] `jda build file.jda` — compile to binary
+  - [ ] `jda run file.jda` — compile and run
+  - [ ] `jda test` — discover and run test functions
+  - [ ] `jda fmt` — format source code
+  - [ ] `jda doc` — generate API documentation
+  - [ ] `jda version` — show version
+  - [ ] `jda init` — create new project
+**Why:** Single entry point like `go`, `cargo`, `python`.
+
+---
+
+### 24. Package manager (`jda pkg`)
 **Status:** [ ] TODO (spec at `tools/pkg.jda`)
 **What:**
-  - [ ] `jda pkg init` — create new project
+  - [ ] `jda pkg init` — create project manifest
   - [ ] `jda pkg add <name>` — add dependency
-  - [ ] `jda pkg build` — build project
-  - [ ] `jda pkg test` — run tests
+  - [ ] `jda pkg build` — build with dependencies
   - [ ] `jda pkg publish` — publish to registry
-  - [ ] Package registry website (like crates.io / pkg.go.dev)
+  - [ ] Package registry website
   - [ ] Lock file for reproducible builds
-**Why:** Go has `go mod`, Rust has `cargo`, Node has `npm`. Essential for ecosystem.
+  - [ ] Semantic versioning
+**Why:** Go has `go mod`, Rust has `cargo`, Node has `npm`.
 
 ---
 
-### 22. Built-in test framework
+### 25. Built-in test framework
 **Status:** [ ] TODO
 **What:**
-  - [ ] `test` keyword or `#[test]` attribute for test functions
-  - [ ] `jda test` command to discover and run all tests
-  - [ ] Assert macros: `assert(cond)`, `assert_eq(a, b)`
-  - [ ] Test output: pass/fail counts, failure details
+  - [ ] `test fn test_name() { ... }` or `#[test]` attribute
+  - [ ] `jda test` discovers and runs all tests
+  - [ ] `assert(cond)`, `assert_eq(a, b)`, `assert_ne(a, b)`
+  - [ ] Pass/fail counts, failure details with source location
   - [ ] Parallel test execution
-**Why:** Go's `go test` is a huge productivity win. Every modern language has this.
+**Why:** `go test` and `cargo test` are huge productivity wins.
 
 ---
 
-### 23. Formatter (`jda fmt`)
+### 26. Formatter (`jda fmt`)
 **Status:** [ ] TODO
 **What:**
-  - [ ] Canonical code formatting (indentation, spacing, line breaks)
+  - [ ] Canonical style: indentation, spacing, alignment
   - [ ] `jda fmt` reformats in-place
-  - [ ] `jda fmt --check` for CI (exit 1 if unformatted)
-  - [ ] No configuration — one true style (like `gofmt`)
-**Why:** Eliminates bikeshedding. CI-enforceable code quality.
+  - [ ] `jda fmt --check` for CI
+  - [ ] Zero configuration — one style (like `gofmt`)
+**Why:** Eliminates style debates. CI-enforceable.
 
 ---
 
-### 24. LSP server (IDE support)
-**Status:** [ ] PARTIAL (spec at `tools/lsp.jda`)
+### 27. LSP server and IDE support
+**Status:** [ ] TODO (spec at `tools/lsp.jda`)
 **What:**
-  - [ ] Go-to-definition
-  - [ ] Hover type info
-  - [ ] Autocomplete
-  - [ ] Error diagnostics (red squiggles)
+  - [ ] Go-to-definition, hover info, autocomplete
+  - [ ] Error diagnostics (inline)
   - [ ] Rename symbol
-  - [ ] VS Code extension published on marketplace
-  - [ ] Neovim/Emacs LSP compatibility
+  - [ ] VS Code extension on marketplace
+  - [ ] Neovim/Emacs LSP support
 **Why:** Modern development requires IDE intelligence.
 
 ---
 
-### 25. Debugger support
+### 28. Debugger support
 **Status:** [ ] TODO
 **What:**
-  - [ ] DWARF debug info emission in ELF binaries
+  - [ ] DWARF debug info in ELF binaries
   - [ ] Source-level debugging with GDB/LLDB
   - [ ] Breakpoints, step, inspect variables
-  - [ ] Stack trace on crash (with source locations)
-**Why:** Without debugging, development is painful. C has had this for 40 years.
+  - [ ] Stack trace on crash with source locations
+**Why:** Essential for debugging. C has had this for 40 years.
 
 ---
 
-### 26. REPL / interactive mode
+### 29. REPL / interactive mode
 **Status:** [ ] TODO
 **What:**
-  - [ ] `jda repl` launches interactive session
-  - [ ] Evaluate expressions, define functions
-  - [ ] Tab completion
-  - [ ] History
-**Why:** Python/Ruby developers expect this. Great for learning the language.
+  - [ ] `jda repl` — interactive expression evaluation
+  - [ ] Define functions, inspect results
+  - [ ] Tab completion, history
+**Why:** Python/Ruby developers expect this. Great for learning.
 
 ---
 
-## Phase 5: Documentation
+## Phase 6: Documentation
 
-### 27. Language reference manual
+### 30. Language reference manual
 **Status:** [ ] TODO
 **What:**
-  - [ ] Complete grammar specification
-  - [ ] All types: primitives, structs, enums, arrays, pointers
+  - [ ] Complete grammar (EBNF or railroad diagrams)
+  - [ ] All types: primitives, structs, enums, arrays, pointers, references
   - [ ] All statements: let, if, loop, match, ret, fn, struct, enum, impl, trait
-  - [ ] Operators and precedence rules (left-to-right evaluation)
+  - [ ] Operators (left-to-right evaluation, no precedence — Jda design)
   - [ ] Ownership and borrowing rules
   - [ ] Memory model
-**Where:** `docs/reference/` or website
-**Why:** Developers need a definitive reference. Rust has "The Book", Go has the spec.
+  - [ ] Calling conventions
+**Where:** `docs/reference/` and website
 
 ---
 
-### 28. Getting Started tutorial
+### 31. Getting Started tutorial
 **Status:** [ ] TODO
 **What:**
-  - [ ] Install Jda (one-liner for each OS)
+  - [ ] Install (one-liner per OS)
   - [ ] Hello World
-  - [ ] Variables and types
-  - [ ] Functions
-  - [ ] Structs
+  - [ ] Variables, types, functions
+  - [ ] Structs and methods
   - [ ] Control flow (if/else, loop, match)
-  - [ ] Error handling
-  - [ ] Building a small project (CLI tool or web server)
-**Where:** `docs/tutorial/` or website
-**Why:** First 30 minutes determine if someone adopts a language.
+  - [ ] Error handling (Result)
+  - [ ] Build a small project (CLI tool or web server)
+**Where:** `docs/tutorial/` and website
 
 ---
 
-### 29. Standard library API documentation
+### 32. API documentation (auto-generated)
 **Status:** [ ] TODO
 **What:**
-  - [ ] Auto-generated from doc comments in source
+  - [ ] Doc comments in source (`; @doc ...` or `/// ...`)
+  - [ ] `jda doc` generates HTML
   - [ ] Every public function: signature, description, example
-  - [ ] Searchable HTML site (like docs.rs / pkg.go.dev)
-  - [ ] `jda doc` command to generate locally
-**Why:** Developers won't use what they can't look up.
+  - [ ] Searchable website (like docs.rs / pkg.go.dev)
 
 ---
 
-### 30. Examples and cookbook
-**Status:** [ ] PARTIAL (4 examples exist)
-**What:** Expand `examples/` to cover real-world use cases:
+### 33. Examples and cookbook
+**Status:** [ ] PARTIAL (4 examples: hello.jda, web_server.jda, mlp.jda, transformer.jda)
+**What:** Expand `examples/` with real-world programs:
   - [ ] CLI argument parser
   - [ ] File I/O (read CSV, write JSON)
   - [ ] HTTP server and client
-  - [ ] WebSocket chat server
-  - [ ] Database query (SQLite)
+  - [ ] WebSocket chat
   - [ ] Concurrent worker pool
-  - [ ] ML inference (load model, run prediction)
-  - [ ] Game of Life (terminal graphics)
-  - [ ] Markdown to HTML converter
+  - [ ] ML inference
+  - [ ] Game of Life (terminal)
+  - [ ] Markdown to HTML
   - [ ] Build tool / task runner
-**Why:** Examples are the fastest way to learn. "Show me the code."
+  - [ ] Key-value store
 
 ---
 
-### 31. Website (jda-lang.org)
+### 34. Website (jda-lang.org)
 **Status:** [ ] TODO
 **What:**
   - [ ] Landing page with elevator pitch
   - [ ] Install instructions (Linux/macOS/Windows)
-  - [ ] Online playground (WASM-compiled Jda in browser)
-  - [ ] Documentation hub (tutorial, reference, API docs)
-  - [ ] Blog (release announcements, design decisions)
+  - [ ] Online playground (WASM)
+  - [ ] Documentation hub
+  - [ ] Blog
   - [ ] Package registry search
-**Why:** Every serious language has a website. It's the front door.
 
 ---
 
-## Phase 6: Performance and Production Readiness
+## Phase 7: Performance and Production
 
-### 32. Optimizing compiler backend
-**Status:** [ ] TODO
+### 35. Optimizing compiler backend
+**Status:** [ ] PARTIAL (basic DCE + constant folding done)
 **What:**
-  - [ ] Register allocation (linear scan or graph coloring)
-  - [ ] Instruction selection (better than 1:1 mapping)
-  - [ ] Dead code elimination (already started)
-  - [ ] Constant folding (already started)
-  - [ ] Inlining
+  - [ ] Graph-coloring register allocator
+  - [ ] Instruction selection (not 1:1 IR → x86)
+  - [ ] Function inlining
   - [ ] Loop unrolling
   - [ ] Tail call optimization
-  - [ ] Benchmark suite comparing Jda to C/Go/Rust
-**Why:** "Machine-code fast" is the promise. Must prove it with numbers.
+  - [ ] Benchmark suite (Jda vs C vs Go vs Rust)
 
 ---
 
-### 33. Concurrency runtime (J-Threads)
+### 36. Concurrency runtime (J-Threads)
 **Status:** [ ] TODO (spec at `concurrency/`)
 **What:**
-  - [ ] Green thread scheduler (M:N threading)
-  - [ ] Lock-free channel implementation
-  - [ ] `spawn` keyword to launch J-Thread
-  - [ ] Channel send/recv syntax
+  - [ ] Green thread scheduler (M:N)
+  - [ ] Lock-free channels
+  - [ ] `spawn` keyword, channel send/recv
   - [ ] Work-stealing scheduler
-**Why:** "Concurrent like Go" is the promise. goroutines are Go's killer feature.
+  - [ ] Deadlock detection
+**Why:** "Concurrent like Go" promise.
 
 ---
 
-### 34. ML runtime (tensors, autograd)
+### 37. ML runtime (tensors, autograd)
 **Status:** [ ] TODO (spec at `stdlib/ml/`)
 **What:**
-  - [ ] Tensor type as language primitive
-  - [ ] Shape checking at compile time
-  - [ ] Autograd (reverse-mode automatic differentiation)
-  - [ ] GPU backends (CUDA PTX, ROCm, Metal)
-  - [ ] AVX-512 / NEON SIMD acceleration
-  - [ ] Pre-trained model loading
-**Why:** "ML-native" is the unique differentiator vs all competitors.
+  - [ ] Tensor as language primitive
+  - [ ] Compile-time shape checking
+  - [ ] Autograd (reverse-mode AD)
+  - [ ] GPU backends (CUDA, ROCm, Metal)
+  - [ ] SIMD acceleration (AVX-512, NEON)
+**Why:** "ML-native" unique differentiator.
 
 ---
 
-### 35. C FFI (Foreign Function Interface)
+### 38. C FFI (Foreign Function Interface)
 **Status:** [ ] TODO
 **What:**
   - [ ] Call C functions from Jda
   - [ ] Expose Jda functions to C
-  - [ ] C header file parser (basic)
-  - [ ] libc interop layer (optional, for porting existing code)
-**Why:** No language succeeds in isolation. Must interop with existing C ecosystem.
+  - [ ] C header parser (basic)
+  - [ ] libc interop layer (optional)
+**Why:** No language succeeds in isolation. Must use existing C libraries.
 
 ---
 
-## Summary: What Competitors Have That Jda Doesn't (Yet)
+## Competitor Comparison
 
-| Feature | C | Go | Rust | Python | Jda |
-|---------|---|-----|------|--------|-----|
-| Cross-platform | ✅ | ✅ | ✅ | ✅ | ❌ Linux x86-64 only |
-| Package manager | make/cmake | go mod | cargo | pip | ❌ Spec only |
-| Test framework | external | go test | cargo test | pytest | ❌ None |
-| Formatter | clang-format | gofmt | rustfmt | black | ❌ None |
-| Debugger | GDB | dlv | rust-gdb | pdb | ❌ None |
-| IDE support | clangd | gopls | rust-analyzer | pylsp | ❌ Spec only |
-| REPL | ❌ | ❌ | ❌ | ✅ | ❌ None |
-| Generics | templates | ✅ | ✅ | ✅ | ❌ None |
-| Error handling | errno | error interface | Result<T,E> | exceptions | ❌ None |
-| Concurrency | pthreads | goroutines | async/tokio | asyncio | ❌ Spec only |
-| Documentation | man pages | go doc | rustdoc | docstrings | ❌ None |
-| Website | cppreference | go.dev | rust-lang.org | python.org | ❌ None |
-| Ecosystem size | massive | large | growing | massive | ❌ Zero |
-| Self-hosting | ✅ | ✅ | ✅ (via LLVM) | N/A | 🔧 In progress |
+| Feature | C | Go | Rust | Python | Ruby | **Jda** |
+|---------|---|-----|------|--------|------|---------|
+| Cross-platform | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ Linux x86-64 only |
+| Self-hosted | ✅ | ✅ | ✅ (LLVM) | N/A | N/A | 🔧 In progress |
+| Package manager | cmake | go mod | cargo | pip | gem | ❌ Spec only |
+| Test framework | external | go test | cargo test | pytest | minitest | ❌ |
+| Formatter | clang-format | gofmt | rustfmt | black | rubocop | ❌ |
+| Debugger | GDB | dlv | rust-gdb | pdb | byebug | ❌ |
+| IDE/LSP | clangd | gopls | rust-analyzer | pylsp | solargraph | ❌ Spec only |
+| REPL | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Generics | templates | ✅ | ✅ | ✅ | duck typing | ❌ |
+| Error handling | errno | error | Result<T,E> | exceptions | exceptions | ❌ |
+| Concurrency | pthreads | goroutines | async/tokio | asyncio | threads | ❌ Spec only |
+| ML native | ❌ | ❌ | ❌ | PyTorch/NumPy | ❌ | ❌ Spec only |
+| Zero deps compiler | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ NASM → bare metal |
+| Docs/website | cppreference | go.dev | rust-lang.org | python.org | ruby-lang.org | ❌ |
 
 ---
 
 ## Priority Order
 
-**Must-have (blocks everything):**
-1. Loop mutation (#1) → Function calls (#2) → Structs (#3) → Arrays (#4) → Self-hosting (#8)
+**P0 — Blocks everything:**
+1. Multi-function (#1) → Structs (#2) → Arrays (#3) → Pointers (#4) → Self-hosting (#10)
 
-**Must-have (blocks adoption):**
-2. Cross-platform installers (#9, #10, #11)
-3. Getting Started tutorial (#28) + Language reference (#27)
-4. Type checking (#13) + Error handling (#16)
+**P1 — Blocks adoption:**
+2. Linux installer (#11) → macOS (#12) → Windows (#13)
+3. Tutorial (#31) → Language reference (#30)
+4. Type checking (#15) → Error handling (#17)
 
-**Should-have (competitive parity):**
-3. Package manager (#21) + Test framework (#22) + Formatter (#23)
-4. Enums (#15) + Generics (#17) + Traits (#19)
-5. LSP + VS Code extension (#24)
-6. Website (#31)
+**P2 — Competitive parity:**
+5. Package manager (#24) → Test framework (#25) → Formatter (#26)
+6. Enums (#16) → Generics (#18) → Traits (#20)
+7. LSP + VS Code extension (#27)
+8. Website (#34)
 
-**Nice-to-have (differentiation):**
-7. Concurrency runtime (#33) + ML runtime (#34)
-8. Debugger (#25) + REPL (#26)
-9. C FFI (#35) + WASM target (#12)
+**P3 — Differentiation:**
+9. J-Threads concurrency (#36)
+10. ML tensor runtime (#37)
+11. Debugger (#28) → REPL (#29)
+12. C FFI (#38) → WASM (#14)
