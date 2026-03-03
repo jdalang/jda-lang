@@ -36,6 +36,11 @@ for dir in tests/conformance/stage0/pass tests/conformance/stage0/fail tests/con
   fi
 done
 
+echo "[lint] checking stage1 workaround safety for stage0 compound expressions"
+if ! bash tools/dev/check_jda0_compound_expr_workaround.sh; then
+  has_error=1
+fi
+
 if [[ $has_error -ne 0 ]]; then
   exit 1
 fi

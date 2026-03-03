@@ -128,6 +128,7 @@ section .bss
     frm_patch_off resb 8    ; frame size placeholder offset (gen_fn, r15 not safe)
     prm_cnt_bss  resb 8    ; param count during gen_fn loop (all regs clobbered)
     prec_stop    resb 1    ; 0=normal, 1=stop-before-or, 2=stop-before-or-and
+    arith_stop   resb 1    ; 0=normal, 1=stop-before-plus-minus
     asm_reglen   resb 8    ; asm handler: register name length (r15 must not be clobbered)
 
 section .data
@@ -2502,9 +2503,12 @@ gen_expr_base:
     jne     .not_lparen
     call    adv_tok             ; skip '('
     movzx   r13, byte [prec_stop]
+    movzx   r12, byte [arith_stop]
     mov     byte [prec_stop], 0 ; inside parens: allow all ops
+    mov     byte [arith_stop], 0
     call    gen_expr            ; evaluate inner expr → rax
     mov     byte [prec_stop], r13b ; restore
+    mov     byte [arith_stop], r12b
     call    adv_tok             ; skip ')'
     jmp     .maybe_binary
 .not_lparen:
@@ -2870,6 +2874,14 @@ gen_expr_base:
 
 .maybe_binary:
     call    cur_tok_type
+    movzx   r13, byte [arith_stop]
+    cmp     r13, 0
+    je      .mb_chk_plus_minus
+    cmp     rax, TOK_PLUS
+    je      .expr_done
+    cmp     rax, TOK_MINUS
+    je      .expr_done
+.mb_chk_plus_minus:
     cmp     rax, TOK_PLUS
     je      .do_add
     cmp     rax, TOK_MINUS
@@ -2926,7 +2938,10 @@ gen_expr_base:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
+    movzx   r13, byte [arith_stop]
+    mov     byte [arith_stop], 1
     call    gen_expr_base
+    mov     byte [arith_stop], r13b
     mov     rdi, 0x5B
     call    emit1
     mov     rdi, 0x48
@@ -2942,7 +2957,10 @@ gen_expr_base:
     call    adv_tok
     mov     rdi, 0x50
     call    emit1
+    movzx   r13, byte [arith_stop]
+    mov     byte [arith_stop], 1
     call    gen_expr_base
+    mov     byte [arith_stop], r13b
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x89
