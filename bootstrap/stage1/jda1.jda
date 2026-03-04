@@ -207,6 +207,7 @@ struct Fixup {
     code_off:  i64
     target_bb: i64
     kind:      i64
+    str_len:   i64
 }
 
 struct RegAlloc {
@@ -665,7 +666,8 @@ fn parse_call_rest(toks: &Token, pos: &i64, name: &Token) -> Node {
     expect(toks, pos, TOK_RPAREN)
     let n = Node{}
     n.node_type = NODE_CALL
-    n.token     = name
+    n.token     = name.str_start
+    n.token2    = name.str_len
     n.children  = args
     n.child_cnt = cnt
     ret n
@@ -839,8 +841,8 @@ fn codegen_call(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     ins.operand1  = arg_ids[1]
     ins.operand2  = arg_ids[2]
     ins.operand3  = node.child_cnt
-    ins.str_start = node.token.str_start
-    ins.str_len   = node.token.str_len
+    ins.str_start = node.token
+    ins.str_len   = node.token2
     ret emit(jfn, bb, &ins)
 }
 
@@ -908,6 +910,10 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     }
     if node.node_type == NODE_SYSCALL {
         codegen_syscall(node, jfn, bb)
+        ret bb
+    }
+    if node.node_type == NODE_CALL {
+        codegen_call(node, jfn, bb)
         ret bb
     }
     ret bb
@@ -1705,10 +1711,12 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
             let a2_r = get_or_load(&ctx.ra, out, pos, ins.operand2)
             if a2_r != PHYS_RDX { emit_mov_rr(out, pos, PHYS_RDX, a2_r) }
         }
-        ; CALL rel32 — placeholder, patched by linker/fixup
+        ; CALL rel32 — placeholder, patched after all functions lowered
         let fix_idx = ctx.fix_cnt
         ctx.fixups[fix_idx].code_off  = pos[0] + 1
-        ctx.fixups[fix_idx].target_bb = ins.str_start   ; reuse as name offset
+        ctx.fixups[fix_idx].target_bb = ins.str_start   ; function name src offset
+        ctx.fixups[fix_idx].kind      = 2               ; call fixup
+        ctx.fixups[fix_idx].str_len   = ins.str_len     ; function name length
         ctx.fix_cnt = ctx.fix_cnt + 1
         emit_call_rel32(out, pos, 0)
         ; Restore caller-saved regs (in reverse)
@@ -1742,7 +1750,7 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     }
 }
 
-fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
+fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
     ; Function prologue: push rbp; mov rbp, rsp; sub rsp, frame_size
     emit_push_r(out, pos, PHYS_RBP)
     ; MOV rbp, rsp:  48 89 E5
@@ -1803,16 +1811,26 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
         i = i + 1
     }
 
-    ; Emit exit(0) syscall: mov rax,60; xor rdi,rdi; syscall
-    emit_byte(out, pos, 0x48)   ; REX.W
-    emit_byte(out, pos, 0xC7)   ; MOV r/m64, imm32
-    emit_byte(out, pos, 0xC0)   ; ModRM: rax
-    emit_i32_le(out, pos, 60)   ; SYS_EXIT
-    emit_byte(out, pos, 0x48)   ; REX.W
-    emit_byte(out, pos, 0x31)   ; XOR
-    emit_byte(out, pos, 0xFF)   ; rdi, rdi
-    emit_byte(out, pos, 0x0F)
-    emit_byte(out, pos, 0x05)   ; syscall
+    ; Emit function ending
+    if is_main == 1 {
+        ; Exit(0) syscall for main: mov rax,60; xor rdi,rdi; syscall
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 60)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+    } else {
+        ; Non-main epilogue: mov rsp, rbp; pop rbp; ret
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x89)
+        emit_byte(out, pos, 0xEC)
+        emit_pop_r(out, pos, PHYS_RBP)
+        emit_ret_instr(out, pos)
+    }
 
     ; Branch fixup pass: patch rel32 for OP_BR and OP_JMP
     let fi = 0
@@ -1952,7 +1970,7 @@ fn main() {
     asm { out argv_ptr = rsi }
 
     let src_buf  = alloc_pages(8)
-    let toks    = alloc_pages(4)
+    let toks     = Token[4096]
 
     let src_path = get_argv(argv_ptr, 1)
     let out_path = get_argv(argv_ptr, 2)
@@ -1963,44 +1981,151 @@ fn main() {
 
     let tok_cnt = 0
     lex(src_buf, src_len, toks, &tok_cnt)
-    
-    let ast = Node{}
-    let pos = 0
-    parse_fn(toks, &pos, &ast)
-    
-    let jfn = JirFunction{}
-    jfn.src = src_buf
-    codegen_fn(&ast, &jfn)
-    
-    fold_constants(&jfn)
-    dce(&jfn)
-    
-    let ctx = LowerCtx{}
-    let code_buf = alloc_pages(8)                ; up to 32 KB code
-    let code_len = 0
-    regalloc_init(&ctx.ra)
-    lower_fn(&jfn, &ctx, code_buf, &code_len)
 
-    ; Patch strtab RIP-relative references now that code_len is known
-    ; strtab starts at: load_va + hdr_size(120) + code_len
-    let strtab_va = 0x400000 + 120 + code_len
+    ; ---- Parse all functions ----
+    let fn_asts    = Node[64]
+    let fn_name_off = i64[64]
+    let fn_name_len = i64[64]
+    let fn_cnt = 0
+    let pos = 0
+
+    loop toks[pos].type == TOK_FN {
+        ; Peek at name token (pos+1) before parse_fn advances pos
+        fn_name_off[fn_cnt] = toks[pos + 1].str_start
+        fn_name_len[fn_cnt] = toks[pos + 1].str_len
+        parse_fn(toks, &pos, &fn_asts[fn_cnt])
+        fn_cnt = fn_cnt + 1
+    }
+
+    ; ---- Prepare output buffers ----
+    let code_buf    = alloc_pages(16)
+    let code_len    = 0
+    let merged_str  = alloc_pages(4)
+    let merged_pos  = 0
+
+    ; Emit JMP rel32 placeholder (5 bytes) — entry point jumps to main
+    emit_byte(code_buf, &code_len, 0xE9)
+    emit_i32_le(code_buf, &code_len, 0)
+
+    ; Global fixup arrays for strtab and call patches
+    let gf_strtab_co   = i64[512]
+    let gf_strtab_tgt  = i64[512]
+    let gf_strtab_base = i64[512]
+    let gf_strtab_cnt  = 0
+    let gf_call_co     = i64[512]
+    let gf_call_name   = i64[512]
+    let gf_call_nlen   = i64[512]
+    let gf_call_cnt    = 0
+
+    ; Track code offsets per function
+    let fn_code_off = i64[64]
+    let main_idx    = -1
+
+    ; ---- Compile each function ----
     let fi = 0
-    loop fi < ctx.fix_cnt {
-        let fk = ctx.fixups[fi].kind
-        let co = ctx.fixups[fi].code_off
-        let tb = ctx.fixups[fi].target_bb
-        if fk == 1 {
-            let str_va = strtab_va + tb
-            let rel    = str_va - (0x400000 + 120 + co + 4)
-            poke_byte(code_buf, co,     rel & 0xFF)
-            poke_byte(code_buf, co + 1, (rel >> 8) & 0xFF)
-            poke_byte(code_buf, co + 2, (rel >> 16) & 0xFF)
-            poke_byte(code_buf, co + 3, (rel >> 24) & 0xFF)
+    loop fi < fn_cnt {
+        let jfn = JirFunction{}
+        jfn.src = src_buf
+        codegen_fn(&fn_asts[fi], &jfn)
+        fold_constants(&jfn)
+        dce(&jfn)
+
+        ; Check if this is main
+        let is_main = streq(src_buf, fn_name_off[fi], fn_name_len[fi], "main")
+        if is_main == 1 {
+            main_idx = fi
         }
+
+        fn_code_off[fi] = code_len
+
+        let ctx = LowerCtx{}
+        regalloc_init(&ctx.ra)
+        lower_fn(&jfn, &ctx, code_buf, &code_len, is_main)
+
+        ; Collect strtab and call fixups from this function
+        let ci = 0
+        loop ci < ctx.fix_cnt {
+            let fk = ctx.fixups[ci].kind
+            if fk == 1 {
+                ; Strtab fixup — adjust offset by merged strtab base
+                gf_strtab_co[gf_strtab_cnt]   = ctx.fixups[ci].code_off
+                gf_strtab_tgt[gf_strtab_cnt]  = ctx.fixups[ci].target_bb
+                gf_strtab_base[gf_strtab_cnt] = merged_pos
+                gf_strtab_cnt = gf_strtab_cnt + 1
+            }
+            if fk == 2 {
+                ; Call fixup — store function name info
+                gf_call_co[gf_call_cnt]   = ctx.fixups[ci].code_off
+                gf_call_name[gf_call_cnt] = ctx.fixups[ci].target_bb
+                gf_call_nlen[gf_call_cnt] = ctx.fixups[ci].str_len
+                gf_call_cnt = gf_call_cnt + 1
+            }
+            ci = ci + 1
+        }
+
+        ; Copy this function's strtab to merged buffer (byte-by-byte)
+        let si = 0
+        loop si < jfn.strtab_pos {
+            poke_byte(merged_str, merged_pos, jfn.strtab[si])
+            merged_pos = merged_pos + 1
+            si = si + 1
+        }
+
         fi = fi + 1
     }
-    ; Write ELF output: out_path already captured above
-    let out_fd   = syscall(2, out_path, 577, 493)  ; open(O_WRONLY|O_CREAT|O_TRUNC, 0755)
-    write_elf(out_fd, code_buf, code_len, &jfn.strtab, jfn.strtab_pos)
-    syscall(3, out_fd, 0, 0)                       ; close
+
+    ; ---- Patch initial JMP to main ----
+    if main_idx >= 0 {
+        let main_off = fn_code_off[main_idx]
+        let jmp_rel = main_off - 5
+        poke_byte(code_buf, 1, jmp_rel & 0xFF)
+        poke_byte(code_buf, 2, (jmp_rel >> 8) & 0xFF)
+        poke_byte(code_buf, 3, (jmp_rel >> 16) & 0xFF)
+        poke_byte(code_buf, 4, (jmp_rel >> 24) & 0xFF)
+    }
+
+    ; ---- Patch strtab fixups ----
+    let strtab_va = 0x400000 + 120 + code_len
+    let si = 0
+    loop si < gf_strtab_cnt {
+        let co = gf_strtab_co[si]
+        let str_off = gf_strtab_base[si] + gf_strtab_tgt[si]
+        let str_va = strtab_va + str_off
+        let rel = str_va - (0x400000 + 120 + co + 4)
+        poke_byte(code_buf, co,     rel & 0xFF)
+        poke_byte(code_buf, co + 1, (rel >> 8) & 0xFF)
+        poke_byte(code_buf, co + 2, (rel >> 16) & 0xFF)
+        poke_byte(code_buf, co + 3, (rel >> 24) & 0xFF)
+        si = si + 1
+    }
+
+    ; ---- Patch call fixups ----
+    let ci = 0
+    loop ci < gf_call_cnt {
+        let co = gf_call_co[ci]
+         let call_name = gf_call_name[ci]
+        let call_nlen = gf_call_nlen[ci]
+        ; Find the target function by name
+        let ti = 0
+        loop ti < fn_cnt {
+            if call_nlen == fn_name_len[ti] {
+                let matched = str_match(src_buf, call_name, fn_name_off[ti], call_nlen)
+                if matched == 1 {
+                    let target_off = fn_code_off[ti]
+                    let rel = target_off - (co + 4)
+                    poke_byte(code_buf, co,     rel & 0xFF)
+                    poke_byte(code_buf, co + 1, (rel >> 8) & 0xFF)
+                    poke_byte(code_buf, co + 2, (rel >> 16) & 0xFF)
+                    poke_byte(code_buf, co + 3, (rel >> 24) & 0xFF)
+                }
+            }
+            ti = ti + 1
+        }
+        ci = ci + 1
+    }
+
+    ; ---- Write ELF output ----
+    let out_fd = syscall(2, out_path, 577, 493)
+    write_elf(out_fd, code_buf, code_len, merged_str, merged_pos)
+    syscall(3, out_fd, 0, 0)
 }
