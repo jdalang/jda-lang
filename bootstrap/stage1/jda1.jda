@@ -524,6 +524,7 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
             n.node_type = NODE_FIELD_STORE
             n.token     = lhs.token
             n.token2    = lhs.token2
+            n.imm       = lhs.imm
             n.child0    = lhs.child0
             n.child1    = rhs
             n.data_type = lhs.data_type
@@ -772,8 +773,10 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
             let fn = Node{}
             fn.node_type = NODE_FIELD
             fn.token     = t
-            fn.token2    = field
+            fn.token2    = field.str_start
+            fn.imm       = field.str_len
             fn.data_type = -1
+            fn.child0    = null
             if has_idx == 1 { fn.child0 = idx }
             ret fn
         }
@@ -1043,12 +1046,11 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     if node.node_type == NODE_FIELD {
         let base_ident = Node{}
         base_ident.node_type = NODE_IDENT
-        let btok = node.token
-        base_ident.token = btok
+        base_ident.token = node.token
         let base = codegen_expr(base_ident, jfn, bb)
         let sid = node.data_type
         if sid < 0 {
-            sid = lookup_stype(jfn, btok)
+            sid = lookup_stype(jfn, node.token)
         }
         let obj = base
         if node.child0 != null {
@@ -1060,7 +1062,7 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             obj = emit_binop(jfn, bb, OP_ADD, base, byte_off)
         }
         if sid < 0 { ret obj }
-        let foff = lookup_field_off(jfn.stab, jfn.src, sid, node.token2.str_start, node.token2.str_len)
+        let foff = lookup_field_off(jfn.stab, jfn.src, sid, node.token2, node.imm)
         ret field_addr_from_base(obj, foff, jfn, bb)
     }
     ret -1
@@ -1121,6 +1123,7 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         fexpr.node_type = NODE_FIELD
         fexpr.token = node.token
         fexpr.token2 = node.token2
+        fexpr.imm = node.imm
         fexpr.child0 = node.child0
         fexpr.data_type = node.data_type
         let faddr = codegen_addr_expr(fexpr, jfn, bb)
@@ -2318,8 +2321,7 @@ fn main() {
     let tok_cnt = 0
     lex(src_buf, src_len, toks, &tok_cnt)
 
-    ; ---- Parse all functions ----
-    let fn_asts    = Node[64]
+    ; ---- Parse/compile functions ----
     let fn_name_off = i64[64]
     let fn_name_len = i64[64]
     let fn_cnt = 0
@@ -2329,14 +2331,6 @@ fn main() {
     ; Parse and record top-level structs first.
     loop toks[pos].type == TOK_STRUCT {
         parse_struct_decl(toks, &pos, stab)
-    }
-
-    loop toks[pos].type == TOK_FN {
-        ; Peek at name token (pos+1) before parse_fn advances pos
-        fn_name_off[fn_cnt] = toks[pos + 1].str_start
-        fn_name_len[fn_cnt] = toks[pos + 1].str_len
-        parse_fn(toks, &pos, &fn_asts[fn_cnt], stab, src_buf)
-        fn_cnt = fn_cnt + 1
     }
 
     ; ---- Prepare output buffers ----
@@ -2363,13 +2357,19 @@ fn main() {
     let fn_code_off = i64[64]
     let main_idx    = -1
 
-    ; ---- Compile each function ----
-    let fi = 0
-    loop fi < fn_cnt {
+    ; ---- Parse and compile each function immediately ----
+    loop toks[pos].type == TOK_FN {
+        let fn_node = Node{}
+        let fi = fn_cnt
+        ; Peek at name token (pos+1) before parse_fn advances pos
+        fn_name_off[fi] = toks[pos + 1].str_start
+        fn_name_len[fi] = toks[pos + 1].str_len
+        parse_fn(toks, &pos, &fn_node, stab, src_buf)
+
         let jfn = JirFunction{}
         jfn.src = src_buf
         jfn.stab = stab
-        codegen_fn(&fn_asts[fi], &jfn)
+        codegen_fn(&fn_node, &jfn)
         fold_constants(&jfn)
         dce(&jfn)
 
@@ -2414,7 +2414,7 @@ fn main() {
             si = si + 1
         }
 
-        fi = fi + 1
+        fn_cnt = fn_cnt + 1
     }
 
     ; ---- Patch initial JMP to main ----
