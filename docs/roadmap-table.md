@@ -3,7 +3,7 @@
   successfully compiles jda1.jda into a working binary.
   March 4, 2026 update: fixed stage-0 pass-count corruption (`P2 0`/549-byte output) in `bootstrap/stage0/jda0.asm`.
 
-  jda1 (self-hosted compiler) — can compile simple programs but is missing 12 features needed to compile itself:
+  jda1 (self-hosted compiler) — can compile simple programs but is missing 11 features needed to compile itself:
 
   ┌────────────────┬──────┬────────────────┐
   │ Feature        │ jda0 │ jda1           │

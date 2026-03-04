@@ -39,7 +39,6 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] Loop variable mutation via stack slots (OP_STORE/OP_LOAD)
 
 **What jda1 CANNOT compile yet (needed for self-hosting):**
-- [ ] Multiple function definitions (only parses 1 fn: `parse_fn` called once in `main()`)
 - [ ] Struct definitions and field access (partial in jda1: parser/lowering wired; minimal read/store/indexed-field repros now compile)
 - [ ] Array declarations and `arr[i]` / `arr[i].field` indexing
 - [ ] Pointer/reference types (`&expr`, `ptr.field`, `&Type` in signatures)
