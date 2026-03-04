@@ -82,6 +82,9 @@ const NODE_FIELD  = 12
 const NODE_MATCH  = 13
 const NODE_PRINT  = 14
 const NODE_SYSCALL= 15
+const NODE_FIELD_STORE = 16
+const NODE_STRUCT_INIT = 17
+const NODE_ADDR   = 18
 
 ; Type system
 const TYPE_VOID   = 0
@@ -111,6 +114,9 @@ const OP_STRLIT   = 15
 const OP_STRLEN   = 16
 const OP_STORE    = 17
 const OP_LOAD     = 18
+const OP_ADDR     = 19
+const OP_LOAD_MEM = 20
+const OP_STORE_MEM= 21
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -184,6 +190,7 @@ struct VarEntry {
     name_start: i64
     name_len:   i64
     slot_off:   i64
+    stype:      i64
 }
 
 struct JirFunction {
@@ -196,6 +203,9 @@ struct JirFunction {
     next_id:    i64
     strtab:     i8[4096]
     strtab_pos: i64
+    stab:       &StructTable
+    param_cnt:  i64
+    param_slots:i64[16]
 }
 
 struct ConstVal {
@@ -224,6 +234,20 @@ struct LowerCtx {
     fix_cnt:    i64
     bb_offsets: i64[256]
     use_cnt:    i32[4096]
+}
+
+struct StructTable {
+    cnt:        i64
+    names:      i64[64]
+    nlens:      i64[64]
+    fcnts:      i64[64]
+    sizes:      i64[64]
+    fbases:     i64[64]
+    field_cnt:  i64
+    fnames:     i64[4096]
+    flens:      i64[4096]
+    foffs:      i64[4096]
+    fowners:    i64[4096]
 }
 
 ; ============================================================
@@ -423,19 +447,97 @@ fn parse_type(toks: &Token, pos: &i64) -> i32 {
     ret TYPE_VOID
 }
 
+fn lookup_struct(stab: &StructTable, src: &i8, ns: i64, nl: i64) -> i64 {
+    let si = 0
+    loop si < stab.cnt {
+        if stab.nlens[si] == nl {
+            if str_match(src, ns, stab.names[si], nl) == 1 { ret si }
+        }
+        si = si + 1
+    }
+    ret -1
+}
+
+fn lookup_field_off(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64) -> i64 {
+    let base = stab.fbases[sid]
+    let cnt  = stab.fcnts[sid]
+    let i = 0
+    loop i < cnt {
+        let fi = base + i
+        if stab.flens[fi] == fl {
+            if str_match(src, fs, stab.fnames[fi], fl) == 1 {
+                ret stab.foffs[fi]
+            }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
+fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
+    expect(toks, pos, TOK_STRUCT)
+    let st_name = toks[pos[0]]
+    expect(toks, pos, TOK_IDENT)
+    expect(toks, pos, TOK_LBRACE)
+
+    let sid = stab.cnt
+    let base = stab.field_cnt
+    stab.names[sid]  = st_name.str_start
+    stab.nlens[sid]  = st_name.str_len
+    stab.fbases[sid] = base
+
+    let fcnt = 0
+    let off  = 0
+    loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
+        let fname = toks[pos[0]]
+        expect(toks, pos, TOK_IDENT)
+        expect(toks, pos, TOK_COLON)
+        ; consume type token (scalar or struct name) and optional [N]
+        pos[0] = pos[0] + 1
+        if toks[pos[0]].type == TOK_LBRACK {
+            pos[0] = pos[0] + 1
+            pos[0] = pos[0] + 1
+            expect(toks, pos, TOK_RBRACK)
+        }
+        let fi = base + fcnt
+        stab.fnames[fi]  = fname.str_start
+        stab.flens[fi]   = fname.str_len
+        stab.foffs[fi]   = off
+        stab.fowners[fi] = sid
+        off = off + 8
+        fcnt = fcnt + 1
+    }
+    expect(toks, pos, TOK_RBRACE)
+    stab.fcnts[sid] = fcnt
+    stab.sizes[sid] = off
+    stab.cnt = sid + 1
+    stab.field_cnt = base + fcnt
+}
+
 fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
-    let save_pos = pos[0]
     let lhs = parse_expr(toks, pos)
-    ; assignment: ident = expr
     if toks[pos[0]].type == TOK_EQ {
         pos[0] = pos[0] + 1
         let rhs = parse_expr(toks, pos)
-        let n = Node{}
-        n.node_type = NODE_LET
-        n.op        = 1   ; assignment
-        n.token     = toks[save_pos]
-        n.child0    = rhs
-        ret n
+        if lhs.node_type == NODE_FIELD {
+            let n = Node{}
+            n.node_type = NODE_FIELD_STORE
+            n.token     = lhs.token
+            n.token2    = lhs.token2
+            n.child0    = lhs.child0
+            n.child1    = rhs
+            n.data_type = lhs.data_type
+            ret n
+        }
+        if lhs.node_type == NODE_IDENT {
+            let n = Node{}
+            n.node_type = NODE_LET
+            n.op        = 1
+            n.token     = lhs.token
+            n.child0    = rhs
+            ret n
+        }
+        print("Parse error: invalid assignment target\n")
     }
     ret lhs
 }
@@ -444,7 +546,7 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
 ; 4. PARSER
 ; ============================================================
 
-fn parse_fn(toks: &Token, pos: &i64, out: &Node) -> i32 {
+fn parse_fn(toks: &Token, pos: &i64, out: &Node, stab: &StructTable, src: &i8) -> i32 {
     expect(toks, pos, TOK_FN)
     let name_tok = toks[pos[0]]
     expect(toks, pos, TOK_IDENT)
@@ -457,10 +559,22 @@ fn parse_fn(toks: &Token, pos: &i64, out: &Node) -> i32 {
         let p_name = toks[pos[0]]
         expect(toks, pos, TOK_IDENT)
         expect(toks, pos, TOK_COLON)
+        let p_type_tok = toks[pos[0]]
+        if p_type_tok.type == TOK_AMP {
+            p_type_tok = toks[pos[0] + 1]
+        }
         let p_type = parse_type(toks, pos)
+        let p_sid = -1
+        if p_type_tok.type == TOK_IDENT {
+            p_sid = lookup_struct(stab, src, p_type_tok.str_start, p_type_tok.str_len)
+        }
         params[param_cnt].node_type = NODE_IDENT
-        params[param_cnt].token     = p_name
-        params[param_cnt].data_type = p_type
+        params[param_cnt].token     = p_name.str_start
+        params[param_cnt].token2    = p_name.str_len
+        params[param_cnt].data_type = p_sid
+        if p_sid == -1 {
+            params[param_cnt].data_type = p_type
+        }
         param_cnt = param_cnt + 1
         if toks[pos[0]].type == TOK_COMMA {
             pos[0] = pos[0] + 1
@@ -481,6 +595,8 @@ fn parse_fn(toks: &Token, pos: &i64, out: &Node) -> i32 {
     out.param_cnt = param_cnt
     out.ret_type  = ret_type
     out.child0    = body
+    out.children  = params
+    out.child_cnt = param_cnt
     ret ok(0)
 }
 
@@ -605,6 +721,14 @@ fn op_precedence(op: i32) -> i32 {
 
 fn parse_primary(toks: &Token, pos: &i64) -> Node {
     let t = toks[pos[0]]
+    if t.type == TOK_AMP {
+        pos[0] = pos[0] + 1
+        let inner = parse_primary(toks, pos)
+        let n = Node{}
+        n.node_type = NODE_ADDR
+        n.child0 = inner
+        ret n
+    }
     if t.type == TOK_INT {
         pos[0] = pos[0] + 1
         let n = Node{}
@@ -624,15 +748,45 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
         if toks[pos[0]].type == TOK_LPAREN {
             ret parse_call_rest(toks, pos, t)
         }
+        if toks[pos[0]].type == TOK_LBRACE {
+            ; Struct literal init: Type{}
+            pos[0] = pos[0] + 1
+            expect(toks, pos, TOK_RBRACE)
+            let n = Node{}
+            n.node_type = NODE_STRUCT_INIT
+            n.token     = t
+            ret n
+        }
+        let idx = Node{}
+        let has_idx = 0
+        if toks[pos[0]].type == TOK_LBRACK {
+            pos[0] = pos[0] + 1
+            idx = parse_expr(toks, pos)
+            expect(toks, pos, TOK_RBRACK)
+            has_idx = 1
+        }
         if toks[pos[0]].type == TOK_DOT {
             pos[0] = pos[0] + 1
             let field = toks[pos[0]]
-            pos[0] = pos[0] + 1
-            let n = Node{}
-            n.node_type = NODE_FIELD
-            n.token     = t
-            n.token2    = field
-            ret n
+            expect(toks, pos, TOK_IDENT)
+            let fn = Node{}
+            fn.node_type = NODE_FIELD
+            fn.token     = t
+            fn.token2    = field
+            fn.data_type = -1
+            if has_idx == 1 { fn.child0 = idx }
+            ret fn
+        }
+        if has_idx == 1 {
+            let b = Node{}
+            b.node_type = NODE_IDENT
+            b.token     = t
+            let in = Node{}
+            in.node_type = NODE_BINOP
+            in.op        = TOK_LBRACK
+            in.child0    = b
+            in.child1    = idx
+            ret in
         }
         let n = Node{}
         n.node_type = NODE_IDENT
@@ -805,27 +959,40 @@ fn alloc_slot(jfn: &JirFunction) -> i64 {
     ret jfn.next_slot_off
 }
 
-fn bind(jfn: &JirFunction, tok: &Token) -> i64 {
+fn bind(jfn: &JirFunction, tok: &Token, stype: i64) -> i64 {
     let idx = jfn.var_cnt
     jfn.vars[idx].name_start = tok.str_start
     jfn.vars[idx].name_len   = tok.str_len
     jfn.vars[idx].slot_off   = alloc_slot(jfn)
+    jfn.vars[idx].stype      = stype
     jfn.var_cnt = jfn.var_cnt + 1
     ret jfn.vars[idx].slot_off
 }
 
-fn lookup(jfn: &JirFunction, tok: &Token) -> i64 {
+fn lookup_idx(jfn: &JirFunction, tok: &Token) -> i64 {
     ; Walk backwards so innermost binding wins
     let i = jfn.var_cnt - 1
     loop i >= 0 {
         if jfn.vars[i].name_len == tok.str_len {
             if str_match(jfn.src, tok.str_start, jfn.vars[i].name_start, tok.str_len) {
-                ret jfn.vars[i].slot_off
+                ret i
             }
         }
         i = i - 1
     }
     ret -1   ; undefined: caller should error
+}
+
+fn lookup(jfn: &JirFunction, tok: &Token) -> i64 {
+    let idx = lookup_idx(jfn, tok)
+    if idx < 0 { ret -1 }
+    ret jfn.vars[idx].slot_off
+}
+
+fn lookup_stype(jfn: &JirFunction, tok: &Token) -> i64 {
+    let idx = lookup_idx(jfn, tok)
+    if idx < 0 { ret -1 }
+    ret jfn.vars[idx].stype
 }
 
 fn codegen_call(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
@@ -850,9 +1017,68 @@ fn codegen_call(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
 ; 6. JIR CODE GENERATOR
 ; ============================================================
 
+fn field_addr_from_base(base_ptr: i64, foff: i64, jfn: &JirFunction, bb: i64) -> i64 {
+    let off_id = emit_const(jfn, bb, TYPE_I64, foff)
+    ret emit_binop(jfn, bb, OP_ADD, base_ptr, off_id)
+}
+
+fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
+    if node.node_type == NODE_IDENT {
+        ret codegen_expr(node, jfn, bb)
+    }
+    if node.node_type == NODE_BINOP and node.op == TOK_LBRACK {
+        if node.child0.node_type == NODE_IDENT {
+            let arr_sid = lookup_stype(jfn, node.child0.token)
+            let base_ptr = codegen_expr(node.child0, jfn, bb)
+            let idx = codegen_expr(node.child1, jfn, bb)
+            let elem_sz = 8
+            if arr_sid >= 0 {
+                elem_sz = jfn.stab.sizes[arr_sid]
+            }
+            let sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
+            let byte_off = emit_binop(jfn, bb, OP_MUL, idx, sz_id)
+            ret emit_binop(jfn, bb, OP_ADD, base_ptr, byte_off)
+        }
+    }
+    if node.node_type == NODE_FIELD {
+        let base_ident = Node{}
+        base_ident.node_type = NODE_IDENT
+        let btok = node.token
+        base_ident.token = btok
+        let base = codegen_expr(base_ident, jfn, bb)
+        let sid = node.data_type
+        if sid < 0 {
+            sid = lookup_stype(jfn, btok)
+        }
+        let obj = base
+        if node.child0 != null {
+            let idx = codegen_expr(node.child0, jfn, bb)
+            let elem_sz = 8
+            if sid >= 0 { elem_sz = jfn.stab.sizes[sid] }
+            let sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
+            let byte_off = emit_binop(jfn, bb, OP_MUL, idx, sz_id)
+            obj = emit_binop(jfn, bb, OP_ADD, base, byte_off)
+        }
+        if sid < 0 { ret obj }
+        let foff = lookup_field_off(jfn.stab, jfn.src, sid, node.token2.str_start, node.token2.str_len)
+        ret field_addr_from_base(obj, foff, jfn, bb)
+    }
+    ret -1
+}
+
 fn codegen_fn(fn_node: &Node, jfn: &JirFunction) {
     jfn.var_cnt       = 0
     jfn.next_slot_off = 0
+    jfn.param_cnt     = fn_node.child_cnt
+    let pi = 0
+    loop pi < fn_node.child_cnt {
+        let ptok = Token{}
+        ptok.str_start = fn_node.children[pi].token
+        ptok.str_len   = fn_node.children[pi].token2
+        let pslot = bind(jfn, ptok, fn_node.children[pi].data_type)
+        jfn.param_slots[pi] = pslot
+        pi = pi + 1
+    }
     let entry_bb = new_block(jfn)
     codegen_block(fn_node.child0, jfn, entry_bb)
 }
@@ -872,17 +1098,37 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         let val_id = codegen_expr(node.child0, jfn, bb)
         let slot = lookup(jfn, node.token)
         let out_slot = slot
+        let out_stype = -1
+        if node.child0.node_type == NODE_STRUCT_INIT {
+            out_stype = lookup_struct(jfn.stab, jfn.src, node.child0.token.str_start, node.child0.token.str_len)
+        }
         if node.op == 0 {
             ; let declaration introduces a new stack slot
-            out_slot = bind(jfn, node.token)
+            out_slot = bind(jfn, node.token, out_stype)
         } else {
             ; assignment updates existing slot; undefined vars become implicit slots
-            if slot == -1 { out_slot = bind(jfn, node.token) }
+            if slot == -1 { out_slot = bind(jfn, node.token, out_stype) }
         }
         let st = Instr{}
         st.op       = OP_STORE
         st.operand0 = val_id
         st.operand1 = out_slot
+        emit(jfn, bb, &st)
+        ret bb
+    }
+    if node.node_type == NODE_FIELD_STORE {
+        let fexpr = Node{}
+        fexpr.node_type = NODE_FIELD
+        fexpr.token = node.token
+        fexpr.token2 = node.token2
+        fexpr.child0 = node.child0
+        fexpr.data_type = node.data_type
+        let faddr = codegen_addr_expr(fexpr, jfn, bb)
+        let rhs = codegen_expr(node.child1, jfn, bb)
+        let st = Instr{}
+        st.op = OP_STORE_MEM
+        st.operand0 = rhs
+        st.operand1 = faddr
         emit(jfn, bb, &st)
         ret bb
     }
@@ -895,7 +1141,7 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         ret bb
     }
     if node.node_type == NODE_PRINT {
-        ; print(str) → SYS_WRITE(1, str_ptr, str_len)
+        ; print(str) -> SYS_WRITE(1, str_ptr, str_len)
         let str_id = codegen_expr(node.child0, jfn, bb)
         let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)        ; stdout fd
         let len_id = emit_strlen(jfn, bb, str_id)
@@ -933,7 +1179,36 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         ld.operand0 = slot
         ret emit(jfn, bb, &ld)
     }
+    if node.node_type == NODE_STRUCT_INIT {
+        ; Allocation for struct literals is implemented in other roadmap items.
+        ; Keep parser acceptance so struct syntax can coexist with field support.
+        ret emit_const(jfn, bb, TYPE_I64, 0)
+    }
+    if node.node_type == NODE_ADDR {
+        if node.child0.node_type == NODE_IDENT {
+            let slot = lookup(jfn, node.child0.token)
+            let ins = Instr{}
+            ins.op = OP_ADDR
+            ins.operand0 = slot
+            ret emit(jfn, bb, &ins)
+        }
+        ret codegen_addr_expr(node.child0, jfn, bb)
+    }
+    if node.node_type == NODE_FIELD {
+        let addr = codegen_addr_expr(node, jfn, bb)
+        let ld = Instr{}
+        ld.op = OP_LOAD_MEM
+        ld.operand0 = addr
+        ret emit(jfn, bb, &ld)
+    }
     if node.node_type == NODE_BINOP {
+        if node.op == TOK_LBRACK {
+            let addr = codegen_addr_expr(node, jfn, bb)
+            let ld = Instr{}
+            ld.op = OP_LOAD_MEM
+            ld.operand0 = addr
+            ret emit(jfn, bb, &ld)
+        }
         let a  = codegen_expr(node.child0, jfn, bb)
         let b  = codegen_expr(node.child1, jfn, bb)
         let op = tok_to_jir_op(node.op)
@@ -1056,7 +1331,7 @@ fn dce(jfn: &JirFunction) {
     loop bi < jfn.block_cnt {
         let ii = 0
         loop ii < jfn.blocks[bi].instr_cnt {
-            ; Access fields directly — do NOT copy Instr by value
+            ; Access fields directly - do NOT copy Instr by value
             let o0 = jfn.blocks[bi].instrs[ii].operand0
             let o1 = jfn.blocks[bi].instrs[ii].operand1
             let o2 = jfn.blocks[bi].instrs[ii].operand2
@@ -1409,6 +1684,18 @@ fn emit_store_spill(out: &i8, pos: &i64, off: i64, src: i32) {
     emit_i32_le(out, pos, 0 - off)
 }
 
+fn emit_load_mem_reg(out: &i8, pos: &i64, dst: i32, base: i32) {
+    emit_byte(out, pos, rex_byte(1, dst >> 3, 0, base >> 3))
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, modrm_rr(dst, base))
+}
+
+fn emit_store_mem_reg(out: &i8, pos: &i64, base: i32, src: i32) {
+    emit_byte(out, pos, rex_byte(1, src >> 3, 0, base >> 3))
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, modrm_rr(src, base))
+}
+
 ; SETNE al / SETE al after CMP, then MOVZX rax, al
 fn emit_setcc_rax(out: &i8, pos: &i64, cc: i32) {
     ; SETCC al:  0F 9x C0
@@ -1423,7 +1710,7 @@ fn emit_setcc_rax(out: &i8, pos: &i64, cc: i32) {
 }
 
 ; ============================================================
-; 10. X86-64 LOWERING  (JIR → machine code)
+; 10. X86-64 LOWERING  (JIR -> machine code)
 ; ============================================================
 
 fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
@@ -1452,7 +1739,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
 
     if ins.op == OP_STRLIT {
         ; The string is in jfn.strtab at offset ins.str_start.
-        ; Emit LEA dst, [rip + rel] — rel patched at write_elf time.
+        ; Emit LEA dst, [rip + rel] - rel patched at write_elf time.
         ; For now emit a placeholder; the strtab base address will be
         ; filled in by write_elf using the fixup recorded here.
         let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
@@ -1529,10 +1816,39 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
+    if ins.op == OP_ADDR {
+        let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
+        ; LEA dst, [rbp - off]
+        let b = 0
+        if dst >= 8 { b = 1 }
+        emit_byte(out, pos, rex_byte(1, b, 0, 0))
+        emit_byte(out, pos, 0x8D)
+        emit_byte(out, pos, 0x80 | ((dst & 7) << 3) | 5)
+        emit_i32_le(out, pos, 0 - ins.operand0)
+        ret ok(0)
+    }
+
     if ins.op == OP_STORE {
         let src_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
         emit_store_spill(out, pos, ins.operand1, src_r)
         consume_use(ctx, ins.operand0)
+        ret ok(0)
+    }
+
+    if ins.op == OP_LOAD_MEM {
+        let base_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
+        emit_load_mem_reg(out, pos, dst, base_r)
+        consume_use(ctx, ins.operand0)
+        ret ok(0)
+    }
+
+    if ins.op == OP_STORE_MEM {
+        let src_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let base_r = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        emit_store_mem_reg(out, pos, base_r, src_r)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
         ret ok(0)
     }
 
@@ -1570,13 +1886,13 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if ins.op == OP_DIV {
-        ; IDIV clobbers rdx:rax  — move dividend to rax, sign-extend, divide
+        ; IDIV clobbers rdx:rax  - move dividend to rax, sign-extend, divide
         let a = get_or_load(&ctx.ra, out, pos, ins.operand0)
         let b = get_or_load(&ctx.ra, out, pos, ins.operand1)
         emit_mov_rr(out, pos, PHYS_RAX, a)
         emit_cqo(out, pos)
         emit_idiv_r(out, pos, b)
-        ; Quotient in rax — allocate result there
+        ; Quotient in rax - allocate result there
         let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
         if dst != PHYS_RAX {
             emit_mov_rr(out, pos, dst, PHYS_RAX)
@@ -1636,14 +1952,14 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ; Conditional branch: cmp cond_reg, 0; je else_bb; jmp then_bb
         let cond_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
         emit_cmp_zero(out, pos, cond_r)
-        ; JE → else_bb
+        ; JE -> else_bb
         let fix_else = ctx.fix_cnt
         ctx.fixups[fix_else].code_off  = pos[0] + 2
         ctx.fixups[fix_else].target_bb = ins.bb_target1
         ctx.fixups[fix_else].kind      = 0             ; branch fixup
         ctx.fix_cnt = ctx.fix_cnt + 1
         emit_je_rel32(out, pos, 0)
-        ; JMP → then_bb
+        ; JMP -> then_bb
         let fix_then = ctx.fix_cnt
         ctx.fixups[fix_then].code_off  = pos[0] + 1
         ctx.fixups[fix_then].target_bb = ins.bb_target0
@@ -1655,13 +1971,13 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if ins.op == OP_SYSCALL {
-        ; Linux x86-64 syscall ABI: nr→rax, a0→rdi, a1→rsi, a2→rdx
+        ; Linux x86-64 syscall ABI: nr->rax, a0->rdi, a1->rsi, a2->rdx
         let nr_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
         let a0_r = get_or_load(&ctx.ra, out, pos, ins.operand1)
         let a1_r = get_or_load(&ctx.ra, out, pos, ins.operand2)
         let a2_r = get_or_load(&ctx.ra, out, pos, ins.operand3)
         ; Resolve clobber: if rax holds a value needed for rdi/rsi/rdx,
-        ; moving nr_r→rax first would destroy it.  Save rax to r11 if needed.
+        ; moving nr_r->rax first would destroy it.  Save rax to r11 if needed.
         let saved_rax = 0
         if nr_r != PHYS_RAX {
             if a0_r == PHYS_RAX or a1_r == PHYS_RAX or a2_r == PHYS_RAX {
@@ -1698,7 +2014,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
             }
             i = i + 1
         }
-        ; Arg 0 → rdi, arg 1 → rsi, arg 2 → rdx
+        ; Arg 0 -> rdi, arg 1 -> rsi, arg 2 -> rdx
         if ins.operand3 >= 1 {
             let a0_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
             if a0_r != PHYS_RDI { emit_mov_rr(out, pos, PHYS_RDI, a0_r) }
@@ -1711,7 +2027,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
             let a2_r = get_or_load(&ctx.ra, out, pos, ins.operand2)
             if a2_r != PHYS_RDX { emit_mov_rr(out, pos, PHYS_RDX, a2_r) }
         }
-        ; CALL rel32 — placeholder, patched after all functions lowered
+        ; CALL rel32 - placeholder, patched after all functions lowered
         let fix_idx = ctx.fix_cnt
         ctx.fixups[fix_idx].code_off  = pos[0] + 1
         ctx.fixups[fix_idx].target_bb = ins.str_start   ; function name src offset
@@ -1763,6 +2079,19 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     emit_byte(out, pos, 0xEC)
     emit_i32_le(out, pos, 4096)
 
+    ; Spill incoming params (rdi,rsi,rdx,rcx,r8,r9) into their stack slots.
+    let pi = 0
+    loop pi < jfn.param_cnt and pi < 6 {
+        let pr = PHYS_RDI
+        if pi == 1 { pr = PHYS_RSI }
+        if pi == 2 { pr = PHYS_RDX }
+        if pi == 3 { pr = PHYS_RCX }
+        if pi == 4 { pr = PHYS_R8 }
+        if pi == 5 { pr = PHYS_R9 }
+        emit_store_spill(out, pos, jfn.param_slots[pi], pr)
+        pi = pi + 1
+    }
+
     ; Build use counts for register lifetime management.
     let ui = 0
     loop ui < 4096 {
@@ -1786,6 +2115,13 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
                 }
                 if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_STORE {
                     mark_use(ctx, o0)
+                }
+                if op == OP_LOAD_MEM {
+                    mark_use(ctx, o0)
+                }
+                if op == OP_STORE_MEM {
+                    mark_use(ctx, o0)
+                    mark_use(ctx, o1)
                 }
                 if op == OP_SYSCALL {
                     mark_use(ctx, o0)
@@ -1854,7 +2190,7 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
 ; ============================================================
 ; Produces a minimal static ELF64 executable:
 ;   - ELF header (64 bytes)
-;   - 1 × PT_LOAD program header (56 bytes)
+;   - 1 x PT_LOAD program header (56 bytes)
 ;   - .text  (machine code)
 ;   - .rodata (string table)
 
@@ -1937,7 +2273,7 @@ fn alloc(sz: i64) -> i64 {
     ret alloc_pages(1)
 }
 
-; Allocate n × 4096-byte pages via mmap anonymous
+; Allocate n x 4096-byte pages via mmap anonymous
 fn alloc_pages(n: i64) -> &i8 {
     ; mmap(NULL, n*4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0)
     ; SYS_MMAP = 9
@@ -1988,12 +2324,18 @@ fn main() {
     let fn_name_len = i64[64]
     let fn_cnt = 0
     let pos = 0
+    let stab = StructTable{}
+
+    ; Parse and record top-level structs first.
+    loop toks[pos].type == TOK_STRUCT {
+        parse_struct_decl(toks, &pos, stab)
+    }
 
     loop toks[pos].type == TOK_FN {
         ; Peek at name token (pos+1) before parse_fn advances pos
         fn_name_off[fn_cnt] = toks[pos + 1].str_start
         fn_name_len[fn_cnt] = toks[pos + 1].str_len
-        parse_fn(toks, &pos, &fn_asts[fn_cnt])
+        parse_fn(toks, &pos, &fn_asts[fn_cnt], stab, src_buf)
         fn_cnt = fn_cnt + 1
     }
 
@@ -2003,7 +2345,7 @@ fn main() {
     let merged_str  = alloc_pages(4)
     let merged_pos  = 0
 
-    ; Emit JMP rel32 placeholder (5 bytes) — entry point jumps to main
+    ; Emit JMP rel32 placeholder (5 bytes) - entry point jumps to main
     emit_byte(code_buf, &code_len, 0xE9)
     emit_i32_le(code_buf, &code_len, 0)
 
@@ -2026,6 +2368,7 @@ fn main() {
     loop fi < fn_cnt {
         let jfn = JirFunction{}
         jfn.src = src_buf
+        jfn.stab = stab
         codegen_fn(&fn_asts[fi], &jfn)
         fold_constants(&jfn)
         dce(&jfn)
@@ -2047,14 +2390,14 @@ fn main() {
         loop ci < ctx.fix_cnt {
             let fk = ctx.fixups[ci].kind
             if fk == 1 {
-                ; Strtab fixup — adjust offset by merged strtab base
+                ; Strtab fixup - adjust offset by merged strtab base
                 gf_strtab_co[gf_strtab_cnt]   = ctx.fixups[ci].code_off
                 gf_strtab_tgt[gf_strtab_cnt]  = ctx.fixups[ci].target_bb
                 gf_strtab_base[gf_strtab_cnt] = merged_pos
                 gf_strtab_cnt = gf_strtab_cnt + 1
             }
             if fk == 2 {
-                ; Call fixup — store function name info
+                ; Call fixup - store function name info
                 gf_call_co[gf_call_cnt]   = ctx.fixups[ci].code_off
                 gf_call_name[gf_call_cnt] = ctx.fixups[ci].target_bb
                 gf_call_nlen[gf_call_cnt] = ctx.fixups[ci].str_len
