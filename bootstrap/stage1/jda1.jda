@@ -566,10 +566,49 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
                 n.child_cnt = base.str_len
                 n.token2 = field.str_start
                 n.imm = field.str_len
-                n.data_type = -1
+                n.data_type = idx_kind
                 n.child0 = null
-                if has_idx == 1 { n.child0 = idx }
-                if rhs_tok.type == TOK_IDENT {
+                if idx_kind == 1 {
+                    n.child2 = idx_start
+                    n.child3 = idx_len
+                }
+                if idx_kind == 2 { n.child0 = idx }
+                ; stable rhs encoding: rhs is indexed field read (base[idx].field), ident index
+                if rhs_tok.type == TOK_IDENT and
+                   toks[pos[0] + 1].type == TOK_LBRACK and
+                   toks[pos[0] + 2].type == TOK_IDENT and
+                   toks[pos[0] + 3].type == TOK_RBRACK and
+                   toks[pos[0] + 4].type == TOK_DOT and
+                   toks[pos[0] + 5].type == TOK_IDENT {
+                    let ridx = toks[pos[0] + 2]
+                    let rf   = toks[pos[0] + 5]
+                    n.op = 6
+                    n.children = rhs_tok.str_start
+                    n.param_cnt = rhs_tok.str_len
+                    n.child2 = ridx.str_start
+                    n.child3 = ridx.str_len
+                    n.child1 = rf.str_start
+                    n.ret_type = rf.str_len
+                    pos[0] = pos[0] + 6
+                    ret n
+                }
+                ; stable rhs encoding: rhs is direct field read (base.field)
+                if rhs_tok.type == TOK_IDENT and
+                   toks[pos[0] + 1].type == TOK_DOT and
+                   toks[pos[0] + 2].type == TOK_IDENT {
+                    let rf = toks[pos[0] + 2]
+                    n.op = 5
+                    n.children = rhs_tok.str_start
+                    n.param_cnt = rhs_tok.str_len
+                    n.child3 = rf.str_start
+                    n.ret_type = rf.str_len
+                    pos[0] = pos[0] + 3
+                    ret n
+                }
+                if rhs_tok.type == TOK_IDENT and
+                   toks[pos[0] + 1].type != TOK_DOT and
+                   toks[pos[0] + 1].type != TOK_LBRACK and
+                   toks[pos[0] + 1].type != TOK_LPAREN {
                     ; stable rhs encoding: store identifier name on node itself
                     pos[0] = pos[0] + 1
                     n.op = 3
@@ -596,9 +635,16 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
             n.child_cnt = lhs.child_cnt
             n.token2    = lhs.token2
             n.imm       = lhs.imm
-            n.child0    = lhs.child0
+            n.data_type = lhs.op
+            n.child0    = null
+            if lhs.op == 1 {
+                n.child2 = lhs.children
+                n.child3 = lhs.param_cnt
+            }
+            if lhs.op == 2 {
+                n.child0 = lhs.child0
+            }
             n.child1    = rhs
-            n.data_type = lhs.data_type
             ret n
         }
         if lhs.node_type == NODE_IDENT {
@@ -783,9 +829,20 @@ fn parse_ret(toks: &Token, pos: &i64) -> Node {
         pos[0] = pos[0] + 1
         let idx = Node{}
         let has_idx = 0
+        let idx_kind = 0
+        let idx_start = 0
+        let idx_len = 0
         if toks[pos[0]].type == TOK_LBRACK {
             pos[0] = pos[0] + 1
-            idx = parse_expr(toks, pos)
+            if toks[pos[0]].type == TOK_IDENT and toks[pos[0] + 1].type == TOK_RBRACK {
+                idx_kind = 1
+                idx_start = toks[pos[0]].str_start
+                idx_len   = toks[pos[0]].str_len
+                pos[0] = pos[0] + 1
+            } else {
+                idx = parse_expr(toks, pos)
+                idx_kind = 2
+            }
             expect(toks, pos, TOK_RBRACK)
             has_idx = 1
         }
@@ -902,9 +959,20 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
         }
         let idx = Node{}
         let has_idx = 0
+        let idx_kind = 0
+        let idx_start = 0
+        let idx_len = 0
         if toks[pos[0]].type == TOK_LBRACK {
             pos[0] = pos[0] + 1
-            idx = parse_expr(toks, pos)
+            if toks[pos[0]].type == TOK_IDENT and toks[pos[0] + 1].type == TOK_RBRACK {
+                idx_kind = 1
+                idx_start = toks[pos[0]].str_start
+                idx_len   = toks[pos[0]].str_len
+                pos[0] = pos[0] + 1
+            } else {
+                idx = parse_expr(toks, pos)
+                idx_kind = 2
+            }
             expect(toks, pos, TOK_RBRACK)
             has_idx = 1
         }
@@ -920,7 +988,12 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
             fn.imm       = field.str_len
             fn.data_type = -1
             fn.child0    = null
-            if has_idx == 1 { fn.child0 = idx }
+            fn.op        = idx_kind
+            if idx_kind == 1 {
+                fn.children = idx_start
+                fn.param_cnt = idx_len
+            }
+            if idx_kind == 2 { fn.child0 = idx }
             ret fn
         }
         if has_idx == 1 {
@@ -1007,7 +1080,9 @@ fn new_block(jfn: &JirFunction) -> i64 {
 }
 
 fn emit(jfn: &JirFunction, bb: i64, ins: &Instr) -> i64 {
+    if bb < 0 or bb >= 64 { ret -1 }
     let slot = jfn.blocks[bb].instr_cnt
+    if slot < 0 or slot >= 256 { ret -1 }
     jfn.blocks[bb].instrs[slot].op        = ins.op
     jfn.blocks[bb].instrs[slot].itype     = ins.itype
     jfn.blocks[bb].instrs[slot].operand0  = ins.operand0
@@ -1234,8 +1309,12 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
                 idx = codegen_expr(node.child0, jfn, bb)
             }
             let elem_sz = 8
-            if sid >= 0 { elem_sz = jfn.stab.sizes[sid] }
-            let sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
+            if sid >= 0 and sid < jfn.stab.cnt { elem_sz = jfn.stab.sizes[sid] }
+            let cins = Instr{}
+            cins.op = OP_CONST
+            cins.itype = TYPE_I64
+            cins.imm = elem_sz
+            let sz_id = emit(jfn, bb, &cins)
             let byte_off = emit_binop(jfn, bb, OP_MUL, idx, sz_id)
             obj = emit_binop(jfn, bb, OP_ADD, base, byte_off)
         }
@@ -1302,17 +1381,94 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         ret bb
     }
     if nt == NODE_FIELD_STORE {
-        let fexpr = Node{}
-        fexpr.node_type = NODE_FIELD
-        fexpr.token = node.token
-        fexpr.child_cnt = node.child_cnt
-        fexpr.token2 = node.token2
-        fexpr.imm = node.imm
-        fexpr.child0 = node.child0
-        fexpr.data_type = node.data_type
-        let faddr = codegen_addr_expr(fexpr, jfn, bb)
+        let faddr = 0
+        if node.data_type == 1 {
+            ; Direct indexed-lhs field address path to avoid fragile temporary nodes.
+            let bslot = lookup_slot_name(jfn, node.token, node.child_cnt)
+            let bld = Instr{}
+            bld.op = OP_LOAD
+            bld.operand0 = bslot
+            let base = emit(jfn, bb, &bld)
+            let sid = lookup_stype_name(jfn, node.token, node.child_cnt)
+            let islot = lookup_slot_name(jfn, node.child2, node.child3)
+            let ild = Instr{}
+            ild.op = OP_LOAD
+            ild.operand0 = islot
+            let idx = emit(jfn, bb, &ild)
+            let elem_sz = 8
+            if sid >= 0 and sid < jfn.stab.cnt { elem_sz = jfn.stab.sizes[sid] }
+            let cins = Instr{}
+            cins.op = OP_CONST
+            cins.itype = TYPE_I64
+            cins.imm = elem_sz
+            let sz_id = emit(jfn, bb, &cins)
+            let byte_off = emit_binop(jfn, bb, OP_MUL, idx, sz_id)
+            let obj = emit_binop(jfn, bb, OP_ADD, base, byte_off)
+            faddr = obj
+            if sid >= 0 and sid < jfn.stab.cnt and node.token2 >= 0 and node.imm > 0 and node.token2 + node.imm <= jfn.src_len {
+                let foff = lookup_field_off_any(jfn.stab, jfn.src, sid, node.token2, node.imm)
+                if foff >= 0 { faddr = field_addr_from_base(obj, foff, jfn, bb) }
+            }
+        } else {
+            let fexpr = Node{}
+            fexpr.node_type = NODE_FIELD
+            fexpr.token = node.token
+            fexpr.child_cnt = node.child_cnt
+            fexpr.op = node.data_type
+            fexpr.children = 0
+            fexpr.param_cnt = 0
+            fexpr.token2 = node.token2
+            fexpr.imm = node.imm
+            fexpr.child0 = null
+            fexpr.data_type = -1
+            if node.data_type == 2 {
+                fexpr.child0 = node.child0
+            }
+            faddr = codegen_addr_expr(fexpr, jfn, bb)
+        }
         let rhs = 0
-        if node.op == 3 {
+        if node.op == 6 {
+            ; Direct rhs indexed-field load: rhs_base[idx].field
+            let rbslot = lookup_slot_name(jfn, node.children, node.param_cnt)
+            let rbld = Instr{}
+            rbld.op = OP_LOAD
+            rbld.operand0 = rbslot
+            let rbase = emit(jfn, bb, &rbld)
+            let rsid = lookup_stype_name(jfn, node.children, node.param_cnt)
+            let rislot = lookup_slot_name(jfn, node.child2, node.child3)
+            let rild = Instr{}
+            rild.op = OP_LOAD
+            rild.operand0 = rislot
+            let ridx = emit(jfn, bb, &rild)
+            let relem = 8
+            if rsid >= 0 and rsid < jfn.stab.cnt { relem = jfn.stab.sizes[rsid] }
+            let rc = Instr{}
+            rc.op = OP_CONST
+            rc.itype = TYPE_I64
+            rc.imm = relem
+            let rsz = emit(jfn, bb, &rc)
+            let rbyte = emit_binop(jfn, bb, OP_MUL, ridx, rsz)
+            let robj = emit_binop(jfn, bb, OP_ADD, rbase, rbyte)
+            let raddr = robj
+            if rsid >= 0 and rsid < jfn.stab.cnt and node.child1 >= 0 and node.ret_type > 0 and node.child1 + node.ret_type <= jfn.src_len {
+                let rfoff = lookup_field_off_any(jfn.stab, jfn.src, rsid, node.child1, node.ret_type)
+                if rfoff >= 0 { raddr = field_addr_from_base(robj, rfoff, jfn, bb) }
+            }
+            let rld = Instr{}
+            rld.op = OP_LOAD_MEM
+            rld.operand0 = raddr
+            rhs = emit(jfn, bb, &rld)
+        } else if node.op == 5 {
+            let rfield = Node{}
+            rfield.node_type = NODE_FIELD
+            rfield.token = node.children
+            rfield.child_cnt = node.param_cnt
+            rfield.token2 = node.child3
+            rfield.imm = node.ret_type
+            rfield.data_type = -1
+            rfield.child0 = null
+            rhs = codegen_expr(rfield, jfn, bb)
+        } else if node.op == 3 {
             let slot = lookup_slot_name(jfn, node.children, node.param_cnt)
             let ld = Instr{}
             ld.op = OP_LOAD
@@ -1331,19 +1487,43 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     if nt == NODE_RET {
         let val_id = 0
         if node.op == 2 {
-            let fexpr = Node{}
-            fexpr.node_type = NODE_FIELD
-            fexpr.token = node.token
-            fexpr.child_cnt = node.child_cnt
-            fexpr.token2 = node.token2
-            fexpr.imm = node.imm
-            fexpr.data_type = node.data_type
-            fexpr.op = node.ret_type
-            fexpr.children = node.children
-            fexpr.param_cnt = node.param_cnt
-            fexpr.child0 = null
-            if node.ret_type == 2 { fexpr.child0 = node.child1 }
-            val_id = codegen_expr(fexpr, jfn, bb)
+            let bslot = lookup_slot_name(jfn, node.token, node.child_cnt)
+            let bld = Instr{}
+            bld.op = OP_LOAD
+            bld.operand0 = bslot
+            let base = emit(jfn, bb, &bld)
+            let sid = lookup_stype_name(jfn, node.token, node.child_cnt)
+            let obj = base
+            if node.ret_type == 1 or node.ret_type == 2 {
+                let idx = 0
+                if node.ret_type == 1 {
+                    let islot = lookup_slot_name(jfn, node.children, node.param_cnt)
+                    let ild = Instr{}
+                    ild.op = OP_LOAD
+                    ild.operand0 = islot
+                    idx = emit(jfn, bb, &ild)
+                } else {
+                    idx = codegen_expr(node.child1, jfn, bb)
+                }
+                let elem_sz = 8
+                if sid >= 0 and sid < jfn.stab.cnt { elem_sz = jfn.stab.sizes[sid] }
+                let cins = Instr{}
+                cins.op = OP_CONST
+                cins.itype = TYPE_I64
+                cins.imm = elem_sz
+                let sz_id = emit(jfn, bb, &cins)
+                let byte_off = emit_binop(jfn, bb, OP_MUL, idx, sz_id)
+                obj = emit_binop(jfn, bb, OP_ADD, base, byte_off)
+            }
+            let addr = obj
+            if sid >= 0 and sid < jfn.stab.cnt and node.token2 >= 0 and node.imm > 0 and node.token2 + node.imm <= jfn.src_len {
+                let foff = lookup_field_off_any(jfn.stab, jfn.src, sid, node.token2, node.imm)
+                if foff >= 0 { addr = field_addr_from_base(obj, foff, jfn, bb) }
+            }
+            let fld = Instr{}
+            fld.op = OP_LOAD_MEM
+            fld.operand0 = addr
+            val_id = emit(jfn, bb, &fld)
         } else if node.op == 3 {
             let slot = lookup_slot_name(jfn, node.token, node.child_cnt)
             let ld = Instr{}
