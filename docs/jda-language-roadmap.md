@@ -39,7 +39,7 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] Loop variable mutation via stack slots (OP_STORE/OP_LOAD)
 
 **What jda1 CANNOT compile yet (needed for self-hosting):**
-- [ ] Array declarations and `arr[i]` / `arr[i].field` indexing
+- [ ] Full array matrix (`arr[i].field` still unstable/segfaulting in stage1 compile path)
 - [ ] Pointer/reference types (`&expr`, `ptr.field`, `&Type` in signatures)
 - [ ] String escape sequences (`\n` → 0x0A in lexer)
 - [ ] `print(int)` — only `print("string")` works
@@ -87,15 +87,33 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 3. Array declarations and indexing
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing (alloc_pages used internally but no `Type[size]` syntax)**
+**Status:** [ ] IN PROGRESS — **jda0: ✅ done | jda1: ⚠️ partial**
+**Update (March 5, 2026):** Stage1 now parses and lowers primitive/struct `Type[size]` declarations plus `arr[i] = val` assignment shape, but full integration is still blocked by a stage1 compile-time segfault on minimal `arr[i].field` programs.
 **What:**
-  - [ ] Parse `let arr = Type[size]` → mmap allocation
-  - [ ] Parse `let arr = i64[size]` / `let arr = i32[size]` / `let arr = i8[size]`
-  - [ ] `arr[i]` read → base + (i * element_size)
-  - [ ] `arr[i] = val` write
+  - [x] Parse `let arr = Type[size]` → mmap allocation
+  - [x] Parse `let arr = i64[size]` / `let arr = i32[size]` / `let arr = i8[size]`
+  - [x] `arr[i]` read → base + (i * element_size)
+  - [x] `arr[i] = val` write
   - [ ] `arr[i].field` for struct arrays
   - [ ] Stack-allocated small arrays vs mmap for large
 **Why:** jda1.jda uses arrays everywhere (Token[4096], Instr[256], BasicBlock[64], etc.)
+
+---
+
+### 3a. Issue: stage1 segfault on minimal `arr[i].field` compile path
+**Status:** [ ] TODO — ISSUE TRACKER
+**Problem:** Stage1 currently segfaults while compiling minimal struct-array field programs (for example `let ps = Pair[2]; ps[1].x = 33`), so array item 3 cannot be marked done.
+**Repro:**
+  - [ ] Build stage1 via stage0, then compile `/jda/bootstrap/stage0/tmp_struct_arr_field_store.jda`
+  - [ ] Observe stage1 process segfault during compile (before running output binary)
+**Scope:**
+  - [ ] Trace `NODE_FIELD_STORE` + indexed path interactions after array-allocation changes
+  - [ ] Verify `NODE_FIELD`/`NODE_FIELD_STORE` temporary-node lifetime assumptions in parse/codegen fast paths
+  - [ ] Add a stable conformance case for `arr[i].field = val` and `let x = arr[i].field`
+**Exit criteria:**
+  - [ ] Minimal struct-array field compile no longer segfaults
+  - [ ] `arr[i].field` read/write conformance tests pass under stage1
+**Owner handoff:** start in `bootstrap/stage1/jda1.jda` around `parse_expr_stmt`, `parse_primary`, `codegen_addr_expr`, and `codegen_stmt` field/index store branches.
 
 ---
 
