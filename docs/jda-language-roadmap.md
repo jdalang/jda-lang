@@ -73,6 +73,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ### 2. Struct definitions and field access
 **Status:** ✅ DONE — **jda0: ✅ done | jda1: ✅ done (feature-complete)**
 **Integration note (March 5, 2026):** `ci-selfhost-roundtrip` (`stage1_a -> stage1_b`) is still failing, but the remaining blocker is in other missing language features (notably `and`/`or` parsing), not in struct field access. Struct read/write/indexed-field matrix cases compile under stage1.
+**Handoff note:** next issue owners should work `and`/`or` lexer+parser support (Phase 1 item 9). Current repro for the non-struct blocker: `if a == 1 or a == 2 { ... }` causes repeated parse errors and stage1 segfault; this is what currently prevents `ci-selfhost-roundtrip` from going green.
 **What:**
   - [x] Parse `struct Name { field1: type  field2: type ... }`
   - [x] Calculate struct layout (field offsets, each field 8 bytes in jda)
