@@ -937,7 +937,14 @@ fn parse_if(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     let else_b = Node{}
     if toks[pos[0]].type == TOK_ELSE {
         pos[0] = pos[0] + 1
-        else_b = parse_block(toks, pos, stab, src)
+        ; Check if this is 'else if' or just 'else'
+        if toks[pos[0]].type == TOK_IF {
+            ; Recursively parse the next if statement
+            else_b = parse_if(toks, pos, stab, src)
+        } else {
+            ; Parse the else block
+            else_b = parse_block(toks, pos, stab, src)
+        }
     }
     let n = Node{}
     n.node_type = NODE_IF
