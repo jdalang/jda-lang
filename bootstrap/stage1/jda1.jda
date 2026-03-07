@@ -87,6 +87,7 @@ const NODE_STRUCT_INIT = 17
 const NODE_ADDR   = 18
 const NODE_ARRAY_ALLOC = 19
 const NODE_INDEX_STORE = 20
+const NODE_DEREF  = 21
 
 ; Type system
 const TYPE_VOID   = 0
@@ -95,6 +96,14 @@ const TYPE_I32    = 2
 const TYPE_I8     = 3
 const TYPE_F64    = 4
 const TYPE_PTR    = 5
+
+; Pointer type flag (bitmask)
+const TYPE_PTR_FLAG = 0x10000
+
+; Helper types for pointers
+const TYPE_PTR_I64 = 0x10001
+const TYPE_PTR_I32 = 0x10002
+const TYPE_PTR_I8  = 0x10003
 
 ; JIR opcodes
 const OP_CONST    = 0
@@ -300,6 +309,19 @@ fn try_escape(c: i8, next_c: i8) -> i64 {
     ret -1  ; Unknown escape
 }
 
+; Type system helpers
+fn is_pointer_type(t: i32) -> i32 {
+    ret (t & TYPE_PTR_FLAG) != 0
+}
+
+fn base_type(t: i32) -> i32 {
+    ret t & ~TYPE_PTR_FLAG
+}
+
+fn ptr_of(base: i32) -> i32 {
+    ret base | TYPE_PTR_FLAG
+}
+
 fn is_alpha(c: i8) -> i32 {
     ret (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')
 }
@@ -471,17 +493,24 @@ fn expect(toks: &Token, pos: &i64, expected: i32) {
 fn parse_type(toks: &Token, pos: &i64) -> i32 {
     let t = toks[pos[0]].type
     pos[0] = pos[0] + 1
-    ; Strip pointer prefix &
+    let is_ptr = 0
+    ; Check for pointer prefix &
     if t == TOK_AMP {
+        is_ptr = 1
         t = toks[pos[0]].type
         pos[0] = pos[0] + 1
     }
-    if t == TOK_I64   { ret TYPE_I64 }
-    if t == TOK_I32   { ret TYPE_I32 }
-    if t == TOK_I8    { ret TYPE_I8 }
-    if t == TOK_F64   { ret TYPE_F64 }
-    if t == TOK_IDENT { ret TYPE_PTR }   ; named struct / pointer type
-    ret TYPE_VOID
+    let base_t = TYPE_VOID
+    if t == TOK_I64   { base_t = TYPE_I64 }
+    if t == TOK_I32   { base_t = TYPE_I32 }
+    if t == TOK_I8    { base_t = TYPE_I8 }
+    if t == TOK_F64   { base_t = TYPE_F64 }
+    if t == TOK_IDENT { base_t = TYPE_PTR }   ; named struct / pointer type
+    ; Apply pointer flag if & was present
+    if is_ptr == 1 {
+        ret ptr_of(base_t)
+    }
+    ret base_t
 }
 
 fn lookup_struct(stab: &StructTable, src: &i8, ns: i64, nl: i64) -> i64 {
@@ -1030,9 +1059,58 @@ fn parse_expr(toks: &Token, pos: &i64) -> Node {
     ret parse_binop(toks, pos, 0)
 }
 
+; Handle postfix operations (array indexing, field access, arrow access)
+fn parse_postfix(toks: &Token, pos: &i64) -> Node {
+    let expr = parse_primary(toks, pos)
+    loop {
+        let tok_type = toks[pos[0]].type
+        if tok_type == TOK_LBRACK {
+            pos[0] = pos[0] + 1
+            let idx = parse_expr(toks, pos)
+            expect(toks, pos, TOK_RBRACK)
+            let n = Node{}
+            n.node_type = NODE_BINOP
+            n.op        = TOK_LBRACK
+            n.child0    = expr
+            n.child1    = idx
+            expr = n
+        }
+        if tok_type == TOK_DOT {
+            pos[0] = pos[0] + 1
+            let field = toks[pos[0]]
+            expect(toks, pos, TOK_IDENT)
+            let n = Node{}
+            n.node_type = NODE_FIELD
+            n.token     = field.str_start
+            n.imm       = field.str_len
+            n.child0    = expr
+            expr = n
+        }
+        if tok_type == TOK_ARROW {
+            pos[0] = pos[0] + 1
+            let field = toks[pos[0]]
+            expect(toks, pos, TOK_IDENT)
+            ; ptr->field is equivalent to (*ptr).field
+            let deref = Node{}
+            deref.node_type = NODE_DEREF
+            deref.child0    = expr
+            let n = Node{}
+            n.node_type = NODE_FIELD
+            n.token     = field.str_start
+            n.imm       = field.str_len
+            n.child0    = deref
+            expr = n
+        }
+        if tok_type != TOK_LBRACK and tok_type != TOK_DOT and tok_type != TOK_ARROW {
+            ret expr
+        }
+    }
+    ret expr
+}
+
 ; Pratt-style precedence climbing
 fn parse_binop(toks: &Token, pos: &i64, min_prec: i32) -> Node {
-    let left = parse_primary(toks, pos)
+    let left = parse_postfix(toks, pos)
     loop {
         let op   = toks[pos[0]].type
         let prec = op_precedence(op)
@@ -1064,6 +1142,14 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
         let inner = parse_primary(toks, pos)
         let n = Node{}
         n.node_type = NODE_ADDR
+        n.child0 = inner
+        ret n
+    }
+    if t.type == TOK_STAR {
+        pos[0] = pos[0] + 1
+        let inner = parse_primary(toks, pos)
+        let n = Node{}
+        n.node_type = NODE_DEREF
         n.child0 = inner
         ret n
     }
@@ -1857,6 +1943,13 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             ret emit(jfn, bb, &ins)
         }
         ret codegen_addr_expr(node.child0, jfn, bb)
+    }
+    if node.node_type == NODE_DEREF {
+        let ptr_id = codegen_expr(node.child0, jfn, bb)
+        let ld = Instr{}
+        ld.op = OP_LOAD_MEM
+        ld.operand0 = ptr_id
+        ret emit(jfn, bb, &ld)
     }
     if node.node_type == NODE_FIELD {
         let addr = codegen_addr_expr(node, jfn, bb)
