@@ -1473,8 +1473,12 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             } else {
                 idx = codegen_expr(node.child0, jfn, bb)
             }
+            ; Get element size from struct table using array's element type
+            let elem_sid = lookup_struct(jfn.stab, jfn.src, node.token, node.child_cnt)
             let elem_sz = 8
-            if sid >= 0 and sid < jfn.stab.cnt { elem_sz = jfn.stab.sizes[sid] }
+            if elem_sid >= 0 and elem_sid < jfn.stab.cnt {
+                elem_sz = jfn.stab.sizes[elem_sid]
+            }
             let cins = Instr{}
             cins.op = OP_CONST
             cins.itype = TYPE_I64
@@ -1483,11 +1487,16 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             let byte_off = emit_binop(jfn, bb, OP_MUL, idx, sz_id)
             obj = emit_binop(jfn, bb, OP_ADD, base, byte_off)
         }
-        if sid < 0 { ret obj }
-        if sid >= jfn.stab.cnt { ret obj }
+        ; Get element type from array allocation
+        let elem_sid = node.data_type
+        if elem_sid < 0 {
+            ; Lookup struct type from array declaration
+            elem_sid = lookup_struct(jfn.stab, jfn.src, node.token, node.child_cnt)
+        }
+        if elem_sid < 0 or elem_sid >= jfn.stab.cnt { ret obj }
         if node.token2 < 0 or node.imm <= 0 { ret obj }
         if node.token2 + node.imm > jfn.src_len { ret obj }
-        let foff = lookup_field_off_any(jfn.stab, jfn.src, sid, node.token2, node.imm)
+        let foff = lookup_field_off_any(jfn.stab, jfn.src, elem_sid, node.token2, node.imm)
         if foff < 0 { ret obj }
         ret field_addr_from_base(obj, foff, jfn, bb)
     }
