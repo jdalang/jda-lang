@@ -9,6 +9,7 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - jda0 (5200+ lines NASM x86-64) → compiles jda1.jda → jda1 binary
 - jda1 compiles: hello.jda, if/else programs, loop programs ✅
 - Full pipeline: jda0 → jda1 → working ELF binaries on Linux x86-64
+- Stage-0 pass-2 truncation blocker fixed (`P2 0` / 549-byte `jda1` issue resolved in `bootstrap/stage0/jda0.asm`) ✅
 - 23 compiler bugs found and fixed (see `todo-compiler.md`)
 - CI: Stage 0 smoke tests, conformance tests (24 pass / 2 fail), quality checks, self-host roundtrip gate
 
@@ -38,8 +39,6 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] Loop variable mutation via stack slots (OP_STORE/OP_LOAD)
 
 **What jda1 CANNOT compile yet (needed for self-hosting):**
-- [ ] Multiple function definitions (only parses 1 fn: `parse_fn` called once in `main()`)
-- [ ] Struct definitions and field access (TOK_STRUCT exists but no parse/codegen)
 - [ ] Array declarations and `arr[i]` / `arr[i].field` indexing
 - [ ] Pointer/reference types (`&expr`, `ptr.field`, `&Type` in signatures)
 - [ ] String escape sequences (`\n` → 0x0A in lexer)
@@ -72,15 +71,17 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 2. Struct definitions and field access
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing (TOK_STRUCT/NODE_STRUCT exist but no parser/codegen)**
+**Status:** ✅ DONE — **jda0: ✅ done | jda1: ✅ done (feature-complete)**
+**Integration note (March 5, 2026):** `ci-selfhost-roundtrip` (`stage1_a -> stage1_b`) is still failing, but the remaining blocker is in other missing language features (notably `and`/`or` parsing), not in struct field access. Struct read/write/indexed-field matrix cases compile under stage1.
+**Handoff note:** next issue owners should work `and`/`or` lexer+parser support (Phase 1 item 9). Current repro for the non-struct blocker: `if a == 1 or a == 2 { ... }` causes repeated parse errors and stage1 segfault; this is what currently prevents `ci-selfhost-roundtrip` from going green.
 **What:**
-  - [ ] Parse `struct Name { field1: type  field2: type ... }`
-  - [ ] Calculate struct layout (field offsets, each field 8 bytes in jda)
-  - [ ] `s.field` → load from `base + offset`
-  - [ ] `s.field = val` → store to `base + offset`
-  - [ ] `arr[i].field` → base + (i * struct_size) + field_offset
-  - [ ] `&s` → address-of (LEA)
-  - [ ] Pass structs by reference (`fn foo(s: &Struct)`)
+  - [x] Parse `struct Name { field1: type  field2: type ... }`
+  - [x] Calculate struct layout (field offsets, each field 8 bytes in jda)
+  - [x] `s.field` → load from `base + offset`
+  - [x] `s.field = val` → store to `base + offset`
+  - [x] `arr[i].field` → base + (i * struct_size) + field_offset
+  - [x] `&s` → address-of (LEA)
+  - [x] Pass structs by reference (`fn foo(s: &Struct)`)
 **Why:** jda1.jda uses 10+ structs: Token, Node, Instr, BasicBlock, JirFunction, RegAlloc, LowerCtx, Fixup, VarEntry, etc.
 
 ---
@@ -158,6 +159,24 @@ jda1 must support every feature used in its own source code (~1900 lines).
   - [ ] `!= null` null comparison
   - [ ] Chained conditions: `a >= '0' and a <= '9'`
 **Why:** jda1.jda uses compound conditions in loops and if statements.
+
+---
+
+### 9a. Issue: stage1 roundtrip blocker (`and`/`or` crash)
+**Status:** [ ] TODO — ISSUE TRACKER
+**Problem:** `ci-selfhost-roundtrip` fails at `stage1_a -> stage1_b` because stage1 cannot parse logical operators used in `jda1.jda`, then segfaults in parse/codegen flow.
+**Repro:**
+  - [ ] `make ci-selfhost-roundtrip` fails with segfault in `stage1_a -> stage1_b`
+  - [ ] Minimal repro: `if a == 1 or a == 2 { ... }` currently triggers repeated parse errors + segfault under stage1
+**Scope:**
+  - [ ] Add lexer tokens for `and` / `or` (and related `>=` / `<=` where needed)
+  - [ ] Add parser precedence/associativity for logical operators
+  - [ ] Implement lowering/codegen with short-circuit behavior
+  - [ ] Ensure parse errors fail cleanly (no segfault) for malformed logical expressions
+**Exit criteria:**
+  - [ ] Minimal `and` / `or` conformance tests pass
+  - [ ] `make ci-selfhost-roundtrip` passes stage1→stage1 compilation
+**Owner handoff:** next contributor can start in `bootstrap/stage1/jda1.jda` (`classify_keyword`, lexer parse loop, `op_precedence`, `parse_binop`, `tok_to_jir_op`/control-flow lowering).
 
 ---
 
