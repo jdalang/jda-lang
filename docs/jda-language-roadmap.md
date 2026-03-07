@@ -185,12 +185,17 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 6. print(int) — integer to string conversion
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ only print(string) works**
+**Status:** 🟡 IN PROGRESS — **jda0: ✅ done | jda1: 🟡 parsing/codegen done, runtime asm bug**
 **What:**
-  - [ ] Emit runtime int-to-decimal-string conversion
+  - [x] Parse `print(int_literal)` syntax
+  - [x] Add OP_PRINT_INT opcode
+  - [x] Codegen: detect integer vs string arguments
+  - [ ] Emit runtime int-to-decimal-string conversion — asm encoding bug
   - [ ] Handle negative numbers
   - [ ] Output via SYS_WRITE
 **Why:** jda1.jda uses `print(variable)` for debug output of integer values.
+**Blocker:** x86-64 assembly byte encoding in lower_instr() for OP_PRINT_INT is malformed.
+**Branch:** `issue-6-print-int` (pushed to origin)
 
 ---
 
