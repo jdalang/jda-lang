@@ -8,6 +8,7 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 - `jda1` binary starts, opens file, begins lexing ✓
 - TODOs 1–10 all PASS ✓
 - TODO 11 (end-to-end bootstrap) FAILS — jda1 parses every token as unexpected
+- **Issue #6 (print(int))**: BLOCKED — i64 struct field access bug (see Bug #24)
 
 ---
 
@@ -395,3 +396,27 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   - Bug #23: DONE ✅
   - fold_constants verification: DONE ✅ (enabled and validated)
   - No remaining known item in this area.
+
+---
+
+### 24. jda0 struct field access reads wrong offset [BLOCKING — Issue #6, future features]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_addr` / `.ga_dot` / `.do_lvalue`
+**Symptom:** ALL struct fields (both i32 and i64) read from offset 0 instead of correct offset. When accessing `node.imm`, reads `node.node_type` (value 7) instead of actual value (42).
+**Root cause:** `gen_addr` / `.ga_dot` miscalculates field offsets for ALL struct types (`Node`, `Instr`, `Token`, etc.). The emitted code adds the correct field offset to `rax`, but subsequent loads read from the wrong location.
+**Impact:**
+  - `parse_print()` cannot store integer literal value — `node.imm = arg.imm` reads wrong value
+  - `codegen` for `NODE_PRINT` cannot retrieve integer value — `node.imm` reads garbage
+  - ANY code accessing struct fields by name is affected
+  - Blocks: print(int), and any feature requiring struct field access
+**Workaround attempts (ALL FAILED):**
+  1. Store value in i64 fields (`imm`, `token`) — reads wrong offset
+  2. Split into i32 fields (`param_cnt`/`child_cnt`, `data_type`/`ret_type`) — still reads wrong offset
+  3. **Conclusion:** ALL struct field access is broken, not just i64 fields
+**Fix needed:** Deep debugging of `gen_addr` in `jda0.asm` — how it calculates and emits field offset loads. Compare emitted assembly with expected x86-64 addressing modes.
+**Status:** ❌ NOT PURSUING — Requires fundamental jda0 fix. Infrastructure for Issue #6 is complete and ready to work once jda0 is fixed.
+**Test case:**
+```jda
+fn main() {
+    print(42)  ; Should print "42", currently prints garbage or segfaults
+}
+```
