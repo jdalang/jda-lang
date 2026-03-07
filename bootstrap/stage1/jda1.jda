@@ -1052,14 +1052,7 @@ fn parse_print(toks: &Token, pos: &i64) -> Node {
     expect(toks, pos, TOK_RPAREN)
     let n = Node{}
     n.node_type = NODE_PRINT
-    ; For integer literals, store the value in token field (i64) and mark with op=7 (NODE_INT)
-    ; For strings, store the reference in child0 and mark with op=8 (NODE_STR)
-    n.op = arg.node_type
-    if arg.node_type == 7 {
-        n.token = arg.imm
-    } else {
-        n.child0 = arg
-    }
+    n.child0 = arg
     ret n
 }
 
@@ -1431,10 +1424,10 @@ fn emit_strlen(jfn: &JirFunction, bb: i64, str_id: i64) -> i64 {
     ret emit(jfn, bb, &ins)
 }
 
-fn emit_print_int(jfn: &JirFunction, bb: i64, val_id: i64) {
+fn emit_print_int(jfn: &JirFunction, bb: i64, imm_val: i64) {
     let ins = Instr{}
     ins.op       = OP_PRINT_INT
-    ins.operand0 = val_id
+    ins.imm      = imm_val
     emit(jfn, bb, &ins)
 }
 
@@ -1884,12 +1877,11 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     }
     if nt == NODE_PRINT {
         ; Check op field to determine argument type
-        ; op=7 (NODE_INT) -> integer literal stored in node.token
-        ; op=8 (NODE_STR) -> string stored in node.child0
+        ; op=7 (NODE_INT) -> integer literal stored in node.imm
+        ; otherwise -> string or other expression in node.child0
         if node.op == 7 {
             ; print(int_literal) -> emit print_int with immediate value
-            let val_id = emit_const(jfn, bb, TYPE_I64, node.token)
-            emit_print_int(jfn, bb, val_id)
+            emit_print_int(jfn, bb, node.imm)
         } else {
             ; print(str) or print(variable) -> SYS_WRITE(1, str_ptr, str_len)
             let str_id = codegen_expr(node.child0, jfn, bb)
@@ -2598,22 +2590,25 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
 
     if ins.op == OP_PRINT_INT {
         ; Integer to decimal string conversion and print
-        ; Input: operand0 contains the value to print
+        ; Input: ins.imm contains the immediate value to print
         ; Uses stack buffer, converts right-to-left, then SYS_WRITE
-        let val_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
         ; Save registers: rbx, r12, r13
         emit_byte(out, pos, 0x53)   ; push rbx
         emit_byte(out, pos, 0x41)
         emit_byte(out, pos, 0x54)   ; push r12
         emit_byte(out, pos, 0x41)
         emit_byte(out, pos, 0x55)   ; push r13
-        ; mov r12, val_r - use MOV r64, r/m64 (0x8B)
-        ; jda0 uses: 49 89 C4 (mov r12, rax) when source is rax
-        ; Note: 0x89 is MOV r/m64, r64, so ModRM.reg=source, ModRM.r/m=dest
-        ; For mov r12, rax: REX=0x49, 0x89, ModRM=0xC4 (reg=rax=0, rm=r12=4)
-        emit_rex_w_rr(out, pos, 12, val_r)
-        emit_byte(out, pos, 0x89)
-        emit_byte(out, pos, modrm_rr(val_r & 7, 12))
+        ; mov r12, imm64 (load the value to print)
+        emit_byte(out, pos, 0x49)
+        emit_byte(out, pos, 0xBC)
+        emit_byte(out, pos, ins.imm & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 8) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 16) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 24) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 32) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 40) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 48) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 56) & 0xFF)
         ; sub rsp, 32 (buffer space)
         emit_byte(out, pos, 0x48)
         emit_byte(out, pos, 0x83)
