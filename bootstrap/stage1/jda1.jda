@@ -2142,6 +2142,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ALLOC   { used[id] = 1 }
             if op == OP_CALL    { used[id] = 1 }
             if op == OP_STORE   { used[id] = 1 }
+            if op == OP_PRINT_INT { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -2591,19 +2592,17 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ; Input: operand0 contains the value to print
         ; Uses stack buffer, converts right-to-left, then SYS_WRITE
         let val_r = get_or_load(&ctx.ra, out, pos, ins.operand0)
-        ; Save registers we'll use: rbx (divisor), r12 (value), r13 (buffer ptr)
+        ; Save registers: rbx, r12, r13
         emit_byte(out, pos, 0x53)   ; push rbx
         emit_byte(out, pos, 0x41)
         emit_byte(out, pos, 0x54)   ; push r12
         emit_byte(out, pos, 0x41)
         emit_byte(out, pos, 0x55)   ; push r13
-        ; mov r12, val_r (save value) - use MOV R12, source_reg
-        ; REX.W = 0x49 if val_r >= 8, else 0x48
-        if val_r >= 8 {
-            emit_byte(out, pos, 0x49)
-        } else {
-            emit_byte(out, pos, 0x48)
-        }
+        ; mov r12, val_r - use MOV r64, r/m64 (0x8B)
+        ; jda0 uses: 49 89 C4 (mov r12, rax) when source is rax
+        ; Note: 0x89 is MOV r/m64, r64, so ModRM.reg=source, ModRM.r/m=dest
+        ; For mov r12, rax: REX=0x49, 0x89, ModRM=0xC4 (reg=rax=0, rm=r12=4)
+        emit_rex_w_rr(out, pos, 12, val_r)
         emit_byte(out, pos, 0x89)
         emit_byte(out, pos, modrm_rr(val_r & 7, 12))
         ; sub rsp, 32 (buffer space)
