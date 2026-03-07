@@ -111,8 +111,8 @@ jda0 bootstrap/stage1/jda1.jda jda1_bin   # stage 0 compiles stage 1
 jda1_bin test.jda test_out                  # stage 1 compiles a test program
 ./test_out                                  # test program runs correctly
 ```
-**Expected:** `test.jda = fn main() { print(42) }` → prints `42`.
-**Current status:** jda1 compiles OK, opens file, lexes 10 tokens, but parser fails with "Parse error: unexpected token" on every `expect()` call. Root cause under investigation — see bugs 12–16 below.
+**Expected:** `hello.jda = fn main() { print("Hello Bare Metal") }` → prints `Hello Bare Metal`.
+**Current status:** jda1 compiles hello.jda → 210-byte ELF (73 bytes code + 17 strtab). LEA RIP-relative fixup for strings is wrong, causing "Illegal instruction". Bugs 12–19 all FIXED. Bug #20 in progress — 7 of ~10 sub-issues resolved.
 
 ---
 
@@ -173,16 +173,25 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 
 ---
 
-### 18. Fix jda1 segfault in `lower_fn` → `emit_byte` — `pos[0]` deref crash [TODO 🔴]
-**File:** `bootstrap/stage0/jda0.asm` — code generation (under investigation)
-**Symptom:** After successful lex + parse + codegen + fold + dce, jda1 crashes with SIGSEGV inside `emit_byte(out, pos, 0x55)` when trying to read `pos[0]`. The crash happens in `lower_fn` → `emit_push_r` → `emit_byte`.
-**Debug findings:**
-  - `emit_byte` enters OK, `b=85` (0x55) is printed, but reading `pos[0]` segfaults
-  - Simplified test (3-level passthrough with 4 params) works fine outside of jda1 context
-  - The real jda1 main function is very large (~30+ locals, many struct allocs)
-  - Possible causes: stack frame offset overflow, parameter slot corruption in large functions, or interaction with many mmap allocs
-**Depends on:** Fix #17
-**Test:** `./jda1 ../../examples/hello.jda hello_s1` should compile successfully.
+### 18. Fix `&` (address-of) operator — returns value instead of address [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_expr_base` `&` handler + `gen_expr` init
+**Symptom:** `&var` returned the VALUE of the variable instead of its stack address. `print(&x)` where `x=42` outputs `42` instead of a stack address.
+**Root cause (two bugs):**
+  1. `gen_expr` never initialized `lv_sid` to -1 (BSS default is 0). When `.gs_let_expr` called `gen_expr(42)`, `lv_sid` stayed 0, so the check `lv_sid != -1` was true, causing scalar `let x = 42` to be created as TK_PTR instead of TK_SCALAR. The `&` handler then saw `lv_isptr=1` and emitted an unwanted `mov rax,[rax]` deref.
+  2. The `&` handler was emitting a debug marker (`0xDEAD`) instead of actual address-of code.
+**Fix:**
+  1. Added `lv_sid=-1, lv_esz=8, lv_isptr=0` initialization at start of `gen_expr` (~line 2119).
+  2. Rewrote `&` handler: calls `gen_addr`, then checks `lv_isptr` — for pointers (e.g. `&struct_ptr`) emits `mov rax,[rax]` to load heap pointer; for scalars (e.g. `&x`) keeps raw stack address.
+**Test:** `let x = 42; print(&x)` prints a large stack address ✓. `&struct_ptr` returns heap address ✓.
+
+---
+
+### 19. Fix 5th/6th function parameter storage (r8/r9 registers) [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_fn` / `.gf_param_r8r9` (~line 4686)
+**Symptom:** Functions with 5+ parameters (e.g. `lower_block(jfn, ctx, code, code_len, pos)`) received `0` for the 5th parameter. `lower_block` got `pos=0`, causing null pointer deref on `pos[0]`.
+**Root cause:** `gen_fn` prologue stored params 0–3 (rdi/rsi/rdx/rcx) to stack but SKIPPED params 4–5 (r8/r9). The loop condition `cmp rcx, 4; jge .gf_param_next` jumped over the emit code, so r8/r9 stack slots were allocated but never initialized.
+**Fix:** Added `.gf_param_r8r9` handler to emit `mov [rbp-off], r8` (4C 89 85 disp32) for param index 4 and `mov [rbp-off], r9` (4C 89 8D disp32) for param index 5.
+**Test:** `lower_fn(&jfn, &ctx, code_buf, &code_len)` — 5th param `pos` now arrives correctly ✓.
 
 ---
 
@@ -212,40 +221,69 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ┌─────┬────────────────────────────────────────────────────────┬─────────────────┐                                        
   │  #  │                          Task                          │     Status      │                                      
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 32  │ Fix arr[i].field struct array field read/write         │ DONE ✅         │                                        
+  │ 1  │ Fix arr[i].field struct array field read/write         │ DONE ✅         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 33  │ Fix let inside loop accumulating locals each iteration │ DONE ✅         │ 
+  │ 2  │ Fix let inside loop accumulating locals each iteration │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 34  │ Fix else if chain compilation                          │ DONE ✅         │ 
+  │ 3  │ Fix else if chain compilation                          │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 35  │ Fix compound or/and conditions                         │ DONE ✅         │ 
+  │ 4  │ Fix compound or/and conditions                         │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 36  │ Fix ptr[0] = val deref-write                           │ DONE ✅         │ 
+  │ 5  │ Fix ptr[0] = val deref-write                           │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 37  │ Fix ptr[idx] = struct_val large copy                   │ DONE ✅         │ 
+  │ 6  │ Fix ptr[idx] = struct_val large copy                   │ DONE ✅         │ 
                                         
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                      
-  │ 38  │ Fix inline asm asm { out var = reg }                   │ DONE ✅         │                                        
+  │ 7  │ Fix inline asm asm { out var = reg }                   │ DONE ✅         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 39  │ Fix struct literal init let x = Struct{}               │ DONE ✅         │
+  │ 8  │ Fix struct literal init let x = Struct{}               │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 40  │ Fix nested function call arguments                     │ DONE ✅         │
+  │ 9  │ Fix nested function call arguments                     │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 41  │ Fix jfn.src = val struct-pointer field write           │ DONE ✅         │
+  │ 10  │ Fix jfn.src = val struct-pointer field write           │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 42  │ End-to-end jda1 bootstrap test                         │ IN PROGRESS 🔧  │
+  │ 11  │ End-to-end jda1 bootstrap test                         │ IN PROGRESS 🔧  │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 43  │ Merge conflict leftover in syscall pop code            │ FIXED ✅        │
+  │ 12  │ Merge conflict leftover in syscall pop code            │ FIXED ✅        │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 44  │ parse_reg_name jg→jge for 3-char registers             │ FIXED ✅        │
+  │ 13  │ parse_reg_name jg→jge for 3-char registers             │ FIXED ✅        │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 45  │ asm handler clobbers r15 (globals base)                │ FIXED ✅        │
+  │ 14  │ asm handler clobbers r15 (globals base)                │ FIXED ✅        │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 46  │ gen_expr_base duplicate comparison/logical handling    │ FIXED ✅        │
+  │ 15  │ gen_expr_base duplicate comparison/logical handling    │ FIXED ✅        │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 47  │ Pointer double-dereference on function argument pass   │ FIXED ✅        │
+  │ 16  │ Pointer double-dereference on function argument pass   │ FIXED ✅        │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 48  │ jda1 parser reads all tokens as unexpected             │ FIXED ✅        │
+  │ 17  │ jda1 parser reads all tokens as unexpected             │ FIXED ✅        │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 49  │ jda1 segfault in lower_fn → emit_byte pos[0] deref   │ TODO 🔴         │
+  │ 18  │ & operator returns value instead of address             │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 19  │ 5th/6th param (r8/r9) not stored in gen_fn prologue   │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 20  │ Fix codegen/lowering pipeline for working ELF         │ IN PROGRESS 🔧  │
   └─────┴────────────────────────────────────────────────────────┴─────────────────┘
+
+---
+
+### 20. Fix codegen/lowering pipeline — jda1 produces working ELF [IN PROGRESS 🔧]
+**File:** `bootstrap/stage0/jda0.asm` + `bootstrap/stage1/jda1.jda`
+**Original symptom:** `hello_s1` output was 131 bytes (prologue only, no body).
+**Root causes found and fixed so far:**
+  1. ✅ `parse_block` used `alloc(128)` → changed to `Node{}` for correct struct offsets
+  2. ✅ `block.children[i]` returned element address, not stored pointer → changed `children: &Node` → `children: i64` and `Node[256]` → `i64[256]`
+  3. ✅ `.ga_dot` + `[` (dot-then-index) needed conditional deref → added `ga_from_dot` + `ga_acnt` BSS flags in `.ga_pre_index` to deref scalar/pointer fields but NOT embedded arrays
+  4. ✅ `node.token`/`node.token2` as `Token` struct → changed to `i64` (pointer storage)
+  5. ✅ Functions taking `Token` by value → changed to `&Token` (`emit_strlit`, `bind`, `parse_call_rest`, `lookup`)
+  6. ✅ `jfn.strtab` was 0 → `strtab: i8[4096]` is embedded array; `ga_acnt` flag prevents wrong deref
+  7. ✅ `emit()` passed `Instr` by value (8 bytes) → changed to `&Instr` with field-by-field copy into `jfn.blocks[bb].instrs[slot]`
+
+**Current state:** jda1 compiles hello.jda → 210-byte ELF (120 header + 73 code + 17 strtab). Binary has "Illegal instruction" error.
+
+**Remaining issues:**
+  - [ ] LEA RIP-relative fixup for string literals: displacement is wrong (`0xFFFFF800` instead of correct forward offset). `emit_lea_rip` code_off calculation or patching logic may be off-by-one.
+  - [ ] Missing `exit(0)` syscall at end of main — will segfault after print even if string is correct
+  - [ ] Verify `syscall` instruction encoding in lowered code (SYS_WRITE args: fd=1, buf=str_ptr, len)
+  - [ ] Remove debug prints from jda1.jda after all issues resolved
+
+**Depends on:** Fixes #12–#19
+**Test:** `./jda1 ../../examples/hello.jda hello_s1 && ./hello_s1` should print "Hello Bare Metal"
