@@ -288,9 +288,13 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 **Depends on:** Fixes #12–#19
 
 **Known limitations (future work):**
-  - [ ] Branch fixup loop disabled — needed for multi-block programs (if/else, loops)
-  - [ ] Debug prints still in jda1.jda — remove after bootstrap is stable
-  - [ ] fold_constants uses struct-by-value `ConstVal` — may need `&ConstVal` treatment
+  - [x] DCE disabled — root cause was struct-by-value bug (`let ins = ...` copies 8 bytes), NOT array allocation. Fixed by accessing Instr fields directly through chain expression. Re-enabled. → Bug #21
+  - [x] `print(int)` in loops breaks subsequent statements — was already fixed by patches #12-#20
+  - [x] Branch fixup loop disabled — FIXED in Bug #22: if/else works, branch fixup patching implemented
+  - [x] Debug prints still in jda1.jda — removed in Bug #22
+  - [x] fold_constants uses struct-by-value `ConstVal` — verified safe with direct field access in find_const/fold_constants and re-enabled in main()
+  - [x] Loop variable mutation crashes — fixed with stack-slot variable loads/stores (Bug #23)
+  - [ ] jda0 compound expression bug — `a * b + c` evaluates wrong, must split into two statements → workaround in jda1.jda tokenizer
 
 ---
 
@@ -306,13 +310,84 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 
 ---
 
-### 22. Fix `print(int)` in loops breaks subsequent statements [DONE ✅]
-**File:** `bootstrap/stage0/jda0.asm` — `gen_print` integer path
-**Original symptom:** Calling `print(integer_variable)` inside a loop body was reported to corrupt execution state.
-**Resolution:** Extensive testing confirms this bug was already fixed by earlier patches (bugs #12–#20). All patterns work correctly:
-  - `print(int)` followed by `print(string)` in loops ✅
-  - `print(struct.field)` in loops ✅
-  - `print(arr[i])` in loops ✅
-  - `print(int)` + function calls in loops ✅
-**Fix:** No additional changes needed — resolved as side effect of register clobber fixes (#14), gen_addr deref fixes (#16), and other codegen patches.
-**Test:** Multiple test patterns verified — all produce correct output.
+### 22. Enable branch fixup + fix if/else/loop lowering [DONE ✅]
+**Branch:** `fix-branch-fixup-loop`
+**File:** `bootstrap/stage1/jda1.jda`
+**Goal:** Allow jda1 to compile multi-block programs (if/else, loops) by implementing branch fixup patching.
+
+**Sub-bugs found and fixed:**
+
+1. **Tokenizer compound expression bug** ✅
+   - `val = val * 10 + (src[pos] - '0')` evaluates to 0 — jda0 codegen bug with `a * b + c` compound expressions
+   - **Fix:** Split into `let digit = src[pos] - '0'; let tmp = val * 10; val = tmp + digit`
+   - All integer literals were tokenized as 0
+
+2. **Variable lookup uses wrong string comparison** ✅
+   - `streq()` checks for null-terminator (`kw[len] != 0`) but source-buffer strings are NOT null-terminated
+   - `lookup()` never found any variable → returned -1 → CMP operand0 was 0xFFFFFFFFFFFFFFFF
+   - **Fix:** Added `str_match()` that compares two regions of the source buffer by offset+length (no null check). Changed `lookup()` to use `str_match()`.
+
+3. **Assignment `i = expr` uses stale return-by-value Node** ✅
+   - `parse_expr_stmt()` calls `let lhs = parse_expr(...)` then reads `lhs.token` for the assignment target
+   - Return-by-value copies only 8 bytes (pointer), so `lhs.token` reads garbage from stack offset
+   - **Fix:** Save `pos[0]` before `parse_expr`, use `toks[save_pos]` to get the ident token directly for assignments
+
+4. **codegen_if/codegen_loop didn't return continuation block** ✅
+   - After an `if` or `loop`, subsequent statements were emitted into the WRONG basic block
+   - **Fix:** `codegen_stmt` now returns `i64` (continuation bb). `codegen_if` returns `merge_bb`, `codegen_loop` returns `exit_bb`. `codegen_block` tracks `cur_bb` through the loop.
+
+5. **Removed debug prints from jda1.jda** ✅ (~142 debug print lines removed)
+
+**Infrastructure added:**
+  - `kind` field on Fixup struct (0=branch, 1=strtab) to distinguish fixup types
+  - `bb_offsets: i64[256]` on LowerCtx to record code offsets per basic block
+  - Branch fixup pass in `lower_fn` using `poke_byte` for rel32 patching
+  - Fixed struct-by-value in `fold_constants`, `find_const`, main() patching loop, `lookup()`
+
+**What works:**
+  - ✅ `hello.jda` — "Hello Bare Metal"
+  - ✅ `if x == 5 { print("yes") } else { print("no") }` — correct branching
+  - ✅ Multiple sequential if statements
+  - ✅ Branch fixup patching for forward and backward jumps
+
+**Additional close-out for loops (via Bug #23):**
+  - ✅ `loop i < 3 { print("hi "); i = i + 1 }` compiles and runs (`hi hi hi`)
+  - ✅ Loop mutation no longer crashes lowering
+  - ✅ Back-edge branch fixup still patches correctly with mutable loop vars
+
+---
+
+### 23. Loop variable mutation — SSA needs phi nodes or stack slots [DONE ✅]
+**Branch:** `fix-branch-fixup-loop`
+**File:** `bootstrap/stage1/jda1.jda`
+**Symptom (before):** Loop programs with mutation (`i = i + 1`) segfaulted in lowering, then emitted invalid runtime behavior.
+**Root cause:** SSA-only variable IDs across loop back-edges without phi nodes, plus regalloc edge cases for cross-block values and spills.
+**Fix implemented (stack-slot path):**
+  1. Variable bindings moved to stack slots:
+     - `VarEntry.val_id` -> `VarEntry.slot_off`
+     - `JirFunction.next_slot_off` allocator added
+  2. Parser marks declaration vs assignment on `NODE_LET`:
+     - `parse_let()` sets `op=0` (declaration)
+     - `parse_expr_stmt()` assignment sets `op=1`
+  3. Codegen now emits memory-based var ops:
+     - declaration/assignment emit `OP_STORE` to slot
+     - identifier lookup emits `OP_LOAD` from slot
+  4. Lowering added for `OP_STORE` / `OP_LOAD`:
+     - `mov [rbp-off], reg`
+     - `mov reg, [rbp-off]`
+  5. Regalloc/runtime hardening:
+     - bounds-checked `regalloc_get()`
+     - real spill stores on eviction (not bookkeeping-only)
+     - use-count based `regalloc_free()` to prevent operand register aliasing
+  6. `OP_STRLEN` SIB emission rewritten with stepwise arithmetic to avoid stage0 compound-expression miscodegen in byte construction.
+
+**Validation:**
+  - ✅ `loop i < 3 { print("hi "); i = i + 1 }` -> `hi hi hi` and exit code 0
+  - ✅ `examples/hello.jda` still compiles/runs -> `Hello Bare Metal`
+**Depends on:** Bug #22
+
+**Current working in TODO (latest):**
+  - Bug #22: DONE ✅
+  - Bug #23: DONE ✅
+  - fold_constants verification: DONE ✅ (enabled and validated)
+  - Remaining known item in this area: jda0 compound expression bug workaround still required in a few emitter expressions.
