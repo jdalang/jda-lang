@@ -288,8 +288,6 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 **Depends on:** Fixes #12–#19
 
 **Known limitations (future work):**
-  - [x] DCE disabled — root cause was struct-by-value bug (`let ins = ...` copies 8 bytes), NOT array allocation. Fixed by accessing Instr fields directly through chain expression. Re-enabled. → Bug #21
-  - [ ] `print(int)` in loops breaks subsequent statements — jda0 gen_print integer bug
   - [ ] Branch fixup loop disabled — needed for multi-block programs (if/else, loops)
   - [ ] Debug prints still in jda1.jda — remove after bootstrap is stable
   - [ ] fold_constants uses struct-by-value `ConstVal` — may need `&ConstVal` treatment
@@ -305,3 +303,16 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   - Same for `o1`, `o2`, `o3`, `op`, `id`
   - Array allocation (`let used = i32[4096]`) was NOT the problem — works correctly in jda0 via mmap
 **Test:** `./jda1 ../../examples/hello.jda hello_s1 && ./hello_s1` → prints "Hello Bare Metal" ✅
+
+---
+
+### 22. Fix `print(int)` in loops breaks subsequent statements [DONE ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_print` integer path
+**Original symptom:** Calling `print(integer_variable)` inside a loop body was reported to corrupt execution state.
+**Resolution:** Extensive testing confirms this bug was already fixed by earlier patches (bugs #12–#20). All patterns work correctly:
+  - `print(int)` followed by `print(string)` in loops ✅
+  - `print(struct.field)` in loops ✅
+  - `print(arr[i])` in loops ✅
+  - `print(int)` + function calls in loops ✅
+**Fix:** No additional changes needed — resolved as side effect of register clobber fixes (#14), gen_addr deref fixes (#16), and other codegen patches.
+**Test:** Multiple test patterns verified — all produce correct output.
