@@ -10,6 +10,7 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] Let bindings, loops, if/else/else-if chains
 - [x] Compound or/and conditions with short-circuit evaluation
 - [x] Pointer deref read/write, address-of operator
+- [x] **Dereference operator (*ptr)** ✅ (March 8, 2026)
 - [x] Nested function calls (e.g., `emit_byte(out, pos, rex_byte(...))`)
 - [x] Inline asm blocks
 - [x] Struct literal init (`let x = Struct{}`)
@@ -33,9 +34,12 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] String handling (inline strlen loop, strtab with RIP-relative LEA)
 - [x] Loop variable mutation via stack slots (OP_STORE/OP_LOAD)
 - [x] **Full struct-array field access (`arr[i].field`)** ✅
+- [x] **Dereference operator (*ptr)** ✅ (March 8, 2026)
+- [x] **Postfix operations (array indexing, field access, arrow dereference)** ✅ (March 8, 2026)
+- [x] **Enhanced type system (pointer type tracking)** ✅ (March 8, 2026)
 
 **What jda1 CANNOT compile yet (needed for self-hosting):**
-- [ ] Pointer/reference types (`&expr`, `ptr.field`, `&Type` in signatures)
+- [x] ~~Pointer/reference types~~ → **NOW SUPPORTED** ✅ (March 8, 2026)
 - [ ] String escape sequences (`\n` → 0x0A in lexer)
 - [ ] `print(int)` — only `print("string")` works
 - [ ] `else if` chains (parser handles `else { }` but not `else if`)
