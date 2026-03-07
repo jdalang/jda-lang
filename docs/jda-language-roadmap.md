@@ -5,6 +5,15 @@
 docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 jda-dev make clean all test stage1
 ```
 
+**Current state (March 2026):**
+- jda0 (5200+ lines NASM x86-64) → compiles jda1.jda → jda1 binary
+- jda1 compiles: hello.jda, if/else programs, loop programs ✅
+- Full pipeline: jda0 → jda1 → working ELF binaries on Linux x86-64
+- Pointer and reference support complete (dereference, arrow field access, type tracking) ✅
+- 23+ compiler bugs found and fixed (see `todo-compiler.md`)
+- **Bug #24:** i64 struct field access reads wrong offset — blocking Issue #6 (print(int))
+- CI: Stage 0 smoke tests, conformance tests, self-host roundtrip verification
+
 **What's working in jda0 (Stage 0 compiler):**
 - [x] Struct definitions and struct arrays with field access
 - [x] Let bindings, loops, if/else/else-if chains
@@ -185,16 +194,23 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 6. print(int) — integer to string conversion
-**Status:** 🟡 IN PROGRESS — **jda0: ✅ done | jda1: 🟡 parsing/codegen done, runtime asm bug**
+**Status:** 🔴 BLOCKED — **jda0: ✅ done | jda1: ❌ i64 struct field access bug**
 **What:**
   - [x] Parse `print(int_literal)` syntax
   - [x] Add OP_PRINT_INT opcode
   - [x] Codegen: detect integer vs string arguments
-  - [ ] Emit runtime int-to-decimal-string conversion — asm encoding bug
+  - [ ] Emit runtime int-to-decimal-string conversion — **blocked by Bug #24**
   - [ ] Handle negative numbers
   - [ ] Output via SYS_WRITE
 **Why:** jda1.jda uses `print(variable)` for debug output of integer values.
-**Blocker:** x86-64 assembly byte encoding in lower_instr() for OP_PRINT_INT is malformed.
+**Blocker:** **Bug #24 — i64 struct field access reads wrong offset**. Accessing i64 fields (`imm`, `token`, `child0`, etc.) in `Node` struct reads from offset 0 instead of correct offset. When accessing `arg.imm` (should be at offset 8), reads value 7 (the `node_type` i32 field at offset 0).
+**Root cause:** Codegen for struct field access in `jda0.asm` (`gen_addr` / `.ga_dot`) calculates wrong offset for i64 fields. Suspect issue in how field offsets are computed for i64 vs i32 fields.
+**Workaround attempts (all failed):**
+  1. Direct `node.child0.node_type` check — reads wrong value
+  2. `node.child0.imm` access — reads 7 instead of actual value
+  3. Storing in `node.imm` — same offset issue
+  4. Storing in `node.token` — same offset issue
+**Fix needed:** Investigate `gen_addr` in `jda0.asm` — how it calculates field offsets for i64 vs i32 fields. Compare with working i32 field access (e.g., `node.node_type`, `node.op`).
 **Branch:** `issue-6-print-int` (pushed to origin)
 
 ---
