@@ -105,7 +105,6 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 ---
 
-### 🔴 Critical Blockers
 
 **Issue 3c: jda1 Runtime Segfault (The "Hello World" Crash)**
 - **Status:** ✅ FIXED (March 7, 2026)
@@ -136,19 +135,20 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ### 🟡 Technical Debt & Stability
 
 **Issue 3e: Register Spill Verification**
-- **Status:** 🧪 READY FOR TEST
+- **Status:** ✅ READY FOR TEST (March 7, 2026)
 - **Problem:** `jda1` has a simple register allocator that *claims* to spill to the stack, but this path is rarely triggered in small programs.
-- **Task:** Create a test case with > 8 concurrent live variables to force spills and verify correctness.
-- **Action:** Created `tests/conformance/stage1/spill_test.jda` with 10 variables.
-- **Next Step:** Run this test once Issue 0b (segfault) is resolved.
-- **Entry Point:** `tests/conformance/stage1/spill_test.jda`.
+- **Test Case:** Created `tests/conformance/stage1/spill_test.jda` with 10 concurrent live variables to force spills
+- **Next Step:** Run this test to verify register spill correctness
+- **Entry Point:** `tests/conformance/stage1/spill_test.jda`
 
 **Issue 3f: jda0 NASM Fragility**
 - **Status:** ✅ STABILIZED (March 7, 2026)
 - **Note:** `jda0.asm` is a one-pass compiler. It uses `r15` as a hardcoded base for globals. Any change to `gen_fn` or statement dispatch MUST preserve `r15`, `r14` (loop starts), and `rbx` (general purpose).
-- **Recent Fixes (March 7, 2026):**
-  - **Bug #19 — Stack overwrite on pointer parameters:** `add_local` allocated only `esz` bytes per stack slot, but register stores always write 8 bytes. For `&i8` params, allocated 1 byte but wrote 8 bytes → corrupted saved rbp. Fixed: `add_local` now allocates `max(esz, 8)`.
-  - **Bug #20 — else-if fallthrough:** `.gs_else_if` in `gen_stmt` clobbered `r15` (outer "after" jump offset) when recursively calling `gen_stmt` for inner `if`. Fixed: save/restore `r15` around the recursive call.
+- **Critical Bugs Fixed (March 7, 2026):**
+  - **Bug #19 — Stack overwrite on pointer parameters:** `add_local` now allocates `max(esz, 8)` bytes per slot
+  - **Bug #20 — else-if fallthrough:** save/restore `r15` around recursive `gen_stmt` call
+  - **Bug #21 — Stack overflow from oversized struct:** Reduce `JirFunction` array sizes from 480MB to 30-40KB
+- **Result:** Bootstrap chain fully functional (jda0 → jda1 → executable)
 
 ---
 
