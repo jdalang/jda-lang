@@ -194,23 +194,27 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 6. print(int) — integer to string conversion
-**Status:** 🔴 BLOCKED — **jda0: ✅ done | jda1: ❌ i64 struct field access bug**
+**Status:** 🟡 PARTIAL — **jda0: ✅ done | jda1: 🟡 infrastructure done, blocked by Bug #24**
 **What:**
   - [x] Parse `print(int_literal)` syntax
   - [x] Add OP_PRINT_INT opcode
   - [x] Codegen: detect integer vs string arguments
+  - [x] x86-64 assembly for int-to-decimal conversion (division loop, SYS_WRITE)
   - [ ] Emit runtime int-to-decimal-string conversion — **blocked by Bug #24**
   - [ ] Handle negative numbers
   - [ ] Output via SYS_WRITE
 **Why:** jda1.jda uses `print(variable)` for debug output of integer values.
-**Blocker:** **Bug #24 — i64 struct field access reads wrong offset**. Accessing i64 fields (`imm`, `token`, `child0`, etc.) in `Node` struct reads from offset 0 instead of correct offset. When accessing `arg.imm` (should be at offset 8), reads value 7 (the `node_type` i32 field at offset 0).
+**Blocker:** **Bug #24 — i64 struct field access reads wrong offset**. Accessing i64 fields (`imm`, `token`, `child0`, etc.) in `Node` struct reads from offset 0 instead of correct offset. When accessing `node.imm` (should be at offset 8), reads value 7 (the `node_type` i32 field at offset 0).
 **Root cause:** Codegen for struct field access in `jda0.asm` (`gen_addr` / `.ga_dot`) calculates wrong offset for i64 fields. Suspect issue in how field offsets are computed for i64 vs i32 fields.
-**Workaround attempts (all failed):**
-  1. Direct `node.child0.node_type` check — reads wrong value
-  2. `node.child0.imm` access — reads 7 instead of actual value
-  3. Storing in `node.imm` — same offset issue
-  4. Storing in `node.token` — same offset issue
-**Fix needed:** Investigate `gen_addr` in `jda0.asm` — how it calculates field offsets for i64 vs i32 fields. Compare with working i32 field access (e.g., `node.node_type`, `node.op`).
+**Infrastructure implemented:**
+  - `emit_print_int()` helper function
+  - Complete x86-64 assembly routine for int-to-decimal conversion
+  - Parser recognizes `print(int_literal)` syntax
+  - Test files: `print_int_literal.jda`, `print_string_and_int.jda`
+**Workaround options:**
+  1. Fix jda0's `gen_addr`/`.ga_dot` to properly handle i64 struct fields
+  2. Use two i32 fields instead of one i64 field (store high/low bits)
+  3. Emit print_int code during parsing (bypass Node struct entirely)
 **Branch:** `issue-6-print-int` (pushed to origin)
 
 ---
