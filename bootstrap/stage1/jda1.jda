@@ -596,16 +596,19 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
                 n.child_cnt = base.str_len
                 n.token2 = field.str_start
                 n.imm = field.str_len
+                n.op = 4  ; Mark as array index access
                 n.data_type = idx_kind
-                n.child0 = null
+                ; Store type info from array allocation
+                n.token = base.str_start
+                n.child_cnt = base.str_len
                 if idx_kind == 1 {
                     n.child2 = idx_start
                     n.child3 = idx_len
-                }
-                if idx_kind == 2 { n.child0 = idx }
-                if idx_kind == 3 {
+                } else if idx_kind == 3 {
                     n.child2 = idx_imm
                     n.child3 = 0
+                } else {
+                    n.child0 = idx
                 }
                 if idx_kind != 3 {
                     ; stable rhs encoding: rhs is indexed field read (base[idx].field), ident index
