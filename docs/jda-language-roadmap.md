@@ -162,6 +162,24 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 ---
 
+### 9a. Issue: stage1 roundtrip blocker (`and`/`or` crash)
+**Status:** [ ] TODO — ISSUE TRACKER
+**Problem:** `ci-selfhost-roundtrip` fails at `stage1_a -> stage1_b` because stage1 cannot parse logical operators used in `jda1.jda`, then segfaults in parse/codegen flow.
+**Repro:**
+  - [ ] `make ci-selfhost-roundtrip` fails with segfault in `stage1_a -> stage1_b`
+  - [ ] Minimal repro: `if a == 1 or a == 2 { ... }` currently triggers repeated parse errors + segfault under stage1
+**Scope:**
+  - [ ] Add lexer tokens for `and` / `or` (and related `>=` / `<=` where needed)
+  - [ ] Add parser precedence/associativity for logical operators
+  - [ ] Implement lowering/codegen with short-circuit behavior
+  - [ ] Ensure parse errors fail cleanly (no segfault) for malformed logical expressions
+**Exit criteria:**
+  - [ ] Minimal `and` / `or` conformance tests pass
+  - [ ] `make ci-selfhost-roundtrip` passes stage1→stage1 compilation
+**Owner handoff:** next contributor can start in `bootstrap/stage1/jda1.jda` (`classify_keyword`, lexer parse loop, `op_precedence`, `parse_binop`, `tok_to_jir_op`/control-flow lowering).
+
+---
+
 ### 10. Self-hosting roundtrip
 **Status:** [ ] TODO — MILESTONE 🎯
 **What:** jda1 compiles jda1.jda → jda1-gen2 → compiles hello.jda → runs correctly. Binary hashes match.
