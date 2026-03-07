@@ -394,4 +394,4 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   - Bug #22: DONE ✅
   - Bug #23: DONE ✅
   - fold_constants verification: DONE ✅ (enabled and validated)
-  - Remaining known item in this area: jda0 compound expression bug workaround still required in a few emitter expressions.
+  - No remaining known item in this area.
