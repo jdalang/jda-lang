@@ -2514,6 +2514,21 @@ gen_expr_base:
     jmp     .maybe_binary
 
 .not_amp:
+    ; --- Dereference *ptr ---
+    cmp     rax, TOK_STAR
+    jne     .not_deref
+    call    adv_tok             ; skip '*'
+    call    gen_expr_base       ; evaluate ptr expr → rax
+    ; emit: mov rax, [rax]  (load from address)
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x8B
+    call    emit1
+    mov     rdi, 0x00
+    call    emit1
+    jmp     .maybe_binary
+
+.not_deref:
     ; --- Parenthesized expression (expr) ---
     cmp     rax, TOK_LPAREN
     jne     .not_lparen
