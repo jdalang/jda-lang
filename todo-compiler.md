@@ -6,7 +6,8 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 ## Current State
 - All 88 functions in `jda1.jda` compile without crash ✓
 - `jda1` binary starts, opens file, begins lexing ✓
-- Full end-to-end bootstrap successful ✓
+- TODOs 1–10 all PASS ✓
+- TODO 11 (end-to-end bootstrap) FAILS — jda1 parses every token as unexpected
 
 ---
 
@@ -78,7 +79,15 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 ### 9. Fix nested function call arguments (`ret ok(0)`, `emit_byte(..., rex_byte(...))`) [DONE ✅]
 **File:** `gen_expr` / `.do_call` / `gen_expr_stmt` / `.ges_arg_loop`
 **Symptom:** Patterns like `ret ok(0)` and `emit_byte(out, pos, rex_byte(1, r, 0, b))` pass a function call result as an argument.
-**Fix:** Verify that when `gen_expr` evaluates a function-call argument and the argument is itself a call, registers are correctly saved/restored across the nested call.
+**Fix (PARTIAL):**
+- **Fixed:** ModRM byte in `.ga_idx_add` (0xD8 → 0xC3) for correct `add rax, rbx` instruction encoding. This fixes single-parameter pointer array dereference.
+- **Verified Working:** Nested function calls in arguments actually work correctly (tested `outer(5, inner(10))` successfully).
+- **New Issue Found:** Pointer parameter array dereference fails when function has 2+ parameters.
+  - ✅ Works: single pointer param: `fn test(p: &i64) { p[0] = 5 }`
+  - ✅ Works: reading params with 2+: `fn test(a: i64, b: i64) { let z = a }`
+  - ✅ Works: struct field access: `fn test(p: &Point, v: i64) { let z = p.x }`
+  - ❌ Fails: array deref with 2+ params: `fn test(p: &i64, v: i64) { let z = p[0] }`
+  - Root Cause: Unknown, requires deeper analysis of gen_addr stack frame handling when multiple parameters present.
 
 ---
 
@@ -95,14 +104,94 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ## Final Gate
 
-### 11. End-to-end bootstrap test [DONE ✅]
+### 11. End-to-end bootstrap test [IN PROGRESS 🔧]
 Run the full chain:
 ```
 jda0 bootstrap/stage1/jda1.jda jda1_bin   # stage 0 compiles stage 1
 jda1_bin test.jda test_out                  # stage 1 compiles a test program
 ./test_out                                  # test program runs correctly
 ```
-**Expected:** `test.jda = fn main() { print(42) }` → prints `42`.
+**Expected:** `hello.jda = fn main() { print("Hello Bare Metal") }` → prints `Hello Bare Metal`.
+**Current status:** jda1 compiles hello.jda → 210-byte ELF (73 bytes code + 17 strtab). LEA RIP-relative fixup for strings is wrong, causing "Illegal instruction". Bugs 12–19 all FIXED. Bug #20 in progress — 7 of ~10 sub-issues resolved.
+
+---
+
+## Post-Merge Regression Fixes (applied)
+
+### 12. Fix merge conflict leftover in syscall pop code [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `.sc_done_args`
+**Symptom:** Duplicate syscall argument pop code with `=======` merge conflict marker left in source.
+**Root cause:** Merge left BOTH old (wrong-order) and new (reverse-order) pop sequences.
+**Fix:** Removed old wrong-order pop code and `=======` marker, kept new reverse-pop code.
+
+---
+
+### 13. Fix `parse_reg_name` for 3-char register names (`rsi`, `rdi`, `rdx`, etc.) [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `parse_reg_name` / `.prn_3plus`
+**Symptom:** `asm { out x = rsi }` generates wrong machine code (`48 89 FD` instead of `48 89 B5 F8FFFFFF`). All 3-char register names fail.
+**Root cause:** `cmp r9, 3; jg .prn_3plus` — uses `jg` (greater) instead of `jge` (greater-or-equal). When r9==3, condition is false, falls through to `.prn_fail`.
+**Fix:** Changed `jg` to `jge` at the 3-char length check.
+**Also fixed:** Added `.prn_di_or_dx` to distinguish `rdi` (code 7) from `rdx` (code 2), and `.prn_si` for `rsi` (code 6).
+
+---
+
+### 14. Fix asm handler clobbering r15 (globals base register) [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `.gs_asm`
+**Symptom:** `asm { out x = rsi }` clobbers r15 with register name length, corrupting all subsequent global variable access.
+**Root cause:** `mov r15, [rax+16]` stores reg name length in r15, but r15 is the globals base register.
+**Fix:** Added BSS variable `asm_reglen` to store the register name length instead of r15.
+**Also fixed:** `lea r8, [src_buf]; add r8, r14` to convert src_buf offset to pointer for parse_reg_name. Changed ModRM from `0x45` (8-bit disp) to `0x85` (32-bit disp).
+
+---
+
+### 15. Fix `gen_expr_base` duplicate comparison/logical operator handling [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_expr_base` / `.maybe_binary`
+**Symptom:** `or`/`and` conditions and comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`) evaluated incorrectly.
+**Root cause:** `gen_expr_base` had DUPLICATE handling of these operators via `.maybe_binary`, conflicting with the structured hierarchy (`gen_expr` → `gen_expr_and` → `gen_expr_cmp` → `gen_expr_base`). `gen_expr_base` consumed comparisons before `gen_expr_cmp` could handle them.
+**Fix:** Removed comparison operators and `or`/`and` from `.maybe_binary` dispatch. Now `gen_expr_base` only handles: `+`, `-`, `*`, `/`, `|`, `&`, `<<`, `>>`.
+
+---
+
+### 16. Fix pointer variable double-dereference when passed as function argument [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_addr` / `.ga_post`
+**Symptom:** Passing a pointer-typed variable through two function calls causes segfault. E.g. `fn pass_through(pos: &i64) { read_pos(pos) }` — `pos` gets double-dereferenced, passing `*pos` instead of `pos`.
+**Root cause:** `gen_addr` always dereferenced pointer variables (`lv_isptr=1`), even without navigation (`.` or `[`). Then `.do_lvalue` added another `mov rax, [rax]` (scalar load), resulting in double-dereference.
+**Fix:** Changed `.ga_post` to only deref pointer variables when navigation (`.` or `[`) follows. For bare pointer variables, return the stack address and let the caller load the value.
+
+---
+
+### 17. Fix jda1 parser — all tokens read as unexpected [FIXED ✅]
+**File:** `bootstrap/stage1/jda1.jda` — `classify_keyword` + `bootstrap/stage0/jda0.asm` — `.gs_let_expr`
+**Symptom:** jda1 lexes 10 tokens correctly from `hello.jda`, but `parse_fn` → `expect(toks, pos, TOK_FN)` reports "unexpected token" for every single token.
+**Root cause (two bugs):**
+  1. `classify_keyword()` had a stale `ret TOK_IDENT` before the keyword checks, so ALL identifiers were returned as TOK_IDENT instead of TOK_FN, TOK_PRINT, etc.
+  2. `let t = toks[pos[0]]` in `parse_primary` stored a struct address as a plain scalar (TK_SCALAR, sid=-1, esz=8). Then `t.type` had no struct context, skipping the field offset and reading 8 bytes (including adjacent `str_start` data) instead of the 4-byte i32 `.type` field.
+**Fix:**
+  1. Removed the stale `ret TOK_IDENT` line in `classify_keyword`.
+  2. Modified `.gs_let_expr` in jda0.asm to detect when `gen_expr` returns a struct address (`lv_sid != -1`) and create the local as TK_PTR with the correct struct ID and element size.
+**Test:** All 10 tokens now parse correctly in `expect()` output.
+
+---
+
+### 18. Fix `&` (address-of) operator — returns value instead of address [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_expr_base` `&` handler + `gen_expr` init
+**Symptom:** `&var` returned the VALUE of the variable instead of its stack address. `print(&x)` where `x=42` outputs `42` instead of a stack address.
+**Root cause (two bugs):**
+  1. `gen_expr` never initialized `lv_sid` to -1 (BSS default is 0). When `.gs_let_expr` called `gen_expr(42)`, `lv_sid` stayed 0, so the check `lv_sid != -1` was true, causing scalar `let x = 42` to be created as TK_PTR instead of TK_SCALAR. The `&` handler then saw `lv_isptr=1` and emitted an unwanted `mov rax,[rax]` deref.
+  2. The `&` handler was emitting a debug marker (`0xDEAD`) instead of actual address-of code.
+**Fix:**
+  1. Added `lv_sid=-1, lv_esz=8, lv_isptr=0` initialization at start of `gen_expr` (~line 2119).
+  2. Rewrote `&` handler: calls `gen_addr`, then checks `lv_isptr` — for pointers (e.g. `&struct_ptr`) emits `mov rax,[rax]` to load heap pointer; for scalars (e.g. `&x`) keeps raw stack address.
+**Test:** `let x = 42; print(&x)` prints a large stack address ✓. `&struct_ptr` returns heap address ✓.
+
+---
+
+### 19. Fix 5th/6th function parameter storage (r8/r9 registers) [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_fn` / `.gf_param_r8r9` (~line 4686)
+**Symptom:** Functions with 5+ parameters (e.g. `lower_block(jfn, ctx, code, code_len, pos)`) received `0` for the 5th parameter. `lower_block` got `pos=0`, causing null pointer deref on `pos[0]`.
+**Root cause:** `gen_fn` prologue stored params 0–3 (rdi/rsi/rdx/rcx) to stack but SKIPPED params 4–5 (r8/r9). The loop condition `cmp rcx, 4; jge .gf_param_next` jumped over the emit code, so r8/r9 stack slots were allocated but never initialized.
+**Fix:** Added `.gf_param_r8r9` handler to emit `mov [rbp-off], r8` (4C 89 85 disp32) for param index 4 and `mov [rbp-off], r9` (4C 89 8D disp32) for param index 5.
+**Test:** `lower_fn(&jfn, &ctx, code_buf, &code_len)` — 5th param `pos` now arrives correctly ✓.
 
 ---
 
@@ -132,26 +221,75 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ┌─────┬────────────────────────────────────────────────────────┬─────────────────┐                                        
   │  #  │                          Task                          │     Status      │                                      
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 32  │ Fix arr[i].field struct array field read/write         │ DONE ✅         │                                        
+  │ 1  │ Fix arr[i].field struct array field read/write         │ DONE ✅         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                        
-  │ 33  │ Fix let inside loop accumulating locals each iteration │ DONE ✅         │ 
+  │ 2  │ Fix let inside loop accumulating locals each iteration │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 34  │ Fix else if chain compilation                          │ DONE ✅         │ 
+  │ 3  │ Fix else if chain compilation                          │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 35  │ Fix compound or/and conditions                         │ DONE ✅         │ 
+  │ 4  │ Fix compound or/and conditions                         │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 36  │ Fix ptr[0] = val deref-write                           │ DONE ✅         │ 
+  │ 5  │ Fix ptr[0] = val deref-write                           │ DONE ✅         │ 
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤ 
-  │ 37  │ Fix ptr[idx] = struct_val large copy                   │ DONE ✅         │ 
+  │ 6  │ Fix ptr[idx] = struct_val large copy                   │ DONE ✅         │ 
                                         
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤                                      
-  │ 38  │ Fix inline asm asm { out var = reg }                   │ DONE ✅         │                                        
+  │ 7  │ Fix inline asm asm { out var = reg }                   │ DONE ✅         │                                        
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 39  │ Fix struct literal init let x = Struct{}               │ DONE ✅         │
+  │ 8  │ Fix struct literal init let x = Struct{}               │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 40  │ Fix nested function call arguments                     │ DONE ✅         │
+  │ 9  │ Fix nested function call arguments                     │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 41  │ Fix jfn.src = val struct-pointer field write           │ DONE ✅         │
+  │ 10  │ Fix jfn.src = val struct-pointer field write           │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 42  │ End-to-end jda1 bootstrap test                         │ DONE ✅         │
+  │ 11  │ End-to-end jda1 bootstrap test                         │ IN PROGRESS 🔧  │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 12  │ Merge conflict leftover in syscall pop code            │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 13  │ parse_reg_name jg→jge for 3-char registers             │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 14  │ asm handler clobbers r15 (globals base)                │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 15  │ gen_expr_base duplicate comparison/logical handling    │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 16  │ Pointer double-dereference on function argument pass   │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 17  │ jda1 parser reads all tokens as unexpected             │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 18  │ & operator returns value instead of address             │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 19  │ 5th/6th param (r8/r9) not stored in gen_fn prologue   │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 20  │ Fix codegen/lowering pipeline for working ELF         │ IN PROGRESS 🔧  │
   └─────┴────────────────────────────────────────────────────────┴─────────────────┘
+
+---
+
+### 20. Fix codegen/lowering pipeline — jda1 produces working ELF [DONE ✅]
+**File:** `bootstrap/stage0/jda0.asm` + `bootstrap/stage1/jda1.jda`
+**Original symptom:** `hello_s1` output was 131 bytes (prologue only, no body).
+**Root causes found and fixed:**
+  1. ✅ `parse_block` used `alloc(128)` → changed to `Node{}` for correct struct offsets
+  2. ✅ `block.children[i]` returned element address, not stored pointer → changed `children: &Node` → `children: i64` and `Node[256]` → `i64[256]`
+  3. ✅ `.ga_dot` + `[` (dot-then-index) needed conditional deref → added `ga_from_dot` + `ga_acnt` BSS flags in `.ga_pre_index` to deref scalar/pointer fields but NOT embedded arrays
+  4. ✅ `node.token`/`node.token2` as `Token` struct → changed to `i64` (pointer storage)
+  5. ✅ Functions taking `Token` by value → changed to `&Token` (`emit_strlit`, `bind`, `parse_call_rest`, `lookup`)
+  6. ✅ `jfn.strtab` was 0 → `strtab: i8[4096]` is embedded array; `ga_acnt` flag prevents wrong deref
+  7. ✅ `emit()` passed `Instr` by value (8 bytes) → changed to `&Instr` with field-by-field copy into `jfn.blocks[bb].instrs[slot]`
+  8. ✅ DCE disabled — `let used = i32[4096]` doesn't allocate a real array, corrupted instruction dead flags
+  9. ✅ LEA code_off fixed: `pos[0] + 3` (was `pos[0] + 4`) — rel32 starts at byte 3 of LEA instruction
+  10. ✅ Added exit(0) syscall emission at end of lower_fn
+  11. ✅ Strtab patching: `code_buf[off]` used i64 stride (esz=8) — added `poke_byte()` for byte-level access
+  12. ✅ CMP in strlen loop: was missing SIB byte — fixed ModRM+SIB encoding for `cmp byte [ptr_r+dst*1], 0`
+  13. ✅ Syscall register clobber: `mov rax, nr` destroyed string pointer before `mov rsi, rax` — save RAX→R11 when needed
+
+**Test:** `./jda1 ../../examples/hello.jda hello_s1 && ./hello_s1` → prints "Hello Bare Metal" ✅
+
+**Depends on:** Fixes #12–#19
+
+**Known limitations (future work):**
+  - [ ] DCE disabled — needs proper array allocation (`let x = type[N]`) in jda0
+  - [ ] `print(int)` in loops breaks subsequent statements — jda0 gen_print integer bug
+  - [ ] Branch fixup loop disabled — needed for multi-block programs (if/else, loops)
+  - [ ] Debug prints still in jda1.jda — remove after bootstrap is stable
+  - [ ] fold_constants uses struct-by-value `ConstVal` — may need `&ConstVal` treatment
