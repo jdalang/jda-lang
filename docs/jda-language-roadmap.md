@@ -23,9 +23,10 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] 6-argument function calls (System V ABI)
 - [x] mmap-based memory allocation for arrays
 
-**What's working in jda1 (Stage 1 compiler):**
+**What's working in jda1 (Stage 1 compiler — what jda1 can COMPILE):**
 - [x] Lexer (all tokens, string/int literals, keywords)
 - [x] Parser (fn, let, if/else, loop, print, return, expressions, assignment)
+- [x] Function calls with arguments (`codegen_call` + `OP_CALL`)
 - [x] JIR codegen (SSA instructions, basic blocks, branch/jump)
 - [x] DCE (dead code elimination)
 - [x] Constant folding
@@ -36,6 +37,20 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] String handling (inline strlen loop, strtab with RIP-relative LEA)
 - [x] Loop variable mutation via stack slots (OP_STORE/OP_LOAD)
 
+**What jda1 CANNOT compile yet (needed for self-hosting):**
+- [ ] Multiple function definitions (only parses 1 fn: `parse_fn` called once in `main()`)
+- [ ] Struct definitions and field access (TOK_STRUCT exists but no parse/codegen)
+- [ ] Array declarations and `arr[i]` / `arr[i].field` indexing
+- [ ] Pointer/reference types (`&expr`, `ptr.field`, `&Type` in signatures)
+- [ ] String escape sequences (`\n` → 0x0A in lexer)
+- [ ] `print(int)` — only `print("string")` works
+- [ ] `else if` chains (parser handles `else { }` but not `else if`)
+- [ ] `const NAME = value` declarations from source
+- [ ] `and` / `or` logical operators (no TOK_AND/TOK_OR in lexer)
+- [ ] `>=` / `<=` comparison operators
+- [ ] Inline `asm { }` blocks
+- [ ] 5+ argument function calls (currently max 4 via operand0-3)
+
 ---
 
 ## Phase 1: Self-Hosting (jda1 compiles jda1.jda)
@@ -43,7 +58,7 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 jda1 must support every feature used in its own source code (~1900 lines).
 
 ### 1. Multi-function programs
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing**
 **What:** jda1 currently compiles only `fn main()`. Need:
   - [ ] Parse multiple `fn` definitions
   - [ ] Emit separate function prologue/epilogue for each
@@ -56,7 +71,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 2. Struct definitions and field access
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing (TOK_STRUCT/NODE_STRUCT exist but no parser/codegen)**
 **What:**
   - [ ] Parse `struct Name { field1: type  field2: type ... }`
   - [ ] Calculate struct layout (field offsets, each field 8 bytes in jda)
@@ -70,7 +85,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 3. Array declarations and indexing
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing (alloc_pages used internally but no `Type[size]` syntax)**
 **What:**
   - [ ] Parse `let arr = Type[size]` → mmap allocation
   - [ ] Parse `let arr = i64[size]` / `let arr = i32[size]` / `let arr = i8[size]`
@@ -83,7 +98,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 4. Pointer and reference support
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing**
 **What:**
   - [ ] Parse `&expr` (address-of) → LEA
   - [ ] Parse `ptr[index]` (deref + index) → MOV from [base + index*stride]
@@ -95,7 +110,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 5. String escape sequences
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing (lexer copies raw bytes, no `\n` → 0x0A)**
 **What:**
   - [ ] `\n` → newline (0x0A)
   - [ ] `\t` → tab (0x09)
@@ -107,7 +122,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 6. print(int) — integer to string conversion
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ only print(string) works**
 **What:**
   - [ ] Emit runtime int-to-decimal-string conversion
   - [ ] Handle negative numbers
@@ -117,7 +132,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 7. Else-if chains
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ only if/else, not `else if`**
 **What:**
   - [ ] Parse `if ... { } else if ... { } else { }` chains
   - [ ] Codegen cascading conditional branches
@@ -126,7 +141,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 8. Constants (`const NAME = value`)
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ no `const` parsing from source**
 **What:**
   - [ ] Parse `const NAME = int_literal`
   - [ ] Store in compile-time constant table
@@ -136,7 +151,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 9. Logical operators in expressions
-**Status:** [ ] TODO
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ no TOK_AND/TOK_OR/TOK_GE/TOK_LE in lexer**
 **What:**
   - [ ] `and` / `or` in if/loop conditions with short-circuit evaluation
   - [ ] `!= null` null comparison
