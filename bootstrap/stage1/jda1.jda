@@ -2163,7 +2163,8 @@ fn dce(jfn: &JirFunction) {
             let op = jfn.blocks[bi].instrs[ii].op
             let id = jfn.blocks[bi].instrs[ii].id
             if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
-               op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT {
+               op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
+               op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
@@ -2366,6 +2367,20 @@ fn emit_add_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
 fn emit_sub_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
     emit_rex_w_rr(out, pos, src, dst)
     emit_byte(out, pos, 0x29)
+    emit_byte(out, pos, modrm_rr(src, dst))
+}
+
+; AND r/m64, r64:  REX.W 21 /r
+fn emit_and_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
+    emit_rex_w_rr(out, pos, src, dst)
+    emit_byte(out, pos, 0x21)
+    emit_byte(out, pos, modrm_rr(src, dst))
+}
+
+; OR r/m64, r64:  REX.W 09 /r
+fn emit_or_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
+    emit_rex_w_rr(out, pos, src, dst)
+    emit_byte(out, pos, 0x09)
     emit_byte(out, pos, modrm_rr(src, dst))
 }
 
@@ -2867,19 +2882,43 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if ins.op == OP_CMP_EQ or ins.op == OP_CMP_NE or
-       ins.op == OP_CMP_LT or ins.op == OP_CMP_GT {
+       ins.op == OP_CMP_LT or ins.op == OP_CMP_GT or ins.op == OP_CMP_LTE or ins.op == OP_CMP_GTE {
         let a = get_or_load(&ctx.ra, out, pos, ins.operand0)
         let b = get_or_load(&ctx.ra, out, pos, ins.operand1)
         emit_cmp_rr(out, pos, a, b)
-        let cc = 4  ; JE   (cc nibble for SETCC: 4=E 5=NE C=L F=G)
+        let cc = 4  ; JE   (cc nibble for SETCC: 4=E 5=NE C=L D=LE E=BE F=G)
         if ins.op == OP_CMP_NE { cc = 5 }
         if ins.op == OP_CMP_LT { cc = 0xC }
+        if ins.op == OP_CMP_LTE { cc = 0xE }
         if ins.op == OP_CMP_GT { cc = 0xF }
+        if ins.op == OP_CMP_GTE { cc = 0xD }
         emit_setcc_rax(out, pos, cc)
         let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
         if dst != PHYS_RAX {
             emit_mov_rr(out, pos, dst, PHYS_RAX)
         }
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        ret ok(0)
+    }
+
+    if ins.op == OP_AND {
+        let a   = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let b   = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, a)
+        emit_and_rr(out, pos, dst, b)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        ret ok(0)
+    }
+
+    if ins.op == OP_OR {
+        let a   = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let b   = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, a)
+        emit_or_rr(out, pos, dst, b)
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
         ret ok(0)
@@ -3092,7 +3131,8 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
                 let o2 = jfn.blocks[bi].instrs[ii].operand2
                 let o3 = jfn.blocks[bi].instrs[ii].operand3
                 if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
-                   op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT {
+                   op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
+                   op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR {
                     mark_use(ctx, o0)
                     mark_use(ctx, o1)
                 }
