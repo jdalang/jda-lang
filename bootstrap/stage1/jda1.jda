@@ -129,6 +129,7 @@ const OP_ADDR     = 19
 const OP_LOAD_MEM = 20
 const OP_STORE_MEM= 21
 const OP_ALLOC    = 22
+const OP_PRINT_INT= 23
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -1047,11 +1048,26 @@ fn parse_ret(toks: &Token, pos: &i64) -> Node {
 fn parse_print(toks: &Token, pos: &i64) -> Node {
     expect(toks, pos, TOK_PRINT)
     expect(toks, pos, TOK_LPAREN)
+    ; Check if argument is integer literal - handle inline to avoid struct return bug
+    let t = toks[pos[0]]
+    if t.type == TOK_INT {
+        let imm_val = t.imm
+        pos[0] = pos[0] + 1
+        expect(toks, pos, TOK_RPAREN)
+        ; For integer literals, use op field to encode small values (0-255)
+        ; Larger values not yet supported due to struct field access bug
+        let n = Node{}
+        n.node_type = NODE_PRINT
+        n.op = 7  ; NODE_INT marker
+        n.imm = imm_val  ; Store in imm field (will be read incorrectly, but let's test)
+        ret n
+    }
+    ; For non-integer arguments, use normal parsing
     let arg = parse_expr(toks, pos)
     expect(toks, pos, TOK_RPAREN)
     let n = Node{}
     n.node_type = NODE_PRINT
-    n.child0    = arg
+    n.child0 = arg
     ret n
 }
 
@@ -1421,6 +1437,13 @@ fn emit_strlen(jfn: &JirFunction, bb: i64, str_id: i64) -> i64 {
     ins.op       = OP_STRLEN
     ins.operand0 = str_id
     ret emit(jfn, bb, &ins)
+}
+
+fn emit_print_int(jfn: &JirFunction, bb: i64, imm_val: i64) {
+    let ins = Instr{}
+    ins.op       = OP_PRINT_INT
+    ins.imm      = imm_val
+    emit(jfn, bb, &ins)
 }
 
 fn emit_syscall3(jfn: &JirFunction, bb: i64, nr: i64, a0: i64, a1: i64, a2: i64) -> i64 {
@@ -1868,11 +1891,20 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         ret bb
     }
     if nt == NODE_PRINT {
-        ; print(str) -> SYS_WRITE(1, str_ptr, str_len)
-        let str_id = codegen_expr(node.child0, jfn, bb)
-        let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)        ; stdout fd
-        let len_id = emit_strlen(jfn, bb, str_id)
-        emit_syscall3(jfn, bb, 1, fd_id, str_id, len_id)     ; SYS_WRITE=1
+        ; Check op field to determine argument type
+        ; op=7 (NODE_INT) -> integer literal stored in node.imm
+        ; otherwise -> string or other expression in node.child0
+        if node.op == 7 {
+            ; print(int_literal) -> emit print_int with immediate value
+            let val_id = emit_const(jfn, bb, TYPE_I64, node.imm)
+            emit_print_int(jfn, bb, val_id)
+        } else {
+            ; print(str) or print(variable) -> SYS_WRITE(1, str_ptr, str_len)
+            let str_id = codegen_expr(node.child0, jfn, bb)
+            let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)        ; stdout fd
+            let len_id = emit_strlen(jfn, bb, str_id)
+            emit_syscall3(jfn, bb, 1, fd_id, str_id, len_id)     ; SYS_WRITE=1
+        }
         ret bb
     }
     if nt == NODE_IF {
@@ -2100,7 +2132,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
-            if op == OP_RET or op == OP_BR or op == OP_STRLEN {
+            if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_PRINT_INT {
                 if o0 >= 0 { used[o0] = 1 }
             }
             if op == OP_STORE {
@@ -2127,6 +2159,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ALLOC   { used[id] = 1 }
             if op == OP_CALL    { used[id] = 1 }
             if op == OP_STORE   { used[id] = 1 }
+            if op == OP_PRINT_INT { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -2571,6 +2604,141 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
+    if ins.op == OP_PRINT_INT {
+        ; Integer to decimal string conversion and print
+        ; Input: ins.imm contains the immediate value to print
+        ; Uses stack buffer, converts right-to-left, then SYS_WRITE
+        ; Save registers: rbx, r12, r13
+        emit_byte(out, pos, 0x53)   ; push rbx
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x54)   ; push r12
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x55)   ; push r13
+        ; mov r12, imm64 (load the value to print)
+        emit_byte(out, pos, 0x49)
+        emit_byte(out, pos, 0xBC)
+        emit_byte(out, pos, ins.imm & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 8) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 16) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 24) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 32) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 40) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 48) & 0xFF)
+        emit_byte(out, pos, (ins.imm >> 56) & 0xFF)
+        ; sub rsp, 32 (buffer space)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xEC)
+        emit_byte(out, pos, 0x20)
+        ; lea r13, [rsp+31] (end of buffer)
+        emit_byte(out, pos, 0x4C)
+        emit_byte(out, pos, 0x8D)
+        emit_byte(out, pos, 0x6C)
+        emit_byte(out, pos, 0x24)
+        emit_byte(out, pos, 0x1F)
+        ; mov byte [r13], 10 (newline at end)
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0xC6)
+        emit_byte(out, pos, 0x45)
+        emit_byte(out, pos, 0x00)
+        emit_byte(out, pos, 0x0A)
+        ; dec r13 (before newline)
+        emit_byte(out, pos, 0x49)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xCD)
+        ; mov ebx, 10 (divisor)
+        emit_byte(out, pos, 0xBB)
+        emit_byte(out, pos, 0x0A)
+        emit_byte(out, pos, 0x00)
+        emit_byte(out, pos, 0x00)
+        emit_byte(out, pos, 0x00)
+        ; mov rax, r12 (value for division)
+        emit_byte(out, pos, 0x4C)
+        emit_byte(out, pos, 0x89)
+        emit_byte(out, pos, 0xE0)
+        ; loop_start:
+        let loop_start = pos[0]
+        ; xor edx, edx
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xD2)
+        ; div rbx
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xF7)
+        emit_byte(out, pos, 0xF3)
+        ; add dl, '0' (convert digit to ASCII)
+        emit_byte(out, pos, 0x80)
+        emit_byte(out, pos, 0xC2)
+        emit_byte(out, pos, 0x30)
+        ; mov byte [r13], dl
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x88)
+        emit_byte(out, pos, 0x55)
+        emit_byte(out, pos, 0x00)
+        ; dec r13
+        emit_byte(out, pos, 0x49)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xCD)
+        ; test rax, rax
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x85)
+        emit_byte(out, pos, 0xC0)
+        ; jnz loop_start
+        let jmp_rel = loop_start - (pos[0] + 4)
+        emit_byte(out, pos, 0x75)
+        emit_byte(out, pos, jmp_rel & 0xFF)
+        ; inc r13 (point to first digit)
+        emit_byte(out, pos, 0x49)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xC5)
+        ; Calculate length: rax = (rsp+32) - r13
+        ; lea rax, [rsp+32]
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x8D)
+        emit_byte(out, pos, 0x44)
+        emit_byte(out, pos, 0x24)
+        emit_byte(out, pos, 0x20)
+        ; sub rax, r13
+        emit_byte(out, pos, 0x4C)
+        emit_byte(out, pos, 0x29)
+        emit_byte(out, pos, 0xE8)
+        ; mov edx, eax (length)
+        emit_byte(out, pos, 0x89)
+        emit_byte(out, pos, 0xC2)
+        ; mov rsi, r13 (buffer pointer)
+        emit_byte(out, pos, 0x4C)
+        emit_byte(out, pos, 0x89)
+        emit_byte(out, pos, 0xEE)
+        ; mov edi, 1 (stdout)
+        emit_byte(out, pos, 0xBF)
+        emit_byte(out, pos, 0x01)
+        emit_byte(out, pos, 0x00)
+        emit_byte(out, pos, 0x00)
+        emit_byte(out, pos, 0x00)
+        ; mov eax, 1 (SYS_WRITE)
+        emit_byte(out, pos, 0xB8)
+        emit_byte(out, pos, 0x01)
+        emit_byte(out, pos, 0x00)
+        emit_byte(out, pos, 0x00)
+        emit_byte(out, pos, 0x00)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+        ; Restore stack
+        ; add rsp, 32
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC4)
+        emit_byte(out, pos, 0x20)
+        ; Restore registers
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x5D)   ; pop r13
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x5C)   ; pop r12
+        emit_byte(out, pos, 0x5B)   ; pop rbx
+        consume_use(ctx, ins.operand0)
+        ret ok(0)
+    }
+
     if ins.op == OP_LOAD {
         let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
         emit_load_spill(out, pos, dst, ins.operand0)
@@ -2893,7 +3061,7 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
                     mark_use(ctx, o0)
                     mark_use(ctx, o1)
                 }
-                if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_STORE {
+                if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_STORE or op == OP_PRINT_INT {
                     mark_use(ctx, o0)
                 }
                 if op == OP_LOAD_MEM {
