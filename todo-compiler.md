@@ -104,7 +104,7 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ## Final Gate
 
-### 11. End-to-end bootstrap test [IN PROGRESS 🔧]
+### 11. End-to-end bootstrap test [DONE ✅]
 Run the full chain:
 ```
 jda0 bootstrap/stage1/jda1.jda jda1_bin   # stage 0 compiles stage 1
@@ -112,7 +112,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 ./test_out                                  # test program runs correctly
 ```
 **Expected:** `hello.jda = fn main() { print("Hello Bare Metal") }` → prints `Hello Bare Metal`.
-**Current status:** jda1 compiles hello.jda → 210-byte ELF (73 bytes code + 17 strtab). LEA RIP-relative fixup for strings is wrong, causing "Illegal instruction". Bugs 12–19 all FIXED. Bug #20 in progress — 7 of ~10 sub-issues resolved.
+**Status:** ✅ COMPLETE — `hello.jda` → `Hello Bare Metal`. `multi_fn.jda` (two functions) → `Hello from greetdone`. All bugs 12–23 fixed. Bootstrap chain fully operational.
 
 ---
 
@@ -242,7 +242,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
   │ 10  │ Fix jfn.src = val struct-pointer field write           │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 11  │ End-to-end jda1 bootstrap test                         │ IN PROGRESS 🔧  │
+  │ 11  │ End-to-end jda1 bootstrap test                         │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
   │ 12  │ Merge conflict leftover in syscall pop code            │ FIXED ✅        │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
@@ -260,7 +260,7 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
   │ 19  │ 5th/6th param (r8/r9) not stored in gen_fn prologue   │ FIXED ✅        │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 20  │ Fix codegen/lowering pipeline for working ELF         │ IN PROGRESS 🔧  │
+  │ 20  │ Fix codegen/lowering pipeline for working ELF         │ DONE ✅         │
   └─────┴────────────────────────────────────────────────────────┴─────────────────┘
 
 ---
