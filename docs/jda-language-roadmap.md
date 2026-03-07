@@ -72,8 +72,8 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 2. Struct definitions and field access
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ⚠️ partial (field read/store/indexed read compile in minimal repros; broader selfhost validation pending)**
-**Blocker update (March 4, 2026):** ✅ jda0 pass-1/pass-2 function-count corruption is fixed. ✅ jda1 now compiles minimal field-access repros (`ret s.field`, `s.field = v`, `ret arr[i].field` on pointer params). ⚠️ still not marked done until broader jda1.jda/selfhost validation confirms no regressions.
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ⚠️ partial (read/store + indexed read/write matrix compiles in targeted tests; full selfhost still pending)**
+**Blocker update (March 5, 2026):** ✅ jda0 pass-1/pass-2 function-count corruption is fixed. ✅ jda1 now compiles targeted struct-field matrix cases including `s.field`, `s.field = v`, `s.field = t.field`, `a[i].field = ...`, and `... = b[i].field`. ⚠️ still not marked done because `ci-selfhost-roundtrip` (`stage1_a -> stage1_b`) is still segfaulting on full `jda1.jda`, so broader integration validation is not complete yet.
 **What:**
   - [ ] Parse `struct Name { field1: type  field2: type ... }`
   - [ ] Calculate struct layout (field offsets, each field 8 bytes in jda)
@@ -83,6 +83,11 @@ jda1 must support every feature used in its own source code (~1900 lines).
   - [ ] `&s` → address-of (LEA)
   - [ ] Pass structs by reference (`fn foo(s: &Struct)`)
 **Why:** jda1.jda uses 10+ structs: Token, Node, Instr, BasicBlock, JirFunction, RegAlloc, LowerCtx, Fixup, VarEntry, etc.
+Estimated time for closing item 2 fully:
+1. Full selfhost validation + regressions: 2-4 hours
+2. Fixes from selfhost failures (likely AST lifetime edge cases): 4-10 hours
+3. Conformance/minimal tests for struct field matrix (read/write/indexed/ref params): 2-4 hours
+4. Final cleanup + docs/status updates: 30-60 minutes
 
 ---
 
