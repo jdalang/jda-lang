@@ -368,12 +368,9 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
                 if sc == '"' {
                     break
                 }
-                if sc == 92 {
-                    ; Backslash (0x5C = 92 decimal) - skip escape sequence (count both chars)
-                    pos = pos + 2
-                } else {
-                    pos = pos + 1
-                }
+                ; Don't skip escape sequences - capture all characters
+                ; emit_strlit will process them
+                pos = pos + 1
             }
             let len = pos - start
             out_toks[count].type      = TOK_STR
@@ -1168,11 +1165,14 @@ fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
     let off = jfn.strtab_pos
     let i = 0
     let processed_len = 0
+    let backslash = 92  ; ASCII value for backslash
     loop i < tok.str_len {
-        let c = jfn.src[tok.str_start + i]
-        ; Check for backslash (92 = 0x5C)
-        if c == 92 and i + 1 < tok.str_len {
-            let next_c = jfn.src[tok.str_start + i + 1]
+        let idx = tok.str_start + i
+        let c = jfn.src[idx]
+        ; Check for backslash
+        if c == backslash and i + 1 < tok.str_len {
+            let next_idx = idx + 1
+            let next_c = jfn.src[next_idx]
             let esc_val = process_escape(next_c)
             if esc_val >= 0 {
                 jfn.strtab[jfn.strtab_pos] = esc_val
@@ -1181,7 +1181,7 @@ fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
                 i = i + 2
             } else {
                 ; Unknown escape, copy backslash as-is
-                jfn.strtab[jfn.strtab_pos] = c
+                jfn.strtab[jfn.strtab_pos] = backslash
                 jfn.strtab_pos = jfn.strtab_pos + 1
                 processed_len = processed_len + 1
                 i = i + 1
