@@ -1,0 +1,46 @@
+struct Token {
+    type:      i32
+    str_start: i64
+    str_len:   i64
+    imm:       i64
+}
+
+fn is_alpha(c: i8) -> i32 {
+    if c >= 'a' and c <= 'z' { ret 1 }
+    if c >= 'A' and c <= 'Z' { ret 1 }
+    ret 0
+}
+
+fn main() {
+    ; allocate token buffer
+    let size = 4096
+    let toks = syscall(9, 0, size, 3, 0x22, -1, 0)
+    print("alloc ok\n")
+
+    ; write a source string into memory
+    let src = syscall(9, 0, 4096, 3, 0x22, -1, 0)
+    print("src alloc ok\n")
+
+    ; store 'f','n',' ','m' at src
+    let src8 = src
+    ; manually write chars
+    syscall(1, 1, "testing\n", 8)
+    print("before loop\n")
+
+    let pos = 0
+    let count = 0
+    let c = 0
+    loop pos < 2 {
+        c = pos + 97   ; 'a' + pos
+        print(c)
+        print("\n")
+        if is_alpha(c) or c == '_' {
+            print("alpha!\n")
+        }
+        count = count + 1
+        pos = pos + 1
+    }
+    print("done\n")
+    print(count)
+    print("\n")
+}
