@@ -651,24 +651,108 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 ---
 
-## Priority Order
+## Priority Order — Dependency Chain
 
-**P0 — Blocks everything:**
-1. Multi-function (#1) → Structs (#2) → Arrays (#3) → Pointers (#4) → Self-hosting (#10)
+**How to read this:** Each issue unblocks subsequent tasks. Complete issues in order.
 
-**P1 — Blocks adoption:**
-2. Linux installer (#11) → macOS (#12) → Windows (#13)
-3. Tutorial (#31) → Language reference (#30)
-4. Type checking (#15) → Error handling (#17)
+### 🔴 P0 — Blocks EVERYTHING (Self-Hosting Gate)
+```
+#1 Multi-function ✅
+    ↓ unblocks
+#2 Structs ✅
+    ↓ unblocks
+#3 Arrays ❌ ← NEXT TARGET
+    ↓ unblocks
+#4 Pointers/refs ❌
+    ↓ unblocks
+#5 String escapes ✅
+    ↓ unblocks
+#6 print(int) 🔴 (blocked by Bug #24)
+    ↓ unblocks
+#7 Else-if chains ❌
+    ↓ unblocks
+#8 Constants ❌
+    ↓ unblocks
+#9 Logical operators ❌
+    ↓ unblocks
+#10 SELF-HOSTING ROUNDTRIP 🎯 (jda1 compiles jda1.jda)
+```
+**Goal:** True self-hosting compiler with zero external dependencies.
 
-**P2 — Competitive parity:**
-5. Package manager (#24) → Test framework (#25) → Formatter (#26)
-6. Enums (#16) → Generics (#18) → Traits (#20)
-7. LSP + VS Code extension (#27)
-8. Website (#34)
+---
 
-**P3 — Differentiation:**
-9. J-Threads concurrency (#36)
-10. ML tensor runtime (#37)
-11. Debugger (#28) → REPL (#29)
-12. C FFI (#38) → WASM (#14)
+### 🟡 P1 — Blocks Adoption (Can't use without these)
+```
+#10 Self-hosting (from P0)
+    ↓ unblocks
+#11 Linux installer ❌
+    ↓ unblocks
+#12 macOS installer ❌
+    ↓ unblocks
+#13 Windows installer ❌
+
+#10 Self-hosting (from P0)
+    ↓ unblocks
+#15 Type checking ❌
+    ↓ unblocks
+#17 Result<T,E> error handling ❌
+
+#30 Language reference ❌ ← Can write once language stabilizes
+#31 Tutorial ❌ ← Can write once language stabilizes
+```
+
+---
+
+### 🟢 P2 — Competitive Parity (Nice to have, not critical)
+```
+#10 Self-hosting (from P0)
+    ↓ unblocks
+#23 CLI interface (`jda` command) ❌
+    ↓ unblocks
+#24 Package manager ❌
+    ↓ unblocks
+#25 Test framework ❌
+    ↓ unblocks
+#26 Formatter ❌
+
+#15 Type checking (from P1)
+    ↓ unblocks
+#16 Enums ❌
+    ↓ unblocks
+#18 Generics ❌
+    ↓ unblocks
+#20 Traits ❌
+
+#23 CLI (above)
+    ↓ unblocks
+#27 LSP + VS Code extension ❌
+#34 Website ❌
+```
+
+---
+
+### 🔵 P3 — Differentiation (Unique Jda features)
+```
+#10 Self-hosting (from P0)
+    ↓ unblocks
+#36 J-Threads concurrency ❌
+#37 ML tensor runtime ❌
+
+#23 CLI (from P2)
+    ↓ unblocks
+#28 Debugger ❌
+#29 REPL ❌
+
+#38 C FFI ❌ ← Can call C libraries
+#14 WASM ❌ ← Web deployment
+```
+
+---
+
+### Current Focus
+1. **Fix Bug #24** (i64 struct field access) → unblocks #6
+2. **Complete #6** (print(int)) → clears P0 blocker
+3. **Tackle #3** (Arrays) → next P0 milestone
+4. **Then #4, #7, #8, #9** → achieve #10 Self-Hosting
+
+**After Self-Hosting (#10):** Everything else becomes possible.
