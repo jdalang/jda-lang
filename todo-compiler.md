@@ -6,7 +6,8 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 ## Current State
 - All 88 functions in `jda1.jda` compile without crash ✓
 - `jda1` binary starts, opens file, begins lexing ✓
-- Full end-to-end bootstrap successful ✓
+- TODOs 1–10 all PASS ✓
+- TODO 11 (end-to-end bootstrap) FAILS — jda1 parses every token as unexpected
 
 ---
 
@@ -103,7 +104,7 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 
 ## Final Gate
 
-### 11. End-to-end bootstrap test [DONE ✅]
+### 11. End-to-end bootstrap test [IN PROGRESS 🔧]
 Run the full chain:
 ```
 jda0 bootstrap/stage1/jda1.jda jda1_bin   # stage 0 compiles stage 1
@@ -111,6 +112,77 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 ./test_out                                  # test program runs correctly
 ```
 **Expected:** `test.jda = fn main() { print(42) }` → prints `42`.
+**Current status:** jda1 compiles OK, opens file, lexes 10 tokens, but parser fails with "Parse error: unexpected token" on every `expect()` call. Root cause under investigation — see bugs 12–16 below.
+
+---
+
+## Post-Merge Regression Fixes (applied)
+
+### 12. Fix merge conflict leftover in syscall pop code [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `.sc_done_args`
+**Symptom:** Duplicate syscall argument pop code with `=======` merge conflict marker left in source.
+**Root cause:** Merge left BOTH old (wrong-order) and new (reverse-order) pop sequences.
+**Fix:** Removed old wrong-order pop code and `=======` marker, kept new reverse-pop code.
+
+---
+
+### 13. Fix `parse_reg_name` for 3-char register names (`rsi`, `rdi`, `rdx`, etc.) [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `parse_reg_name` / `.prn_3plus`
+**Symptom:** `asm { out x = rsi }` generates wrong machine code (`48 89 FD` instead of `48 89 B5 F8FFFFFF`). All 3-char register names fail.
+**Root cause:** `cmp r9, 3; jg .prn_3plus` — uses `jg` (greater) instead of `jge` (greater-or-equal). When r9==3, condition is false, falls through to `.prn_fail`.
+**Fix:** Changed `jg` to `jge` at the 3-char length check.
+**Also fixed:** Added `.prn_di_or_dx` to distinguish `rdi` (code 7) from `rdx` (code 2), and `.prn_si` for `rsi` (code 6).
+
+---
+
+### 14. Fix asm handler clobbering r15 (globals base register) [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `.gs_asm`
+**Symptom:** `asm { out x = rsi }` clobbers r15 with register name length, corrupting all subsequent global variable access.
+**Root cause:** `mov r15, [rax+16]` stores reg name length in r15, but r15 is the globals base register.
+**Fix:** Added BSS variable `asm_reglen` to store the register name length instead of r15.
+**Also fixed:** `lea r8, [src_buf]; add r8, r14` to convert src_buf offset to pointer for parse_reg_name. Changed ModRM from `0x45` (8-bit disp) to `0x85` (32-bit disp).
+
+---
+
+### 15. Fix `gen_expr_base` duplicate comparison/logical operator handling [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_expr_base` / `.maybe_binary`
+**Symptom:** `or`/`and` conditions and comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`) evaluated incorrectly.
+**Root cause:** `gen_expr_base` had DUPLICATE handling of these operators via `.maybe_binary`, conflicting with the structured hierarchy (`gen_expr` → `gen_expr_and` → `gen_expr_cmp` → `gen_expr_base`). `gen_expr_base` consumed comparisons before `gen_expr_cmp` could handle them.
+**Fix:** Removed comparison operators and `or`/`and` from `.maybe_binary` dispatch. Now `gen_expr_base` only handles: `+`, `-`, `*`, `/`, `|`, `&`, `<<`, `>>`.
+
+---
+
+### 16. Fix pointer variable double-dereference when passed as function argument [FIXED ✅]
+**File:** `bootstrap/stage0/jda0.asm` — `gen_addr` / `.ga_post`
+**Symptom:** Passing a pointer-typed variable through two function calls causes segfault. E.g. `fn pass_through(pos: &i64) { read_pos(pos) }` — `pos` gets double-dereferenced, passing `*pos` instead of `pos`.
+**Root cause:** `gen_addr` always dereferenced pointer variables (`lv_isptr=1`), even without navigation (`.` or `[`). Then `.do_lvalue` added another `mov rax, [rax]` (scalar load), resulting in double-dereference.
+**Fix:** Changed `.ga_post` to only deref pointer variables when navigation (`.` or `[`) follows. For bare pointer variables, return the stack address and let the caller load the value.
+
+---
+
+### 17. Fix jda1 parser — all tokens read as unexpected [FIXED ✅]
+**File:** `bootstrap/stage1/jda1.jda` — `classify_keyword` + `bootstrap/stage0/jda0.asm` — `.gs_let_expr`
+**Symptom:** jda1 lexes 10 tokens correctly from `hello.jda`, but `parse_fn` → `expect(toks, pos, TOK_FN)` reports "unexpected token" for every single token.
+**Root cause (two bugs):**
+  1. `classify_keyword()` had a stale `ret TOK_IDENT` before the keyword checks, so ALL identifiers were returned as TOK_IDENT instead of TOK_FN, TOK_PRINT, etc.
+  2. `let t = toks[pos[0]]` in `parse_primary` stored a struct address as a plain scalar (TK_SCALAR, sid=-1, esz=8). Then `t.type` had no struct context, skipping the field offset and reading 8 bytes (including adjacent `str_start` data) instead of the 4-byte i32 `.type` field.
+**Fix:**
+  1. Removed the stale `ret TOK_IDENT` line in `classify_keyword`.
+  2. Modified `.gs_let_expr` in jda0.asm to detect when `gen_expr` returns a struct address (`lv_sid != -1`) and create the local as TK_PTR with the correct struct ID and element size.
+**Test:** All 10 tokens now parse correctly in `expect()` output.
+
+---
+
+### 18. Fix jda1 segfault in `lower_fn` → `emit_byte` — `pos[0]` deref crash [TODO 🔴]
+**File:** `bootstrap/stage0/jda0.asm` — code generation (under investigation)
+**Symptom:** After successful lex + parse + codegen + fold + dce, jda1 crashes with SIGSEGV inside `emit_byte(out, pos, 0x55)` when trying to read `pos[0]`. The crash happens in `lower_fn` → `emit_push_r` → `emit_byte`.
+**Debug findings:**
+  - `emit_byte` enters OK, `b=85` (0x55) is printed, but reading `pos[0]` segfaults
+  - Simplified test (3-level passthrough with 4 params) works fine outside of jda1 context
+  - The real jda1 main function is very large (~30+ locals, many struct allocs)
+  - Possible causes: stack frame offset overflow, parameter slot corruption in large functions, or interaction with many mmap allocs
+**Depends on:** Fix #17
+**Test:** `./jda1 ../../examples/hello.jda hello_s1` should compile successfully.
 
 ---
 
@@ -161,5 +233,19 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
   │ 41  │ Fix jfn.src = val struct-pointer field write           │ DONE ✅         │
   ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
-  │ 42  │ End-to-end jda1 bootstrap test                         │ DONE ✅         │
+  │ 42  │ End-to-end jda1 bootstrap test                         │ IN PROGRESS 🔧  │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 43  │ Merge conflict leftover in syscall pop code            │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 44  │ parse_reg_name jg→jge for 3-char registers             │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 45  │ asm handler clobbers r15 (globals base)                │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 46  │ gen_expr_base duplicate comparison/logical handling    │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 47  │ Pointer double-dereference on function argument pass   │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 48  │ jda1 parser reads all tokens as unexpected             │ FIXED ✅        │
+  ├─────┼────────────────────────────────────────────────────────┼─────────────────┤
+  │ 49  │ jda1 segfault in lower_fn → emit_byte pos[0] deref   │ TODO 🔴         │
   └─────┴────────────────────────────────────────────────────────┴─────────────────┘
