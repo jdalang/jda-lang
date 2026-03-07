@@ -16,7 +16,7 @@
   ├────────────────┼──────┼────────────────┤
   │ Pointers/refs  │ ✅   │ ❌             │
   ├────────────────┼──────┼────────────────┤
-  │ String escapes │ ✅   │ ❌             │
+  │ String escapes │ ✅   │ ⚠️ Partial     │
   ├────────────────┼──────┼────────────────┤
   │ print(int)     │ ✅   │ ❌             │
   ├────────────────┼──────┼────────────────┤
@@ -32,3 +32,7 @@
   └────────────────┴──────┴────────────────┘
 
   Phase 1 is about closing this gap so jda1 can compile jda1.jda → true self-hosting.
+
+  String escapes (Issue #5): Lexer handles `\"` to prevent premature string termination.
+  Escape sequence conversion (\n, \t, \\, \") blocked by jda0 if-statement bug in emit_strlit.
+  Branch: `issue-5-string-escape-sequences` — requires jda0 compiler fix to complete.
