@@ -89,24 +89,24 @@ TK_PTR           equ 2
 PTR_FLAG         equ 0x8000000000000000
 
 section .bss
-    src_buf resb 65536
+    src_buf resb 1048576
     tok_buf resb 1048576
     tok_cnt resb 8
     tok_pos resb 8
-    cst_tbl resb 16384
+    cst_tbl resb 65536
     cst_cnt resb 8
-    stt_tbl resb 198656
+    stt_tbl resb 262144
     stt_cnt resb 8
-    fn_tbl resb 73728
-    fn_cnt resb 8
-    loc_tbl resb 12288
+    fn_tbl  resb 262144
+    fn_cnt  resb 8
+    loc_tbl resb 65536
     loc_cnt resb 8
     loc_rbp resb 8
     loc_max_rbp resb 8
     lv_sid resb 8
     lv_esz resb 8
     lv_isptr resb 8
-    glb_tbl resb 4096
+    glb_tbl resb 32768
     glb_cnt resb 8
     glb_r15 resb 8
     cod_buf resb 4194304
@@ -1559,7 +1559,56 @@ p1_scan:
     call    lookup_struct
     mov     rdx, rax        ; struct id (or -1)
     cmp     rdx, -1
-    je      .p1_p_type_done
+    jne     .p1_p_type_struct_ok
+    ; fallback: handle builtin scalar names lexed as identifiers
+    cmp     r12, 2
+    jne     .p1_p_type_ident_len3
+    mov     al, [src_buf + r11]
+    cmp     al, 'i'
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11 + 1]
+    cmp     al, '8'
+    jne     .p1_p_type_done
+    mov     rdx, TOK_I8
+    mov     rsi, 1
+    jmp     .p1_p_type_done
+.p1_p_type_ident_len3:
+    cmp     r12, 3
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11]
+    cmp     al, 'i'
+    jne     .p1_p_type_ident_f64
+    mov     al, [src_buf + r11 + 1]
+    cmp     al, '3'
+    jne     .p1_p_type_ident_i64
+    mov     al, [src_buf + r11 + 2]
+    cmp     al, '2'
+    jne     .p1_p_type_done
+    mov     rdx, TOK_I32
+    mov     rsi, 4
+    jmp     .p1_p_type_done
+.p1_p_type_ident_i64:
+    cmp     al, '6'
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11 + 2]
+    cmp     al, '4'
+    jne     .p1_p_type_done
+    mov     rdx, TOK_I64
+    mov     rsi, 8
+    jmp     .p1_p_type_done
+.p1_p_type_ident_f64:
+    cmp     al, 'f'
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11 + 1]
+    cmp     al, '6'
+    jne     .p1_p_type_done
+    mov     al, [src_buf + r11 + 2]
+    cmp     al, '4'
+    jne     .p1_p_type_done
+    mov     rdx, TOK_F64
+    mov     rsi, 8
+    jmp     .p1_p_type_done
+.p1_p_type_struct_ok:
     mov     rax, rdx
     imul    rax, rax, STR_SZ
     lea     rbx, [stt_tbl]
@@ -1567,6 +1616,7 @@ p1_scan:
     mov     rsi, [rax+16]   ; struct size
     jmp     .p1_p_type_done
 .p1_p_type_scalar:
+    mov     rdx, r10        ; scalar type_id
     cmp     r10, TOK_I8
     jne     .p1_p_type_i32
     mov     rsi, 1
@@ -2793,8 +2843,8 @@ gen_addr:
     mov     qword [lv_isptr], 0
     cmp     rbx, -1
     je      .ga_post_loop
-    test    rbx, PTR_FLAG
-    jz      .ga_dot_struct
+    bt      rbx, 63
+    jnc     .ga_dot_struct
     ; pointer field
     mov     qword [lv_isptr], 1
     mov     rdx, rbx
@@ -2827,6 +2877,15 @@ gen_addr:
     mov     qword [lv_esz], 8
     jmp     .ga_post_loop
 .ga_dot_struct:
+    ; non-pointer field: only structs carry a valid sid
+    cmp     rbx, TOK_I8
+    je      .ga_post_loop
+    cmp     rbx, TOK_I32
+    je      .ga_post_loop
+    cmp     rbx, TOK_I64
+    je      .ga_post_loop
+    cmp     rbx, TOK_F64
+    je      .ga_post_loop
     mov     [lv_sid], rbx
     jmp     .ga_post_loop
 
@@ -2847,7 +2906,19 @@ gen_addr:
     mov     rdi, 0x50
     call    emit1
     ; index expr
+    mov     rax, [lv_sid]
+    push    rax
+    mov     rax, [lv_esz]
+    push    rax
+    mov     rax, [lv_isptr]
+    push    rax
     call    gen_expr
+    pop     rax
+    mov     [lv_isptr], rax
+    pop     rax
+    mov     [lv_esz], rax
+    pop     rax
+    mov     [lv_sid], rax
     ; pop base into rbx
     mov     rdi, 0x5B
     call    emit1
@@ -3723,7 +3794,19 @@ gen_expr_stmt:
     mov     rdi, 0x50
     call    emit1
     ; rhs expr -> rax
+    mov     rax, [lv_sid]
+    push    rax
+    mov     rax, [lv_esz]
+    push    rax
+    mov     rax, [lv_isptr]
+    push    rax
     call    gen_expr
+    pop     rax
+    mov     [lv_isptr], rax
+    pop     rax
+    mov     [lv_esz], rax
+    pop     rax
+    mov     [lv_sid], rax
     ; pop address into rbx
     mov     rdi, 0x5B
     call    emit1
@@ -3870,8 +3953,8 @@ gen_fn:
     mov     r11, -1
     mov     r12, [r13+16]   ; elem_size
     mov     r15, [r13+24]   ; type_id
-    test    r15, PTR_FLAG
-    jz      .gf_param_type_done
+    bt      r15, 63
+    jnc     .gf_param_type_done
     mov     r10, TK_PTR
     mov     rax, r15
     shl     rax, 1
@@ -3885,6 +3968,10 @@ gen_fn:
     je      .gf_param_type_done
     cmp     rax, TOK_F64
     je      .gf_param_type_done
+    ; only accept valid struct ids
+    mov     rbx, [stt_cnt]
+    cmp     rax, rbx
+    jae     .gf_param_type_done
     mov     r11, rax        ; struct id
 .gf_param_type_done:
     push    r12
