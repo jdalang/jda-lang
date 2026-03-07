@@ -1048,6 +1048,21 @@ fn parse_ret(toks: &Token, pos: &i64) -> Node {
 fn parse_print(toks: &Token, pos: &i64) -> Node {
     expect(toks, pos, TOK_PRINT)
     expect(toks, pos, TOK_LPAREN)
+    ; Check if argument is integer literal - handle inline to avoid struct return bug
+    let t = toks[pos[0]]
+    if t.type == TOK_INT {
+        let imm_val = t.imm
+        pos[0] = pos[0] + 1
+        expect(toks, pos, TOK_RPAREN)
+        ; For integer literals, use op field to encode small values (0-255)
+        ; Larger values not yet supported due to struct field access bug
+        let n = Node{}
+        n.node_type = NODE_PRINT
+        n.op = 7  ; NODE_INT marker
+        n.imm = imm_val  ; Store in imm field (will be read incorrectly, but let's test)
+        ret n
+    }
+    ; For non-integer arguments, use normal parsing
     let arg = parse_expr(toks, pos)
     expect(toks, pos, TOK_RPAREN)
     let n = Node{}
@@ -1881,7 +1896,8 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         ; otherwise -> string or other expression in node.child0
         if node.op == 7 {
             ; print(int_literal) -> emit print_int with immediate value
-            emit_print_int(jfn, bb, node.imm)
+            let val_id = emit_const(jfn, bb, TYPE_I64, node.imm)
+            emit_print_int(jfn, bb, val_id)
         } else {
             ; print(str) or print(variable) -> SYS_WRITE(1, str_ptr, str_len)
             let str_id = codegen_expr(node.child0, jfn, bb)
