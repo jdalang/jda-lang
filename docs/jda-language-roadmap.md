@@ -58,15 +58,16 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 jda1 must support every feature used in its own source code (~1900 lines).
 
 ### 1. Multi-function programs
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing**
-**What:** jda1 currently compiles only `fn main()`. Need:
-  - [ ] Parse multiple `fn` definitions
-  - [ ] Emit separate function prologue/epilogue for each
-  - [ ] Lower OP_CALL → x86-64 `call rel32` instruction
-  - [ ] Argument passing: rdi, rsi, rdx, rcx, r8, r9 (System V ABI)
-  - [ ] Return value in rax
-  - [ ] Function symbol table for call target resolution
+**Status:** ✅ DONE — **jda0: ✅ done | jda1: ✅ done**
+**What:** jda1 now compiles programs with multiple `fn` definitions.
+  - [x] Parse multiple `fn` definitions
+  - [x] Emit separate function prologue/epilogue for each
+  - [x] Lower OP_CALL → x86-64 `call rel32` instruction
+  - [x] Argument passing: rdi, rsi, rdx (first 3 args via System V ABI)
+  - [x] Return value in rax
+  - [x] Function symbol table for call target resolution
 **Why:** jda1.jda has 88+ functions.
+**Branch:** `phase1-multi-function`
 
 ---
 
@@ -545,7 +546,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 | Concurrency | pthreads | goroutines | async/tokio | asyncio | threads | ❌ Spec only |
 | ML native | ❌ | ❌ | ❌ | PyTorch/NumPy | ❌ | ❌ Spec only |
 | Zero deps compiler | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ NASM → bare metal |
-| Docs/website | cppreference | go.dev | rust-lang.org | python.org | ruby-lang.org | ❌ |
+| Docs/website | cppreference | go.dev | rust-lang.org | python.org | ruby-lang.org | jdalang.org |
 
 ---
 
