@@ -294,7 +294,11 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   - [x] Debug prints still in jda1.jda — removed in Bug #22
   - [x] fold_constants uses struct-by-value `ConstVal` — verified safe with direct field access in find_const/fold_constants and re-enabled in main()
   - [x] Loop variable mutation crashes — fixed with stack-slot variable loads/stores (Bug #23)
-  - [ ] jda0 compound expression bug — `a * b + c` evaluates wrong, must split into two statements → workaround in jda1.jda tokenizer
+  - [x] jda0 compound expression bug — fixed precedence handling for `a * b + c` in stage0 `gen_expr_base`
+      - Added `arith_stop` parsing guard so RHS of `*`/`/` does not consume top-level `+`/`-`
+      - Parenthesized subexpressions explicitly clear/restore `arith_stop` so `n * (n + 1)` still works
+      - Added stage0 conformance tests:
+        `print_expr_mul_add` (expects 57) and `print_expr_mul_paren_add` (expects 110)
 
 ---
 
