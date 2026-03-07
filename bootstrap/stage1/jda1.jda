@@ -65,14 +65,6 @@ const TOK_I32     = 37
 const TOK_I8      = 38
 const TOK_F64     = 39
 
-; Character constants
-const CHAR_BACKSLASH = 0x5C
-const CHAR_N         = 0x6E
-const CHAR_T         = 0x74
-const CHAR_QUOTE     = 0x22
-const CHAR_NEWLINE   = 0x0A
-const CHAR_TAB       = 0x09
-
 ; AST node types
 const NODE_FN     = 0
 const NODE_LET    = 1
@@ -280,16 +272,6 @@ fn str_match(src: &i8, s1: i64, s2: i64, len: i64) -> i32 {
         i = i + 1
     }
     ret 1
-}
-
-; Process escape sequences in string literals
-; Returns the escaped byte value, or -1 if not an escape sequence
-fn process_escape(c: i8) -> i64 {
-    if c == 110 { ret 10 }   ; 'n' (110) -> newline (10)
-    if c == 116 { ret 9 }    ; 't' (116) -> tab (9)
-    if c == 92  { ret 92 }   ; '\' (92) -> backslash (92)
-    if c == 34  { ret 34 }   ; '"' (34) -> double quote (34)
-    ret -1
 }
 
 fn is_alpha(c: i8) -> i32 {
@@ -1165,28 +1147,57 @@ fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
     let off = jfn.strtab_pos
     let i = 0
     let processed_len = 0
-    let backslash = 92  ; ASCII value for backslash
     loop i < tok.str_len {
         let idx = tok.str_start + i
         let c = jfn.src[idx]
-        ; Check for backslash
-        if c == backslash and i + 1 < tok.str_len {
-            let next_idx = idx + 1
-            let next_c = jfn.src[next_idx]
-            let esc_val = process_escape(next_c)
-            if esc_val >= 0 {
-                jfn.strtab[jfn.strtab_pos] = esc_val
-                jfn.strtab_pos = jfn.strtab_pos + 1
-                processed_len = processed_len + 1
-                i = i + 2
+        ; Check for backslash (ASCII 92)
+        ; If found, process escape sequence
+        if c == 92 {
+            ; Found backslash - check if there's a next character
+            if i + 1 < tok.str_len {
+                let next_idx = idx + 1
+                let next_c = jfn.src[next_idx]
+                ; Check for \n (ASCII 110)
+                if next_c == 110 {
+                    ; Convert to newline (ASCII 10)
+                    jfn.strtab[jfn.strtab_pos] = 10
+                    jfn.strtab_pos = jfn.strtab_pos + 1
+                    processed_len = processed_len + 1
+                    i = i + 2
+                } else if next_c == 116 {
+                    ; \t -> tab (ASCII 9)
+                    jfn.strtab[jfn.strtab_pos] = 9
+                    jfn.strtab_pos = jfn.strtab_pos + 1
+                    processed_len = processed_len + 1
+                    i = i + 2
+                } else if next_c == 92 {
+                    ; \\ -> backslash (ASCII 92)
+                    jfn.strtab[jfn.strtab_pos] = 92
+                    jfn.strtab_pos = jfn.strtab_pos + 1
+                    processed_len = processed_len + 1
+                    i = i + 2
+                } else if next_c == 34 {
+                    ; \" -> quote (ASCII 34)
+                    jfn.strtab[jfn.strtab_pos] = 34
+                    jfn.strtab_pos = jfn.strtab_pos + 1
+                    processed_len = processed_len + 1
+                    i = i + 2
+                } else {
+                    ; Unknown escape, copy backslash
+                    jfn.strtab[jfn.strtab_pos] = 92
+                    jfn.strtab_pos = jfn.strtab_pos + 1
+                    processed_len = processed_len + 1
+                    i = i + 1
+                }
             } else {
-                ; Unknown escape, copy backslash as-is
-                jfn.strtab[jfn.strtab_pos] = backslash
+                ; Backslash at end of string, copy it
+                jfn.strtab[jfn.strtab_pos] = 92
                 jfn.strtab_pos = jfn.strtab_pos + 1
                 processed_len = processed_len + 1
                 i = i + 1
             }
         } else {
+            ; Regular character
             jfn.strtab[jfn.strtab_pos] = c
             jfn.strtab_pos = jfn.strtab_pos + 1
             processed_len = processed_len + 1
