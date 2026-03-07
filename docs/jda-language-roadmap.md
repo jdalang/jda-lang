@@ -9,6 +9,7 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - jda0 (5200+ lines NASM x86-64) → compiles jda1.jda → jda1 binary
 - jda1 compiles: hello.jda, if/else programs, loop programs ✅
 - Full pipeline: jda0 → jda1 → working ELF binaries on Linux x86-64
+- Stage-0 pass-2 truncation blocker fixed (`P2 0` / 549-byte `jda1` issue resolved in `bootstrap/stage0/jda0.asm`) ✅
 - 23 compiler bugs found and fixed (see `todo-compiler.md`)
 - CI: Stage 0 smoke tests, conformance tests (24 pass / 2 fail), quality checks, self-host roundtrip gate
 
@@ -73,6 +74,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 ### 2. Struct definitions and field access
 **Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing (TOK_STRUCT/NODE_STRUCT exist but no parser/codegen)**
+**Blocker update (March 4, 2026):** ✅ fixed in jda0 — pass-1/pass-2 function-count corruption that produced `P2 0` and a 549-byte stage1 binary has been resolved.
 **What:**
   - [ ] Parse `struct Name { field1: type  field2: type ... }`
   - [ ] Calculate struct layout (field offsets, each field 8 bytes in jda)
