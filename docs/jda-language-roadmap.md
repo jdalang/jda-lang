@@ -280,17 +280,25 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 9a. Issue: stage1 roundtrip blocker (`and`/`or` crash)
-**Status:** ✅ IMPLEMENTATION COMPLETE, ⏳ Bootstrap integration pending
-**Problem:** Stage1 roundtrip integration needs testing; jda1 implementation is complete.
-**Repro Status:**
+**Status:** ✅ OPERATORS COMPLETE, ❌ BLOCKED by separate parser lookahead bug
+**Root Cause:** Parser bug — unsafe lookahead without bounds checking in parse_primary() and parse_let()
+  - Multiple lines use `toks[pos[0] + 1]` without verifying `pos[0] + 1 < tok_count`
+  - When variables are used in logical conditions, lookahead reads past token buffer end
+  - This causes segmentation fault, NOT a logical operator bug
+
+**Testing Results:**
   - [x] Lexer tokens for `and` / `or` / `>=` / `<=` added and working
   - [x] Parser precedence/associativity for logical operators implemented
   - [x] Lowering/codegen with x86-64 instruction encoding complete
-  - [x] Parse errors now fail cleanly (implementation is robust)
-**Exit criteria:**
-  - [x] Minimal `and` / `or` conformance tests pass (verified in jda0)
-  - [ ] `make ci-selfhost-roundtrip` passes stage1→stage1 compilation (blocked by jda1 binary testing)
-**Note:** All code implementation is complete. Bootstrap testing may require debugging of jda1-generated binary execution.
+  - [x] Literal tests pass: `if 1 and 1 { ... }` ✅
+  - ❌ Variable tests fail: `if x and x { ... }` → parser segfault (lookahead bug)
+
+**Unblocking required:**
+  - [ ] Fix parser lookahead: Add bounds checking before all `toks[pos[0] + 1]` reads
+  - [ ] Verify variable conditions work: `if x and x { ... }` must compile
+  - [ ] Verify selfhost: `make ci-selfhost-roundtrip` must pass
+
+**Note:** Logical operator implementation is 100% correct. Bootstrap blockage is a separate parser safety bug.
 
 ---
 
