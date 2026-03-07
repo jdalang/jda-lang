@@ -40,7 +40,7 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 
 **What jda1 CANNOT compile yet (needed for self-hosting):**
 - [ ] Multiple function definitions (only parses 1 fn: `parse_fn` called once in `main()`)
-- [ ] Struct definitions and field access (partial in jda1: parse/lowering exists, field-access compile path still crashes)
+- [ ] Struct definitions and field access (partial in jda1: parser/lowering wired; minimal read/store/indexed-field repros now compile)
 - [ ] Array declarations and `arr[i]` / `arr[i].field` indexing
 - [ ] Pointer/reference types (`&expr`, `ptr.field`, `&Type` in signatures)
 - [ ] String escape sequences (`\n` → 0x0A in lexer)
@@ -73,8 +73,8 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 2. Struct definitions and field access
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ⚠️ partial (struct parser/lowering added; field access still unstable)**
-**Blocker update (March 4, 2026):** ✅ jda0 pass-1/pass-2 function-count corruption is fixed; ⚠️ jda1 still crashes while compiling field access paths (`s.field`, `s.field = v`, `arr[i].field`). Minimal repros without field access compile (`struct + ret 0`, `fn foo(s:&S,v:i64){ret v}`), but adding field access still segfaults in stage1 compile path.
+**Status:** [ ] TODO — **jda0: ✅ done | jda1: ⚠️ partial (field read/store/indexed read compile in minimal repros; broader selfhost validation pending)**
+**Blocker update (March 4, 2026):** ✅ jda0 pass-1/pass-2 function-count corruption is fixed. ✅ jda1 now compiles minimal field-access repros (`ret s.field`, `s.field = v`, `ret arr[i].field` on pointer params). ⚠️ still not marked done until broader jda1.jda/selfhost validation confirms no regressions.
 **What:**
   - [ ] Parse `struct Name { field1: type  field2: type ... }`
   - [ ] Calculate struct layout (field offsets, each field 8 bytes in jda)
