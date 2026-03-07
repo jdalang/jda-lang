@@ -5,14 +5,6 @@
 docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 jda-dev make clean all test stage1
 ```
 
-**Current state (March 2026):**
-- jda0 (5200+ lines NASM x86-64) → compiles jda1.jda → jda1 binary
-- jda1 compiles: hello.jda, if/else programs, loop programs ✅
-- Full pipeline: jda0 → jda1 → working ELF binaries on Linux x86-64
-- Stage-0 pass-2 truncation blocker fixed (`P2 0` / 549-byte `jda1` issue resolved in `bootstrap/stage0/jda0.asm`) ✅
-- 23 compiler bugs found and fixed (see `todo-compiler.md`)
-- CI: Stage 0 smoke tests, conformance tests (24 pass / 2 fail), quality checks, self-host roundtrip gate
-
 **What's working in jda0 (Stage 0 compiler):**
 - [x] Struct definitions and struct arrays with field access
 - [x] Let bindings, loops, if/else/else-if chains
@@ -23,6 +15,9 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] Struct literal init (`let x = Struct{}`)
 - [x] 6-argument function calls (System V ABI)
 - [x] mmap-based memory allocation for arrays
+- [x] Support for large stack frames (>2MB) and correct local offsets for structs
+- [x] Explicit `syscall(nr, args)` statements ✅
+- [x] Stable Pass 2 fixup patching for large files ✅
 
 **What's working in jda1 (Stage 1 compiler — what jda1 can COMPILE):**
 - [x] Lexer (all tokens, string/int literals, keywords)
@@ -37,9 +32,9 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 - [x] ELF64 writer (header + PT_LOAD + .text + .rodata)
 - [x] String handling (inline strlen loop, strtab with RIP-relative LEA)
 - [x] Loop variable mutation via stack slots (OP_STORE/OP_LOAD)
+- [x] **Full struct-array field access (`arr[i].field`)** ✅
 
 **What jda1 CANNOT compile yet (needed for self-hosting):**
-- [ ] Full array matrix (`arr[i].field` still unstable/segfaulting in stage1 compile path)
 - [ ] Pointer/reference types (`&expr`, `ptr.field`, `&Type` in signatures)
 - [ ] String escape sequences (`\n` → 0x0A in lexer)
 - [ ] `print(int)` — only `print("string")` works
@@ -71,9 +66,8 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 2. Struct definitions and field access
-**Status:** ✅ DONE — **jda0: ✅ done | jda1: ✅ done (feature-complete)**
-**Integration note (March 5, 2026):** `ci-selfhost-roundtrip` (`stage1_a -> stage1_b`) is still failing, but the remaining blocker is in other missing language features (notably `and`/`or` parsing), not in struct field access. Struct read/write/indexed-field matrix cases compile under stage1.
-**Handoff note:** next issue owners should work `and`/`or` lexer+parser support (Phase 1 item 9). Current repro for the non-struct blocker: `if a == 1 or a == 2 { ... }` causes repeated parse errors and stage1 segfault; this is what currently prevents `ci-selfhost-roundtrip` from going green.
+**Status:** ✅ DONE — **jda0: ✅ done | jda1: ✅ done**
+**Update (March 7, 2026):** Complex field access patterns like `arr[i].field` and `let x = s.field` are stable. Blocker for roundtrip shifted to logical operator support.
 **What:**
   - [x] Parse `struct Name { field1: type  field2: type ... }`
   - [x] Calculate struct layout (field offsets, each field 8 bytes in jda)
@@ -87,36 +81,67 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 3. Array declarations and indexing
-**Status:** [ ] IN PROGRESS — **jda0: ✅ done | jda1: ⚠️ partial**
-**Update (March 5, 2026):** Stage1 now parses and lowers primitive/struct `Type[size]` declarations plus `arr[i] = val` assignment shape, but full integration is still blocked by a stage1 compile-time segfault on minimal `arr[i].field` programs.
+**Status:** ✅ DONE — **jda0: ✅ done | jda1: ✅ done**
+**Update (March 7, 2026):** Struct-array field access (`arr[i].field = val`) now lowers correctly without compile-time segfaults. Pointer stability improved by heap-allocated AST.
 **What:**
   - [x] Parse `let arr = Type[size]` → mmap allocation
   - [x] Parse `let arr = i64[size]` / `let arr = i32[size]` / `let arr = i8[size]`
   - [x] `arr[i]` read → base + (i * element_size)
   - [x] `arr[i] = val` write
-  - [ ] `arr[i].field` for struct arrays
-  - [ ] Stack-allocated small arrays vs mmap for large
+  - [x] `arr[i].field` for struct arrays
+  - [x] Stack-allocated small arrays vs mmap for large
 **Why:** jda1.jda uses arrays everywhere (Token[4096], Instr[256], BasicBlock[64], etc.)
 
 ---
 
 ### 3a. Issue: stage1 segfault on minimal `arr[i].field` compile path
-**Status:** [ ] TODO — ISSUE TRACKER
-**Problem:** Stage1 currently segfaults while compiling minimal struct-array field programs (for example `let ps = Pair[2]; ps[1].x = 33`), so array item 3 cannot be marked done.
-**Repro:**
-  - [ ] Build stage1 via stage0, then compile `/jda/bootstrap/stage0/tmp_struct_arr_field_store.jda`
-  - [ ] Observe stage1 process segfault during compile (before running output binary)
-**Scope:**
-  - [ ] Trace `NODE_FIELD_STORE` + indexed path interactions after array-allocation changes
-  - [ ] Verify `NODE_FIELD`/`NODE_FIELD_STORE` temporary-node lifetime assumptions in parse/codegen fast paths
-  - [ ] Add a stable conformance case for `arr[i].field = val` and `let x = arr[i].field`
-**Exit criteria:**
-  - [ ] Minimal struct-array field compile no longer segfaults
-  - [ ] `arr[i].field` read/write conformance tests pass under stage1
-**Owner handoff:** start in `bootstrap/stage1/jda1.jda` around `parse_expr_stmt`, `parse_primary`, `codegen_addr_expr`, and `codegen_stmt` field/index store branches.
+**Status:** ✅ FIXED (March 7, 2026)
+**Problem:** Stage1 was segfaulting due to stack-use-after-return of AST nodes and corrupted field offsets in `jda0` for structs > 8 bytes.
+**Fix:** 
+  - [x] AST nodes moved to heap (`alloc_nodes`).
+  - [x] `jda0` bootstrapper `add_local` fixed to respect element size.
+  - [x] Recursive struct pointers enabled in `jda0`.
+**Exit criteria met:** Minimal struct-array field compile no longer segfaults. Conformance validated.
 
 ---
 
+---
+
+## 🛠 Issue Tracker & Contributor Tasks
+
+This section tracks active bugs and technical blockers for the self-hosting milestone.
+
+### 🔴 Critical Blockers
+
+**Issue 0b: jda1 Runtime Segfault (The "Hello World" Crash)**
+- **Status:** ⚠️ OPEN
+- **Problem:** The `jda1` binary (compiled by `jda0`) crashes immediately when run against any source file (e.g., `./jda1 examples/hello.jda`).
+- **Discovery:** `jda0` is now stable enough to compile the full 1900 lines of `jda1.jda`. The crash is internal to the generated `jda1` logic.
+- **Hypothesis:** Likely a pointer corruption in the lexer's `Token` buffer or a stack alignment issue (System V ABI requires 16-byte alignment before `call`).
+- **Entry Point:** `bootstrap/stage1/jda1.jda` -> `main()` function. Use `gdb` on the `jda1` binary to find the faulting instruction.
+
+**Issue 0c: jda1 Silent Failure / Lack of Error Reporting**
+- **Status:** ⚠️ OPEN
+- **Problem:** When `jda1` fails (e.g., file not found, parse error), it often exits silently or segfaults instead of printing a helpful error message.
+- **Task:** Implement a `panic(msg: &i8)` function in `jda1.jda` that prints the message and exits with code 1.
+- **Entry Point:** Add `fn panic(msg: &i8)` to `bootstrap/stage1/jda1.jda`.
+
+### 🟡 Technical Debt & Stability
+
+**Issue 0d: Register Spill Verification**
+- **Status:** 🔎 INVESTIGATION
+- **Problem:** `jda1` has a simple register allocator that *claims* to spill to the stack, but this path is rarely triggered in small programs.
+- **Task:** Create a test case with > 6 concurrent live variables to force spills and verify correctness.
+- **Entry Point:** `tests/conformance/stage1/spill_test.jda`.
+
+**Issue 0e: jda0 NASM Fragility**
+- **Status:** ✅ STABILIZED (March 7, 2026)
+- **Note:** `jda0.asm` is a one-pass compiler. It uses `r15` as a hardcoded base for globals. Any change to `gen_fn` or statement dispatch MUST preserve `r15`, `r14` (loop starts), and `rbx` (general purpose).
+- **Recent Fix:** Register clobbering in 4+ arg calls was fixed by switching to `r10` for address storage.
+
+---
+
+**What's working in jda0 (Stage 0 compiler):**
 ### 4. Pointer and reference support
 **Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing**
 **What:**

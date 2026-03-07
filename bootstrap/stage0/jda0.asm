@@ -112,12 +112,13 @@ section .bss
     glb_tbl resb 32768
     glb_cnt resb 8
     glb_r15 resb 8
+    fix_cnt resb 8
     cod_buf resb 4194304
     cod_len resb 8
     sdt_buf resb 1048576
     sdt_len resb 8
     fix_buf resb 32768
-    fix_cnt resb 8
+    sfx_tbl resb 32768
     sfix_cnt resb 8
     jmp_stk resb 4096
     jmp_top resb 8
@@ -1366,6 +1367,7 @@ p1_scan:
     add     r14, rax        ; r14 = struct entry ptr
     mov     [r14],   r12
     mov     [r14+8], r13
+    inc     qword [stt_cnt]
     mov     qword [r14+16], 0   ; total_size
     mov     qword [r14+24], 0   ; field_count
     xor     r15, r15            ; offset = 0
@@ -1537,7 +1539,6 @@ p1_scan:
     mov     [r14+16], r15   ; total_size
     mov     [r14+24], rbx   ; field_count
     call    adv_tok         ; skip '}'
-    inc     qword [stt_cnt]
     jmp     .p1_loop
 
 ; --- fn NAME(params) -> type { body } ---
@@ -1873,7 +1874,11 @@ find_field:
 ; Adds to loc_tbl, updates loc_rbp
 ; =============================================================================
 add_local:
-    add     qword [loc_rbp], 8
+    mov     rax, [loc_rbp]
+    add     rax, 7
+    and     rax, -8         ; align to 8
+    add     rax, r12        ; r12 = esz
+    mov     [loc_rbp], rax
     mov     rax, [loc_rbp]      ; rbp_offset = loc_rbp (positive, use [rbp-rax])
     cmp     rax, [loc_max_rbp]
     jbe     .al_skip_max
@@ -2454,10 +2459,10 @@ gen_expr_base:
     call    emit1
     ; record fixup: patch_off=cod_len, target=sdt_buf offset r14
     ; For now emit placeholder 0 — we patch at ELF write time
-    ; Store as string fixup: {cod_off, sdt_off} in fix_buf[0..], indexed by sfix_cnt
+    ; Store as string fixup: {cod_off, sdt_off} in sfx_tbl, indexed by sfix_cnt
     mov     rax, [sfix_cnt]
     imul    rax, rax, 16
-    lea     rbx, [fix_buf]
+    lea     rbx, [sfx_tbl]
     add     rbx, rax
     mov     rax, [cod_len]
     mov     [rbx], rax      ; code offset of rel32
@@ -2786,85 +2791,7 @@ gen_expr_base:
     jmp     .maybe_binary
 
 .do_syscall_expr:
-    ; If current tok is TOK_SYSCALL, skip it; some paths may already be at '('
-    call    cur_tok_type
-    cmp     rax, TOK_SYSCALL
-    jne     .sc_skip_ident
-    call    adv_tok         ; skip 'syscall'
-.sc_skip_ident:
-    call    adv_tok         ; skip '('
-    xor     r14, r14
-.sc_arg_loop:
-    call    cur_tok_type
-    cmp     rax, TOK_RPAREN
-    je      .sc_done_args
-    cmp     rax, TOK_EOF
-    je      .sc_done_args
-    push    r14             ; preserve arg count across gen_expr
-    call    gen_expr
-    pop     r14
-    mov     rdi, 0x50       ; push rax
-    call    emit1
-    inc     r14
-    call    cur_tok_type
-    cmp     rax, TOK_COMMA
-    jne     .sc_arg_loop
-    call    adv_tok
-    jmp     .sc_arg_loop
-.sc_done_args:
-    call    adv_tok         ; skip ')'
-    ; pop args: syscall(nr, a1..a6)
-    ; Stack (top first): aN, ..., a1, nr
-    ; Pop in reverse so rax gets nr last.
-    cmp     r14, 7
-    jl      .sc_pop_r8
-    ; pop r9 = 41 59
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x59
-    call    emit1
-.sc_pop_r8:
-    cmp     r14, 6
-    jl      .sc_pop_r10
-    ; pop r8 = 41 58
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x58
-    call    emit1
-.sc_pop_r10:
-    cmp     r14, 5
-    jl      .sc_pop_rdx
-    ; pop r10 = 41 5A
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x5A
-    call    emit1
-.sc_pop_rdx:
-    cmp     r14, 4
-    jl      .sc_pop_rsi
-    mov     rdi, 0x5A       ; pop rdx (arg3)
-    call    emit1
-.sc_pop_rsi:
-    cmp     r14, 3
-    jl      .sc_pop_rdi
-    mov     rdi, 0x5E       ; pop rsi (arg2)
-    call    emit1
-.sc_pop_rdi:
-    cmp     r14, 2
-    jl      .sc_pop_rax
-    mov     rdi, 0x5F       ; pop rdi (arg1)
-    call    emit1
-.sc_pop_rax:
-    cmp     r14, 1
-    jl      .sc_call
-    mov     rdi, 0x58       ; pop rax  (syscall nr)
-    call    emit1
-.sc_call:
-    mov     rdi, 0x0F
-    call    emit1
-    mov     rdi, 0x05
-    call    emit1 ; syscall
-.sc_emit_done:
+    call    gen_syscall
     jmp     .maybe_binary
 
 .literal_done:
@@ -3612,6 +3539,95 @@ gen_addr:
     ret
 
 ; =============================================================================
+; gen_syscall — generate code for syscall(nr, arg1, ...)
+; =============================================================================
+gen_syscall:
+    push    rbp
+    mov     rbp, rsp
+    push    r12
+    push    r13
+    push    r14
+    push    r15
+
+    call    cur_tok_type
+    cmp     rax, TOK_SYSCALL
+    jne     .gs_skip_ident
+    call    adv_tok         ; skip 'syscall'
+.gs_skip_ident:
+    call    adv_tok         ; skip '('
+    xor     r14, r14
+.gs_arg_loop:
+    call    cur_tok_type
+    cmp     rax, TOK_RPAREN
+    je      .gs_done_args
+    cmp     rax, TOK_EOF
+    je      .gs_done_args
+    push    r14
+    call    gen_expr
+    pop     r14
+    mov     rdi, 0x50
+    call    emit1
+    inc     r14
+    call    cur_tok_type
+    cmp     rax, TOK_COMMA
+    jne     .gs_arg_loop
+    call    adv_tok
+    jmp     .gs_arg_loop
+.gs_done_args:
+    call    adv_tok         ; skip ')'
+    cmp     r14, 7
+    jl      .gs_pop_r8
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x59
+    call    emit1           ; pop r9
+.gs_pop_r8:
+    cmp     r14, 6
+    jl      .gs_pop_r10
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x58
+    call    emit1           ; pop r8
+.gs_pop_r10:
+    cmp     r14, 5
+    jl      .gs_pop_rdx
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x5A
+    call    emit1           ; pop r10
+.gs_pop_rdx:
+    cmp     r14, 4
+    jl      .gs_pop_rsi
+    mov     rdi, 0x5A
+    call    emit1           ; pop rdx
+.gs_pop_rsi:
+    cmp     r14, 3
+    jl      .gs_pop_rdi
+    mov     rdi, 0x5E
+    call    emit1           ; pop rsi
+.gs_pop_rdi:
+    cmp     r14, 2
+    jl      .gs_pop_rax
+    mov     rdi, 0x5F
+    call    emit1           ; pop rdi
+.gs_pop_rax:
+    cmp     r14, 1
+    jl      .gs_emit_sys
+    mov     rdi, 0x58
+    call    emit1           ; pop rax
+.gs_emit_sys:
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x05
+    call    emit1
+    pop     r15
+    pop     r14
+    pop     r13
+    pop     r12
+    leave
+    ret
+
+; =============================================================================
 ; gen_stmt — generate code for one statement
 ; =============================================================================
 gen_stmt:
@@ -3633,6 +3649,8 @@ gen_stmt:
     je      .gs_ret
     cmp     rax, TOK_PRINT
     je      .gs_print
+    cmp     rax, TOK_SYSCALL
+    je      .gs_syscall
     cmp     rax, TOK_ASM
     je      .gs_asm
     cmp     rax, TOK_BREAK
@@ -4071,8 +4089,12 @@ gen_stmt:
     call    cur_tok_type
     cmp     rax, TOK_LBRACE
     je      .gs_loop_body
-    ; conditional loop: gen_expr for condition — r14/r15 preserved (gen_expr saves them)
+    ; conditional loop: gen_expr for condition — r14/r15 preserved
+    push    r14
+    push    r15
     call    gen_expr        ; rax = condition
+    pop     r15
+    pop     r14
     ; emit: test rax, rax
     mov     rdi, 0x48
     call    emit1
@@ -4096,7 +4118,11 @@ gen_stmt:
     call    emit4           ; placeholder rel32 = 0
 .gs_loop_body:
     call    adv_tok         ; skip '{'
+    push    r14
+    push    r15
     call    gen_block_body  ; compile body (breaks push to jmp_stk)
+    pop     r15
+    pop     r14
     ; emit: jmp loop_start (backward rel32)
     mov     rdi, 0xE9
     call    emit1
@@ -4165,21 +4191,20 @@ gen_stmt:
     call    emit1
 .gs_ret_epilog:
     ; emit function epilogue and ret
-    ; pop r14, r13, r12, rbx (r15 NOT popped — was not pushed in prologue)
-    mov     rdi, 0x5B
-    call    emit1   ; pop rbx
     mov     rdi, 0x41
     call    emit1
-    mov     rdi, 0x5C
-    call    emit1   ; pop r12
+    mov     rdi, 0x5E
+    call    emit1   ; pop r14
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x5D
     call    emit1   ; pop r13
     mov     rdi, 0x41
     call    emit1
-    mov     rdi, 0x5E
-    call    emit1   ; pop r14
+    mov     rdi, 0x5C
+    call    emit1   ; pop r12
+    mov     rdi, 0x5B
+    call    emit1   ; pop rbx
     ; NOTE: r15 is NOT popped — not pushed in prologue (reserved for globals base)
     ; leave; ret
     mov     rdi, 0xC9
@@ -4277,6 +4302,10 @@ gen_stmt:
     mov     rsi, print_int_code_len
     call    emit_bytes
     call    adv_tok         ; skip ')'
+    jmp     .gs_done
+
+.gs_syscall:
+    call    gen_syscall
     jmp     .gs_done
 
 ; --- asm { ... } block ---
@@ -4406,7 +4435,6 @@ gen_stmt:
     jmp     .gs_done
 
 .gs_done:
-    pop     r15
     pop     r14
     pop     r13
     pop     r12
@@ -4420,7 +4448,6 @@ gen_expr_stmt:
     push    r12
     push    r13
     push    r14
-    push    r15
     call    get_cur_tok_ptr
     mov     r12, [rax+8]
     mov     r13, [rax+16]
@@ -4559,9 +4586,11 @@ gen_expr_stmt:
     pop     qword [lv_isptr]
     pop     qword [lv_esz]
     pop     qword [lv_sid]
-    ; pop address into rbx
-    mov     rdi, 0x5B
+    ; pop address into r10
+    mov     rdi, 0x41
     call    emit1
+    mov     rdi, 0x5A
+    call    emit1           ; pop r10
     ; store based on lvalue type
     cmp     qword [lv_isptr], 0
     jne     .store_qword
@@ -4575,28 +4604,31 @@ gen_expr_stmt:
     je      .store_dword
     jmp     .store_qword
 .store_byte:
+    mov     rdi, 0x41
+    call    emit1
     mov     rdi, 0x88
     call    emit1
-    mov     rdi, 0x03
+    mov     rdi, 0x02       ; mov [r10], al
     call    emit1
     jmp     .ges_done
 .store_dword:
+    mov     rdi, 0x41
+    call    emit1
     mov     rdi, 0x89
     call    emit1
-    mov     rdi, 0x03
+    mov     rdi, 0x02       ; mov [r10], eax
     call    emit1
     jmp     .ges_done
 .store_qword:
-    mov     rdi, 0x48
+    mov     rdi, 0x49
     call    emit1
     mov     rdi, 0x89
     call    emit1
-    mov     rdi, 0x03
+    mov     rdi, 0x02       ; mov [r10], rax
     call    emit1
     jmp     .ges_done
 
 .ges_done:
-    pop     r15
     pop     r14
     pop     r13
     pop     r12
@@ -4633,14 +4665,13 @@ gen_fn:
     push    r12
     push    r13
     push    r14
-    push    r15
 
     mov     r14, rdi        ; fn entry ptr
     ; record code_off
     mov     rax, [cod_len]
     mov     [r14+40], rax
 
-    ; prologue: push rbp; mov rbp,rsp; sub rsp,0(patch later); push rbx,r12,r13,r14,r15
+    ; prologue: push rbp; mov rbp,rsp; sub rsp,0(patch later); push rbx,r12,r13,r14
     mov     rdi, 0x55
     call    emit1           ; push rbp
     mov     rdi, 0x48
@@ -4844,20 +4875,20 @@ gen_fn:
     ; generate body
     call    gen_block_body
     ; epilogue
-    mov     rdi, 0x5B
-    call    emit1           ; pop rbx
     mov     rdi, 0x41
     call    emit1
-    mov     rdi, 0x5C
-    call    emit1           ; pop r12
+    mov     rdi, 0x5E
+    call    emit1           ; pop r14
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x5D
     call    emit1           ; pop r13
     mov     rdi, 0x41
     call    emit1
-    mov     rdi, 0x5E
-    call    emit1           ; pop r14
+    mov     rdi, 0x5C
+    call    emit1           ; pop r12
+    mov     rdi, 0x5B
+    call    emit1           ; pop rbx
     ; NOTE: r15 is not popped since it's reserved for globals base (was not pushed)
     mov     rdi, 0xC9
     call    emit1           ; leave
@@ -4872,7 +4903,6 @@ gen_fn:
     add     rbx, [frm_patch_off]    ; use BSS-saved placeholder offset (r15 was clobbered)
     mov     [rbx], eax
 
-    pop     r15
     pop     r14
     pop     r13
     pop     r12
@@ -5037,7 +5067,7 @@ p2_gen:
 .p2_done:
     ; Patch call fixups
     xor     r12, r12
-.p2_fix:
+.p2_fix_loop:
     cmp     r12, [fix_cnt]
     jge     .p2_fix_done
     mov     rax, r12
@@ -5101,11 +5131,11 @@ p2_gen:
     mov     [rbx], r15d
 .p2_fix_next:
     inc     r12
-    jmp     .p2_fix
+    jmp     .p2_fix_loop
 
 .p2_fix_done:
     ; Patch string fixups (LEA rel32)
-    ; fix_buf[i*16] = {cod_off:8, sdt_off:8} for i in 0..sfix_cnt-1
+    ; sfx_tbl[i*16] = {cod_off:8, sdt_off:8} for i in 0..sfix_cnt-1
     ; rel32 = cod_len + sdt_off - cod_off - 4
     xor     r12, r12
 .p2_sfix:
@@ -5113,7 +5143,7 @@ p2_gen:
     jge     .p2_done2
     mov     rax, r12
     imul    rax, rax, 16
-    lea     rbx, [fix_buf]
+    lea     rbx, [sfx_tbl]
     add     rbx, rax
     mov     r13, [rbx]      ; cod_off
     mov     r14, [rbx+8]    ; sdt_off
