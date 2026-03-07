@@ -112,14 +112,17 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 5. String escape sequences
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing (lexer copies raw bytes, no `\n` → 0x0A)**
+**Status:** ⚠️ PARTIAL — **jda0: ✅ done | jda1: 🟡 lexer handles `\"` | ❌ escape conversion blocked by jda0 bug**
 **What:**
-  - [ ] `\n` → newline (0x0A)
-  - [ ] `\t` → tab (0x09)
-  - [ ] `\\` → backslash (0x5C)
-  - [ ] `\"` → quote (0x22)
-  - [ ] Process escapes during lexing or when copying to strtab
+  - [x] Lexer skips escape sequences to handle `\"` without terminating string early
+  - [ ] `\n` → newline (0x0A) — blocked by jda0 if-statement bug in emit_strlit
+  - [ ] `\t` → tab (0x09) — blocked by jda0 if-statement bug in emit_strlit
+  - [ ] `\\` → backslash (0x5C) — blocked by jda0 if-statement bug in emit_strlit
+  - [ ] `\"` → quote (0x22) — blocked by jda0 if-statement bug in emit_strlit
+  - [ ] Process escapes when copying to strtab (emit_strlit)
 **Why:** jda1.jda uses `\n` in print statements everywhere.
+**Blocker:** jda0 compiler bug — if-statements inside loops in emit_strlit function don't execute.
+**Branch:** `issue-5-string-escape-sequences` (pushed to origin)
 
 ---
 
