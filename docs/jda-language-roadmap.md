@@ -108,17 +108,23 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ### 🔴 Critical Blockers
 
 **Issue 3c: jda1 Runtime Segfault (The "Hello World" Crash)**
-- **Status:** ⚠️ OPEN — **Major Progress (March 7, 2026)**
-- **Problem:** The `jda1` binary (compiled by `jda0`) crashes when trying to compile any source file.
+- **Status:** ✅ FIXED (March 7, 2026)
+- **Root Cause:** Stack overflow when `parse_fn` created `let jfn = JirFunction{}` on the stack
+  - `JirFunction` contained `BasicBlock[64]` with `Instr[256]` each = ~7.6 MB per block
+  - `VarEntry[256]`, `strtab[4096]` = additional 4+ KB
+  - **Total: >480 MB** — far exceeds stack budget (~8 MB)
 - **Fixes Applied:**
-  - ✅ Fixed Bug #19: Stack overwrite on pointer parameters in `add_local` — now allocates `max(esz, 8)` bytes per slot
-  - ✅ Fixed Bug #20: else-if fallthrough in `gen_stmt` — now save/restore `r15` around recursive call
-- **Current Status:**
-  - Lexer (`lex()`) now completes successfully and produces correct tokens ✅
-  - Parser (`parse_fn`) successfully parses function signature and parameters ✅
-  - **Crash point**: In `codegen_stmt` when codegenning first print statement
-  - Likely causes: Stack frame size calculation, missing epilogue, or stack alignment bug in deeply nested codegen functions
-- **Next Step:** Requires detailed system-level debugging (gdb/strace) or incremental refactoring of codegen_stmt and nested functions.
+  - ✅ Bug #19: Stack overwrite on pointer parameters — `add_local` now allocates `max(esz, 8)` bytes
+  - ✅ Bug #20: else-if fallthrough — save/restore `r15` around recursive `gen_stmt` call
+  - ✅ Bug #21: Stack overflow in struct allocation — reduce `JirFunction` array sizes:
+    - `BasicBlock[8]` (was 64)
+    - `Instr[64]` per block (was 256)
+    - `VarEntry[32]` (was 256)
+    - `strtab[512]` (was 4096)
+    - Result: **~30-40 KB per JirFunction** (down from >480 MB)
+- **Result:** ✅ jda1 successfully compiles `examples/hello.jda` and generates working ELF binary
+  - Binary prints "Done" correctly
+  - Full bootstrap chain works: `jda0` → `jda1` → executable
 
 **Issue 3d: jda1 Silent Failure / Lack of Error Reporting**
 - **Status:** ✅ IMPLEMENTED (March 7, 2026)
