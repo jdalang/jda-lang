@@ -114,11 +114,14 @@ This section tracks active bugs and technical blockers for the self-hosting mile
 ### 🔴 Critical Blockers
 
 **Issue 0b: jda1 Runtime Segfault (The "Hello World" Crash)**
-- **Status:** ⚠️ OPEN
-- **Problem:** The `jda1` binary (compiled by `jda0`) crashes immediately when run against any source file (e.g., `./jda1 examples/hello.jda`).
-- **Discovery:** `jda0` is now stable enough to compile the full 1900 lines of `jda1.jda`. The crash is internal to the generated `jda1` logic.
-- **Hypothesis:** Likely a pointer corruption in the lexer's `Token` buffer or a stack alignment issue (System V ABI requires 16-byte alignment before `call`).
-- **Entry Point:** `bootstrap/stage1/jda1.jda` -> `main()` function. Use `gdb` on the `jda1` binary to find the faulting instruction.
+- **Status:** ⚠️ OPEN — **Progress: Crashes in `parse_fn()` after lexing completes**
+- **Problem:** The `jda1` binary (compiled by `jda0`) crashes when trying to compile any source file.
+- **Recent Progress (March 7, 2026):**
+  - Fixed two critical jda0 bugs (#19 and #20) that were causing stack corruption and else-if fallthrough issues.
+  - Lexer (`lex()`) now completes successfully and produces correct tokens.
+  - Crash now happens in `parse_fn()` — the recursive descent parser.
+- **Current Hypothesis:** Likely a stack alignment issue in `parse_fn` prologue, or a crash in one of the deeply nested parsing functions (e.g., `parse_expr`, `parse_type`).
+- **Next Step:** Debug with `gdb` on the generated jda1 binary to identify the faulting instruction in parse_fn.
 
 **Issue 0c: jda1 Silent Failure / Lack of Error Reporting**
 - **Status:** ⚠️ OPEN
@@ -129,15 +132,19 @@ This section tracks active bugs and technical blockers for the self-hosting mile
 ### 🟡 Technical Debt & Stability
 
 **Issue 0d: Register Spill Verification**
-- **Status:** 🔎 INVESTIGATION
+- **Status:** 🧪 READY FOR TEST
 - **Problem:** `jda1` has a simple register allocator that *claims* to spill to the stack, but this path is rarely triggered in small programs.
-- **Task:** Create a test case with > 6 concurrent live variables to force spills and verify correctness.
+- **Task:** Create a test case with > 8 concurrent live variables to force spills and verify correctness.
+- **Action:** Created `tests/conformance/stage1/spill_test.jda` with 10 variables.
+- **Next Step:** Run this test once Issue 0b (segfault) is resolved.
 - **Entry Point:** `tests/conformance/stage1/spill_test.jda`.
 
 **Issue 0e: jda0 NASM Fragility**
 - **Status:** ✅ STABILIZED (March 7, 2026)
 - **Note:** `jda0.asm` is a one-pass compiler. It uses `r15` as a hardcoded base for globals. Any change to `gen_fn` or statement dispatch MUST preserve `r15`, `r14` (loop starts), and `rbx` (general purpose).
-- **Recent Fix:** Register clobbering in 4+ arg calls was fixed by switching to `r10` for address storage.
+- **Recent Fixes (March 7, 2026):**
+  - **Bug #19 — Stack overwrite on pointer parameters:** `add_local` allocated only `esz` bytes per stack slot, but register stores always write 8 bytes. For `&i8` params, allocated 1 byte but wrote 8 bytes → corrupted saved rbp. Fixed: `add_local` now allocates `max(esz, 8)`.
+  - **Bug #20 — else-if fallthrough:** `.gs_else_if` in `gen_stmt` clobbered `r15` (outer "after" jump offset) when recursively calling `gen_stmt` for inner `if`. Fixed: save/restore `r15` around the recursive call.
 
 ---
 
