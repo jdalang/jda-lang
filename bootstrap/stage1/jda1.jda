@@ -564,12 +564,17 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
         let idx_kind = 0
         let idx_start = 0
         let idx_len = 0
+        let idx_imm = 0
         if toks[pos[0]].type == TOK_LBRACK {
             pos[0] = pos[0] + 1
             if toks[pos[0]].type == TOK_IDENT and toks[pos[0] + 1].type == TOK_RBRACK {
                 idx_kind = 1
                 idx_start = toks[pos[0]].str_start
                 idx_len   = toks[pos[0]].str_len
+                pos[0] = pos[0] + 1
+            } else if toks[pos[0]].type == TOK_INT and toks[pos[0] + 1].type == TOK_RBRACK {
+                idx_kind = 3
+                idx_imm = toks[pos[0]].imm
                 pos[0] = pos[0] + 1
             } else {
                 idx = parse_expr(toks, pos)
@@ -598,48 +603,71 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
                     n.child3 = idx_len
                 }
                 if idx_kind == 2 { n.child0 = idx }
-                ; stable rhs encoding: rhs is indexed field read (base[idx].field), ident index
-                if rhs_tok.type == TOK_IDENT and
-                   toks[pos[0] + 1].type == TOK_LBRACK and
-                   toks[pos[0] + 2].type == TOK_IDENT and
-                   toks[pos[0] + 3].type == TOK_RBRACK and
-                   toks[pos[0] + 4].type == TOK_DOT and
-                   toks[pos[0] + 5].type == TOK_IDENT {
-                    let ridx = toks[pos[0] + 2]
-                    let rf   = toks[pos[0] + 5]
-                    n.op = 6
-                    n.children = rhs_tok.str_start
-                    n.param_cnt = rhs_tok.str_len
-                    n.child2 = ridx.str_start
-                    n.child3 = ridx.str_len
-                    n.child1 = rf.str_start
-                    n.ret_type = rf.str_len
-                    pos[0] = pos[0] + 6
-                    ret n
+                if idx_kind == 3 {
+                    n.child2 = idx_imm
+                    n.child3 = 0
                 }
-                ; stable rhs encoding: rhs is direct field read (base.field)
-                if rhs_tok.type == TOK_IDENT and
-                   toks[pos[0] + 1].type == TOK_DOT and
-                   toks[pos[0] + 2].type == TOK_IDENT {
-                    let rf = toks[pos[0] + 2]
-                    n.op = 5
-                    n.children = rhs_tok.str_start
-                    n.param_cnt = rhs_tok.str_len
-                    n.child3 = rf.str_start
-                    n.ret_type = rf.str_len
-                    pos[0] = pos[0] + 3
-                    ret n
-                }
-                if rhs_tok.type == TOK_IDENT and
-                   toks[pos[0] + 1].type != TOK_DOT and
-                   toks[pos[0] + 1].type != TOK_LBRACK and
-                   toks[pos[0] + 1].type != TOK_LPAREN {
-                    ; stable rhs encoding: store identifier name on node itself
-                    pos[0] = pos[0] + 1
-                    n.op = 3
-                    n.children = rhs_tok.str_start
-                    n.param_cnt = rhs_tok.str_len
-                    ret n
+                if idx_kind != 3 {
+                    ; stable rhs encoding: rhs is indexed field read (base[idx].field), ident index
+                    if rhs_tok.type == TOK_IDENT and
+                       toks[pos[0] + 1].type == TOK_LBRACK and
+                       toks[pos[0] + 2].type == TOK_IDENT and
+                       toks[pos[0] + 3].type == TOK_RBRACK and
+                       toks[pos[0] + 4].type == TOK_DOT and
+                       toks[pos[0] + 5].type == TOK_IDENT {
+                        let ridx = toks[pos[0] + 2]
+                        let rf   = toks[pos[0] + 5]
+                        n.op = 6
+                        n.children = rhs_tok.str_start
+                        n.param_cnt = rhs_tok.str_len
+                        n.child2 = ridx.str_start
+                        n.child3 = ridx.str_len
+                        n.child1 = rf.str_start
+                        n.ret_type = rf.str_len
+                        pos[0] = pos[0] + 6
+                        ret n
+                    }
+                    ; stable rhs encoding: rhs is direct field read (base.field)
+                    if rhs_tok.type == TOK_IDENT and
+                       toks[pos[0] + 1].type == TOK_DOT and
+                       toks[pos[0] + 2].type == TOK_IDENT {
+                        let rf = toks[pos[0] + 2]
+                        n.op = 5
+                        n.children = rhs_tok.str_start
+                        n.param_cnt = rhs_tok.str_len
+                        n.child3 = rf.str_start
+                        n.ret_type = rf.str_len
+                        pos[0] = pos[0] + 3
+                        ret n
+                    }
+                    if rhs_tok.type == TOK_IDENT and
+                       toks[pos[0] + 1].type != TOK_DOT and
+                       toks[pos[0] + 1].type != TOK_LBRACK and
+                       toks[pos[0] + 1].type != TOK_LPAREN {
+                        ; stable rhs encoding: store identifier name on node itself
+                        pos[0] = pos[0] + 1
+                        n.op = 3
+                        n.children = rhs_tok.str_start
+                        n.param_cnt = rhs_tok.str_len
+                        ret n
+                    }
+                } else {
+                    if rhs_tok.type == TOK_INT {
+                        pos[0] = pos[0] + 1
+                        n.op = 4
+                        n.ret_type = rhs_tok.imm
+                        ret n
+                    }
+                    if rhs_tok.type == TOK_IDENT and
+                       toks[pos[0] + 1].type != TOK_DOT and
+                       toks[pos[0] + 1].type != TOK_LBRACK and
+                       toks[pos[0] + 1].type != TOK_LPAREN {
+                        pos[0] = pos[0] + 1
+                        n.op = 3
+                        n.children = rhs_tok.str_start
+                        n.param_cnt = rhs_tok.str_len
+                        ret n
+                    }
                 }
                 let rhs = parse_expr(toks, pos)
                 n.child1 = rhs
@@ -661,6 +689,9 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
             }
             if idx_kind == 2 {
                 n.child0 = idx
+            }
+            if idx_kind == 3 {
+                n.children = idx_imm
             }
             n.child1 = rhs
             ret n
@@ -688,6 +719,9 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
             if lhs.op == 2 {
                 n.child0 = lhs.child0
             }
+            if lhs.op == 3 {
+                n.children = lhs.children
+            }
             n.child1    = rhs
             ret n
         }
@@ -705,6 +739,7 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
             n.child0 = lhs.child0
             n.child2 = lhs.child1
             n.child1 = rhs
+            n.op = 2
             ret n
         }
         print("Parse error: invalid assignment target\n")
@@ -913,12 +948,17 @@ fn parse_ret(toks: &Token, pos: &i64) -> Node {
         let idx_kind = 0
         let idx_start = 0
         let idx_len = 0
+        let idx_imm = 0
         if toks[pos[0]].type == TOK_LBRACK {
             pos[0] = pos[0] + 1
             if toks[pos[0]].type == TOK_IDENT and toks[pos[0] + 1].type == TOK_RBRACK {
                 idx_kind = 1
                 idx_start = toks[pos[0]].str_start
                 idx_len   = toks[pos[0]].str_len
+                pos[0] = pos[0] + 1
+            } else if toks[pos[0]].type == TOK_INT and toks[pos[0] + 1].type == TOK_RBRACK {
+                idx_kind = 3
+                idx_imm = toks[pos[0]].imm
                 pos[0] = pos[0] + 1
             } else {
                 idx = parse_expr(toks, pos)
@@ -944,6 +984,9 @@ fn parse_ret(toks: &Token, pos: &i64) -> Node {
             if idx_kind == 1 {
                 n.children = idx_start
                 n.param_cnt = idx_len
+            }
+            if idx_kind == 3 {
+                n.children = idx_imm
             }
             if has_idx == 1 and idx_kind == 2 { n.child1 = idx }
             ret n
@@ -1043,12 +1086,17 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
         let idx_kind = 0
         let idx_start = 0
         let idx_len = 0
+        let idx_imm = 0
         if toks[pos[0]].type == TOK_LBRACK {
             pos[0] = pos[0] + 1
             if toks[pos[0]].type == TOK_IDENT and toks[pos[0] + 1].type == TOK_RBRACK {
                 idx_kind = 1
                 idx_start = toks[pos[0]].str_start
                 idx_len   = toks[pos[0]].str_len
+                pos[0] = pos[0] + 1
+            } else if toks[pos[0]].type == TOK_INT and toks[pos[0] + 1].type == TOK_RBRACK {
+                idx_kind = 3
+                idx_imm = toks[pos[0]].imm
                 pos[0] = pos[0] + 1
             } else {
                 idx = parse_expr(toks, pos)
@@ -1074,6 +1122,9 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
                 fn.children = idx_start
                 fn.param_cnt = idx_len
             }
+            if idx_kind == 3 {
+                fn.children = idx_imm
+            }
             if idx_kind == 2 { fn.child0 = idx }
             ret fn
         }
@@ -1087,6 +1138,9 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
                 it.str_len   = idx_len
                 idx.node_type = NODE_IDENT
                 idx.token = it
+            } else if idx_kind == 3 {
+                idx.node_type = NODE_INT
+                idx.imm = idx_imm
             }
             let in = Node{}
             in.node_type = NODE_BINOP
@@ -1406,7 +1460,7 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             sid = lookup_stype_name(jfn, node.token, node.child_cnt)
         }
         let obj = base
-        if node.child0 != null or node.op == 1 {
+        if node.child0 != null or node.op == 1 or node.op == 3 {
             let idx = 0
             if node.op == 1 {
                 let islot = lookup_slot_name(jfn, node.children, node.param_cnt)
@@ -1414,6 +1468,8 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
                 ild.op = OP_LOAD
                 ild.operand0 = islot
                 idx = emit(jfn, bb, &ild)
+            } else if node.op == 3 {
+                idx = emit_const(jfn, bb, TYPE_I64, node.children)
             } else {
                 idx = codegen_expr(node.child0, jfn, bb)
             }
@@ -1507,6 +1563,8 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
                 ild.op = OP_LOAD
                 ild.operand0 = islot
                 idx = emit(jfn, bb, &ild)
+            } else if node.op == 3 {
+                idx = emit_const(jfn, bb, TYPE_I64, node.children)
             } else {
                 idx = codegen_expr(node.child0, jfn, bb)
             }
@@ -1576,6 +1634,9 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             if node.data_type == 2 {
                 fexpr.child0 = node.child0
             }
+            if node.data_type == 3 {
+                fexpr.children = node.child2
+            }
             faddr = codegen_addr_expr(fexpr, jfn, bb)
         }
         let rhs = 0
@@ -1626,6 +1687,8 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             ld.op = OP_LOAD
             ld.operand0 = slot
             rhs = emit(jfn, bb, &ld)
+        } else if node.op == 4 {
+            rhs = emit_const(jfn, bb, TYPE_I64, node.ret_type)
         } else {
             rhs = codegen_expr(node.child1, jfn, bb)
         }
@@ -1646,7 +1709,7 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             let base = emit(jfn, bb, &bld)
             let sid = lookup_stype_name(jfn, node.token, node.child_cnt)
             let obj = base
-            if node.ret_type == 1 or node.ret_type == 2 {
+            if node.ret_type == 1 or node.ret_type == 2 or node.ret_type == 3 {
                 let idx = 0
                 if node.ret_type == 1 {
                     let islot = lookup_slot_name(jfn, node.children, node.param_cnt)
@@ -1654,6 +1717,8 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
                     ild.op = OP_LOAD
                     ild.operand0 = islot
                     idx = emit(jfn, bb, &ild)
+                } else if node.ret_type == 3 {
+                    idx = emit_const(jfn, bb, TYPE_I64, node.children)
                 } else {
                     idx = codegen_expr(node.child1, jfn, bb)
                 }
