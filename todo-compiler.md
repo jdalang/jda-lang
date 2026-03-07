@@ -265,10 +265,10 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
 
 ---
 
-### 20. Fix codegen/lowering pipeline — jda1 produces working ELF [IN PROGRESS 🔧]
+### 20. Fix codegen/lowering pipeline — jda1 produces working ELF [DONE ✅]
 **File:** `bootstrap/stage0/jda0.asm` + `bootstrap/stage1/jda1.jda`
 **Original symptom:** `hello_s1` output was 131 bytes (prologue only, no body).
-**Root causes found and fixed so far:**
+**Root causes found and fixed:**
   1. ✅ `parse_block` used `alloc(128)` → changed to `Node{}` for correct struct offsets
   2. ✅ `block.children[i]` returned element address, not stored pointer → changed `children: &Node` → `children: i64` and `Node[256]` → `i64[256]`
   3. ✅ `.ga_dot` + `[` (dot-then-index) needed conditional deref → added `ga_from_dot` + `ga_acnt` BSS flags in `.ga_pre_index` to deref scalar/pointer fields but NOT embedded arrays
@@ -276,14 +276,20 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   5. ✅ Functions taking `Token` by value → changed to `&Token` (`emit_strlit`, `bind`, `parse_call_rest`, `lookup`)
   6. ✅ `jfn.strtab` was 0 → `strtab: i8[4096]` is embedded array; `ga_acnt` flag prevents wrong deref
   7. ✅ `emit()` passed `Instr` by value (8 bytes) → changed to `&Instr` with field-by-field copy into `jfn.blocks[bb].instrs[slot]`
+  8. ✅ DCE disabled — `let used = i32[4096]` doesn't allocate a real array, corrupted instruction dead flags
+  9. ✅ LEA code_off fixed: `pos[0] + 3` (was `pos[0] + 4`) — rel32 starts at byte 3 of LEA instruction
+  10. ✅ Added exit(0) syscall emission at end of lower_fn
+  11. ✅ Strtab patching: `code_buf[off]` used i64 stride (esz=8) — added `poke_byte()` for byte-level access
+  12. ✅ CMP in strlen loop: was missing SIB byte — fixed ModRM+SIB encoding for `cmp byte [ptr_r+dst*1], 0`
+  13. ✅ Syscall register clobber: `mov rax, nr` destroyed string pointer before `mov rsi, rax` — save RAX→R11 when needed
 
-**Current state:** jda1 compiles hello.jda → 210-byte ELF (120 header + 73 code + 17 strtab). Binary has "Illegal instruction" error.
-
-**Remaining issues:**
-  - [ ] LEA RIP-relative fixup for string literals: displacement is wrong (`0xFFFFF800` instead of correct forward offset). `emit_lea_rip` code_off calculation or patching logic may be off-by-one.
-  - [ ] Missing `exit(0)` syscall at end of main — will segfault after print even if string is correct
-  - [ ] Verify `syscall` instruction encoding in lowered code (SYS_WRITE args: fd=1, buf=str_ptr, len)
-  - [ ] Remove debug prints from jda1.jda after all issues resolved
+**Test:** `./jda1 ../../examples/hello.jda hello_s1 && ./hello_s1` → prints "Hello Bare Metal" ✅
 
 **Depends on:** Fixes #12–#19
-**Test:** `./jda1 ../../examples/hello.jda hello_s1 && ./hello_s1` should print "Hello Bare Metal"
+
+**Known limitations (future work):**
+  - [ ] DCE disabled — needs proper array allocation (`let x = type[N]`) in jda0
+  - [ ] `print(int)` in loops breaks subsequent statements — jda0 gen_print integer bug
+  - [ ] Branch fixup loop disabled — needed for multi-block programs (if/else, loops)
+  - [ ] Debug prints still in jda1.jda — remove after bootstrap is stable
+  - [ ] fold_constants uses struct-by-value `ConstVal` — may need `&ConstVal` treatment
