@@ -52,10 +52,10 @@ docker run --rm --platform linux/amd64 -v $(pwd):/jda -w /jda/bootstrap/stage0 j
 
 **What jda1 CANNOT compile yet (needed for self-hosting):**
 - [x] ~~Pointer/reference types~~ → **NOW SUPPORTED** ✅ (March 8, 2026)
-- [ ] String escape sequences (`\n` → 0x0A in lexer)
-- [ ] `print(int)` — only `print("string")` works
-- [ ] `else if` chains (parser handles `else { }` but not `else if`)
-- [ ] `const NAME = value` declarations from source
+- [x] ~~String escape sequences~~ → **NOW SUPPORTED** ✅
+- [x] ~~`print(int)` support~~ → **NOW SUPPORTED** ✅
+- [x] ~~`else if` chains~~ → **NOW SUPPORTED** ✅
+- [x] ~~`const NAME = value` declarations~~ → **NOW SUPPORTED** ✅ (March 10, 2026)
 - [ ] `and` / `or` logical operators (no TOK_AND/TOK_OR in lexer)
 - [ ] `>=` / `<=` comparison operators
 - [ ] Inline `asm { }` blocks
@@ -240,11 +240,24 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 8. Constants (`const NAME = value`)
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ no `const` parsing from source**
+**Status:** ✅ COMPLETE — **jda0: ✅ done | jda1: ✅ done** (March 10, 2026)
 **What:**
-  - [ ] Parse `const NAME = int_literal`
-  - [ ] Store in compile-time constant table
-  - [ ] Resolve at codegen time (emit OP_CONST with stored value)
+  - [x] Parse `const NAME = int_literal`
+  - [x] Store in compile-time constant table
+  - [x] Resolve at codegen time (emit OP_CONST with stored value)
+  - [x] Check constants before variable lookup during codegen
+**Implementation:**
+  - Added ConstTable struct with parallel arrays (names, nlens, vals)
+  - Created parse_const() to parse `const NAME = VALUE` declarations
+  - Added lookup_const() for constant resolution by name
+  - Updated JirFunction to include ctab reference
+  - Modified codegen_expr() to check for constants before variable lookup
+  - Updated classify_keyword() to recognize "const" keyword
+  - Added TOK_CONST token constant
+**Testing:**
+  - ✅ Single const declarations compile and resolve correctly
+  - ✅ Multiple const declarations work
+  - ✅ Constants used in expressions evaluate to their stored values
 **Why:** jda1.jda has 40+ constants (TOK_*, NODE_*, OP_*, TYPE_*, PHYS_*, N_ALLOC_REGS, etc.)
 
 ---
