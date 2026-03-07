@@ -58,12 +58,17 @@ const TOK_SLASH   = 31
 const TOK_AMP     = 32
 const TOK_DOT     = 33
 const TOK_FATARROW= 34
-const TOK_EOF     = 35
+const TOK_GTE     = 35
+const TOK_LTE     = 36
+const TOK_AND     = 37
+const TOK_OR      = 38
+const TOK_CONST   = 39
+const TOK_EOF     = 40
 ; Type keyword tokens (classified by lexer)
-const TOK_I64     = 36
-const TOK_I32     = 37
-const TOK_I8      = 38
-const TOK_F64     = 39
+const TOK_I64     = 41
+const TOK_I32     = 42
+const TOK_I8      = 43
+const TOK_F64     = 44
 
 ; AST node types
 const NODE_FN     = 0
@@ -116,20 +121,24 @@ const OP_CMP_EQ   = 6
 const OP_CMP_NE   = 7
 const OP_CMP_LT   = 8
 const OP_CMP_GT   = 9
-const OP_RET      = 10
-const OP_BR       = 11
-const OP_JMP      = 12
-const OP_CALL     = 13
-const OP_SYSCALL  = 14
-const OP_STRLIT   = 15
-const OP_STRLEN   = 16
-const OP_STORE    = 17
-const OP_LOAD     = 18
-const OP_ADDR     = 19
-const OP_LOAD_MEM = 20
-const OP_STORE_MEM= 21
-const OP_ALLOC    = 22
-const OP_PRINT_INT= 23
+const OP_CMP_GTE  = 10
+const OP_CMP_LTE  = 11
+const OP_AND      = 12
+const OP_OR       = 13
+const OP_RET      = 14
+const OP_BR       = 15
+const OP_JMP      = 16
+const OP_CALL     = 17
+const OP_SYSCALL  = 18
+const OP_STRLIT   = 19
+const OP_STRLEN   = 20
+const OP_STORE    = 21
+const OP_LOAD     = 22
+const OP_ADDR     = 23
+const OP_LOAD_MEM = 24
+const OP_STORE_MEM= 25
+const OP_ALLOC    = 26
+const OP_PRINT_INT= 27
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -363,6 +372,9 @@ fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
     if streq(src, start, len, "match")   { ret TOK_MATCH }
     if streq(src, start, len, "print")   { ret TOK_PRINT }
     if streq(src, start, len, "syscall") { ret TOK_SYSCALL }
+    if streq(src, start, len, "const")   { ret TOK_CONST }
+    if streq(src, start, len, "and")     { ret TOK_AND }
+    if streq(src, start, len, "or")      { ret TOK_OR }
     if streq(src, start, len, "i64")     { ret TOK_I64 }
     if streq(src, start, len, "i32")     { ret TOK_I32 }
     if streq(src, start, len, "i8")      { ret TOK_I8 }
@@ -460,6 +472,16 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
         }
         else if c == '=' and next_ok and src[pos+1] == '>' {
             out_toks[count].type = TOK_FATARROW
+            count = count + 1
+            pos = pos + 2
+        }
+        else if c == '>' and next_ok and src[pos+1] == '=' {
+            out_toks[count].type = TOK_GTE
+            count = count + 1
+            pos = pos + 2
+        }
+        else if c == '<' and next_ok and src[pos+1] == '=' {
+            out_toks[count].type = TOK_LTE
             count = count + 1
             pos = pos + 2
         }
@@ -1153,8 +1175,10 @@ fn parse_binop(toks: &Token, pos: &i64, min_prec: i32) -> Node {
 fn op_precedence(op: i32) -> i32 {
     if op == TOK_STAR  or op == TOK_SLASH { ret 6 }
     if op == TOK_PLUS  or op == TOK_MINUS { ret 5 }
-    if op == TOK_LT    or op == TOK_GT    { ret 4 }
-    if op == TOK_EQEQ  or op == TOK_NEQ  { ret 3 }
+    if op == TOK_LT    or op == TOK_GT or op == TOK_LTE or op == TOK_GTE { ret 4 }
+    if op == TOK_EQEQ  or op == TOK_NEQ   { ret 3 }
+    if op == TOK_AND   { ret 2 }
+    if op == TOK_OR    { ret 1 }
     ret -1
 }
 
@@ -2063,6 +2087,10 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_NEQ   { ret OP_CMP_NE }
     if tok == TOK_LT    { ret OP_CMP_LT }
     if tok == TOK_GT    { ret OP_CMP_GT }
+    if tok == TOK_LTE   { ret OP_CMP_LTE }
+    if tok == TOK_GTE   { ret OP_CMP_GTE }
+    if tok == TOK_AND   { ret OP_AND }
+    if tok == TOK_OR    { ret OP_OR }
     ret -1
 }
 
