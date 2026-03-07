@@ -250,11 +250,25 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 9. Logical operators in expressions
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ no TOK_AND/TOK_OR/TOK_GE/TOK_LE in lexer**
+**Status:** 🟡 IN PROGRESS — **jda0: ✅ done | jda1: 🟡 lexer/parser complete, lowering pending**
 **What:**
-  - [ ] `and` / `or` in if/loop conditions with short-circuit evaluation
-  - [ ] `!= null` null comparison
+  - [x] Lexer: add TOK_AND, TOK_OR, TOK_GTE, TOK_LTE tokens
+  - [x] Parser: handle operator precedence and create AST nodes
+  - [x] Codegen: convert TOK_* to OP_* JIR opcodes
+  - [ ] x86-64 lowering: implement AND/OR/CMP operations with short-circuit evaluation
+  - [ ] `!= null` null comparison (future)
   - [ ] Chained conditions: `a >= '0' and a <= '9'`
+**Implementation (Phase 1 - Lexer & Parser):**
+  - Added token constants: TOK_GTE=35, TOK_LTE=36, TOK_AND=37, TOK_OR=38, TOK_CONST=39
+  - Multi-character operator lexing for >= and <=
+  - classify_keyword() recognizes 'and', 'or', 'const'
+  - op_precedence() with standard precedence: AND=2, OR=1, comparisons=4, equality=3
+  - JIR opcodes: OP_CMP_GTE, OP_CMP_LTE, OP_AND, OP_OR
+  - tok_to_jir_op() conversions complete
+**Testing:**
+  - ✅ jda0 executes all logical operators correctly
+  - ✅ jda1 parser accepts logical operator syntax
+  - ⏳ x86-64 lowering pending (branch: `issue-9-logical-operators`)
 **Why:** jda1.jda uses compound conditions in loops and if statements.
 
 ---
