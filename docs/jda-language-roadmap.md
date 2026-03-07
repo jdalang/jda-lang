@@ -105,33 +105,31 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 ---
 
----
-
-## 🛠 Issue Tracker & Contributor Tasks
-
-This section tracks active bugs and technical blockers for the self-hosting milestone.
-
 ### 🔴 Critical Blockers
 
-**Issue 0b: jda1 Runtime Segfault (The "Hello World" Crash)**
-- **Status:** ⚠️ OPEN — **Progress: Crashes in `parse_fn()` after lexing completes**
+**Issue 3c: jda1 Runtime Segfault (The "Hello World" Crash)**
+- **Status:** ⚠️ OPEN — **Major Progress (March 7, 2026)**
 - **Problem:** The `jda1` binary (compiled by `jda0`) crashes when trying to compile any source file.
-- **Recent Progress (March 7, 2026):**
-  - Fixed two critical jda0 bugs (#19 and #20) that were causing stack corruption and else-if fallthrough issues.
-  - Lexer (`lex()`) now completes successfully and produces correct tokens.
-  - Crash now happens in `parse_fn()` — the recursive descent parser.
-- **Current Hypothesis:** Likely a stack alignment issue in `parse_fn` prologue, or a crash in one of the deeply nested parsing functions (e.g., `parse_expr`, `parse_type`).
-- **Next Step:** Debug with `gdb` on the generated jda1 binary to identify the faulting instruction in parse_fn.
+- **Fixes Applied:**
+  - ✅ Fixed Bug #19: Stack overwrite on pointer parameters in `add_local` — now allocates `max(esz, 8)` bytes per slot
+  - ✅ Fixed Bug #20: else-if fallthrough in `gen_stmt` — now save/restore `r15` around recursive call
+- **Current Status:**
+  - Lexer (`lex()`) now completes successfully and produces correct tokens ✅
+  - Parser (`parse_fn`) successfully parses function signature and parameters ✅
+  - **Crash point**: In `codegen_stmt` when codegenning first print statement
+  - Likely causes: Stack frame size calculation, missing epilogue, or stack alignment bug in deeply nested codegen functions
+- **Next Step:** Requires detailed system-level debugging (gdb/strace) or incremental refactoring of codegen_stmt and nested functions.
 
-**Issue 0c: jda1 Silent Failure / Lack of Error Reporting**
-- **Status:** ⚠️ OPEN
-- **Problem:** When `jda1` fails (e.g., file not found, parse error), it often exits silently or segfaults instead of printing a helpful error message.
-- **Task:** Implement a `panic(msg: &i8)` function in `jda1.jda` that prints the message and exits with code 1.
-- **Entry Point:** Add `fn panic(msg: &i8)` to `bootstrap/stage1/jda1.jda`.
+**Issue 3d: jda1 Silent Failure / Lack of Error Reporting**
+- **Status:** ✅ IMPLEMENTED (March 7, 2026)
+- **Completed Tasks:**
+  - ✅ Added `panic(msg: &i8)` function that prints "PANIC: " + message and exits with code 1
+  - ✅ Added `ok(val: i64)` helper function for return statements
+- **Result:** Basic error reporting framework now in place for future use
 
 ### 🟡 Technical Debt & Stability
 
-**Issue 0d: Register Spill Verification**
+**Issue 3e: Register Spill Verification**
 - **Status:** 🧪 READY FOR TEST
 - **Problem:** `jda1` has a simple register allocator that *claims* to spill to the stack, but this path is rarely triggered in small programs.
 - **Task:** Create a test case with > 8 concurrent live variables to force spills and verify correctness.
@@ -139,7 +137,7 @@ This section tracks active bugs and technical blockers for the self-hosting mile
 - **Next Step:** Run this test once Issue 0b (segfault) is resolved.
 - **Entry Point:** `tests/conformance/stage1/spill_test.jda`.
 
-**Issue 0e: jda0 NASM Fragility**
+**Issue 3f: jda0 NASM Fragility**
 - **Status:** ✅ STABILIZED (March 7, 2026)
 - **Note:** `jda0.asm` is a one-pass compiler. It uses `r15` as a hardcoded base for globals. Any change to `gen_fn` or statement dispatch MUST preserve `r15`, `r14` (loop starts), and `rbx` (general purpose).
 - **Recent Fixes (March 7, 2026):**
