@@ -477,11 +477,6 @@ fn parse_fn(toks: &Token, pos: &i64, out: &Node) -> i32 {
     out.param_cnt = param_cnt
     out.ret_type  = ret_type
     out.child0    = body
-    print("pf: body=")
-    print(body)
-    print(" out.child0=")
-    print(out.child0)
-    print("\n")
     ret ok(0)
 }
 
@@ -491,26 +486,13 @@ fn parse_block(toks: &Token, pos: &i64) -> &Node {
     let cnt = 0
     loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
         stmts[cnt] = parse_stmt(toks, pos)
-        print("pb: stmts[")
-        print(cnt)
-        print("]=")
-        print(stmts[cnt])
-        print("\n")
         cnt = cnt + 1
     }
     expect(toks, pos, TOK_RBRACE)
-    print("pb: cnt=")
-    print(cnt)
-    print("\n")
     let block = Node{}
     block.node_type = NODE_BLOCK
     block.children  = stmts
     block.child_cnt = cnt
-    print("pb: verify type=")
-    print(block.node_type)
-    print(" cnt=")
-    print(block.child_cnt)
-    print("\n")
     ret block
 }
 
@@ -582,11 +564,6 @@ fn parse_print(toks: &Token, pos: &i64) -> Node {
     let n = Node{}
     n.node_type = NODE_PRINT
     n.child0    = arg
-    print("pp: n=")
-    print(n)
-    print(" n.type=")
-    print(n.node_type)
-    print("\n")
     ret n
 }
 
@@ -778,19 +755,7 @@ fn emit_jmp(jfn: &JirFunction, bb: i64, target: i64) {
 
 fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
     ; Copy string bytes into jfn.strtab and record offset
-    print("es: tok.str_len=")
-    print(tok.str_len)
-    print(" tok.str_start=")
-    print(tok.str_start)
-    print("\n")
     let off = jfn.strtab_pos
-    print("es: off=")
-    print(off)
-    print(" jfn.src=")
-    print(jfn.src)
-    print(" jfn.strtab=")
-    print(jfn.strtab)
-    print("\n")
     let i = 0
     loop i < tok.str_len {
         jfn.strtab[jfn.strtab_pos] = jfn.src[tok.str_start + i]
@@ -831,15 +796,6 @@ fn emit_syscall_raw(jfn: &JirFunction, bb: i64, nr: i64, a0: i64, a1: i64, a2: i
 
 fn bind(jfn: &JirFunction, tok: &Token, val_id: i64) {
     let idx = jfn.var_cnt
-    print("bind: idx=")
-    print(idx)
-    print(" str_start=")
-    print(tok.str_start)
-    print(" str_len=")
-    print(tok.str_len)
-    print(" val_id=")
-    print(val_id)
-    print("\n")
     jfn.vars[idx].name_start = tok.str_start
     jfn.vars[idx].name_len   = tok.str_len
     jfn.vars[idx].val_id     = val_id
@@ -848,13 +804,6 @@ fn bind(jfn: &JirFunction, tok: &Token, val_id: i64) {
 
 fn lookup(jfn: &JirFunction, tok: &Token) -> i64 {
     ; Walk backwards so innermost binding wins
-    print("lookup: var_cnt=")
-    print(jfn.var_cnt)
-    print(" tok.str_start=")
-    print(tok.str_start)
-    print(" tok.str_len=")
-    print(tok.str_len)
-    print("\n")
     let i = jfn.var_cnt - 1
     loop i >= 0 {
         if jfn.vars[i].name_len == tok.str_len {
@@ -891,60 +840,24 @@ fn codegen_call(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
 
 fn codegen_fn(fn_node: &Node, jfn: &JirFunction) {
     let entry_bb = new_block(jfn)
-    print("cf: child0=")
-    print(fn_node.child0)
-    print(" child0.type=")
-    print(fn_node.child0.node_type)
-    print(" child0.cnt=")
-    print(fn_node.child0.child_cnt)
-    print("\n")
     codegen_block(fn_node.child0, jfn, entry_bb)
-    print("cg: blocks=")
-    print(jfn.block_cnt)
-    print(" bb0.instrs=")
-    print(jfn.blocks[0].instr_cnt)
-    print("\n")
-    ; Dump instruction ops after codegen
-    let dbg_i = 0
-    loop dbg_i < jfn.blocks[0].instr_cnt {
-        print("  i=")
-        dbg_i = dbg_i + 1
-    }
-    print("LOOP DONE\n")
 }
 
 fn codegen_block(block: &Node, jfn: &JirFunction, bb: i64) -> i64 {
-    print("cgblk: type=")
-    print(block.node_type)
-    print(" cnt=")
-    print(block.child_cnt)
-    print(" children=")
-    print(block.children)
-    print("\n")
+    let cur_bb = bb
     let i = 0
     loop i < block.child_cnt {
-        let child = block.children[i]
-        print("cgblk: child[")
-        print(i)
-        print("].type=")
-        print(child.node_type)
-        print("\n")
-        codegen_stmt(block.children[i], jfn, bb)
+        cur_bb = codegen_stmt(block.children[i], jfn, cur_bb)
         i = i + 1
     }
-    ret bb
+    ret cur_bb
 }
 
-fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) {
-    print("cs: type=")
-    print(node.node_type)
-    print("\n")
+fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     if node.node_type == NODE_LET {
         let val_id = codegen_expr(node.child0, jfn, bb)
-        print("cs_let: token=")
-        print(node.token)
-        print("\n")
         bind(jfn, node.token, val_id)
+        ret bb
     }
     if node.node_type == NODE_RET {
         let val_id = codegen_expr(node.child0, jfn, bb)
@@ -952,47 +865,31 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) {
         ret_ins.op = OP_RET
         ret_ins.operand0 = val_id
         emit(jfn, bb, &ret_ins)
+        ret bb
     }
     if node.node_type == NODE_PRINT {
         ; print(str) → SYS_WRITE(1, str_ptr, str_len)
-        print("cs: PRINT calling codegen_expr\n")
-        print("cs: node.child0=")
-        print(node.child0)
-        print("\n")
         let str_id = codegen_expr(node.child0, jfn, bb)
-        print("cs: str_id=")
-        print(str_id)
-        print("\n")
         let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)        ; stdout fd
-        print("cs: fd_id=")
-        print(fd_id)
-        print("\n")
         let len_id = emit_strlen(jfn, bb, str_id)
-        print("cs: len_id=")
-        print(len_id)
-        print("\n")
         emit_syscall3(jfn, bb, 1, fd_id, str_id, len_id)     ; SYS_WRITE=1
-        print("cs: PRINT done\n")
+        ret bb
     }
     if node.node_type == NODE_IF {
-        codegen_if(node, jfn, bb)
+        ret codegen_if(node, jfn, bb)
     }
     if node.node_type == NODE_LOOP {
-        codegen_loop(node, jfn, bb)
+        ret codegen_loop(node, jfn, bb)
     }
     if node.node_type == NODE_SYSCALL {
         codegen_syscall(node, jfn, bb)
+        ret bb
     }
+    ret bb
 }
 
 fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
-    print("ce: type=")
-    print(node.node_type)
-    print("\n")
     if node.node_type == NODE_INT {
-        print("  INT imm=")
-        print(node.imm)
-        print("\n")
         ret emit_const(jfn, bb, TYPE_I64, node.imm)
     }
     if node.node_type == NODE_STR {
@@ -1016,7 +913,7 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     ret -1
 }
 
-fn codegen_if(node: &Node, jfn: &JirFunction, bb: i64) {
+fn codegen_if(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     let cond_id  = codegen_expr(node.child0, jfn, bb)
     let then_bb  = new_block(jfn)
     let else_bb  = new_block(jfn)
@@ -1028,9 +925,10 @@ fn codegen_if(node: &Node, jfn: &JirFunction, bb: i64) {
         codegen_block(node.child2, jfn, else_bb)
     }
     emit_jmp(jfn, else_bb, merge_bb)
+    ret merge_bb
 }
 
-fn codegen_loop(node: &Node, jfn: &JirFunction, bb: i64) {
+fn codegen_loop(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     let header_bb = new_block(jfn)
     let body_bb   = new_block(jfn)
     let exit_bb   = new_block(jfn)
@@ -1039,6 +937,7 @@ fn codegen_loop(node: &Node, jfn: &JirFunction, bb: i64) {
     emit_br(jfn, header_bb, cond_id, body_bb, exit_bb)
     codegen_block(node.child1, jfn, body_bb)
     emit_jmp(jfn, body_bb, header_bb)
+    ret exit_bb
 }
 
 fn codegen_syscall(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
@@ -1470,13 +1369,6 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     if ins.op == OP_CONST {
         let dst = regalloc_alloc(&ctx.ra, ins.id)
-        print("  CONST id=")
-        print(ins.id)
-        print(" imm=")
-        print(ins.imm)
-        print(" dst=")
-        print(dst)
-        print("\n")
         emit_mov_imm64(out, pos, dst, ins.imm)
         ret ok(0)
     }
@@ -1592,18 +1484,8 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
 
     if ins.op == OP_CMP_EQ or ins.op == OP_CMP_NE or
        ins.op == OP_CMP_LT or ins.op == OP_CMP_GT {
-        print("  CMP o0=")
-        print(ins.operand0)
-        print(" o1=")
-        print(ins.operand1)
-        print("\n")
         let a = get_or_load(&ctx.ra, out, pos, ins.operand0)
         let b = get_or_load(&ctx.ra, out, pos, ins.operand1)
-        print("  CMP a=")
-        print(a)
-        print(" b=")
-        print(b)
-        print("\n")
         emit_cmp_rr(out, pos, a, b)
         let cc = 4  ; JE   (cc nibble for SETCC: 4=E 5=NE C=L F=G)
         if ins.op == OP_CMP_NE { cc = 5 }
@@ -1742,17 +1624,14 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
 fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     bb.label_off = pos[0]
-    regalloc_init(&ctx.ra)
     let i = 0
     loop i < bb.instr_cnt {
-        print("lb: i=")
-        print(i)
-        print(" dead=")
-        print(jfn.blocks[bb.id].instrs[i].dead)
-        print(" op=")
-        print(jfn.blocks[bb.id].instrs[i].op)
-        print("\n")
         if jfn.blocks[bb.id].instrs[i].dead == 0 {
+            print(":")
+            print(i)
+            print(" op=")
+            print(jfn.blocks[bb.id].instrs[i].op)
+            print("\n")
             lower_instr(&jfn.blocks[bb.id].instrs[i], ctx, jfn, out, pos)
         }
         i = i + 1
@@ -1772,19 +1651,9 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_byte(out, pos, 0xEC)
     emit_i32_le(out, pos, 256)
 
-    print("lower: blocks=")
-    print(jfn.block_cnt)
-    print("\n")
     let i = 0
     loop i < jfn.block_cnt {
         ctx.bb_offsets[i] = pos[0]
-        print("lower: bb")
-        print(i)
-        print(" off=")
-        print(pos[0])
-        print(" instrs=")
-        print(jfn.blocks[i].instr_cnt)
-        print("\n")
         lower_block(&jfn.blocks[i], ctx, jfn, out, pos)
         i = i + 1
     }
@@ -1886,30 +1755,12 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
     emit_i64_le(buf, &pos, 0x200000)   ; p_align
 
     ; Write header section
-    print("welf: fd=")
-    print(out_fd)
-    print(" pos=")
-    print(pos)
-    print(" code_len=")
-    print(code_len)
-    print(" strtab_len=")
-    print(strtab_len)
-    print("\n")
     let w1 = syscall(1, out_fd, buf, pos)
-    print("welf: w1=")
-    print(w1)
-    print("\n")
     ; Write machine code
     let w2 = syscall(1, out_fd, code, code_len)
-    print("welf: w2=")
-    print(w2)
-    print("\n")
     ; Write string table
     if strtab_len > 0 {
         let w3 = syscall(1, out_fd, strtab, strtab_len)
-        print("welf: w3=")
-        print(w3)
-        print("\n")
     }
 }
 
