@@ -221,11 +221,21 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 7. Else-if chains
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ only if/else, not `else if`**
+**Status:** ✅ COMPLETE — **jda0: ✅ done | jda1: ✅ done** (March 8, 2026)
 **What:**
-  - [ ] Parse `if ... { } else if ... { } else { }` chains
-  - [ ] Codegen cascading conditional branches
+  - [x] Parse `if ... { } else if ... { } else { }` chains
+  - [x] Codegen cascading conditional branches
+**Implementation:**
+  - Modified `parse_if()` to check for `else if` pattern
+  - When `else` is followed by `if`, recursively parse the next if statement
+  - Creates proper AST structure for chained conditions
+  - Codegen automatically handles nested if nodes
 **Why:** jda1.jda uses many else-if chains (tokenizer keyword classification, op dispatch, etc.)
+**Testing:**
+  - ✅ Simple 2-condition chains work
+  - ✅ Complex multi-level chains (3+ conditions) work
+  - ✅ Bootstrap chain verified with updated parser
+**Note:** jda0 already had support; jda1 now matches.
 
 ---
 
@@ -674,16 +684,16 @@ jda1 must support every feature used in its own source code (~1900 lines).
     ↓ unblocks
 #6 print(int) ✅
     ↓ unblocks
-#7 Else-if chains ❌ ← NEXT TARGET
+#7 Else-if chains ✅
     ↓ unblocks
-#8 Constants ❌
+#8 Constants ❌ ← NEXT TARGET
     ↓ unblocks
 #9 Logical operators ❌
     ↓ unblocks
 #10 SELF-HOSTING ROUNDTRIP 🎯 (jda1 compiles jda1.jda)
 ```
 **Goal:** True self-hosting compiler with zero external dependencies.
-**Progress:** 6 of 9 P0 blockers complete. Next: else-if chains (needed for jda1 self-hosting).
+**Progress:** 7 of 9 P0 blockers complete (78%). Next: constants (needed for jda1 self-hosting).
 
 ---
 
@@ -756,13 +766,13 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### Current Focus (Updated March 8, 2026)
-1. ✅ **#1-6 COMPLETE** — Multi-function, structs, arrays, pointers, string escapes, print(int)
-2. 🔴 **#7 NEXT: Else-if chains** → Required for jda1 self-hosting (many chains in lexer/parser)
-3. **#8 Constants** → jda1 has 40+ const declarations
-4. **#9 Logical operators** → and/or/>=/<= operators needed
-5. **#10 Self-hosting** → jda1 compiles jda1.jda (final P0 gate)
+1. ✅ **#1-7 COMPLETE** — Multi-function, structs, arrays, pointers, string escapes, print(int), else-if chains
+2. 🔴 **#8 NEXT: Constants** → jda1 has 40+ const declarations throughout codebase
+3. **#9 Logical operators** → and/or/>=/<= operators needed for jda1 parsing
+4. **#10 Self-hosting** → jda1 compiles jda1.jda (final P0 gate)
 
 **After Self-Hosting (#10):** Phase 2 (installers, type checking, error handling) and beyond.
-**Blockers identified:**
-- Bug #24 (struct field access in Node codegen) still affects jda1 introspection, but doesn't block print(int)
-- else-if chains needed for #7 (parser heavily uses them)
+**Remaining P0 blockers:**
+- Constants (#8): `const NAME = value` parsing and compile-time resolution
+- Logical operators (#9): `and`, `or`, `>=`, `<=` in lexer and parser
+- Once both complete: jda1 can self-host and bootstrap chain is fully self-contained
