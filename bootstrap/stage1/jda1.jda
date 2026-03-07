@@ -65,6 +65,14 @@ const TOK_I32     = 37
 const TOK_I8      = 38
 const TOK_F64     = 39
 
+; Character constants
+const CHAR_BACKSLASH = 0x5C
+const CHAR_N         = 0x6E
+const CHAR_T         = 0x74
+const CHAR_QUOTE     = 0x22
+const CHAR_NEWLINE   = 0x0A
+const CHAR_TAB       = 0x09
+
 ; AST node types
 const NODE_FN     = 0
 const NODE_LET    = 1
@@ -274,6 +282,16 @@ fn str_match(src: &i8, s1: i64, s2: i64, len: i64) -> i32 {
     ret 1
 }
 
+; Process escape sequences in string literals
+; Returns the escaped byte value, or -1 if not an escape sequence
+fn process_escape(c: i8) -> i64 {
+    if c == 110 { ret 10 }   ; 'n' (110) -> newline (10)
+    if c == 116 { ret 9 }    ; 't' (116) -> tab (9)
+    if c == 92  { ret 92 }   ; '\' (92) -> backslash (92)
+    if c == 34  { ret 34 }   ; '"' (34) -> double quote (34)
+    ret -1
+}
+
 fn is_alpha(c: i8) -> i32 {
     ret (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')
 }
@@ -345,12 +363,22 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
         else if c == '"' {
             pos = pos + 1
             let start = pos
-            loop pos < src_len and src[pos] != '"' {
-                pos = pos + 1
+            loop pos < src_len {
+                let sc = src[pos]
+                if sc == '"' {
+                    break
+                }
+                if sc == 92 {
+                    ; Backslash (0x5C = 92 decimal) - skip escape sequence (count both chars)
+                    pos = pos + 2
+                } else {
+                    pos = pos + 1
+                }
             }
+            let len = pos - start
             out_toks[count].type      = TOK_STR
             out_toks[count].str_start = start
-            out_toks[count].str_len   = pos - start
+            out_toks[count].str_len   = len
             count = count + 1
             pos = pos + 1  ; skip closing "
         }
@@ -1136,12 +1164,34 @@ fn emit_jmp(jfn: &JirFunction, bb: i64, target: i64) {
 
 fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
     ; Copy string bytes into jfn.strtab and record offset
+    ; Process escape sequences: \n \t \\ \"
     let off = jfn.strtab_pos
     let i = 0
+    let processed_len = 0
     loop i < tok.str_len {
-        jfn.strtab[jfn.strtab_pos] = jfn.src[tok.str_start + i]
-        jfn.strtab_pos = jfn.strtab_pos + 1
-        i = i + 1
+        let c = jfn.src[tok.str_start + i]
+        ; Check for backslash (92 = 0x5C)
+        if c == 92 and i + 1 < tok.str_len {
+            let next_c = jfn.src[tok.str_start + i + 1]
+            let esc_val = process_escape(next_c)
+            if esc_val >= 0 {
+                jfn.strtab[jfn.strtab_pos] = esc_val
+                jfn.strtab_pos = jfn.strtab_pos + 1
+                processed_len = processed_len + 1
+                i = i + 2
+            } else {
+                ; Unknown escape, copy backslash as-is
+                jfn.strtab[jfn.strtab_pos] = c
+                jfn.strtab_pos = jfn.strtab_pos + 1
+                processed_len = processed_len + 1
+                i = i + 1
+            }
+        } else {
+            jfn.strtab[jfn.strtab_pos] = c
+            jfn.strtab_pos = jfn.strtab_pos + 1
+            processed_len = processed_len + 1
+            i = i + 1
+        }
     }
     jfn.strtab[jfn.strtab_pos] = 0   ; null terminator
     jfn.strtab_pos = jfn.strtab_pos + 1
@@ -1149,7 +1199,7 @@ fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
     let ins = Instr{}
     ins.op        = OP_STRLIT
     ins.str_start = off
-    ins.str_len   = tok.str_len
+    ins.str_len   = processed_len
     ret emit(jfn, bb, &ins)
 }
 
