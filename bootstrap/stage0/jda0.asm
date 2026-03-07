@@ -107,6 +107,8 @@ section .bss
     lv_sid resb 8
     lv_esz resb 8
     lv_isptr resb 8
+    ga_from_dot resb 8      ; 1 if last .ga_post_loop entry came from .ga_dot
+    ga_acnt     resb 8      ; array count from field; >0 means embedded array
     glb_tbl resb 32768
     glb_cnt resb 8
     glb_r15 resb 8
@@ -2120,6 +2122,10 @@ gen_expr:
     push    rbp
     mov     rbp, rsp
     push    r14
+    ; Reset lvalue metadata so callers (e.g. gs_let_expr) don't see stale values
+    mov     qword [lv_sid], -1
+    mov     qword [lv_esz], 8
+    mov     qword [lv_isptr], 0
     call    gen_expr_and
 .lp:
     call    cur_tok_type
@@ -2475,17 +2481,19 @@ gen_expr_base:
     ; --- Address-of &x ---
     cmp     rax, TOK_AMP
     jne     .not_amp
-    call    adv_tok
-    call    gen_addr        ; generates address of the variable/field into rax
+    call    adv_tok             ; skip '&'
+    call    gen_addr
+    ; For &scalar (lv_isptr=0): gen_addr emits lea, keep the stack address.
+    ; For &ptr (lv_isptr=1): emit mov rax,[rax] to load the heap pointer.
     cmp     qword [lv_isptr], 0
-    je      .maybe_binary
-    ; if it's already a pointer value, load it
+    je      .amp_done
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x8B
     call    emit1
     mov     rdi, 0x00
     call    emit1
+.amp_done:
     jmp     .maybe_binary
 
 .not_amp:
@@ -3362,6 +3370,8 @@ gen_addr:
     call    emit4
 
 .ga_post:
+    mov     qword [ga_from_dot], 0
+    mov     qword [ga_acnt], 0
     ; Check if navigation (. or [) follows — needed to decide pointer deref behavior.
     call    cur_tok_type
     cmp     rax, TOK_DOT
@@ -3396,8 +3406,30 @@ gen_addr:
     cmp     rax, TOK_DOT
     je      .ga_dot
     cmp     rax, TOK_LBRACK
-    je      .ga_index
+    je      .ga_pre_index
     jmp     .ga_done
+
+.ga_pre_index:
+    ; Before array indexing after a dot, deref to load the stored pointer/value
+    ; UNLESS it's an embedded array (ga_acnt > 0) — data is inline at field addr.
+    ; Examples:
+    ;   block.children[i]  (children: i64)       → acnt=0  → deref  ✓
+    ;   jfn.strtab[i]      (strtab: &i8)         → acnt=0  → deref  ✓
+    ;   jfn.blocks[i]      (blocks: BB[64])      → acnt=64 → skip   ✓
+    ;   ctx.ra.pool[i]     (pool: i32[8])        → acnt=8  → skip   ✓
+    cmp     qword [ga_from_dot], 0
+    je      .ga_index               ; not from dot → no deref needed
+    mov     qword [ga_from_dot], 0
+    cmp     qword [ga_acnt], 0
+    jne     .ga_index               ; embedded array (acnt>0) → no deref
+    ; scalar or pointer field → deref to load the base address
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x8B
+    call    emit1
+    mov     rdi, 0x00
+    call    emit1           ; mov rax, [rax]
+    jmp     .ga_index
 
 .ga_dot:
     call    adv_tok         ; skip '.'
@@ -3417,6 +3449,10 @@ gen_addr:
     mov     r14, [rax+16]   ; field offset
     mov     r15, [rax+24]   ; elem_size
     mov     r13, [rax+40]   ; type_id (use r13 — emit1 clobbers rbx!)
+    push    rdi
+    mov     rdi, [rax+32]   ; acnt
+    mov     [ga_acnt], rdi
+    pop     rdi
     ; emit: add rax, field_off
     mov     rdi, 0x48
     call    emit1
@@ -3429,6 +3465,7 @@ gen_addr:
     mov     [lv_esz], r15
     mov     qword [lv_sid], -1
     mov     qword [lv_isptr], 0
+    mov     qword [ga_from_dot], 1  ; flag: field address needs deref before [
     ; small non-pointer fields are scalars even if type_id is unknown
     cmp     r15, 8
     jg      .ga_type_check
@@ -3539,6 +3576,8 @@ gen_addr:
     ; lv_esz already carries the element size; lv_isptr stays 0 so
     ; the caller (gen_expr / gen_expr_stmt) uses the esz-based load/store path.
 .ga_idx_done:
+    mov     qword [ga_from_dot], 0  ; clear: result is element address, not field
+    mov     qword [ga_acnt], 0
     jmp     .ga_post_loop
 
 .ga_done:
@@ -4678,7 +4717,7 @@ gen_fn:
     push    r12
     push    r13
     cmp     rcx, 4
-    jge     .gf_param_next  ; r8/r9: pop 4 values and advance
+    jge     .gf_param_r8r9  ; r8/r9: need REX.WR prefix
     ; param regs: 0=rdi(7),1=rsi(6),2=rdx(2),3=rcx(1)
     ; emit REX.W + MOV [rbp-off], regN  (AFTER skip check)
     mov     rdi, 0x48
@@ -4716,6 +4755,43 @@ gen_fn:
     mov     rdi, 0x8D
     call    emit1
 .gf_store_disp:
+    pop     r13
+    pop     r12
+    pop     rcx
+    pop     rax             ; rbp_offset
+    neg     rax
+    mov     rdi, rax
+    push    rcx
+    push    r12
+    push    r13
+    call    emit4
+    pop     r13
+    pop     r12
+    pop     rcx
+    jmp     .gf_param_next_nostack
+.gf_param_r8r9:
+    ; emit: mov [rbp-off], r8 or r9
+    ; REX.WR (4C) MOV (89) ModRM (85=r8/rbp+disp32, 8D=r9/rbp+disp32)
+    mov     rdi, 0x4C
+    call    emit1
+    mov     rdi, 0x89
+    call    emit1
+    pop     r13
+    pop     r12
+    pop     rcx
+    push    rcx
+    push    r12
+    push    r13
+    cmp     rcx, 4
+    je      .gf_store_r8
+    ; param 5 = r9
+    mov     rdi, 0x8D
+    call    emit1
+    jmp     .gf_store_r8r9_disp
+.gf_store_r8:
+    mov     rdi, 0x85
+    call    emit1
+.gf_store_r8r9_disp:
     pop     r13
     pop     r12
     pop     rcx
