@@ -8,6 +8,7 @@ Bootstrap goal: `jda0` compiles `jda1.jda` → working `jda1` binary that can se
 - `jda1` binary starts, opens file, begins lexing ✓
 - TODOs 1–10 all PASS ✓
 - TODO 11 (end-to-end bootstrap) FAILS — jda1 parses every token as unexpected
+- **Issue #6 (print(int))**: BLOCKED — i64 struct field access bug (see Bug #24)
 
 ---
 
@@ -395,3 +396,26 @@ jda1_bin test.jda test_out                  # stage 1 compiles a test program
   - Bug #23: DONE ✅
   - fold_constants verification: DONE ✅ (enabled and validated)
   - No remaining known item in this area.
+
+---
+
+### 24. i64 struct field access reads wrong offset [NEW — Issue #6 blocker]
+**File:** `bootstrap/stage1/jda1.jda` — codegen for struct field access
+**Symptom:** Accessing i64 fields (`imm`, `token`, `token2`, `child0`, etc.) in `Node` struct reads from offset 0 instead of correct offset. When accessing `arg.imm` (should be at offset 8), reads value 7 (the `node_type` i32 field at offset 0).
+**Root cause:** Codegen for struct field access calculates wrong offset for i64 fields. Suspect issue in `gen_addr` / `.ga_dot` handling of i64 vs i32 field offsets.
+**Impact:**
+  - `parse_print()` cannot store integer literal value — `node.imm = arg.imm` reads wrong value
+  - `codegen` for `NODE_PRINT` cannot retrieve integer value — `node.imm` reads garbage
+  - Any code accessing i64 struct fields directly affected
+**Workaround attempts (all failed):**
+  1. Direct `node.child0.node_type` check — reads wrong value
+  2. `node.child0.imm` access — reads 7 instead of actual value
+  3. Storing in `node.imm` — same offset issue
+  4. Storing in `node.token` — same offset issue
+**Fix needed:** Investigate `gen_addr` in `jda0.asm` — how it calculates field offsets for i64 vs i32 fields. Compare with working i32 field access (e.g., `node.node_type`, `node.op`).
+**Test case:**
+```jda
+fn main() {
+    print(42)  ; Should print "42", currently segfaults
+}
+```
