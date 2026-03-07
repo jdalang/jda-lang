@@ -274,6 +274,18 @@ fn str_match(src: &i8, s1: i64, s2: i64, len: i64) -> i32 {
     ret 1
 }
 
+; Check if character is backslash and process escape
+; Returns: converted value if escape, or -1 if not escape
+fn try_escape(c: i8, next_c: i8) -> i64 {
+    ; Check for backslash followed by escape char
+    if c != 92 { ret -1 }  ; Not backslash
+    if next_c == 110 { ret 10 }   ; \n -> newline
+    if next_c == 116 { ret 9 }    ; \t -> tab
+    if next_c == 92  { ret 92 }   ; \\ -> backslash
+    if next_c == 34  { ret 34 }   ; \" -> quote
+    ret -1  ; Unknown escape
+}
+
 fn is_alpha(c: i8) -> i32 {
     ret (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')
 }
@@ -1146,17 +1158,33 @@ fn emit_jmp(jfn: &JirFunction, bb: i64, target: i64) {
 
 fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
     ; Copy string bytes into jfn.strtab and record offset
-    ; NOTE: Escape sequence processing requires fixing jda0 compiler bug
-    ; where if-statements inside loops in this function don't execute correctly.
-    ; Current implementation does simple copy - escape sequences appear literally.
+    ; Process escape sequences: \n \t \\ \"
     let off = jfn.strtab_pos
     let i = 0
+    let processed_len = 0
+    let src_base = tok.str_start
     loop i < tok.str_len {
-        let idx = tok.str_start + i
-        let c = jfn.src[idx]
-        jfn.strtab[jfn.strtab_pos] = c
-        jfn.strtab_pos = jfn.strtab_pos + 1
-        i = i + 1
+        let c = jfn.src[src_base + i]
+        let next_i = i + 1
+        let has_next = next_i < tok.str_len
+        let next_c = 0
+        if has_next {
+            next_c = jfn.src[src_base + next_i]
+        }
+        let esc = try_escape(c, next_c)
+        if esc >= 0 {
+            ; Escape sequence found
+            jfn.strtab[jfn.strtab_pos] = esc
+            jfn.strtab_pos = jfn.strtab_pos + 1
+            processed_len = processed_len + 1
+            i = i + 2
+        } else {
+            ; Regular character
+            jfn.strtab[jfn.strtab_pos] = c
+            jfn.strtab_pos = jfn.strtab_pos + 1
+            processed_len = processed_len + 1
+            i = i + 1
+        }
     }
     jfn.strtab[jfn.strtab_pos] = 0   ; null terminator
     jfn.strtab_pos = jfn.strtab_pos + 1
@@ -1164,7 +1192,7 @@ fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
     let ins = Instr{}
     ins.op        = OP_STRLIT
     ins.str_start = off
-    ins.str_len   = tok.str_len
+    ins.str_len   = processed_len
     ret emit(jfn, bb, &ins)
 }
 
