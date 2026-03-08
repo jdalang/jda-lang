@@ -1,16 +1,55 @@
 # Stage 0: Jda Bootstrapper (x86-64 NASM, Linux)
 # Run inside Docker: make all
+#
+# NOTE: This build includes AUTO-GENERATED constant and struct definitions.
+# These are generated from jda1.jda specification to eliminate hardcoding.
+# See: ../../tools/generate_jda0_constants.py and ../../tools/generate_jda0_structs.py
+# Regenerate: cd bootstrap/stage0 && make generate-all
 
 NASM      = nasm
 LD        = ld
 NASMFLAGS = -f elf64 -g -F dwarf
+PYTHON    = python3
 
 JDA0      = ./jda0
 JDA1_SRC  = ../stage1/jda1.jda
 JDA1_BIN  = jda1
 HELLO_SRC = ../../examples/hello.jda
 
+# Generated files (from jda1.jda specification)
+# These files are AUTO-GENERATED and may be committed to git for Docker builds
+# Regenerate whenever jda1.jda constants or structures change
+GEN_CONST = jda0_constants.asm
+GEN_STRUCT = jda0_structs.asm
+
 all: jda0
+
+# -------------------------------------------------------
+# Auto-generation: Specification and Constants
+#
+# These targets generate NASM constant definitions from jda1.jda
+# to ensure jda0 and jda1 stay in sync without manual maintenance.
+# -------------------------------------------------------
+generate-constants: $(GEN_CONST)
+
+$(GEN_CONST):
+	@echo "[gen] Generating jda0 constants from specification..."
+	$(PYTHON) ../../tools/generate_jda0_constants.py
+	@echo "[gen] Validating generated constants..."
+	$(PYTHON) ../../tools/validate_jda0_constants.py
+	@echo "[gen] Constants generated and validated successfully"
+
+generate-structs: $(GEN_STRUCT)
+
+$(GEN_STRUCT):
+	@echo "[gen] Generating jda0 struct offsets from specification..."
+	$(PYTHON) ../../tools/generate_jda0_structs.py
+	@echo "[gen] Validating generated struct layouts..."
+	$(PYTHON) ../../tools/validate_jda0_structs.py
+	@echo "[gen] Struct offsets generated and validated successfully"
+
+generate-all: generate-constants generate-structs
+	@echo "[gen] All code generation complete!"
 
 # -------------------------------------------------------
 # Stage 0: assembler → jda0 binary
@@ -18,7 +57,7 @@ all: jda0
 jda0: jda0.o
 	$(LD) -o jda0 jda0.o
 
-jda0.o: jda0.asm
+jda0.o: jda0.asm $(GEN_CONST) $(GEN_STRUCT)
 	$(NASM) $(NASMFLAGS) -o jda0.o jda0.asm
 
 # -------------------------------------------------------
@@ -59,3 +98,7 @@ test: jda0
 
 clean:
 	rm -f jda0.o jda0 $(JDA1_BIN) jda1_selfhost hello_out hello_s1 hello_sh
+	rm -f $(GEN_CONST) $(GEN_STRUCT)
+	@echo "[clean] Removed generated files"
+
+.PHONY: all generate-constants generate-structs generate-all test test-stage1 selfhost clean
