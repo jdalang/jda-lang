@@ -47,9 +47,7 @@ generate-all: generate-constants generate-structs
 jda0: jda0.o
 	$(LD) -o jda0 jda0.o
 
-jda0.o: jda0.asm
-	@test -f $(GEN_CONST) || { echo "[warn] $(GEN_CONST) not found - run 'make generate-constants' to regenerate"; }
-	@test -f $(GEN_STRUCT) || { echo "[warn] $(GEN_STRUCT) not found - run 'make generate-structs' to regenerate"; }
+jda0.o: jda0.asm $(GEN_CONST) $(GEN_STRUCT)
 	$(NASM) $(NASMFLAGS) -o jda0.o jda0.asm
 
 # -------------------------------------------------------
