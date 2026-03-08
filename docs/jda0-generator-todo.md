@@ -332,12 +332,12 @@ make stage0  # Builds with regenerated code
 | Phase | Status | % Complete | Last Updated |
 |-------|--------|-----------|--------------|
 | 1: Specification | ✅ DONE | 100% | e0fb886 |
-| 2: Constants | ⏳ NEXT | 0% | - |
-| 3: Structs | 📅 PLANNED | 0% | - |
-| 4: Functions | 📅 PLANNED | 0% | - |
+| 2: Constants | ✅ DONE | 100% | 8469239 |
+| 3: Structs | ⏳ IN PROGRESS | 50% | - |
+| 4: Functions | 📅 OPTIONAL | 0% | - |
 | 5: Integration | 📅 PLANNED | 0% | - |
 
-**Overall Project Progress**: 20% Complete (Phase 1 done, 4 to go)
+**Overall Project Progress**: 60% Complete (Phases 1-2 done, Phase 3 in progress)
 
 ---
 
