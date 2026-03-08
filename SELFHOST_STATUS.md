@@ -171,7 +171,19 @@ Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Fu
 ### Result
 - ✅ jda1 successfully parses ALL struct declarations including Node with pointer fields
 - ✅ Struct parsing phase now completes fully
-- ❌ Function parsing still segfaults (use-after-free in parse_block → needs architectural fix)
+- ❌ Function parsing still segfaults (function #3 causes crash)
+
+## Function Parsing Segfault - Detailed Investigation
+
+**Status**: Functions 1-2 parse successfully ✅ | Function 3 segfaults ❌
+
+**Debugging Process**:
+1. Disabled block parsing entirely → Still crashes ❌ (issue NOT in parse_block)
+2. Added thorough JirFunction array cleanup → Still crashes ❌ (not stale data)
+3. Allocate fresh JirFunction per function → Still crashes ❌ (not state reuse)
+4. Tried depth-aware block buffers → Still crashes ❌ (buffering doesn't help)
+
+**Conclusion**: The crash is NOT caused by use-after-free or state corruption - it's something specific about the 3rd function or a deeper code generation bug in jda0. Further investigation needed to identify which function and why.
 
 ## Summary of All Fixes This Session
 1. ✅ Fixed const declaration parsing (4 tokens vs. 5 tokens)
