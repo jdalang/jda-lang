@@ -592,7 +592,25 @@ fn lookup_field_off_any(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64
     ret -1
 }
 
+; Parse const declarations: const NAME = INT_LITERAL ;
+fn parse_const_decl(toks: &Token, pos: &i64) {
+    ; Skip const keyword
+    pos[0] = pos[0] + 1
+    ; Skip name (identifier)
+    pos[0] = pos[0] + 1
+    ; Skip = sign
+    pos[0] = pos[0] + 1
+    ; Skip integer value
+    pos[0] = pos[0] + 1
+    ; Skip semicolon
+    pos[0] = pos[0] + 1
+}
+
 fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
+    ; Check if this is actually a struct declaration
+    if toks[pos[0]].type != TOK_STRUCT {
+        ret
+    }
     expect(toks, pos, TOK_STRUCT)
     let st_name = toks[pos[0]]
     expect(toks, pos, TOK_IDENT)
@@ -3393,10 +3411,19 @@ fn main() {
     let pos = 0
     let stab = StructTable{}
 
-    ; Parse and record top-level structs first.
-    loop toks[pos].type == TOK_STRUCT {
+    ; Parse const declarations first (jda1.jda starts with 40+ consts)
+    print("[PARSE] parsing const declarations")
+    loop pos < tok_cnt and toks[pos].type == TOK_CONST {
+        parse_const_decl(toks, &pos)
+    }
+    print("[PARSE] const declarations parsed")
+
+    ; Parse and record top-level structs
+    print("[PARSE] parsing struct declarations")
+    loop pos < tok_cnt and toks[pos].type == TOK_STRUCT {
         parse_struct_decl(toks, &pos, stab)
     }
+    print("[PARSE] struct declarations parsed")
 
     ; ---- Prepare output buffers ----
     let code_buf    = alloc_pages(16)
@@ -3426,7 +3453,8 @@ fn main() {
     let jfn = JirFunction{}
 
     ; ---- Parse and compile each function immediately ----
-    loop toks[pos].type == TOK_FN {
+    print("[PARSE] parsing functions")
+    loop pos < tok_cnt and toks[pos].type == TOK_FN {
         let fi = fn_cnt
         ; Peek at name token (pos+1) before parse_fn advances pos
         fn_name_off[fi] = toks[pos + 1].str_start
