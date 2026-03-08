@@ -2128,9 +2128,16 @@ fn codegen_if(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     let then_bb  = new_block(jfn)
     let else_bb  = new_block(jfn)
     let merge_bb = new_block(jfn)
-    ; NOTE: Block bodies are skipped during parsing, so child0 is not set and
-    ; no body code is generated. The if just creates empty branches.
-    emit_jmp(jfn, bb, merge_bb)
+    if node.child0 != 0 {
+        let cond_id  = codegen_expr(node.child0, jfn, bb)
+        emit_br(jfn, bb, cond_id, then_bb, else_bb)
+        emit_jmp(jfn, then_bb, merge_bb)
+        emit_jmp(jfn, else_bb, merge_bb)
+    } else {
+        ; Block bodies are skipped during parsing, so child0 is not set.
+        ; Just jump straight to merge if no condition.
+        emit_jmp(jfn, bb, merge_bb)
+    }
     ret merge_bb
 }
 
@@ -2139,10 +2146,15 @@ fn codegen_loop(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     let body_bb   = new_block(jfn)
     let exit_bb   = new_block(jfn)
     emit_jmp(jfn, bb, header_bb)
-    let cond_id = codegen_expr(node.child0, jfn, header_bb)
-    emit_br(jfn, header_bb, cond_id, body_bb, exit_bb)
-    ; NOTE: Block bodies are now skipped during parsing, so we don't access them
-    ; in codegen. The loop condition branches, but no body code is generated.
+    if node.child0 != 0 {
+        let cond_id = codegen_expr(node.child0, jfn, header_bb)
+        emit_br(jfn, header_bb, cond_id, body_bb, exit_bb)
+    } else {
+        ; Block bodies are skipped during parsing, so child0 is not set.
+        ; Create a dummy always-true condition.
+        let dummy_cond = emit_const(jfn, header_bb, TYPE_I64, 1)
+        emit_br(jfn, header_bb, dummy_cond, body_bb, exit_bb)
+    }
     emit_jmp(jfn, body_bb, header_bb)
     ret exit_bb
 }
