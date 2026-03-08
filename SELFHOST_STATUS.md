@@ -225,4 +225,22 @@ Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Fu
    - Would require detailed codegen analysis or use of GDB
    - May be pointer arithmetic issue or struct size calculation
 
-**Current Commit**: `00e6925` - Block body skipping approach (prevents some crashes but generates incomplete code)
+**Current Commit**: `6a7afd1` - Added null checks to codegen_if/codegen_loop
+
+## Latest Progress: Null Check Safety (March 8, 2026 - Final Fix This Session)
+
+**Fix Implemented**: Added null pointer checks in codegen_if() and codegen_loop()
+- Checks if node.child0 is non-null before calling codegen_expr()
+- If null (due to block skipping), creates dummy condition or skips codegen
+
+**Impact**:
+- ✅ **Major improvement**: jda1 no longer segfaults when compiling jda1.jda
+- ✅ Progresses through multiple functions and blocks
+- ⚠️ Now hits proper "Parse error: unexpected token" (legitimate parse issue)
+- ❌ Generated code is still incomplete (block bodies are empty)
+
+**Significance**: This is substantial progress - we went from immediate segfault to proper parsing error. The system is now stable enough for more debugging. The parse error suggests jda1 is hitting a syntax issue in jda1.jda itself.
+
+**Status**: Self-hosting is closer but not yet achieved. Need to either:
+1. Properly store and codegen block bodies
+2. OR understand and fix the parse error preventing full compilation
