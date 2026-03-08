@@ -218,7 +218,7 @@ struct VarEntry {
 struct JirFunction {
     src:        &i8
     src_len:    i64
-    blocks:     BasicBlock[8]
+    blocks:     BasicBlock[64]
     block_cnt:  i64
     vars:       VarEntry[32]
     var_cnt:    i64
@@ -1376,6 +1376,9 @@ fn parse_syscall(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
 
 fn new_block(jfn: &JirFunction) -> i64 {
     let id = jfn.block_cnt
+    if id < 0 or id >= 64 {
+        panic("Too many blocks")
+    }
     jfn.blocks[id].id        = id
     jfn.blocks[id].instr_cnt = 0
     jfn.blocks[id].label_off = -1
@@ -3395,6 +3398,9 @@ fn main() {
     let fn_code_off = i64[64]
     let main_idx    = -1
 
+    ; Allocate JirFunction once to avoid stack overflow from repeated allocations
+    let jfn = JirFunction{}
+
     ; ---- Parse and compile each function immediately ----
     loop toks[pos].type == TOK_FN {
         let fi = fn_cnt
@@ -3402,10 +3408,43 @@ fn main() {
         fn_name_off[fi] = toks[pos + 1].str_start
         fn_name_len[fi] = toks[pos + 1].str_len
 
-        let jfn = JirFunction{}
+        ; Fully reinitialize jfn for the next function
+        jfn.var_cnt = 0
+        jfn.block_cnt = 0
+        jfn.next_slot_off = 0
+        jfn.next_id = 0
+        jfn.strtab_pos = 0
+        jfn.param_cnt = 0
         jfn.src = src_buf
         jfn.src_len = src_len
         jfn.stab = stab
+
+        ; Clear vars array by explicitly setting entries to zero state
+        let vi = 0
+        loop vi < 32 {
+            jfn.vars[vi].name_start = 0
+            jfn.vars[vi].name_len = 0
+            jfn.vars[vi].slot_off = 0
+            jfn.vars[vi].stype = 0
+            vi = vi + 1
+        }
+
+        ; Clear blocks array instr_cnt field (to ensure fresh blocks)
+        let bi = 0
+        loop bi < 64 {
+            jfn.blocks[bi].id = 0
+            jfn.blocks[bi].instr_cnt = 0
+            jfn.blocks[bi].label_off = -1
+            bi = bi + 1
+        }
+
+        ; Clear param_slots array
+        let pi = 0
+        loop pi < 16 {
+            jfn.param_slots[pi] = 0
+            pi = pi + 1
+        }
+
         parse_fn(toks, &pos, &jfn, stab, src_buf)
         fold_constants(&jfn)
         dce(&jfn)
