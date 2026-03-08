@@ -185,7 +185,7 @@ Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Fu
 
 **Conclusion**: The crash is NOT caused by use-after-free or state corruption - it's something specific about the 3rd function or a deeper code generation bug in jda0. Further investigation needed to identify which function and why.
 
-## Summary of All Fixes This Session
+## Summary of All Fixes This Session (Earlier)
 1. ✅ Fixed const declaration parsing (4 tokens vs. 5 tokens)
 2. ✅ Fixed hex literal values in const declarations (decimal conversion)
 3. ✅ Fixed struct pointer type parsing (& token handling)
@@ -194,3 +194,35 @@ Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Fu
 6. ✅ Verified all struct definitions parse correctly (including pointer fields)
 7. ✅ Confirmed jda1 successfully compiles simple programs (hello.jda)
 8. ❌ Function parsing still segfaults when processing jda1.jda (use-after-free in parse_block)
+
+## Latest Investigation: Block Body Skipping Approach (March 8, 2026 - Continued Session)
+
+**Attempted Solution**: Skip block body parsing entirely to avoid use-after-free
+- Modified parse_if(): Skip block tokens with brace-depth tracking instead of calling parse_block
+- Modified parse_loop(): Similar approach
+- Modified codegen_if/codegen_loop(): Removed codegen_block calls
+
+**Results**:
+- ✅ Eliminates segfault during jda1.jda lexing/parsing phases
+- ✅ jda1 can compile simple programs (hello.jda) without crashing
+- ❌ Generated code is non-functional (block bodies aren't codegenned)
+- ❌ jda1 still crashes when trying to compile jda1.jda (different crash point)
+
+**Root Cause Analysis**:
+- Block parsing stores pointers to stack-allocated or arena nodes
+- When nested blocks reuse the arena, pointers become invalid
+- Solution of skipping blocks avoids the crash but produces incomplete code
+- Attempting to properly allocate conditions in an expression arena crashes jda0
+  - Issue: assigning Node structs to arena arrays triggers segfault in jda0-generated code
+  - Suggests bug in jda0's struct assignment codegen for large structs
+
+**Next Steps Required**:
+1. **Proper Block Allocation**: Need heap allocation or different AST representation
+   - Can't use arena because jda0's struct assignment is broken for this use case
+   - Could refactor to return nodes by reference from parsers
+   - Could embed expressions directly in if/loop nodes
+2. **jda0 Debugging**: The crash in expr_arena assignment suggests jda0 bug
+   - Would require detailed codegen analysis or use of GDB
+   - May be pointer arithmetic issue or struct size calculation
+
+**Current Commit**: `00e6925` - Block body skipping approach (prevents some crashes but generates incomplete code)
