@@ -319,7 +319,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 ## Phase 2: Cross-Platform Installation
 
-### 11. Linux x86-64 installer
+### 11. Make is Mac/Windows/Linux x86 x64 compaatible
 **Status:** [ ] TODO
 **What:**
   - [ ] Shell script: `curl -sSf https://jda-lang.org/install.sh | sh`
@@ -679,22 +679,22 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 ## Competitor Comparison
 
-| Feature | C | Go | Rust | Python | Ruby | **Jda** |
-|---------|---|-----|------|--------|------|---------|
-| Cross-platform | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ Linux x86-64 only |
-| Self-hosted | ✅ | ✅ | ✅ (LLVM) | N/A | N/A | 🔧 In progress |
-| Package manager | cmake | go mod | cargo | pip | gem | ❌ Spec only |
-| Test framework | external | go test | cargo test | pytest | minitest | ❌ |
-| Formatter | clang-format | gofmt | rustfmt | black | rubocop | ❌ |
-| Debugger | GDB | dlv | rust-gdb | pdb | byebug | ❌ |
-| IDE/LSP | clangd | gopls | rust-analyzer | pylsp | solargraph | ❌ Spec only |
-| REPL | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
-| Generics | templates | ✅ | ✅ | ✅ | duck typing | ❌ |
-| Error handling | errno | error | Result<T,E> | exceptions | exceptions | ❌ |
-| Concurrency | pthreads | goroutines | async/tokio | asyncio | threads | ❌ Spec only |
-| ML native | ❌ | ❌ | ❌ | PyTorch/NumPy | ❌ | ❌ Spec only |
-| Zero deps compiler | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ NASM → bare metal |
-| Docs/website | cppreference | go.dev | rust-lang.org | python.org | ruby-lang.org | jdalang.org |
+| Feature            | C            | Go        | Rust         | Python     | Ruby          | **Jda**              |
+|--------------------|--------------|-----------|--------------|------------|---------------|----------------------|
+| Cross-platform     | ✅           | ✅        | ✅            | ✅         | ✅             | ❌ Linux x86-64 only |
+| Self-hosted        | ✅           | ✅        | ✅ (LLVM)     | N/A        | N/A           | 🔧 In progress       |
+| Package manager    | cmake        | go mod    | cargo        | pip        | gem           | ❌ Spec only         |
+| Test framework     | external     | go test   | cargo test   | pytest     | minitest      | ❌                   |
+| Formatter          | clang-format | gofmt     | rustfmt      | black      | rubocop       | ❌                   |
+| Debugger           | GDB          | dlv       | rust-gdb     | pdb        | byebug        | ❌                   |
+| IDE/LSP            | clangd       | gopls     | rust-analyzer| pylsp      | solargraph    | ❌ Spec only         |
+| REPL               | ❌           | ❌         | ❌           | ✅         | ✅             | ❌                   |
+| Generics           | templates    | ✅        | ✅            | ✅         | duck typing   | ❌                   |
+| Error handling     | errno        | error     | Result<T,E>  | exceptions | exceptions    | ❌                   |
+| Concurrency        | pthreads     | goroutines| async/tokio  | asyncio    | threads       | ❌ Spec only         |
+| ML native          | ❌           | ❌         | ❌           |PyTorch/NumPy| ❌            | ❌ Spec only        |
+| Zero deps compiler | ❌           | ❌         | ❌           | ❌          | ❌            | ✅ NASM → bare metal |
+| Docs/website       | cppreference | go.dev    | rust-lang.org| python.org  | ruby-lang.org | jdalang.org         |
 
 ---
 
