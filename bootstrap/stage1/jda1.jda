@@ -625,7 +625,7 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
     stab.field_cnt = base + fcnt
 }
 
-fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
+fn parse_expr_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     ; Fast path for direct field store: base[optional_idx].field = rhs
     let save = pos[0]
     if toks[pos[0]].type == TOK_IDENT {
@@ -649,7 +649,7 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
                 idx_imm = toks[pos[0]].imm
                 pos[0] = pos[0] + 1
             } else {
-                idx = parse_expr(toks, pos)
+                idx = parse_expr(toks, pos, stab, src)
                 idx_kind = 2
             }
             expect(toks, pos, TOK_RBRACK)
@@ -744,14 +744,14 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
                         ret n
                     }
                 }
-                let rhs = parse_expr(toks, pos)
+                let rhs = parse_expr(toks, pos, stab, src)
                 n.child1 = rhs
                 ret n
             }
         }
         if has_idx == 1 and toks[pos[0]].type == TOK_EQ {
             pos[0] = pos[0] + 1
-            let rhs = parse_expr(toks, pos)
+            let rhs = parse_expr(toks, pos, stab, src)
             let n = Node{}
             n.node_type = NODE_INDEX_STORE
             n.token = base.str_start
@@ -774,10 +774,10 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
     }
     pos[0] = save
 
-    let lhs = parse_expr(toks, pos)
+    let lhs = parse_expr(toks, pos, stab, src)
     if toks[pos[0]].type == TOK_EQ {
         pos[0] = pos[0] + 1
-        let rhs = parse_expr(toks, pos)
+        let rhs = parse_expr(toks, pos, stab, src)
         if lhs.node_type == NODE_FIELD {
             let n = Node{}
             n.node_type = NODE_FIELD_STORE
@@ -917,8 +917,8 @@ fn parse_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     if t == TOK_IF    { ret parse_if(toks, pos, stab, src) }
     if t == TOK_LOOP  { ret parse_loop(toks, pos, stab, src) }
     if t == TOK_RET   { ret parse_ret(toks, pos) }
-    if t == TOK_PRINT { ret parse_print(toks, pos) }
-    ret parse_expr_stmt(toks, pos)
+    if t == TOK_PRINT { ret parse_print(toks, pos, stab, src) }
+    ret parse_expr_stmt(toks, pos, stab, src)
 }
 
 fn parse_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
@@ -939,7 +939,7 @@ fn parse_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     if arr_decl == 1 {
         let t = toks[pos[0]]
         pos[0] = pos[0] + 2
-        let cnt = parse_expr(toks, pos)
+        let cnt = parse_expr(toks, pos, stab, src)
         expect(toks, pos, TOK_RBRACK)
         val.node_type = NODE_ARRAY_ALLOC
         val.child0    = cnt
@@ -954,7 +954,7 @@ fn parse_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
             val.token2 = t.str_len
         }
     } else {
-        val = parse_expr(toks, pos)
+        val = parse_expr(toks, pos, stab, src)
     }
     let n = Node{}
     n.node_type = NODE_LET
@@ -966,7 +966,7 @@ fn parse_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
 
 fn parse_if(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     expect(toks, pos, TOK_IF)
-    let cond   = parse_expr(toks, pos)
+    let cond   = parse_expr(toks, pos, stab, src)
     let then_b = parse_block(toks, pos, stab, src)
     let else_b = Node{}
     if toks[pos[0]].type == TOK_ELSE {
@@ -990,7 +990,7 @@ fn parse_if(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
 
 fn parse_loop(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     expect(toks, pos, TOK_LOOP)
-    let cond = parse_expr(toks, pos)
+    let cond = parse_expr(toks, pos, stab, src)
     let body = parse_block(toks, pos, stab, src)
     let n = Node{}
     n.node_type = NODE_LOOP
@@ -1046,7 +1046,7 @@ fn parse_ret(toks: &Token, pos: &i64) -> Node {
                 idx_imm = toks[pos[0]].imm
                 pos[0] = pos[0] + 1
             } else {
-                idx = parse_expr(toks, pos)
+                idx = parse_expr(toks, pos, stab, src)
                 idx_kind = 2
             }
             expect(toks, pos, TOK_RBRACK)
@@ -1079,14 +1079,14 @@ fn parse_ret(toks: &Token, pos: &i64) -> Node {
     }
     pos[0] = save
 
-    let val = parse_expr(toks, pos)
+    let val = parse_expr(toks, pos, stab, src)
     let n = Node{}
     n.node_type = NODE_RET
     n.child0    = val
     ret n
 }
 
-fn parse_print(toks: &Token, pos: &i64) -> Node {
+fn parse_print(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     expect(toks, pos, TOK_PRINT)
     expect(toks, pos, TOK_LPAREN)
     ; Check if argument is integer literal - handle inline to avoid struct return bug
@@ -1104,7 +1104,7 @@ fn parse_print(toks: &Token, pos: &i64) -> Node {
         ret n
     }
     ; For non-integer arguments, use normal parsing
-    let arg = parse_expr(toks, pos)
+    let arg = parse_expr(toks, pos, stab, src)
     expect(toks, pos, TOK_RPAREN)
     let n = Node{}
     n.node_type = NODE_PRINT
@@ -1123,7 +1123,7 @@ fn parse_postfix(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
         let tok_type = toks[pos[0]].type
         if tok_type == TOK_LBRACK {
             pos[0] = pos[0] + 1
-            let idx = parse_expr(toks, pos)
+            let idx = parse_expr(toks, pos, stab, src)
             expect(toks, pos, TOK_RBRACK)
             let n = Node{}
             n.node_type = NODE_BINOP
@@ -1229,22 +1229,20 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
     if t.type == TOK_IDENT {
         pos[0] = pos[0] + 1
         if toks[pos[0]].type == TOK_LPAREN {
-            ret parse_call_rest(toks, pos, t)
+            ret parse_call_rest(toks, pos, t, stab, src)
         }
-        ; NOTE: Struct literal init disabled - requires refactoring to pass stab/src through all parse functions
-        ; Temporarily disabled to avoid conflicts with variable-followed-by-block patterns
-        ; TODO: Re-implement after refactoring parser chain
-        ; if toks[pos[0]].type == TOK_LBRACE {
-        ;     let sid = lookup_struct(stab, src, t.str_start, t.str_len)
-        ;     if sid >= 0 {
-        ;         pos[0] = pos[0] + 1
-        ;         expect(toks, pos, TOK_RBRACE)
-        ;         let n = Node{}
-        ;         n.node_type = NODE_STRUCT_INIT
-        ;         n.token     = t
-        ;         ret n
-        ;     }
-        ; }
+        if toks[pos[0]].type == TOK_LBRACE {
+            ; Struct literal init: Type{} — only if it's actually a struct type
+            let sid = lookup_struct(stab, src, t.str_start, t.str_len)
+            if sid >= 0 {
+                pos[0] = pos[0] + 1
+                expect(toks, pos, TOK_RBRACE)
+                let n = Node{}
+                n.node_type = NODE_STRUCT_INIT
+                n.token     = t
+                ret n
+            }
+        }
         let idx = Node{}
         let has_idx = 0
         let idx_kind = 0
@@ -1263,7 +1261,7 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
                 idx_imm = toks[pos[0]].imm
                 pos[0] = pos[0] + 1
             } else {
-                idx = parse_expr(toks, pos)
+                idx = parse_expr(toks, pos, stab, src)
                 idx_kind = 2
             }
             expect(toks, pos, TOK_RBRACK)
@@ -1319,11 +1317,11 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
         ret n
     }
     if t.type == TOK_SYSCALL {
-        ret parse_syscall(toks, pos)
+        ret parse_syscall(toks, pos, stab, src)
     }
     if t.type == TOK_LPAREN {
         pos[0] = pos[0] + 1
-        let inner = parse_expr(toks, pos)
+        let inner = parse_expr(toks, pos, stab, src)
         expect(toks, pos, TOK_RPAREN)
         ret inner
     }
@@ -1331,12 +1329,12 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
     ret Node{}
 }
 
-fn parse_call_rest(toks: &Token, pos: &i64, name: &Token) -> Node {
+fn parse_call_rest(toks: &Token, pos: &i64, name: &Token, stab: &StructTable, src: &i8) -> Node {
     expect(toks, pos, TOK_LPAREN)
     let args = Node[16]
     let cnt  = 0
     loop toks[pos[0]].type != TOK_RPAREN {
-        args[cnt] = parse_expr(toks, pos)
+        args[cnt] = parse_expr(toks, pos, stab, src)
         cnt = cnt + 1
         if toks[pos[0]].type == TOK_COMMA {
             pos[0] = pos[0] + 1
@@ -1352,16 +1350,16 @@ fn parse_call_rest(toks: &Token, pos: &i64, name: &Token) -> Node {
     ret n
 }
 
-fn parse_syscall(toks: &Token, pos: &i64) -> Node {
+fn parse_syscall(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     expect(toks, pos, TOK_SYSCALL)
     expect(toks, pos, TOK_LPAREN)
-    let nr   = parse_expr(toks, pos)
+    let nr   = parse_expr(toks, pos, stab, src)
     expect(toks, pos, TOK_COMMA)
-    let arg0 = parse_expr(toks, pos)
+    let arg0 = parse_expr(toks, pos, stab, src)
     expect(toks, pos, TOK_COMMA)
-    let arg1 = parse_expr(toks, pos)
+    let arg1 = parse_expr(toks, pos, stab, src)
     expect(toks, pos, TOK_COMMA)
-    let arg2 = parse_expr(toks, pos)
+    let arg2 = parse_expr(toks, pos, stab, src)
     expect(toks, pos, TOK_RPAREN)
     let n = Node{}
     n.node_type = NODE_SYSCALL
