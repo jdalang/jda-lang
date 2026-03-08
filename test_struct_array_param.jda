@@ -1,0 +1,40 @@
+; Test struct array passed as parameter
+; This should expose jda0's codegen issue with parameter-passed arrays
+
+struct Token {
+    type:  i32
+    start: i64
+    len:   i64
+    imm:   i64
+}
+
+fn process_tokens(toks: &Token, count: i64) {
+    print("In process_tokens")
+
+    print("Test 1: Access toks[0].type")
+    let t = toks[0].type
+    print(t)
+
+    print("Test 2: Assign toks[0].type")
+    toks[0].type = 42
+    print("Assigned 42")
+
+    print("Test 3: Access toks[1].start")
+    let s = toks[1].start
+    print(s)
+
+    print("Test 4: Assign multiple fields")
+    toks[2].type = 100
+    toks[2].start = 200
+    toks[2].len = 300
+    print("Assigned multiple")
+}
+
+fn main() {
+    let toks = Token[10]
+
+    print("Calling process_tokens")
+    process_tokens(toks, 10)
+
+    print("All tests passed!")
+}
