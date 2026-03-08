@@ -413,7 +413,11 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
                 }
                 if sc == 92 {
                     ; Backslash - skip next character (escape sequence)
-                    pos = pos + 2
+                    pos = pos + 1
+                    ; Check if there's a character after the backslash
+                    if pos < src_len {
+                        pos = pos + 1
+                    }
                 } else {
                     pos = pos + 1
                 }
@@ -423,7 +427,10 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
             out_toks[count].str_start = start
             out_toks[count].str_len   = len
             count = count + 1
-            pos = pos + 1  ; skip closing "
+            ; Skip closing quote if we found one
+            if pos < src_len and src[pos] == '"' {
+                pos = pos + 1
+            }
         }
 
         ; Integer literal
