@@ -244,3 +244,35 @@ Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Fu
 **Status**: Self-hosting is closer but not yet achieved. Need to either:
 1. Properly store and codegen block bodies
 2. OR understand and fix the parse error preventing full compilation
+
+## Session Continued: Progressive Parsing Fixes (March 8, 2026 - Extended Session)
+
+**Major Improvements Made**:
+1. ✅ Added null checks to codegen_if/codegen_loop (Commit 6a7afd1)
+   - Prevents segfault from accessing uninitialized child0
+   - Allows jda1 to get past crash and reach proper parsing errors
+
+2. ✅ Added unary minus operator support (Commit d1d43db)
+   - Enables parsing of negative literals like `-1`
+   - Progress: function 4 → function 5
+
+3. ✅ Added bitwise AND (&) and NOT (~) operator support (Commit 3acebda)
+   - TOK_AMP treated as binary operator with precedence
+   - Added TOK_TILDE constant for bitwise NOT
+   - Progress: function 5 → function 6
+
+**Current Status**:
+- Successfully parsing up to function 6/119
+- No segfaults - only legitimate parse errors
+- Generated code is still incomplete (block bodies skipped)
+- **Each fix progressively enables parsing of more functions**
+
+**Pattern Identified**:
+- jda1.jda uses advanced language features throughout
+- Requires continued operator/syntax support additions
+- Each added feature allows ~1-5 more functions to parse
+
+**Next Steps**:
+1. Continue analyzing parse errors and implementing missing operators/syntax
+2. Eventually achieve full parsing of jda1.jda
+3. Then fix code generation to properly handle block bodies
