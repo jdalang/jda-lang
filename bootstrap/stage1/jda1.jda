@@ -609,19 +609,10 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
     if toks[pos[0]].type != TOK_STRUCT {
         ret
     }
-    print("[struct] at pos ")
-    print(pos[0])
     expect(toks, pos, TOK_STRUCT)
-    print("[struct] got name token")
     let st_name = toks[pos[0]]
     expect(toks, pos, TOK_IDENT)
-    print("[struct] got ident")
-    print("[struct] next token type=")
-    print(toks[pos[0]].type)
-    print(" expected LBRACE=")
-    print(TOK_LBRACE)
     expect(toks, pos, TOK_LBRACE)
-    print("[struct] got lbrace")
 
     let sid = stab.cnt
     let base = stab.field_cnt
@@ -632,15 +623,9 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
     let fcnt = 0
     let off  = 0
     loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
-        print("[field] at pos=")
-        print(pos[0])
-        print(" type=")
-        print(toks[pos[0]].type)
         let fname = toks[pos[0]]
         expect(toks, pos, TOK_IDENT)
-        print("[field] got ident")
         expect(toks, pos, TOK_COLON)
-        print("[field] got colon")
         ; consume type token (scalar or struct name) and optional [N]
         pos[0] = pos[0] + 1
         if toks[pos[0]].type == TOK_LBRACK {
