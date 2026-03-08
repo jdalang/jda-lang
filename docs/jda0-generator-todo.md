@@ -86,38 +86,38 @@
   - [x] 29 constants in old jda0 but not in jda1 (system calls, ELF constants)
   - [x] 46 new constants from jda1 (new opcodes, struct sizes)
 
-### 2.4 Integrate into Build System
-- [ ] Update Makefile:
-  - [ ] Add `generate-jda0-constants` target
-  - [ ] Make it run before assembly
-  - [ ] Add validation step
-  - [ ] Fail build if validation fails
-- [ ] Update .gitignore
-  - [ ] Add `bootstrap/stage0/jda0_constants.asm` (generated file)
-- [ ] Add to build comments
-  - [ ] Document that constants are auto-generated
-  - [ ] Point to generation script
+### 2.4 Integrate into Build System ✅
+- [x] Update Makefile:
+  - [x] Add `generate-jda0-constants` target
+  - [x] Make it run before assembly
+  - [x] Add validation step
+  - [x] Fail build if validation fails
+- [x] Update .gitignore
+  - [x] Add `bootstrap/stage0/jda0_constants.asm` (generated file)
+- [x] Add to build comments
+  - [x] Document that constants are auto-generated
+  - [x] Point to generation script
 
-### 2.5 Testing
-- [ ] Run generator: `python3 tools/generate_jda0_constants.py`
-- [ ] Validate output: `python3 tools/validate_jda0_constants.py`
-- [ ] Check all constants match jda0.asm
-- [ ] Build jda0: `make stage0`
-- [ ] Test jda0: `make test-stage0`
-- [ ] Compare test output with baseline
-- [ ] All tests pass ✓
+### 2.5 Testing ✅
+- [x] Run generator: `python3 tools/generate_jda0_constants.py`
+- [x] Validate output: `python3 tools/validate_jda0_constants.py`
+- [x] Check all constants match jda0.asm
+- [x] Build jda0: `make stage0`
+- [x] Test jda0: `make test-stage0`
+- [x] Compare test output with baseline
+- [x] All tests pass ✓
 
-### 2.6 Documentation
-- [ ] Add comments to generator script
-- [ ] Document generated file format
-- [ ] Add regeneration instructions
-- [ ] Update README with generation process
+### 2.6 Documentation ✅
+- [x] Add comments to generator script
+- [x] Document generated file format
+- [x] Add regeneration instructions
+- [x] Update README with generation process
 
-### 2.7 Commit Phase 2
-- [ ] Commit message: `feat: generate jda0 constants from spec`
-- [ ] Include: generator script, validation, generated .asm file
-- [ ] Verify: all tests still pass
-- [ ] Push to feature branch
+### 2.7 Commit Phase 2 ✅
+- [x] Commit message: `feat: generate jda0 constants from spec`
+- [x] Include: generator script, validation, generated .asm file
+- [x] Verify: all tests still pass
+- [x] Push to feature branch
 
 **Phase 2 Success Criteria**:
 - ✅ All 45 tokens generated correctly
@@ -167,11 +167,11 @@
 - [x] Reports gaps between fields (informational)
 - [x] Validation results: All 11/11 structures valid, 0 errors
 
-### 3.4 Integration
-- [ ] Update Makefile
-- [ ] Add struct generation to build process
-- [ ] Include validation in build
-- [ ] Update .gitignore
+### 3.4 Integration ✅
+- [x] Update Makefile
+- [x] Add struct generation to build process
+- [x] Include validation in build
+- [x] Update .gitignore
 
 ### 3.5 Testing ✅
 - [x] Generated struct offsets validated: 11/11 structures valid
@@ -332,12 +332,12 @@ make stage0  # Builds with regenerated code
 | Phase | Status | % Complete | Last Updated |
 |-------|--------|-----------|--------------|
 | 1: Specification | ✅ DONE | 100% | e0fb886 |
-| 2: Constants | ✅ DONE | 100% | 8469239 |
-| 3: Structs | ✅ DONE | 100% | 1de8a47 |
+| 2: Constants | ✅ DONE | 100% | 8469239 (integration complete) |
+| 3: Structs | ✅ DONE | 100% | 1de8a47 (integration complete) |
 | 4: Functions | 📅 OPTIONAL | 0% | - |
-| 5: Integration | 📅 NEXT | 0% | - |
+| 5: Integration | ✅ COMPLETE | 100% | Phase 5 verified |
 
-**Overall Project Progress**: 80% Complete (Phases 1-3 done, Phase 5 next)
+**Overall Project Progress**: ✅ 100% COMPLETE (All required phases done, ready for main merge)
 
 ---
 
