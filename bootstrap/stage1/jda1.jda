@@ -64,13 +64,15 @@ const TOK_AND     = 37
 const TOK_OR      = 38
 const TOK_PIPE    = 39  ; Bitwise OR (|)
 const TOK_TILDE   = 40  ; Bitwise NOT (~)
-const TOK_CONST   = 41  ; Shifted from 39
-const TOK_EOF     = 42  ; Shifted from 40
+const TOK_SHR     = 41  ; Right shift (>>)
+const TOK_SHL     = 42  ; Left shift (<<)
+const TOK_CONST   = 43
+const TOK_EOF     = 44
 ; Type keyword tokens (classified by lexer)
-const TOK_I64     = 43  ; Shifted from 41
-const TOK_I32     = 44  ; Shifted from 42
-const TOK_I8      = 45  ; Shifted from 43
-const TOK_F64     = 46  ; Shifted from 44
+const TOK_I64     = 45
+const TOK_I32     = 46
+const TOK_I8      = 47
+const TOK_F64     = 48
 
 ; AST node types
 const NODE_FN     = 0
@@ -141,6 +143,8 @@ const OP_LOAD_MEM = 24
 const OP_STORE_MEM= 25
 const OP_ALLOC    = 26
 const OP_PRINT_INT= 27
+const OP_SHR      = 28  ; Logical right shift
+const OP_SHL      = 29  ; Left shift
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -205,7 +209,7 @@ struct Instr {
 
 struct BasicBlock {
     id:        i64
-    instrs:    Instr[64]
+    instrs:    Instr[128]
     instr_cnt: i64
     label_off: i64
 }
@@ -220,7 +224,7 @@ struct VarEntry {
 struct JirFunction {
     src:        &i8
     src_len:    i64
-    blocks:     BasicBlock[64]
+    blocks:     BasicBlock[256]
     block_cnt:  i64
     vars:       VarEntry[32]
     var_cnt:    i64
@@ -394,25 +398,25 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
         let c = src[pos]
         let next_ok = pos + 1 < src_len
 
-        ; Skip whitespace
-        if c == ' ' or c == '\t' or c == '\n' or c == '\r' {
+        ; Skip whitespace: space=32 tab=9 newline=10 CR=13
+        if c == 32 or c == 9 or c == 10 or c == 13 {
             pos = pos + 1
         }
 
-        ; Skip line comments: ;...
-        else if c == ';' {
-            loop pos < src_len and src[pos] != '\n' {
+        ; Skip line comments: ;=59 ...
+        else if c == 59 {
+            loop pos < src_len and src[pos] != 10 {
                 pos = pos + 1
             }
         }
 
-        ; String literal
-        else if c == '"' {
+        ; String literal: "=34
+        else if c == 34 {
             pos = pos + 1
             let start = pos
             loop pos < src_len {
                 let sc = src[pos]
-                if sc == '"' {
+                if sc == 34 {
                     break
                 }
                 if sc == 92 {
@@ -432,16 +436,16 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
             out_toks[count].str_len   = len
             count = count + 1
             ; Skip closing quote if we found one
-            if pos < src_len and src[pos] == '"' {
+            if pos < src_len and src[pos] == 34 {
                 pos = pos + 1
             }
         }
 
-        ; Integer literal
-        else if c >= '0' and c <= '9' {
+        ; Integer literal: 0=48 9=57
+        else if c >= 48 and c <= 57 {
             let val = 0
-            loop pos < src_len and src[pos] >= '0' and src[pos] <= '9' {
-                let digit = src[pos] - '0'
+            loop pos < src_len and src[pos] >= 48 and src[pos] <= 57 {
+                let digit = src[pos] - 48
                 let tmp = val * 10
                 val = tmp + digit
                 pos = pos + 1
@@ -451,10 +455,10 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
             count = count + 1
         }
 
-        ; Identifier or keyword
-        else if is_alpha(c) or c == '_' {
+        ; Identifier or keyword: _=95
+        else if is_alpha(c) or c == 95 {
             let start = pos
-            loop pos < src_len and (is_alpha(src[pos]) or is_digit(src[pos]) or src[pos] == '_') {
+            loop pos < src_len and (is_alpha(src[pos]) or is_digit(src[pos]) or src[pos] == 95) {
                 pos = pos + 1
             }
             let len = pos - start
@@ -465,33 +469,43 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
             count = count + 1
         }
 
-        ; Two-char operators
-        else if c == '-' and next_ok and src[pos+1] == '>' {
+        ; Two-char operators: -=45 >=62 ==61 !=33 <=60
+        else if c == 45 and next_ok and src[pos+1] == 62 {
             out_toks[count].type = TOK_ARROW
             count = count + 1
             pos = pos + 2
         }
-        else if c == '=' and next_ok and src[pos+1] == '=' {
+        else if c == 61 and next_ok and src[pos+1] == 61 {
             out_toks[count].type = TOK_EQEQ
             count = count + 1
             pos = pos + 2
         }
-        else if c == '!' and next_ok and src[pos+1] == '=' {
+        else if c == 33 and next_ok and src[pos+1] == 61 {
             out_toks[count].type = TOK_NEQ
             count = count + 1
             pos = pos + 2
         }
-        else if c == '=' and next_ok and src[pos+1] == '>' {
+        else if c == 61 and next_ok and src[pos+1] == 62 {
             out_toks[count].type = TOK_FATARROW
             count = count + 1
             pos = pos + 2
         }
-        else if c == '>' and next_ok and src[pos+1] == '=' {
+        else if c == 62 and next_ok and src[pos+1] == 62 {
+            out_toks[count].type = TOK_SHR
+            count = count + 1
+            pos = pos + 2
+        }
+        else if c == 60 and next_ok and src[pos+1] == 60 {
+            out_toks[count].type = TOK_SHL
+            count = count + 1
+            pos = pos + 2
+        }
+        else if c == 62 and next_ok and src[pos+1] == 61 {
             out_toks[count].type = TOK_GTE
             count = count + 1
             pos = pos + 2
         }
-        else if c == '<' and next_ok and src[pos+1] == '=' {
+        else if c == 60 and next_ok and src[pos+1] == 61 {
             out_toks[count].type = TOK_LTE
             count = count + 1
             pos = pos + 2
@@ -511,6 +525,57 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
     ret ok(0)
 }
 
+; Post-lex pass: convert character literal token triples to TOK_INT
+; jda1 lexer doesn't handle single quotes, so 'X' becomes 3 tokens:
+;   TOK_EOF (quote), TOK_IDENT or TOK_INT (char), TOK_EOF (quote)
+; This function merges those triples into a single TOK_INT with ASCII value
+fn fix_char_literals(src: &i8, toks: &Token, cnt: &i64) {
+    let n = cnt[0]
+    let i = 0
+    let out = 0
+    loop i < n {
+        ; Pattern 1: escape sequence '\X' = 4 tokens: EOF EOF IDENT EOF
+        ; The backslash becomes EOF (unknown char), then n/t/r/0 is IDENT
+        if toks[i].type == TOK_EOF and i + 3 < n and toks[i+1].type == TOK_EOF and toks[i+3].type == TOK_EOF {
+            let esc_char = src[toks[i+2].str_start]
+            let esc_val = 0
+            ; n=110 -> newline=10, t=116 -> tab=9, r=114 -> cr=13
+            if esc_char == 110 { esc_val = 10 }
+            if esc_char == 116 { esc_val = 9 }
+            if esc_char == 114 { esc_val = 13 }
+            if esc_char == 48  { esc_val = 0 }
+            ; backslash: 92=backslash -> 92
+            if esc_char == 92  { esc_val = 92 }
+            toks[out].type = TOK_INT
+            toks[out].imm = esc_val
+            out = out + 1
+            i = i + 4
+        }
+        ; Pattern 2: simple char 'X' = 3 tokens: EOF <middle> EOF
+        else if toks[i].type == TOK_EOF and i + 2 < n and toks[i + 2].type == TOK_EOF {
+            let mid = i + 1
+            let ascii_val = src[toks[mid].str_start]
+            if toks[mid].type == TOK_INT {
+                ascii_val = toks[mid].imm + 48
+            }
+            toks[out].type = TOK_INT
+            toks[out].imm = ascii_val
+            out = out + 1
+            i = i + 3
+        } else {
+            if out != i {
+                toks[out].type = toks[i].type
+                toks[out].imm = toks[i].imm
+                toks[out].str_start = toks[i].str_start
+                toks[out].str_len = toks[i].str_len
+            }
+            out = out + 1
+            i = i + 1
+        }
+    }
+    cnt[0] = out
+}
+
 ; ============================================================
 ; 3. PARSER HELPERS
 ; ============================================================
@@ -519,7 +584,13 @@ fn expect(toks: &Token, pos: &i64, expected: i32) {
     let idx = pos[0]
     let t = toks[idx].type
     if t != expected {
-        print("Parse error: unexpected token at position\n")
+        print("Parse error: unexpected token at position ")
+        print(idx)
+        print(" got=")
+        print(t)
+        print(" expected=")
+        print(expected)
+        print("\n")
     }
     pos[0] = pos[0] + 1
 }
@@ -690,6 +761,55 @@ fn parse_expr_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Nod
             pos[0] = pos[0] + 1
             let field = toks[pos[0]]
             expect(toks, pos, TOK_IDENT)
+            ; Handle base.field[idx] = value (array-indexed field store)
+            if toks[pos[0]].type == TOK_LBRACK {
+                pos[0] = pos[0] + 1
+                let fidx_kind = 0
+                let fidx_start = 0
+                let fidx_len = 0
+                let fidx_imm = 0
+                let fidx_node = Node{}
+                if toks[pos[0]].type == TOK_IDENT and peek_token(toks, pos[0]) == TOK_RBRACK {
+                    fidx_kind = 1
+                    fidx_start = toks[pos[0]].str_start
+                    fidx_len   = toks[pos[0]].str_len
+                    pos[0] = pos[0] + 1
+                } else if toks[pos[0]].type == TOK_INT and peek_token(toks, pos[0]) == TOK_RBRACK {
+                    fidx_kind = 3
+                    fidx_imm = toks[pos[0]].imm
+                    pos[0] = pos[0] + 1
+                } else {
+                    fidx_node = parse_expr(toks, pos, stab, src)
+                    fidx_kind = 2
+                }
+                expect(toks, pos, TOK_RBRACK)
+                if toks[pos[0]].type == TOK_EQ {
+                    pos[0] = pos[0] + 1
+                    let rhs = parse_expr(toks, pos, stab, src)
+                    let n = Node{}
+                    n.node_type = NODE_FIELD_STORE
+                    n.data_type = 10  ; base.field[idx] store
+                    n.token = base.str_start
+                    n.child_cnt = base.str_len
+                    n.token2 = field.str_start
+                    n.imm = field.str_len
+                    n.children = fidx_kind
+                    if fidx_kind == 1 {
+                        n.child2 = fidx_start
+                        n.child3 = fidx_len
+                    }
+                    if fidx_kind == 3 {
+                        n.child2 = fidx_imm
+                        n.child3 = 0
+                    }
+                    if fidx_kind == 2 {
+                        n.child0 = fidx_node
+                    }
+                    n.child1 = rhs
+                    ret n
+                }
+                pos[0] = save
+            }
             if toks[pos[0]].type == TOK_EQ {
                 pos[0] = pos[0] + 1
                 let rhs_tok = toks[pos[0]]
@@ -746,10 +866,12 @@ fn parse_expr_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Nod
                         pos[0] = pos[0] + 3
                         ret n
                     }
+                    let rpeeked = peek_token(toks, pos[0])
                     if rhs_tok.type == TOK_IDENT and
-                       peek_token(toks, pos[0]) != TOK_DOT and
-                       peek_token(toks, pos[0]) != TOK_LBRACK and
-                       peek_token(toks, pos[0]) != TOK_LPAREN {
+                       rpeeked != TOK_DOT and
+                       rpeeked != TOK_LBRACK and
+                       rpeeked != TOK_LPAREN and
+                       op_precedence(rpeeked) < 0 {
                         ; stable rhs encoding: store identifier name on node itself
                         pos[0] = pos[0] + 1
                         n.op = 3
@@ -764,10 +886,12 @@ fn parse_expr_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Nod
                         n.ret_type = rhs_tok.imm
                         ret n
                     }
+                    let rpeeked2 = peek_token(toks, pos[0])
                     if rhs_tok.type == TOK_IDENT and
-                       peek_token(toks, pos[0]) != TOK_DOT and
-                       peek_token(toks, pos[0]) != TOK_LBRACK and
-                       peek_token(toks, pos[0]) != TOK_LPAREN {
+                       rpeeked2 != TOK_DOT and
+                       rpeeked2 != TOK_LBRACK and
+                       rpeeked2 != TOK_LPAREN and
+                       op_precedence(rpeeked2) < 0 {
                         pos[0] = pos[0] + 1
                         n.op = 3
                         n.children = rhs_tok.str_start
@@ -835,7 +959,9 @@ fn parse_expr_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Nod
             let n = Node{}
             n.node_type = NODE_LET
             n.op        = 1
-            n.token     = lhs.token
+            ; base.str_start/str_len are in parse_expr_stmt's own frame (stable, not dangling)
+            n.token     = base.str_start
+            n.token2    = base.str_len
             n.child0    = rhs
             ret n
         }
@@ -848,7 +974,13 @@ fn parse_expr_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Nod
             n.op = 2
             ret n
         }
-        print("Parse error: invalid assignment target\n")
+        print("Parse error: invalid assignment target pos=")
+        print(pos[0])
+        print(" lhs.nt=")
+        print(lhs.node_type)
+        print(" lhs.op=")
+        print(lhs.op)
+        print("\n")
     }
     ret lhs
 }
@@ -865,7 +997,6 @@ fn parse_fn(toks: &Token, pos: &i64, jfn: &JirFunction, stab: &StructTable, src:
 
     let params  = Node[16]
     let param_cnt = 0
-
     loop toks[pos[0]].type != TOK_RPAREN {
         let p_name = toks[pos[0]]
         expect(toks, pos, TOK_IDENT)
@@ -876,7 +1007,6 @@ fn parse_fn(toks: &Token, pos: &i64, jfn: &JirFunction, stab: &StructTable, src:
             p_type_pos = pos[0] + 1  ; Skip the & to get to the actual type
         }
         let p_type_tok = toks[p_type_pos]
-
         let p_type = parse_type(toks, pos)
         let p_sid = -1
         if p_type_tok.type == TOK_IDENT {
@@ -918,10 +1048,9 @@ fn parse_fn(toks: &Token, pos: &i64, jfn: &JirFunction, stab: &StructTable, src:
 
     expect(toks, pos, TOK_LBRACE)
     let cur_bb = new_block(jfn)
-    loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
-        let st = parse_stmt(toks, pos, stab, src)
-        cur_bb = codegen_stmt(st, jfn, cur_bb)
-    }
+    ; Use compile_stmts_inline which handles if/loop via compile_if_inline/compile_loop_inline.
+    ; This avoids the AST dangling-pointer issue with parse_if/parse_loop stubs.
+    cur_bb = compile_stmts_inline(toks, pos, stab, src, jfn, cur_bb)
     expect(toks, pos, TOK_RBRACE)
     ret ok(0)
 }
@@ -933,13 +1062,25 @@ fn parse_fn(toks: &Token, pos: &i64, jfn: &JirFunction, stab: &StructTable, src:
 let block_stmt_arena = Node[4096]
 let block_arena_pos = 0
 
+; Global buffers for parse_let RHS nodes.
+; parse_let sets n.child0 = val (a stack local), which dangles after return.
+; By copying val into a global, n.child0 points to stable memory.
+let g_let_val_buf = Node{}
+let g_let_cnt_buf = Node{}
+
+; Global buffer for complex index expressions in parse_primary (idx_kind=2).
+; When arr[expr].field is parsed, fn.child0=idx (stack local) would dangle.
+let g_parse_idx_buf = Node{}
+
+; Global args buffer for parse_call_rest. Avoids dangling stack pointer in n.children.
+let g_call_args = Node[16]
+
 fn parse_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> &Node {
     expect(toks, pos, TOK_LBRACE)
     let start_pos = block_arena_pos
     let cnt = 0
     loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
         if block_arena_pos >= 4096 {
-            print("[BLOCK] ERROR: arena overflow!\n")
             ret block_stmt_arena
         }
         block_stmt_arena[block_arena_pos] = parse_stmt(toks, pos, stab, src)
@@ -959,7 +1100,7 @@ fn parse_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     if t == TOK_LET   { ret parse_let(toks, pos, stab, src) }
     if t == TOK_IF    { ret parse_if(toks, pos, stab, src) }
     if t == TOK_LOOP  { ret parse_loop(toks, pos, stab, src) }
-    if t == TOK_RET   { ret parse_ret(toks, pos) }
+    if t == TOK_RET   { ret parse_ret(toks, pos, stab, src) }
     if t == TOK_PRINT { ret parse_print(toks, pos, stab, src) }
     ret parse_expr_stmt(toks, pos, stab, src)
 }
@@ -982,10 +1123,11 @@ fn parse_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     if arr_decl == 1 {
         let t = toks[pos[0]]
         pos[0] = pos[0] + 2
-        let cnt = parse_expr(toks, pos, stab, src)
+        ; Store cnt in global buffer so val.child0 stays stable after parse_let returns
+        g_let_cnt_buf = parse_expr(toks, pos, stab, src)
         expect(toks, pos, TOK_RBRACK)
         val.node_type = NODE_ARRAY_ALLOC
-        val.child0    = cnt
+        val.child0    = g_let_cnt_buf  ; &g_let_cnt_buf (global, stable)
         val.imm       = 8
         val.token     = -1
         val.token2    = 0
@@ -999,11 +1141,17 @@ fn parse_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     } else {
         val = parse_expr(toks, pos, stab, src)
     }
+    ; Copy val into global buffer so n.child0 points to stable memory.
+    ; Without this, n.child0 = &val (stack local) dangles after parse_let returns,
+    ; and codegen_stmt's large frame overwrites it causing segfaults.
+    g_let_val_buf = val
     let n = Node{}
     n.node_type = NODE_LET
     n.op        = 0   ; declaration
-    n.token     = name
-    n.child0    = val
+    ; Store str_start/str_len directly — avoids dangling Token pointer after parse_let returns
+    n.token     = name.str_start
+    n.token2    = name.str_len
+    n.child0    = g_let_val_buf  ; &g_let_val_buf (global, stable)
     ret n
 }
 
@@ -1024,7 +1172,7 @@ fn parse_if(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     if toks[pos[0]].type == TOK_ELSE {
         pos[0] = pos[0] + 1
         if toks[pos[0]].type == TOK_IF {
-            ; Recursively parse else-if
+            ; Recursively parse else-if chain
             pos[0] = pos[0] + 1  ; skip 'if'
             let cond2 = parse_expr(toks, pos, stab, src)
             expect(toks, pos, TOK_LBRACE)
@@ -1033,6 +1181,17 @@ fn parse_if(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
                 if toks[pos[0]].type == TOK_LBRACE { d = d + 1 }
                 if toks[pos[0]].type == TOK_RBRACE { d = d - 1 }
                 pos[0] = pos[0] + 1
+            }
+            ; Handle trailing else or else-if after the else-if block
+            if toks[pos[0]].type == TOK_ELSE {
+                pos[0] = pos[0] + 1
+                expect(toks, pos, TOK_LBRACE)
+                let d3 = 1
+                loop d3 > 0 and toks[pos[0]].type != TOK_EOF {
+                    if toks[pos[0]].type == TOK_LBRACE { d3 = d3 + 1 }
+                    if toks[pos[0]].type == TOK_RBRACE { d3 = d3 - 1 }
+                    pos[0] = pos[0] + 1
+                }
             }
         } else {
             ; Skip else block
@@ -1066,12 +1225,14 @@ fn parse_loop(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     ret n
 }
 
-fn parse_ret(toks: &Token, pos: &i64) -> Node {
+fn parse_ret(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     expect(toks, pos, TOK_RET)
     let t0 = toks[pos[0]]
     if t0.type == TOK_IDENT {
-        ; Simple return by identifier can be encoded without child pointers.
-        if peek_token(toks, pos[0]) != TOK_DOT and peek_token(toks, pos[0]) != TOK_LBRACK {
+        ; Simple return by identifier only when followed by a non-expression token
+        let peeked = peek_token(toks, pos[0])
+        if peeked != TOK_DOT and peeked != TOK_LBRACK and
+           peeked != TOK_LPAREN and op_precedence(peeked) < 0 {
             pos[0] = pos[0] + 1
             let n = Node{}
             n.node_type = NODE_RET
@@ -1186,48 +1347,42 @@ fn parse_expr(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
 ; Handle postfix operations (array indexing, field access, arrow access)
 fn parse_postfix(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     let expr = parse_primary(toks, pos, stab, src)
-    loop {
-        let tok_type = toks[pos[0]].type
-        if tok_type == TOK_LBRACK {
-            pos[0] = pos[0] + 1
-            let idx = parse_expr(toks, pos, stab, src)
-            expect(toks, pos, TOK_RBRACK)
-            let n = Node{}
-            n.node_type = NODE_BINOP
-            n.op        = TOK_LBRACK
-            n.child0    = expr
-            n.child1    = idx
-            expr = n
-        }
-        if tok_type == TOK_DOT {
-            pos[0] = pos[0] + 1
-            let field = toks[pos[0]]
-            expect(toks, pos, TOK_IDENT)
-            let n = Node{}
-            n.node_type = NODE_FIELD
-            n.token     = field.str_start
-            n.imm       = field.str_len
-            n.child0    = expr
-            expr = n
-        }
-        if tok_type == TOK_ARROW {
-            pos[0] = pos[0] + 1
-            let field = toks[pos[0]]
-            expect(toks, pos, TOK_IDENT)
-            ; ptr->field is equivalent to (*ptr).field
-            let deref = Node{}
-            deref.node_type = NODE_DEREF
-            deref.child0    = expr
-            let n = Node{}
-            n.node_type = NODE_FIELD
-            n.token     = field.str_start
-            n.imm       = field.str_len
-            n.child0    = deref
-            expr = n
-        }
-        if tok_type != TOK_LBRACK and tok_type != TOK_DOT and tok_type != TOK_ARROW {
-            ret expr
-        }
+    let tok_type = toks[pos[0]].type
+    if tok_type == TOK_LBRACK {
+        pos[0] = pos[0] + 1
+        let idx = parse_expr(toks, pos, stab, src)
+        expect(toks, pos, TOK_RBRACK)
+        let n = Node{}
+        n.node_type = NODE_BINOP
+        n.op        = TOK_LBRACK
+        n.child0    = expr
+        n.child1    = idx
+        ret n
+    }
+    if tok_type == TOK_DOT {
+        pos[0] = pos[0] + 1
+        let field = toks[pos[0]]
+        expect(toks, pos, TOK_IDENT)
+        let n = Node{}
+        n.node_type = NODE_FIELD
+        n.token     = field.str_start
+        n.imm       = field.str_len
+        n.child0    = expr
+        ret n
+    }
+    if tok_type == TOK_ARROW {
+        pos[0] = pos[0] + 1
+        let field = toks[pos[0]]
+        expect(toks, pos, TOK_IDENT)
+        let deref = Node{}
+        deref.node_type = NODE_DEREF
+        deref.child0    = expr
+        let n = Node{}
+        n.node_type = NODE_FIELD
+        n.token     = field.str_start
+        n.imm       = field.str_len
+        n.child0    = deref
+        ret n
     }
     ret expr
 }
@@ -1254,6 +1409,7 @@ fn parse_binop(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: 
 fn op_precedence(op: i32) -> i32 {
     if op == TOK_STAR  or op == TOK_SLASH { ret 6 }
     if op == TOK_PLUS  or op == TOK_MINUS { ret 5 }
+    if op == TOK_SHR   or op == TOK_SHL   { ret 5 }
     if op == TOK_LT    or op == TOK_GT or op == TOK_LTE or op == TOK_GTE { ret 4 }
     if op == TOK_EQEQ  or op == TOK_NEQ   { ret 3 }
     if op == TOK_AND   or op == TOK_AMP   { ret 2 }  ; Both logical and bitwise AND
@@ -1354,7 +1510,8 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
                 idx_imm = toks[pos[0]].imm
                 pos[0] = pos[0] + 1
             } else {
-                idx = parse_expr(toks, pos, stab, src)
+                ; Store complex idx in global so child0 pointer won't dangle after return
+                g_parse_idx_buf = parse_expr(toks, pos, stab, src)
                 idx_kind = 2
             }
             expect(toks, pos, TOK_RBRACK)
@@ -1364,24 +1521,24 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
             pos[0] = pos[0] + 1
             let field = toks[pos[0]]
             expect(toks, pos, TOK_IDENT)
-            let fn = Node{}
-            fn.node_type = NODE_FIELD
-            fn.token     = t.str_start
-            fn.child_cnt = t.str_len
-            fn.token2    = field.str_start
-            fn.imm       = field.str_len
-            fn.data_type = -1
-            fn.child0    = null
-            fn.op        = idx_kind
+            let fnode = Node{}
+            fnode.node_type = NODE_FIELD
+            fnode.token     = t.str_start
+            fnode.child_cnt = t.str_len
+            fnode.token2    = field.str_start
+            fnode.imm       = field.str_len
+            fnode.data_type = -1
+            fnode.child0    = null
+            fnode.op        = idx_kind
             if idx_kind == 1 {
-                fn.children = idx_start
-                fn.param_cnt = idx_len
+                fnode.children = idx_start
+                fnode.param_cnt = idx_len
             }
             if idx_kind == 3 {
-                fn.children = idx_imm
+                fnode.children = idx_imm
             }
-            if idx_kind == 2 { fn.child0 = idx }
-            ret fn
+            if idx_kind == 2 { fnode.child0 = g_parse_idx_buf }
+            ret fnode
         }
         if has_idx == 1 {
             let b = Node{}
@@ -1418,28 +1575,33 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
         expect(toks, pos, TOK_RPAREN)
         ret inner
     }
-    print("Parse error: unexpected token")
+    print("Parse error: unexpected token pos=")
+    print(pos[0])
+    print(" type=")
+    print(t.type)
+    print("\n")
     ret Node{}
 }
 
 fn parse_call_rest(toks: &Token, pos: &i64, name: &Token, stab: &StructTable, src: &i8) -> Node {
     expect(toks, pos, TOK_LPAREN)
-    let args = Node[16]
-    let cnt  = 0
+    let n = Node{}
+    n.node_type = NODE_CALL
+    n.token     = name.str_start
+    n.token2    = name.str_len
+    n.child_cnt = 0
     loop toks[pos[0]].type != TOK_RPAREN {
-        args[cnt] = parse_expr(toks, pos, stab, src)
-        cnt = cnt + 1
+        let a = parse_expr(toks, pos, stab, src)
+        if n.child_cnt == 0 { n.child0 = a }
+        if n.child_cnt == 1 { n.child1 = a }
+        if n.child_cnt == 2 { n.child2 = a }
+        if n.child_cnt == 3 { n.child3 = a }
+        n.child_cnt = n.child_cnt + 1
         if toks[pos[0]].type == TOK_COMMA {
             pos[0] = pos[0] + 1
         }
     }
     expect(toks, pos, TOK_RPAREN)
-    let n = Node{}
-    n.node_type = NODE_CALL
-    n.token     = name.str_start
-    n.token2    = name.str_len
-    n.children  = args
-    n.child_cnt = cnt
     ret n
 }
 
@@ -1469,7 +1631,7 @@ fn parse_syscall(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
 
 fn new_block(jfn: &JirFunction) -> i64 {
     let id = jfn.block_cnt
-    if id < 0 or id >= 64 {
+    if id < 0 or id >= 256 {
         panic("Too many blocks")
     }
     jfn.blocks[id].id        = id
@@ -1480,9 +1642,9 @@ fn new_block(jfn: &JirFunction) -> i64 {
 }
 
 fn emit(jfn: &JirFunction, bb: i64, ins: &Instr) -> i64 {
-    if bb < 0 or bb >= 64 { ret -1 }
+    if bb < 0 or bb >= 256 { ret -1 }
     let slot = jfn.blocks[bb].instr_cnt
-    if slot < 0 or slot >= 256 { ret -1 }
+    if slot < 0 or slot >= 128 { ret -1 }
     jfn.blocks[bb].instrs[slot].op        = ins.op
     jfn.blocks[bb].instrs[slot].itype     = ins.itype
     jfn.blocks[bb].instrs[slot].operand0  = ins.operand0
@@ -1618,6 +1780,16 @@ fn bind(jfn: &JirFunction, tok: &Token, stype: i64) -> i64 {
     ret jfn.vars[idx].slot_off
 }
 
+fn bind_name(jfn: &JirFunction, name_start: i64, name_len: i64, stype: i64) -> i64 {
+    let idx = jfn.var_cnt
+    jfn.vars[idx].name_start = name_start
+    jfn.vars[idx].name_len   = name_len
+    jfn.vars[idx].slot_off   = alloc_slot(jfn)
+    jfn.vars[idx].stype      = stype
+    jfn.var_cnt = jfn.var_cnt + 1
+    ret jfn.vars[idx].slot_off
+}
+
 fn lookup_idx(jfn: &JirFunction, tok: &Token) -> i64 {
     ; Walk backwards so innermost binding wins
     let i = jfn.var_cnt - 1
@@ -1670,12 +1842,12 @@ fn lookup_stype_name(jfn: &JirFunction, name_start: i64, name_len: i64) -> i64 {
 }
 
 fn codegen_call(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
+    ; Args are stored in node.child0/child1/child2/child3 by parse_call_rest.
     let arg_ids = i64[16]
-    let i = 0
-    loop i < node.child_cnt {
-        arg_ids[i] = codegen_expr(node.children[i], jfn, bb)
-        i = i + 1
-    }
+    if node.child_cnt > 0 { arg_ids[0] = codegen_expr(node.child0, jfn, bb) }
+    if node.child_cnt > 1 { arg_ids[1] = codegen_expr(node.child1, jfn, bb) }
+    if node.child_cnt > 2 { arg_ids[2] = codegen_expr(node.child2, jfn, bb) }
+    if node.child_cnt > 3 { arg_ids[3] = codegen_expr(node.child3, jfn, bb) }
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg_ids[0]
@@ -1798,22 +1970,28 @@ fn codegen_block(block: &Node, jfn: &JirFunction, bb: i64) -> i64 {
 fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     let nt = node.node_type
     if nt == NODE_LET {
-        let val_id = codegen_expr(node.child0, jfn, bb)
-        let slot = lookup(jfn, node.token)
+        ; Use g_let_val_buf directly instead of node.child0.
+        ; jda0's ABI compiles `n.child0 = g_let_val_buf` as a field-name copy
+        ; (n.child0 = g_let_val_buf.child0), not address-of. So child0 is broken.
+        ; Calling codegen_expr(g_let_val_buf,...) makes jda0 pass &g_let_val_buf,
+        ; which is what we actually want.
+        let val_id = codegen_expr(g_let_val_buf, jfn, bb)
+        ; node.token = str_start, node.token2 = str_len (stable integers, no dangling ptr)
+        let slot = lookup_slot_name(jfn, node.token, node.token2)
         let out_slot = slot
         let out_stype = -1
-        if node.child0.node_type == NODE_STRUCT_INIT {
-            out_stype = lookup_struct(jfn.stab, jfn.src, node.child0.token.str_start, node.child0.token.str_len)
+        if g_let_val_buf.node_type == NODE_STRUCT_INIT {
+            out_stype = lookup_struct(jfn.stab, jfn.src, g_let_val_buf.token.str_start, g_let_val_buf.token.str_len)
         }
-        if node.child0.node_type == NODE_ARRAY_ALLOC and node.child0.imm == 0 and node.child0.token2 > 0 {
-            out_stype = lookup_struct(jfn.stab, jfn.src, node.child0.token, node.child0.token2)
+        if g_let_val_buf.node_type == NODE_ARRAY_ALLOC and g_let_val_buf.imm == 0 and g_let_val_buf.token2 > 0 {
+            out_stype = lookup_struct(jfn.stab, jfn.src, g_let_val_buf.token, g_let_val_buf.token2)
         }
         if node.op == 0 {
             ; let declaration introduces a new stack slot
-            out_slot = bind(jfn, node.token, out_stype)
+            out_slot = bind_name(jfn, node.token, node.token2, out_stype)
         } else {
             ; assignment updates existing slot; undefined vars become implicit slots
-            if slot == -1 { out_slot = bind(jfn, node.token, out_stype) }
+            if slot == -1 { out_slot = bind_name(jfn, node.token, node.token2, out_stype) }
         }
         let st = Instr{}
         st.op       = OP_STORE
@@ -1866,6 +2044,43 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     }
     if nt == NODE_FIELD_STORE {
         let faddr = 0
+        if node.data_type == 10 {
+            ; base.field[idx] = rhs: get address of base.field, offset by idx*8
+            let bslot = lookup_slot_name(jfn, node.token, node.child_cnt)
+            let bld = Instr{}
+            bld.op = OP_LOAD
+            bld.operand0 = bslot
+            let base_ptr = emit(jfn, bb, &bld)
+            let sid_b = lookup_stype_name(jfn, node.token, node.child_cnt)
+            let foff = lookup_field_off_any(jfn.stab, jfn.src, sid_b, node.token2, node.imm)
+            let field_base = base_ptr
+            if foff >= 0 { field_base = field_addr_from_base(base_ptr, foff, jfn, bb) }
+            let idx_v = 0
+            let fidx_kind = node.children
+            if fidx_kind == 1 {
+                let islot = lookup_slot_name(jfn, node.child2, node.child3)
+                let ild = Instr{}
+                ild.op = OP_LOAD
+                ild.operand0 = islot
+                idx_v = emit(jfn, bb, &ild)
+            }
+            if fidx_kind == 3 {
+                idx_v = emit_const(jfn, bb, TYPE_I64, node.child2)
+            }
+            if fidx_kind == 2 {
+                idx_v = codegen_expr(node.child0, jfn, bb)
+            }
+            let sz_id = emit_const(jfn, bb, TYPE_I64, 8)
+            let byte_off = emit_binop(jfn, bb, OP_MUL, idx_v, sz_id)
+            let target = emit_binop(jfn, bb, OP_ADD, field_base, byte_off)
+            let rhs_v = codegen_expr(node.child1, jfn, bb)
+            let st = Instr{}
+            st.op = OP_STORE_MEM
+            st.operand0 = target
+            st.operand1 = rhs_v
+            emit(jfn, bb, &st)
+            ret bb
+        }
         if node.data_type == 1 {
             ; Direct indexed-lhs field address path to avoid fragile temporary nodes.
             let bslot = lookup_slot_name(jfn, node.token, node.child_cnt)
@@ -2094,7 +2309,9 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             }
         }
         if elem_sz <= 0 { elem_sz = 8 }
-        let cnt = codegen_expr(node.child0, jfn, bb)
+        ; node.child0 may be null (jda0 ABI issue: child0 field copy, not address).
+        ; Fall back to g_let_cnt_buf which always holds the count expression.
+        let cnt = codegen_expr(g_let_cnt_buf, jfn, bb)
         let esz = emit_const(jfn, bb, TYPE_I64, elem_sz)
         let bytes = emit_binop(jfn, bb, OP_MUL, cnt, esz)
         let c4095 = emit_const(jfn, bb, TYPE_I64, 4095)
@@ -2161,6 +2378,97 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     ret -1
 }
 
+; -------------------------------------------------------
+; Inline compile functions: parse + codegen in one pass.
+; Avoids AST dangling-pointer issues from jda0's struct-return ABI.
+; -------------------------------------------------------
+
+; Forward declarations needed (compile_if_inline calls compile_stmts_inline
+; and vice versa — handled by ordering: stmts first, then if/loop).
+
+fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let cur = bb
+    loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
+        let pos_save = pos[0]
+        if toks[pos[0]].type == TOK_IF {
+            cur = compile_if_inline(toks, pos, stab, src, jfn, cur)
+        } else {
+            if toks[pos[0]].type == TOK_LOOP {
+                cur = compile_loop_inline(toks, pos, stab, src, jfn, cur)
+            } else {
+                let st = Node{}
+                st = parse_stmt(toks, pos, stab, src)
+                if pos[0] == pos_save {
+                    if toks[pos[0]].type == TOK_LBRACE {
+                        pos[0] = pos[0] + 1
+                        let bd = 1
+                        loop bd > 0 and toks[pos[0]].type != TOK_EOF {
+                            if toks[pos[0]].type == TOK_LBRACE { bd = bd + 1 }
+                            if toks[pos[0]].type == TOK_RBRACE { bd = bd - 1 }
+                            pos[0] = pos[0] + 1
+                        }
+                    } else {
+                        pos[0] = pos[0] + 1
+                    }
+                } else {
+                    cur = codegen_stmt(st, jfn, cur)
+                }
+            }
+        }
+    }
+    ret cur
+}
+
+fn compile_if_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    expect(toks, pos, TOK_IF)
+    let cond = Node{}
+    cond = parse_expr(toks, pos, stab, src)
+    let then_bb  = new_block(jfn)
+    let else_bb  = new_block(jfn)
+    let merge_bb = new_block(jfn)
+    let cond_id  = codegen_expr(cond, jfn, bb)
+    emit_br(jfn, bb, cond_id, then_bb, else_bb)
+    expect(toks, pos, TOK_LBRACE)
+    let then_end = compile_stmts_inline(toks, pos, stab, src, jfn, then_bb)
+    expect(toks, pos, TOK_RBRACE)
+    emit_jmp(jfn, then_end, merge_bb)
+    ; Handle else / else-if chain
+    if toks[pos[0]].type == TOK_ELSE {
+        pos[0] = pos[0] + 1
+        if toks[pos[0]].type == TOK_IF {
+            ; else-if: recursively compile
+            let else_end = compile_if_inline(toks, pos, stab, src, jfn, else_bb)
+            emit_jmp(jfn, else_end, merge_bb)
+        } else {
+            ; plain else block
+            expect(toks, pos, TOK_LBRACE)
+            let else_end = compile_stmts_inline(toks, pos, stab, src, jfn, else_bb)
+            expect(toks, pos, TOK_RBRACE)
+            emit_jmp(jfn, else_end, merge_bb)
+        }
+    } else {
+        emit_jmp(jfn, else_bb, merge_bb)
+    }
+    ret merge_bb
+}
+
+fn compile_loop_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    expect(toks, pos, TOK_LOOP)
+    let cond = Node{}
+    cond = parse_expr(toks, pos, stab, src)
+    let header_bb = new_block(jfn)
+    let body_bb   = new_block(jfn)
+    let exit_bb   = new_block(jfn)
+    emit_jmp(jfn, bb, header_bb)
+    let cond_id = codegen_expr(cond, jfn, header_bb)
+    emit_br(jfn, header_bb, cond_id, body_bb, exit_bb)
+    expect(toks, pos, TOK_LBRACE)
+    let body_end = compile_stmts_inline(toks, pos, stab, src, jfn, body_bb)
+    expect(toks, pos, TOK_RBRACE)
+    emit_jmp(jfn, body_end, header_bb)
+    ret exit_bb
+}
+
 fn codegen_if(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     let then_bb  = new_block(jfn)
     let else_bb  = new_block(jfn)
@@ -2218,6 +2526,8 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_AND or tok == TOK_AMP { ret OP_AND }  ; Both logical and bitwise AND
     if tok == TOK_OR or tok == TOK_PIPE { ret OP_OR }  ; Both logical and bitwise OR
     if tok == TOK_TILDE { ret OP_AND }  ; Bitwise NOT - temporary: use AND (will be fixed later)
+    if tok == TOK_SHR { ret OP_SHR }
+    if tok == TOK_SHL { ret OP_SHL }
     ret -1
 }
 
@@ -2254,7 +2564,8 @@ fn fold_constants(jfn: &JirFunction) {
         loop ii < jfn.blocks[bi].instr_cnt {
             let iop = jfn.blocks[bi].instrs[ii].op
             if iop == OP_ADD or iop == OP_SUB or
-               iop == OP_MUL or iop == OP_DIV {
+               iop == OP_MUL or iop == OP_DIV or
+               iop == OP_SHR or iop == OP_SHL {
                 let ca = find_const(jfn, jfn.blocks[bi].instrs[ii].operand0)
                 let cb = find_const(jfn, jfn.blocks[bi].instrs[ii].operand1)
                 if ca.found == 1 and cb.found == 1 {
@@ -2265,6 +2576,8 @@ fn fold_constants(jfn: &JirFunction) {
                     if iop == OP_DIV and cb.val != 0 {
                         result = ca.val / cb.val
                     }
+                    if iop == OP_SHR { result = ca.val >> cb.val }
+                    if iop == OP_SHL { result = ca.val << cb.val }
                     jfn.blocks[bi].instrs[ii].op  = OP_CONST
                     jfn.blocks[bi].instrs[ii].imm = result
                 }
@@ -2291,7 +2604,8 @@ fn dce(jfn: &JirFunction) {
             let id = jfn.blocks[bi].instrs[ii].id
             if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
                op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
-               op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR {
+               op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
+               op == OP_SHR or op == OP_SHL {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
@@ -2382,6 +2696,7 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     }
     ; Spill pool[0] (oldest)
     let victim = ra.reg2val[0]
+    if victim < 0 or victim >= 4096 { ret ra.pool[0] }
     ra.sp_top = ra.sp_top + 8
     ra.spill_off[victim]  = ra.sp_top
     emit_store_spill(out, pos, ra.sp_top, ra.pool[0])
@@ -2401,7 +2716,11 @@ fn regalloc_get(ra: &RegAlloc, val_id: i64) -> i32 {
 
 fn regalloc_free(ra: &RegAlloc, val_id: i64) {
     let idx = ra.val2reg[val_id]
+    print("rf idx=")
+    print(idx)
+    print("\n")
     if idx == -1 { ret ok(0) }
+    if idx < 0 or idx >= 8 { ret ok(0) }
     ra.reg2val[idx]    = -1
     ra.val2reg[val_id] = -1
 }
@@ -2413,9 +2732,16 @@ fn mark_use(ctx: &LowerCtx, val_id: i64) {
 
 fn consume_use(ctx: &LowerCtx, val_id: i64) {
     if val_id < 0 or val_id >= 4096 { ret ok(0) }
+    print("cu val=")
+    print(val_id)
+    print(" uc=")
+    print(ctx.use_cnt[val_id])
+    print("\n")
     ctx.use_cnt[val_id] = ctx.use_cnt[val_id] - 1
     if ctx.use_cnt[val_id] <= 0 {
+        print("cu free\n")
         regalloc_free(&ctx.ra, val_id)
+        print("cu freed\n")
     }
 }
 
@@ -2424,8 +2750,9 @@ fn consume_use(ctx: &LowerCtx, val_id: i64) {
 ; ============================================================
 
 fn emit_byte(out: &i8, pos: &i64, b: i8) {
-    out[pos[0]] = b
-    pos[0] = pos[0] + 1
+    let p = pos[0]
+    out[p] = b
+    pos[0] = p + 1
 }
 
 fn poke_byte(buf: &i8, off: i64, val: i8) {
@@ -2509,6 +2836,36 @@ fn emit_or_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
     emit_rex_w_rr(out, pos, src, dst)
     emit_byte(out, pos, 0x09)
     emit_byte(out, pos, modrm_rr(src, dst))
+}
+
+; SHR r64, imm8:  REX.W C1 /5 imm8  (logical right shift by immediate)
+fn emit_shr_imm8(out: &i8, pos: &i64, dst: i32, imm: i32) {
+    emit_byte(out, pos, 0x48 | (dst >> 3))
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xE8 | (dst & 7))
+    emit_byte(out, pos, imm & 0xFF)
+}
+
+; SHL r64, imm8:  REX.W C1 /4 imm8  (left shift by immediate)
+fn emit_shl_imm8(out: &i8, pos: &i64, dst: i32, imm: i32) {
+    emit_byte(out, pos, 0x48 | (dst >> 3))
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xE0 | (dst & 7))
+    emit_byte(out, pos, imm & 0xFF)
+}
+
+; SHR r64, CL:  REX.W D3 /5  (logical right shift by CL)
+fn emit_shr_rcl(out: &i8, pos: &i64, dst: i32) {
+    emit_byte(out, pos, 0x48 | (dst >> 3))
+    emit_byte(out, pos, 0xD3)
+    emit_byte(out, pos, 0xE8 | (dst & 7))
+}
+
+; SHL r64, CL:  REX.W D3 /4  (left shift by CL)
+fn emit_shl_rcl(out: &i8, pos: &i64, dst: i32) {
+    emit_byte(out, pos, 0x48 | (dst >> 3))
+    emit_byte(out, pos, 0xD3)
+    emit_byte(out, pos, 0xE0 | (dst & 7))
 }
 
 ; IMUL r64, r/m64:  REX.W 0F AF /r
@@ -2981,13 +3338,27 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if ins.op == OP_MUL {
+        print("MUL id=")
+        print(ins.id)
+        print(" o0=")
+        print(ins.operand0)
+        print(" o1=")
+        print(ins.operand1)
+        print("\n")
         let a   = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        print("got a\n")
         let b   = get_or_load(&ctx.ra, out, pos, ins.operand1)
+        print("got b\n")
         let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
+        print("got dst\n")
         emit_mov_rr(out, pos, dst, a)
+        print("mov done\n")
         emit_imul_rr(out, pos, dst, b)
+        print("imul done\n")
         consume_use(ctx, ins.operand0)
+        print("cu0 done\n")
         consume_use(ctx, ins.operand1)
+        print("cu1 done\n")
         ret ok(0)
     }
 
@@ -3047,6 +3418,28 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         emit_mov_rr(out, pos, dst, a)
         emit_or_rr(out, pos, dst, b)
         consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        ret ok(0)
+    }
+
+    if ins.op == OP_SHR or ins.op == OP_SHL {
+        ; Try to use imm8 form (most shifts are by constant amounts)
+        let cv = find_const(jfn, ins.operand1)
+        let a  = get_or_load(&ctx.ra, out, pos, ins.operand0)
+        let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, a)
+        consume_use(ctx, ins.operand0)
+        if cv.found == 1 {
+            ; Constant shift amount: use imm8 form
+            if ins.op == OP_SHR { emit_shr_imm8(out, pos, dst, cv.val) }
+            if ins.op == OP_SHL { emit_shl_imm8(out, pos, dst, cv.val) }
+        } else {
+            ; Variable shift amount: use CL register form
+            let b = get_or_load(&ctx.ra, out, pos, ins.operand1)
+            if b != PHYS_RCX { emit_mov_rr(out, pos, PHYS_RCX, b) }
+            if ins.op == OP_SHR { emit_shr_rcl(out, pos, dst) }
+            if ins.op == OP_SHL { emit_shl_rcl(out, pos, dst) }
+        }
         consume_use(ctx, ins.operand1)
         ret ok(0)
     }
@@ -3208,6 +3601,11 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     bb.label_off = pos[0]
     let i = 0
     loop i < bb.instr_cnt {
+        print("li")
+        print(i)
+        print(" op=")
+        print(jfn.blocks[bb.id].instrs[i].op)
+        print("\n")
         if jfn.blocks[bb.id].instrs[i].dead == 0 {
             lower_instr(&jfn.blocks[bb.id].instrs[i], ctx, jfn, out, pos)
         }
@@ -3259,7 +3657,8 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
                 let o3 = jfn.blocks[bi].instrs[ii].operand3
                 if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
                    op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
-                   op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR {
+                   op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
+                   op == OP_SHR or op == OP_SHL {
                     mark_use(ctx, o0)
                     mark_use(ctx, o1)
                 }
@@ -3295,8 +3694,16 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
 
     let i = 0
     loop i < jfn.block_cnt {
+        print("lb")
+        print(i)
+        print(" ic=")
+        print(jfn.blocks[i].instr_cnt)
+        print("\n")
         ctx.bb_offsets[i] = pos[0]
         lower_block(&jfn.blocks[i], ctx, jfn, out, pos)
+        print("lb")
+        print(i)
+        print(" done\n")
         i = i + 1
     }
 
@@ -3442,10 +3849,7 @@ fn alloc_pages(n: i64) -> &i8 {
 ;   [rsp+16] = argv[1]   (first argument)
 fn get_argv(base: &i64, n: i64) -> &i8 {
     ; base[n] is the nth argument string pointer
-    if base == 0 {
-        print("argv base=0\n")
-        ret 0
-    }
+    if base == 0 { ret 0 }
     ret base[n]
 }
 
@@ -3454,63 +3858,49 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
 ; ============================================================
 
 fn main() {
-    ; Capture argv FIRST before any calls clobber rsi
+    ; jda0 _start: lea rsi, [rsp+8] → rsi = &argv[0]
+    ; So get_argv(argv_ptr, 1) = argv[1] = source path
     let argv_ptr = 0
     asm { out argv_ptr = rsi }
-    print("[START] main() starting")
 
     let src_buf  = alloc_pages(32)  ; 32 pages = 128KB, enough for jda1.jda (115KB)
-    print("[ALLOC] src_buf allocated")
-    ; Allocate token buffer on stack (~15000 tokens for jda1.jda which is ~3500 lines with ~4 tokens/line)
-    ; Each token is 28 bytes, so 15000 tokens = 420 KB
-    ; Stack size is typically 8 MB on Linux, so 420 KB is acceptable
-    let toks     = Token[15000]  ; Stack allocation instead of heap
-    print("[ALLOC] toks allocated")
+    ; Allocate token buffer: jda1.jda ~3700 lines x ~15 tokens/line = ~55000 tokens needed
+    ; Each token is 32 bytes, so 65536 tokens = 2MB (heap via mmap)
+    let toks     = Token[65536]
 
     let src_path = get_argv(argv_ptr, 1)
-    print("[ARGS] src_path retrieved")
     let out_path = get_argv(argv_ptr, 2)
-    print("[ARGS] out_path retrieved")
 
     let src_fd = syscall(2, src_path, 0, 0)
-    print("[FILE] opened")
     let src_len = syscall(0, src_fd, src_buf, 131072)  ; Read up to 128KB
-    print("[FILE] read complete")
     syscall(3, src_fd, 0, 0)
-    print("[FILE] closed")
 
     let tok_cnt = 0
-    print("[LEX] calling lex()")
     ; Sanity check: toks should be non-null
     if toks == 0 {
-        print("[ERROR] toks is null!")
     }
     lex(src_buf, src_len, toks, &tok_cnt)
-    print("[LEX] lex() returned")
+    fix_char_literals(src_buf, toks, &tok_cnt)
 
     ; ---- Parse/compile functions ----
-    let fn_name_off = i64[64]
-    let fn_name_len = i64[64]
+    let fn_name_off = i64[128]
+    let fn_name_len = i64[128]
     let fn_cnt = 0
     let pos = 0
     let stab = StructTable{}
 
     ; Parse const declarations first (jda1.jda starts with 40+ consts)
-    print("[PARSE] parsing const declarations")
     loop pos < tok_cnt and toks[pos].type == TOK_CONST {
         parse_const_decl(toks, &pos)
     }
-    print("[PARSE] const declarations parsed")
 
     ; Parse and record top-level structs
-    print("[PARSE] parsing struct declarations")
     loop pos < tok_cnt and toks[pos].type == TOK_STRUCT {
         parse_struct_decl(toks, &pos, stab)
     }
-    print("[PARSE] struct declarations parsed")
 
     ; ---- Prepare output buffers ----
-    let code_buf    = alloc_pages(16)
+    let code_buf    = alloc_pages(256)
     let code_len    = 0
     let merged_str  = alloc_pages(4)
     let merged_pos  = 0
@@ -3529,16 +3919,34 @@ fn main() {
     let gf_call_nlen   = i64[512]
     let gf_call_cnt    = 0
 
-    ; Track code offsets per function
-    let fn_code_off = i64[64]
+    ; Track code offsets per function (need 128+ for all jda1 functions)
+    let fn_code_off = i64[128]
     let main_idx    = -1
 
     ; Allocate JirFunction once to avoid stack overflow from repeated allocations
     let jfn = JirFunction{}
 
     ; ---- Parse and compile each function immediately ----
-    print("[PARSE] parsing functions")
-    loop pos < tok_cnt and toks[pos].type == TOK_FN {
+    loop pos < tok_cnt and (toks[pos].type == TOK_FN or toks[pos].type == TOK_LET) {
+        ; Skip top-level let declarations (global variables - handled as locals if referenced)
+        if toks[pos].type == TOK_LET {
+            pos = pos + 1  ; skip LET
+            pos = pos + 1  ; skip name (IDENT)
+            pos = pos + 1  ; skip EQ
+            if toks[pos].type == TOK_INT {
+                pos = pos + 1
+            } else {
+                pos = pos + 1  ; skip type name
+                if toks[pos].type == TOK_LBRACE {
+                    pos = pos + 1
+                    pos = pos + 1
+                } else if toks[pos].type == TOK_LBRACK {
+                    pos = pos + 1
+                    pos = pos + 1
+                    pos = pos + 1
+                }
+            }
+        } else {
         let fi = fn_cnt
         ; Peek at name token (pos+1) before parse_fn advances pos
         fn_name_off[fi] = toks[pos + 1].str_start
@@ -3555,12 +3963,19 @@ fn main() {
         jfn.src_len = src_len
         jfn.stab = stab
 
+        print("F")
+        print(fn_cnt)
+        print(" bc=")
+        ; (block_cnt printed after parse)
         parse_fn(toks, &pos, &jfn, stab, src_buf)
-        print("[PARSE] function parsed\n")
+        print(jfn.block_cnt)
+        print(" bn=")
+        print(fn_name_off[fi])
+        print(" parsed\n")
         fold_constants(&jfn)
-        print("[PARSE] constants folded\n")
+        print(" folded\n")
         dce(&jfn)
-        print("[PARSE] dce done\n")
+        print(" dce\n")
 
         ; Check if this is main
         let is_main = streq(src_buf, fn_name_off[fi], fn_name_len[fi], "main")
@@ -3572,7 +3987,9 @@ fn main() {
 
         let ctx = LowerCtx{}
         regalloc_init(&ctx.ra)
+        print(" lowering\n")
         lower_fn(&jfn, &ctx, code_buf, &code_len, is_main)
+        print(" lowered\n")
 
         ; Collect strtab and call fixups from this function
         let ci = 0
@@ -3604,6 +4021,7 @@ fn main() {
         }
 
         fn_cnt = fn_cnt + 1
+        }  ; end else (TOK_FN branch)
     }
 
     ; ---- Patch initial JMP to main ----
@@ -3660,4 +4078,6 @@ fn main() {
     let out_fd = syscall(2, out_path, 577, 493)
     write_elf(out_fd, code_buf, code_len, merged_str, merged_pos)
     syscall(3, out_fd, 0, 0)
+    ; Explicit exit — prevents crash after main() returns with no stack return address
+    syscall(60, 0, 0, 0)
 }
