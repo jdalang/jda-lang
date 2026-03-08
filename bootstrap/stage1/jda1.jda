@@ -839,10 +839,13 @@ fn parse_fn(toks: &Token, pos: &i64, jfn: &JirFunction, stab: &StructTable, src:
         let p_name = toks[pos[0]]
         expect(toks, pos, TOK_IDENT)
         expect(toks, pos, TOK_COLON)
-        let p_type_tok = toks[pos[0]]
-        if p_type_tok.type == TOK_AMP {
-            p_type_tok = toks[pos[0] + 1]  ; TODO: bounds check this
+        ; Check what type is being declared (before advancing)
+        let p_type_pos = pos[0]
+        if toks[pos[0]].type == TOK_AMP {
+            p_type_pos = pos[0] + 1  ; Skip the & to get to the actual type
         }
+        let p_type_tok = toks[p_type_pos]
+
         let p_type = parse_type(toks, pos)
         let p_sid = -1
         if p_type_tok.type == TOK_IDENT {
@@ -1228,9 +1231,9 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
         if toks[pos[0]].type == TOK_LPAREN {
             ret parse_call_rest(toks, pos, t)
         }
-        ; TODO: Re-enable struct literal init parsing once all parse functions take stab/src
-        ; Currently disabled to avoid conflict with variable names followed by statement blocks
-        ; e.g., `if x { ... }` was incorrectly parsed as `x{}` struct literal
+        ; NOTE: Struct literal init disabled - requires refactoring to pass stab/src through all parse functions
+        ; Temporarily disabled to avoid conflicts with variable-followed-by-block patterns
+        ; TODO: Re-implement after refactoring parser chain
         ; if toks[pos[0]].type == TOK_LBRACE {
         ;     let sid = lookup_struct(stab, src, t.str_start, t.str_len)
         ;     if sid >= 0 {
