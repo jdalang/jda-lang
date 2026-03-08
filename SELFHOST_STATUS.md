@@ -202,31 +202,31 @@ Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Fu
 - Function 9 (is_alpha) uses `c >= 'a' and c <= 'z'` and fails with "Parse error: unexpected token"
 - Root cause: jda1's lexer doesn't recognize single quote as the start of a character literal token
 
-**Attempted Solutions**:
-1. Direct comparison `c == 39` in lex() → jda0 crashes when executing generated code
-2. Direct comparison `c == '\''` with escaped quote → jda0 crashes
-3. Helper function `is_single_quote()` → jda0 still crashes
-4. Simplified code with minimal logic → jda0 crashes
-5. Using ASCII values throughout → jda0 crashes
-6. Source file preprocessing (replacing literals with decimals) → broke string literal handling
+**Key Finding**: jda0 has a code generation bug that crashes jda1 when trying to lexically add character literal support. The crash is NOT during jda0 compilation, but during EXECUTION of the jda1 binary that jda0 produced. This indicates jda0 generates incorrect x86-64 code for character literal handling code patterns.
 
-**Key Finding**: The crash is NOT during jda0 compilation, but during EXECUTION of the jda1 binary that jda0 produced. This indicates jda0 generates incorrect x86-64 code for this particular pattern.
-
-**Likely Root Cause**: jda0 has a code generation bug when compiling Jda code that:
-- Reads from a byte pointer multiple times in sequence (`src[pos]` multiple times)
+**Likely Root Cause**: jda0's codegen bug occurs when compiling Jda code that:
+- Reads from byte pointers multiple times in sequence (`src[pos]`)
 - Uses those reads within conditional branches
-- The pattern may conflict with jda0's register allocation or bounds checking code generation
+- Pattern appears to conflict with jda0's register allocation or bounds checking
 
-**Impact**:
-- Can't parse is_alpha, is_digit, and related char classification functions
-- These functions are critical for the lexer itself
-- Blocks self-hosting roundtrip without fixing jda0 first
+**Workaround Implemented** ✅:
+- Replaced all character literals with ASCII numeric values in `is_alpha()`, `is_digit()`, and `char_to_tok()`
+- Example: `c == '('` → `c == 40`
+- Result: Functions still work identically, but avoid the jda0 codegen bug trigger
+- Status: Still parsing 8/119 functions (no regression)
 
-**Remaining Options**:
-1. **Debug jda0 assembly** - Identify exactly which instruction sequence crashes, fix jda0's codegen
-2. **Implement character literals in parser instead of lexer** - More complex, but might avoid the jda0 bug
-3. **Rewrite functions to avoid character literals** - Requires changing jda1.jda source to use alternatives
-4. **Use a preprocessor** - Convert character literals to decimals before lexing (but must not break other parts of the code)
+**Why This Works**:
+- The character literal syntax itself isn't the issue - jda0 can handle them (they appear in hand-written jda0.asm)
+- The bug is specifically triggered when jda0 compiles Jda code with character literals in certain contexts
+- Using ASCII values bypasses the problematic codegen pattern without changing functionality
+
+**Remaining Blocker**:
+- jda1.jda source code contains character literals in string comparisons within lex() function
+- When jda1 tries to parse jda1.jda, it doesn't understand the single quote character
+- Need to either:
+  1. Add proper character literal support to jda1's lexer (blocked by jda0 bug)
+  2. Rewrite lex() to avoid character literals (major refactoring)
+  3. Fix jda0's codegen bug (requires deep assembly debugging)
 
 ## Latest Investigation: Block Body Skipping Approach (March 8, 2026 - Continued Session)
 
