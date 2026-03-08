@@ -3408,7 +3408,8 @@ fn main() {
         fn_name_off[fi] = toks[pos + 1].str_start
         fn_name_len[fi] = toks[pos + 1].str_len
 
-        ; Fully reinitialize jfn for the next function
+        ; Reinitialize jfn for the next function with minimal clearing
+        ; (Arrays will be overwritten by new_block/bind as needed)
         jfn.var_cnt = 0
         jfn.block_cnt = 0
         jfn.next_slot_off = 0
@@ -3418,32 +3419,6 @@ fn main() {
         jfn.src = src_buf
         jfn.src_len = src_len
         jfn.stab = stab
-
-        ; Clear vars array by explicitly setting entries to zero state
-        let vi = 0
-        loop vi < 32 {
-            jfn.vars[vi].name_start = 0
-            jfn.vars[vi].name_len = 0
-            jfn.vars[vi].slot_off = 0
-            jfn.vars[vi].stype = 0
-            vi = vi + 1
-        }
-
-        ; Clear blocks array instr_cnt field (to ensure fresh blocks)
-        let bi = 0
-        loop bi < 64 {
-            jfn.blocks[bi].id = 0
-            jfn.blocks[bi].instr_cnt = 0
-            jfn.blocks[bi].label_off = -1
-            bi = bi + 1
-        }
-
-        ; Clear param_slots array
-        let pi = 0
-        loop pi < 16 {
-            jfn.param_slots[pi] = 0
-            pi = pi + 1
-        }
 
         parse_fn(toks, &pos, &jfn, stab, src_buf)
         fold_constants(&jfn)
