@@ -36,7 +36,15 @@ import sys
 import os
 
 def load_spec():
-    """Load jda0_spec.py from tools directory"""
+    """Load jda0_spec.py from tools directory
+
+    The specification file (jda0_spec.py) is auto-generated from jda1.jda by
+    generate_jda0_spec.py. It contains all token, type, opcode, and structure
+    definitions needed to generate jda0 assembly code.
+
+    Returns:
+        dict: Specification with TOKENS, TYPES, OPCODES, STRUCTURES, and ALL_CONSTANTS
+    """
     spec_path = os.path.join(os.path.dirname(__file__), 'jda0_spec.py')
 
     spec = {}
@@ -218,20 +226,71 @@ def generate_compatibility_constants():
     return output
 
 def generate_header():
-    """Generate file header"""
+    """Generate file header with regeneration instructions
+
+    The generated file is marked as auto-generated to prevent accidental
+    manual edits. Instructions are provided for regeneration.
+
+    Returns:
+        str: NASM comment block with file header and instructions
+    """
     return """; ============================================================
 ; AUTO-GENERATED CONSTANTS FROM jda1.jda
 ; DO NOT EDIT - Run: python3 tools/generate_jda0_constants.py
+; ============================================================
+;
+; This file contains constant definitions automatically extracted from
+; jda1.jda specification. It is included in jda0.asm via:
+;   %include "jda0_constants.asm"
+;
+; REGENERATION:
+;   When jda1.jda constants or structures change:
+;   1. Run: python3 tools/generate_jda0_spec.py bootstrap/stage1/jda1.jda
+;   2. Run: python3 tools/generate_jda0_constants.py
+;   3. Commit the updated jda0_constants.asm
+;
+; FORMAT:
+;   - Token type constants (TOK_*): enumeration values for token types
+;   - Type constants (TYPE_*): enumeration values for data types
+;   - Opcode constants (OP_*): enumeration values for JIR opcodes
+;   - Structure sizes (*_SZ): byte sizes for structs
+;   - AST node types (NODE_*): enumeration for AST node kinds
+;   - System constants (SYS_*, ET_*, etc.): platform-specific values
+;
+; DEPENDENCIES:
+;   - Requires: jda0_spec.py (auto-generated specification)
+;   - Included by: jda0.asm (via %include directive)
+;   - Used by: jda0 assembler code that references these constants
+;
 ; ============================================================
 
 """
 
 def write_asm_file(output_path, content):
-    """Write generated content to NASM file"""
+    """Write generated content to NASM file
+
+    Writes the generated constant definitions to a NASM-compatible assembly
+    file that can be included in jda0.asm via %include directive.
+
+    Args:
+        output_path (str): Path where to write the generated file
+        content (str): Complete NASM constant definitions as string
+
+    Output:
+        Creates bootstrap/stage0/jda0_constants.asm containing:
+        - 45 token type constants (TOK_FN=0, TOK_LET=1, etc.)
+        - 10 type constants (TYPE_VOID=0, TYPE_I64=1, etc.)
+        - 28 opcode constants (OP_CONST=0, OP_ADD=1, etc.)
+        - Structure size equations (TOK_SZ=28, CST_SZ=12, etc.)
+        - Node type constants (NODE_FN=0, NODE_LET=1, etc.)
+        - Platform constants (SYS_READ=0, SYS_WRITE=1, etc.)
+        - Compatibility constants for jda0-specific tokens
+    """
     with open(output_path, 'w') as f:
         f.write(content)
     print(f"✅ Generated {output_path}")
     print(f"   Size: {len(content)} bytes")
+    print(f"   Can be included in jda0.asm: %include \"{os.path.basename(output_path)}\"")
 
 def main():
     # Load specification

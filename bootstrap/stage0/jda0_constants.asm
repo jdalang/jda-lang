@@ -2,6 +2,31 @@
 ; AUTO-GENERATED CONSTANTS FROM jda1.jda
 ; DO NOT EDIT - Run: python3 tools/generate_jda0_constants.py
 ; ============================================================
+;
+; This file contains constant definitions automatically extracted from
+; jda1.jda specification. It is included in jda0.asm via:
+;   %include "jda0_constants.asm"
+;
+; REGENERATION:
+;   When jda1.jda constants or structures change:
+;   1. Run: python3 tools/generate_jda0_spec.py bootstrap/stage1/jda1.jda
+;   2. Run: python3 tools/generate_jda0_constants.py
+;   3. Commit the updated jda0_constants.asm
+;
+; FORMAT:
+;   - Token type constants (TOK_*): enumeration values for token types
+;   - Type constants (TYPE_*): enumeration values for data types
+;   - Opcode constants (OP_*): enumeration values for JIR opcodes
+;   - Structure sizes (*_SZ): byte sizes for structs
+;   - AST node types (NODE_*): enumeration for AST node kinds
+;   - System constants (SYS_*, ET_*, etc.): platform-specific values
+;
+; DEPENDENCIES:
+;   - Requires: jda0_spec.py (auto-generated specification)
+;   - Included by: jda0.asm (via %include directive)
+;   - Used by: jda0 assembler code that references these constants
+;
+; ============================================================
 
 ; Token type constants
 TOK_FN               equ 0
