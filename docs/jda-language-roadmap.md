@@ -310,9 +310,24 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 10. Self-hosting roundtrip
-**Status:** [ ] TODO — MILESTONE 🎯
+**Status:** 🟡 IN PROGRESS — MILESTONE 🎯 (Major breakthrough: jda1 now compiles hello.jda!)
 **What:** jda1 compiles jda1.jda → jda1-gen2 → compiles hello.jda → runs correctly. Binary hashes match.
 **Depends on:** Items 1–9
+
+**Recent Progress (March 8, 2026):**
+- 🔧 **Fixed**: Pointer arithmetic segfault in jda1 (commit 6b8542e)
+  - Issue: jda0 codegen miscalculates struct offsets through byte pointers (`&i8`)
+  - Fix: Use stack-allocated Token array instead of heap-allocated byte buffer
+  - Result: ✅ jda1 now successfully compiles hello.jda and produces working binaries!
+
+**Remaining Blocker:**
+- ❌ jda1 crashes in **lex() phase** when processing jda1.jda (3500+ lines)
+- Possible causes:
+  - Token buffer overflow (increased to 15K but may need more)
+  - Edge case in lexer when handling large input or specific syntax
+  - Memory corruption in lex() internals
+- **Next step:** Debug which specific construct in jda1.jda causes lex() to crash
+
 **Why:** Once achieved, Jda compiler has zero external dependencies. The language bootstraps itself.
 
 ---
