@@ -153,11 +153,32 @@ jda1.jda (parse) → [jda1] → AST ❌ (blocked: needs const parsing)
 Date: March 8, 2026 (Updated)
 Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Function codegen remains to be debugged
 
-## Summary of Fixes This Session
+## Fifth Fix: Struct Pointer Type Support (March 8, 2026 - Final Session)
+**Commit**: `0f0021e` - add pointer type support to struct field parsing
+
+### The Bug
+- parse_struct_decl() didn't handle pointer types in struct field declarations
+- Example failing: `struct Node { child0: &Node }`
+- **Root cause**: After `expect(TOK_COLON)`, parser consumed one token as the type
+- But `&Node` is TWO tokens, so `&` was never consumed, misaligning all subsequent fields
+- Result: cascading "Parse error: unexpected token" for all fields in structs with pointers
+
+### The Fix
+- Added 4-line check: if next token is TOK_AMP, skip it before consuming the type
+- Now correctly handles both `field: i64` and `field: &Type`
+- Minimal, surgical change - no architectural refactoring
+
+### Result
+- ✅ jda1 successfully parses ALL struct declarations including Node with pointer fields
+- ✅ Struct parsing phase now completes fully
+- ❌ Function parsing still segfaults (use-after-free in parse_block → needs architectural fix)
+
+## Summary of All Fixes This Session
 1. ✅ Fixed const declaration parsing (4 tokens vs. 5 tokens)
 2. ✅ Fixed hex literal values in const declarations (decimal conversion)
-3. ✅ Verified lexer correctly processes jda1.jda
-4. ✅ Verified all 118 const declarations parse correctly
-5. ✅ Verified all struct definitions parse correctly
-6. ✅ Confirmed jda1 successfully compiles simple programs (hello.jda)
-7. ❌ Function parsing still crashes when processing jda1.jda (last blocker)
+3. ✅ Fixed struct pointer type parsing (& token handling)
+4. ✅ Verified lexer correctly processes jda1.jda
+5. ✅ Verified all 118 const declarations parse correctly
+6. ✅ Verified all struct definitions parse correctly (including pointer fields)
+7. ✅ Confirmed jda1 successfully compiles simple programs (hello.jda)
+8. ❌ Function parsing still segfaults when processing jda1.jda (use-after-free in parse_block)
