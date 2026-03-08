@@ -5,7 +5,31 @@ Generate jda0 NASM constant definitions from jda0_spec.py
 This script reads the auto-generated specification and outputs NASM-formatted
 constant definitions that can be included in jda0.asm.
 
-Output: bootstrap/stage0/jda0_constants.asm
+USAGE:
+    python3 tools/generate_jda0_constants.py
+
+INPUTS:
+    - tools/jda0_spec.py: Auto-generated specification from jda1.jda
+
+OUTPUT:
+    - bootstrap/stage0/jda0_constants.asm: NASM constant definitions
+
+GENERATED CONTENT:
+    - Token type constants (TOK_FN, TOK_LET, etc.)
+    - Type constants (TYPE_VOID, TYPE_I64, etc.)
+    - Opcode constants (OP_CONST, OP_ADD, etc.)
+    - Structure size equations (TOK_SZ, CST_SZ, etc.)
+    - AST node type constants (NODE_*)
+    - Platform-specific constants (SYS_*, ET_*, etc.)
+    - Compatibility constants (for jda0-specific tokens)
+
+REGENERATION:
+    Run this script anytime jda1.jda changes constants or structures.
+    The Makefile automates this: make generate-constants
+
+VALIDATION:
+    After generation, run: python3 tools/validate_jda0_constants.py
+    This checks constant consistency and reports differences from current jda0.asm
 """
 
 import sys

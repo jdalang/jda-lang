@@ -4,13 +4,42 @@
 NASM      = nasm
 LD        = ld
 NASMFLAGS = -f elf64 -g -F dwarf
+PYTHON    = python3
 
 JDA0      = ./jda0
 JDA1_SRC  = ../stage1/jda1.jda
 JDA1_BIN  = jda1
 HELLO_SRC = ../../examples/hello.jda
 
+# Generated files (auto-generated, not committed)
+GEN_CONST = jda0_constants.asm
+GEN_STRUCT = jda0_structs.asm
+
 all: jda0
+
+# -------------------------------------------------------
+# Auto-generation: Specification and Constants
+# -------------------------------------------------------
+generate-constants: $(GEN_CONST)
+
+$(GEN_CONST):
+	@echo "[gen] Generating jda0 constants from specification..."
+	$(PYTHON) ../../tools/generate_jda0_constants.py
+	@echo "[gen] Validating generated constants..."
+	@$(PYTHON) ../../tools/validate_jda0_constants.py || true
+	@echo "[gen] Constants generated successfully"
+
+generate-structs: $(GEN_STRUCT)
+
+$(GEN_STRUCT):
+	@echo "[gen] Generating jda0 struct offsets from specification..."
+	$(PYTHON) ../../tools/generate_jda0_structs.py
+	@echo "[gen] Validating generated struct layouts..."
+	@$(PYTHON) ../../tools/validate_jda0_structs.py || true
+	@echo "[gen] Struct offsets generated successfully"
+
+generate-all: generate-constants generate-structs
+	@echo "[gen] All code generation complete!"
 
 # -------------------------------------------------------
 # Stage 0: assembler → jda0 binary
@@ -19,6 +48,8 @@ jda0: jda0.o
 	$(LD) -o jda0 jda0.o
 
 jda0.o: jda0.asm
+	@test -f $(GEN_CONST) || { echo "[warn] $(GEN_CONST) not found - run 'make generate-constants' to regenerate"; }
+	@test -f $(GEN_STRUCT) || { echo "[warn] $(GEN_STRUCT) not found - run 'make generate-structs' to regenerate"; }
 	$(NASM) $(NASMFLAGS) -o jda0.o jda0.asm
 
 # -------------------------------------------------------
@@ -59,3 +90,7 @@ test: jda0
 
 clean:
 	rm -f jda0.o jda0 $(JDA1_BIN) jda1_selfhost hello_out hello_s1 hello_sh
+	rm -f $(GEN_CONST) $(GEN_STRUCT)
+	@echo "[clean] Removed generated files"
+
+.PHONY: all generate-constants generate-structs generate-all test test-stage1 selfhost clean
