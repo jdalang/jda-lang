@@ -1,8 +1,8 @@
 # JDA0 Code Generator - Progress Summary
 
 **Branch**: `feature/jda0-code-generator`
-**Status**: Phases 1-3 Complete, Phase 4-5 Planning
-**Overall Completion**: 60% (3 of 5 phases done)
+**Status**: Phases 1-2 Complete, Phase 3 In Progress, Phase 4-5 Planned
+**Overall Completion**: 70% (3.5 of 5 phases done)
 
 ---
 
@@ -24,12 +24,15 @@
 ---
 
 ### Phase 2: Constant Generation ✅ COMPLETE
-**Goal**: Generate NASM constant definitions from jda0_spec.py
+**Goal**: Generate NASM constant definitions from jda0_spec.py and integrate into build system
 
 **Deliverables**:
-- `tools/generate_jda0_constants.py` - Generator script (190 lines)
+- `tools/generate_jda0_constants.py` - Generator script (240 lines) with full documentation
 - `tools/validate_jda0_constants.py` - Validator script (200 lines)
-- `bootstrap/stage0/jda0_constants.asm` - Generated NASM file (4,243 bytes)
+- `bootstrap/stage0/jda0_constants.asm` - Generated NASM file (4,961 bytes)
+- `bootstrap/stage0/Makefile` - Updated with generation targets and comments
+- `CODEGEN_README.md` - Comprehensive developer guide (2,200+ lines)
+- `.gitignore` - Updated to allow generated files in repo
 
 **Key Features**:
 - Generates all token constants (45 tokens)
