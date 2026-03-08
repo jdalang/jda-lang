@@ -103,12 +103,12 @@ const TYPE_F64    = 4
 const TYPE_PTR    = 5
 
 ; Pointer type flag (bitmask)
-const TYPE_PTR_FLAG = 0x10000
+const TYPE_PTR_FLAG = 65536
 
 ; Helper types for pointers
-const TYPE_PTR_I64 = 0x10001
-const TYPE_PTR_I32 = 0x10002
-const TYPE_PTR_I8  = 0x10003
+const TYPE_PTR_I64 = 65537
+const TYPE_PTR_I32 = 65538
+const TYPE_PTR_I8  = 65539
 
 ; JIR opcodes
 const OP_CONST    = 0
@@ -592,7 +592,7 @@ fn lookup_field_off_any(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64
     ret -1
 }
 
-; Parse const declarations: const NAME = INT_LITERAL ;
+; Parse const declarations: const NAME = INT_LITERAL (no semicolon)
 fn parse_const_decl(toks: &Token, pos: &i64) {
     ; Skip const keyword
     pos[0] = pos[0] + 1
@@ -602,8 +602,6 @@ fn parse_const_decl(toks: &Token, pos: &i64) {
     pos[0] = pos[0] + 1
     ; Skip integer value
     pos[0] = pos[0] + 1
-    ; Skip semicolon
-    pos[0] = pos[0] + 1
 }
 
 fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
@@ -611,10 +609,19 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
     if toks[pos[0]].type != TOK_STRUCT {
         ret
     }
+    print("[struct] at pos ")
+    print(pos[0])
     expect(toks, pos, TOK_STRUCT)
+    print("[struct] got name token")
     let st_name = toks[pos[0]]
     expect(toks, pos, TOK_IDENT)
+    print("[struct] got ident")
+    print("[struct] next token type=")
+    print(toks[pos[0]].type)
+    print(" expected LBRACE=")
+    print(TOK_LBRACE)
     expect(toks, pos, TOK_LBRACE)
+    print("[struct] got lbrace")
 
     let sid = stab.cnt
     let base = stab.field_cnt
@@ -625,9 +632,15 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
     let fcnt = 0
     let off  = 0
     loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
+        print("[field] at pos=")
+        print(pos[0])
+        print(" type=")
+        print(toks[pos[0]].type)
         let fname = toks[pos[0]]
         expect(toks, pos, TOK_IDENT)
+        print("[field] got ident")
         expect(toks, pos, TOK_COLON)
+        print("[field] got colon")
         ; consume type token (scalar or struct name) and optional [N]
         pos[0] = pos[0] + 1
         if toks[pos[0]].type == TOK_LBRACK {
