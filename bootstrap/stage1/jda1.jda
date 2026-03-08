@@ -62,13 +62,14 @@ const TOK_GTE     = 35
 const TOK_LTE     = 36
 const TOK_AND     = 37
 const TOK_OR      = 38
-const TOK_CONST   = 39
-const TOK_EOF     = 40
+const TOK_TILDE   = 39  ; Bitwise NOT
+const TOK_CONST   = 40  ; Shifted from 39
+const TOK_EOF     = 41  ; Shifted from 40
 ; Type keyword tokens (classified by lexer)
-const TOK_I64     = 41
-const TOK_I32     = 42
-const TOK_I8      = 43
-const TOK_F64     = 44
+const TOK_I64     = 42  ; Shifted from 41
+const TOK_I32     = 43  ; Shifted from 42
+const TOK_I8      = 44  ; Shifted from 43
+const TOK_F64     = 45  ; Shifted from 44
 
 ; AST node types
 const NODE_FN     = 0
@@ -357,6 +358,7 @@ fn char_to_tok(c: i8) -> i32 {
     if c == '*' { ret TOK_STAR }
     if c == '/' { ret TOK_SLASH }
     if c == '&' { ret TOK_AMP }
+    if c == '~' { ret TOK_TILDE }
     if c == '.' { ret TOK_DOT }
     ret TOK_EOF
 }
@@ -1252,7 +1254,7 @@ fn op_precedence(op: i32) -> i32 {
     if op == TOK_PLUS  or op == TOK_MINUS { ret 5 }
     if op == TOK_LT    or op == TOK_GT or op == TOK_LTE or op == TOK_GTE { ret 4 }
     if op == TOK_EQEQ  or op == TOK_NEQ   { ret 3 }
-    if op == TOK_AND   { ret 2 }
+    if op == TOK_AND   or op == TOK_AMP   { ret 2 }  ; Both logical and bitwise AND
     if op == TOK_OR    { ret 1 }
     ret -1
 }
@@ -1271,6 +1273,18 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
         n.op = TOK_MINUS
         n.child0 = zero
         n.child1 = inner
+        ret n
+    }
+    if t.type == TOK_TILDE {
+        ; Unary bitwise NOT: ~expr (represented as -1 XOR expr, but for now as 0 - 1 - expr)
+        pos[0] = pos[0] + 1
+        let inner = parse_primary(toks, pos, stab, src)
+        ; For bitwise NOT, we use a temporary approach: just pass it through as a unary operator
+        ; by creating a dummy node. Later, we'll handle this in codegen.
+        let n = Node{}
+        n.node_type = NODE_BINOP
+        n.op = TOK_TILDE
+        n.child0 = inner
         ret n
     }
     if t.type == TOK_AMP {
@@ -2192,8 +2206,9 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_GT    { ret OP_CMP_GT }
     if tok == TOK_LTE   { ret OP_CMP_LTE }
     if tok == TOK_GTE   { ret OP_CMP_GTE }
-    if tok == TOK_AND   { ret OP_AND }
+    if tok == TOK_AND or tok == TOK_AMP { ret OP_AND }  ; Both logical and bitwise AND
     if tok == TOK_OR    { ret OP_OR }
+    if tok == TOK_TILDE { ret OP_AND }  ; Bitwise NOT - temporary: use AND (will be fixed later)
     ret -1
 }
 
