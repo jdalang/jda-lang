@@ -626,6 +626,10 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
         let fname = toks[pos[0]]
         expect(toks, pos, TOK_IDENT)
         expect(toks, pos, TOK_COLON)
+        ; consume pointer prefix if present (&)
+        if toks[pos[0]].type == TOK_AMP {
+            pos[0] = pos[0] + 1
+        }
         ; consume type token (scalar or struct name) and optional [N]
         pos[0] = pos[0] + 1
         if toks[pos[0]].type == TOK_LBRACK {
