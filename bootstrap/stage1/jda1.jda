@@ -160,7 +160,7 @@ const PHYS_R9  = 9
 const PHYS_R10 = 10
 const PHYS_R11 = 11
 
-; Allocatable pool size: rax rcx rdx rbx rsi r10 r11 r9
+; Allocatable pool size: rax rcx rdx rbx rsi rdi r10 r11
 const N_ALLOC_REGS = 8
 
 ; ============================================================
@@ -667,16 +667,38 @@ fn lookup_field_off_any(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64
     ret -1
 }
 
+; Global constant table for Bug 2
+let g_const_names_start = i64[512]
+let g_const_names_len   = i64[512]
+let g_const_values      = i64[512]
+let g_const_cnt         = 0
+
+fn lookup_const(src: &i8, name_start: i64, name_len: i64) -> i64 {
+    let i = 0
+    loop i < g_const_cnt {
+        if g_const_names_len[i] == name_len {
+            if str_match(src, name_start, g_const_names_start[i], name_len) == 1 {
+                ret g_const_values[i]
+            }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
 ; Parse const declarations: const NAME = INT_LITERAL (no semicolon)
 fn parse_const_decl(toks: &Token, pos: &i64) {
-    ; Skip const keyword
-    pos[0] = pos[0] + 1
-    ; Skip name (identifier)
-    pos[0] = pos[0] + 1
-    ; Skip = sign
-    pos[0] = pos[0] + 1
-    ; Skip integer value
-    pos[0] = pos[0] + 1
+    expect(toks, pos, TOK_CONST)
+    let name = toks[pos[0]]
+    expect(toks, pos, TOK_IDENT)
+    expect(toks, pos, TOK_EQ)
+    let val = toks[pos[0]].imm
+    expect(toks, pos, TOK_INT)
+
+    g_const_names_start[g_const_cnt] = name.str_start
+    g_const_names_len[g_const_cnt]   = name.str_len
+    g_const_values[g_const_cnt]      = val
+    g_const_cnt = g_const_cnt + 1
 }
 
 fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
@@ -2290,6 +2312,13 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     }
     if node.node_type == NODE_IDENT {
         let slot = lookup(jfn, node.token)
+        if slot == -1 {
+            ; Check constant table
+            let cval = lookup_const(jfn.src, node.token.str_start, node.token.str_len)
+            if cval != -1 {
+                ret emit_const(jfn, bb, TYPE_I64, cval)
+            }
+        }
         let ld = Instr{}
         ld.op       = OP_LOAD
         ld.operand0 = slot
@@ -2385,6 +2414,119 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
 
 ; Forward declarations needed (compile_if_inline calls compile_stmts_inline
 ; and vice versa — handled by ordering: stmts first, then if/loop).
+fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn compile_if_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn compile_loop_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+
+; Forward declarations for inline codegen expressions
+fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn codegen_binop_inline(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn codegen_call_inline(toks: &Token, pos: &i64, name: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+
+fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    ret codegen_binop_inline(toks, pos, 0, stab, src, jfn, bb)
+}
+
+fn codegen_binop_inline(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let left_id = codegen_postfix_inline(toks, pos, stab, src, jfn, bb)
+    loop {
+        let op   = toks[pos[0]].type
+        let prec = op_precedence(op)
+        if prec < min_prec { ret left_id }
+        pos[0] = pos[0] + 1
+        let right_id = codegen_binop_inline(toks, pos, prec + 1, stab, src, jfn, bb)
+        let jir_op = tok_to_jir_op(op)
+        left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
+    }
+    ret left_id
+}
+
+fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let expr_id = codegen_primary_inline(toks, pos, stab, src, jfn, bb)
+    loop {
+        let tok_type = toks[pos[0]].type
+        if tok_type == TOK_LBRACK {
+            pos[0] = pos[0] + 1
+            let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+            expect(toks, pos, TOK_RBRACK)
+            let elem_sz = emit_const(jfn, bb, TYPE_I64, 8) ; Assuming i64 array
+            let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
+            let addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
+            let ld = Instr{}
+            ld.op = OP_LOAD_MEM
+            ld.operand0 = addr
+            expr_id = emit(jfn, bb, &ld)
+        } else {
+            ret expr_id
+        }
+    }
+    ret expr_id
+}
+
+fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let t = toks[pos[0]]
+    if t.type == TOK_INT {
+        pos[0] = pos[0] + 1
+        ret emit_const(jfn, bb, TYPE_I64, t.imm)
+    }
+    if t.type == TOK_IDENT {
+        pos[0] = pos[0] + 1
+        if toks[pos[0]].type == TOK_LPAREN {
+            ret codegen_call_inline(toks, pos, &t, stab, src, jfn, bb)
+        }
+        pos[0] = pos[0] - 1 ; backtrack
+        let slot = lookup(jfn, &t)
+        if slot == -1 {
+            ; Check constant table
+            let cval = lookup_const(src, t.str_start, t.str_len)
+            if cval != -1 {
+                pos[0] = pos[0] + 1
+                ret emit_const(jfn, bb, TYPE_I64, cval)
+            }
+            ret -1
+        }
+        pos[0] = pos[0] + 1
+        let ld = Instr{}
+        ld.op       = OP_LOAD
+        ld.operand0 = slot
+        ret emit(jfn, bb, &ld)
+    }
+    if t.type == TOK_LPAREN {
+        pos[0] = pos[0] + 1
+        let inner_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        expect(toks, pos, TOK_RPAREN)
+        ret inner_id
+    }
+    ret -1
+}
+
+fn codegen_call_inline(toks: &Token, pos: &i64, name: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    expect(toks, pos, TOK_LPAREN)
+    let arg_ids = i64[16]
+    let arg_cnt = 0
+    loop toks[pos[0]].type != TOK_RPAREN {
+        let a_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        arg_ids[arg_cnt] = a_id
+        arg_cnt = arg_cnt + 1
+        if toks[pos[0]].type == TOK_COMMA {
+            pos[0] = pos[0] + 1
+        }
+    }
+    expect(toks, pos, TOK_RPAREN)
+
+    let ins = Instr{}
+    ins.op        = OP_CALL
+    ins.operand0  = arg_ids[0]
+    ins.operand1  = arg_ids[1]
+    ins.operand2  = arg_ids[2]
+    ins.operand3  = arg_cnt
+    ins.str_start = name.str_start
+    ins.str_len   = name.str_len
+    ret emit(jfn, bb, &ins)
+}
+
 
 fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let cur = bb
@@ -2421,12 +2563,10 @@ fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
 
 fn compile_if_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     expect(toks, pos, TOK_IF)
-    let cond = Node{}
-    cond = parse_expr(toks, pos, stab, src)
     let then_bb  = new_block(jfn)
     let else_bb  = new_block(jfn)
     let merge_bb = new_block(jfn)
-    let cond_id  = codegen_expr(cond, jfn, bb)
+    let cond_id  = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
     emit_br(jfn, bb, cond_id, then_bb, else_bb)
     expect(toks, pos, TOK_LBRACE)
     let then_end = compile_stmts_inline(toks, pos, stab, src, jfn, then_bb)
@@ -2454,13 +2594,11 @@ fn compile_if_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn:
 
 fn compile_loop_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     expect(toks, pos, TOK_LOOP)
-    let cond = Node{}
-    cond = parse_expr(toks, pos, stab, src)
     let header_bb = new_block(jfn)
     let body_bb   = new_block(jfn)
     let exit_bb   = new_block(jfn)
     emit_jmp(jfn, bb, header_bb)
-    let cond_id = codegen_expr(cond, jfn, header_bb)
+    let cond_id = codegen_expr_inline(toks, pos, stab, src, jfn, header_bb)
     emit_br(jfn, header_bb, cond_id, body_bb, exit_bb)
     expect(toks, pos, TOK_LBRACE)
     let body_end = compile_stmts_inline(toks, pos, stab, src, jfn, body_bb)
@@ -2716,9 +2854,6 @@ fn regalloc_get(ra: &RegAlloc, val_id: i64) -> i32 {
 
 fn regalloc_free(ra: &RegAlloc, val_id: i64) {
     let idx = ra.val2reg[val_id]
-    print("rf idx=")
-    print(idx)
-    print("\n")
     if idx == -1 { ret ok(0) }
     if idx < 0 or idx >= 8 { ret ok(0) }
     ra.reg2val[idx]    = -1
@@ -2732,16 +2867,9 @@ fn mark_use(ctx: &LowerCtx, val_id: i64) {
 
 fn consume_use(ctx: &LowerCtx, val_id: i64) {
     if val_id < 0 or val_id >= 4096 { ret ok(0) }
-    print("cu val=")
-    print(val_id)
-    print(" uc=")
-    print(ctx.use_cnt[val_id])
-    print("\n")
     ctx.use_cnt[val_id] = ctx.use_cnt[val_id] - 1
     if ctx.use_cnt[val_id] <= 0 {
-        print("cu free\n")
         regalloc_free(&ctx.ra, val_id)
-        print("cu freed\n")
     }
 }
 
@@ -3338,27 +3466,13 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if ins.op == OP_MUL {
-        print("MUL id=")
-        print(ins.id)
-        print(" o0=")
-        print(ins.operand0)
-        print(" o1=")
-        print(ins.operand1)
-        print("\n")
         let a   = get_or_load(&ctx.ra, out, pos, ins.operand0)
-        print("got a\n")
         let b   = get_or_load(&ctx.ra, out, pos, ins.operand1)
-        print("got b\n")
         let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
-        print("got dst\n")
         emit_mov_rr(out, pos, dst, a)
-        print("mov done\n")
         emit_imul_rr(out, pos, dst, b)
-        print("imul done\n")
         consume_use(ctx, ins.operand0)
-        print("cu0 done\n")
         consume_use(ctx, ins.operand1)
-        print("cu1 done\n")
         ret ok(0)
     }
 
@@ -3485,7 +3599,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ; JMP -> then_bb
         let fix_then = ctx.fix_cnt
         ctx.fixups[fix_then].code_off  = pos[0] + 1
-        ctx.fixups[fix_then].target_bb = ins.bb_target0
+        ctx.fixups[fix_then].target_bb = iop.bb_target0
         ctx.fixups[fix_then].kind      = 0             ; branch fixup
         ctx.fix_cnt = ctx.fix_cnt + 1
         emit_jmp_rel32(out, pos, 0)
@@ -3601,11 +3715,6 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     bb.label_off = pos[0]
     let i = 0
     loop i < bb.instr_cnt {
-        print("li")
-        print(i)
-        print(" op=")
-        print(jfn.blocks[bb.id].instrs[i].op)
-        print("\n")
         if jfn.blocks[bb.id].instrs[i].dead == 0 {
             lower_instr(&jfn.blocks[bb.id].instrs[i], ctx, jfn, out, pos)
         }
@@ -3694,16 +3803,8 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
 
     let i = 0
     loop i < jfn.block_cnt {
-        print("lb")
-        print(i)
-        print(" ic=")
-        print(jfn.blocks[i].instr_cnt)
-        print("\n")
         ctx.bb_offsets[i] = pos[0]
         lower_block(&jfn.blocks[i], ctx, jfn, out, pos)
-        print("lb")
-        print(i)
-        print(" done\n")
         i = i + 1
     }
 
@@ -3963,19 +4064,9 @@ fn main() {
         jfn.src_len = src_len
         jfn.stab = stab
 
-        print("F")
-        print(fn_cnt)
-        print(" bc=")
-        ; (block_cnt printed after parse)
         parse_fn(toks, &pos, &jfn, stab, src_buf)
-        print(jfn.block_cnt)
-        print(" bn=")
-        print(fn_name_off[fi])
-        print(" parsed\n")
         fold_constants(&jfn)
-        print(" folded\n")
         dce(&jfn)
-        print(" dce\n")
 
         ; Check if this is main
         let is_main = streq(src_buf, fn_name_off[fi], fn_name_len[fi], "main")
@@ -3987,9 +4078,7 @@ fn main() {
 
         let ctx = LowerCtx{}
         regalloc_init(&ctx.ra)
-        print(" lowering\n")
         lower_fn(&jfn, &ctx, code_buf, &code_len, is_main)
-        print(" lowered\n")
 
         ; Collect strtab and call fixups from this function
         let ci = 0
