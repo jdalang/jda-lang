@@ -148,8 +148,6 @@ jda1 must support every feature used in its own source code (~1900 lines).
   - ✅ Added `ok(val: i64)` helper function for return statements
 - **Result:** Basic error reporting framework now in place for future use
 
-### 🟡 Technical Debt & Stability
-
 **Issue 3e: Register Spill Verification**
 - **Status:** ✅ READY FOR TEST (March 7, 2026)
 - **Problem:** `jda1` has a simple register allocator that *claims* to spill to the stack, but this path is rarely triggered in small programs.
@@ -170,14 +168,15 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 **What's working in jda0 (Stage 0 compiler):**
 ### 4. Pointer and reference support
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ missing**
+**Status:** ✅ DONE — **jda0: ✅ done | jda1: ✅ done** (March 8, 2026)
 **What:**
-  - [ ] Parse `&expr` (address-of) → LEA
-  - [ ] Parse `ptr[index]` (deref + index) → MOV from [base + index*stride]
-  - [ ] Parse `ptr[0] = val` (deref + store)
-  - [ ] Parse `&Type` in function signatures for pass-by-reference
-  - [ ] Pointer arithmetic
+  - [x] Parse `&expr` (address-of) → LEA
+  - [x] Parse `ptr[index]` (deref + index) → MOV from [base + index*stride]
+  - [x] Parse `ptr[0] = val` (deref + store)
+  - [x] Parse `&Type` in function signatures for pass-by-reference
+  - [x] Pointer arithmetic
 **Why:** jda1.jda passes almost everything by pointer/reference.
+**Branch:** `phase2-pointer-reference-support`
 
 ---
 
@@ -240,12 +239,14 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 8. Constants (`const NAME = value`)
-**Status:** [ ] TODO — **jda0: ✅ done | jda1: ❌ no `const` parsing from source**
+**Status:** ✅ DONE — **jda0: ✅ done | jda1: ✅ done** (March 10, 2026)
 **What:**
-  - [ ] Parse `const NAME = int_literal`
-  - [ ] Store in compile-time constant table
-  - [ ] Resolve at codegen time (emit OP_CONST with stored value)
+  - [x] Parse `const NAME = int_literal`
+  - [x] Store in compile-time constant table (`g_const_names_start/len`, `g_const_values`, `g_const_cnt`)
+  - [x] Resolve at codegen time via `lookup_const()` → emit `OP_CONST` with stored value
+  - [x] `codegen_primary_inline` falls through to const table when IDENT has no slot
 **Why:** jda1.jda has 40+ constants (TOK_*, NODE_*, OP_*, TYPE_*, PHYS_*, N_ALLOC_REGS, etc.)
+**Branch:** `selfhost-inline-compile`
 
 ---
 
@@ -280,7 +281,7 @@ jda1 must support every feature used in its own source code (~1900 lines).
 ---
 
 ### 9a. Issue: stage1 roundtrip blocker (`and`/`or` crash)
-**Status:** ✅ PARSER COMPLETE, ❌ Selfhost blocked by unknown segfault
+**Status:** ✅ PARSER COMPLETE, ✅ Root cause bugs identified and fixed (branch: selfhost-inline-compile)
 **Parser Bugs Fixed (March 8, 2026):**
   - [x] Fixed unsafe lookahead: Added `peek_token()` safe lookahead function
   - [x] Replaced all `toks[pos[0] + 1].type` with `peek_token(toks, pos[0])` calls
@@ -299,34 +300,32 @@ jda1 must support every feature used in its own source code (~1900 lines).
   - [x] Function references: `fn foo(x: &Type)` ✅
   - [x] All Phase 1 operators: AND, OR, >=, <=, etc. ✅
 
-**Selfhost Status:**
-  - ❌ Segmentation fault when jda1 compiles jda1.jda
-  - Not a parsing issue - all parsing complete and tested
-  - Likely cause: Memory corruption or stack overflow in code generation phase
-  - Requires deeper debugging with GDB or additional instrumentation
+**Selfhost Status (updated March 10, 2026):**
+  - ✅ Root cause 1 fixed: Dangling AST pointers in `parse_expr` (child0/child1 pointed to dead stack frames)
+    - Fix: `codegen_expr_inline` — Pratt parser that emits JIR directly, builds no AST nodes
+    - `compile_if_inline` / `compile_loop_inline` / `compile_stmts_inline` replace broken stubs
+  - ✅ Root cause 2 fixed: `parse_const_decl` was skipping tokens without recording values
+    - Fix: Global const table (`g_const_names_start/len/values`, `g_const_cnt`) + `lookup_const()`
+    - All `const NAME = INT` declarations now stored and resolved at codegen time
+  - ✅ Block limit fixed: `BasicBlock[64]` → `BasicBlock[256]` (lex() needs 50–200+ blocks)
+  - 🟡 End-to-end roundtrip test pending: `./jda1_sh2 ../../examples/hello.jda hello_sh2 && ./hello_sh2`
 
 **Achievement:** Phase 1 parser is 100% complete and fully functional for all language features.
 
 ---
 
 ### 10. Self-hosting roundtrip
-**Status:** 🟡 IN PROGRESS — MILESTONE 🎯 (Major breakthrough: jda1 now compiles hello.jda!)
+**Status:** 🟡 IN PROGRESS — MILESTONE 🎯
 **What:** jda1 compiles jda1.jda → jda1-gen2 → compiles hello.jda → runs correctly. Binary hashes match.
 **Depends on:** Items 1–9
 
-**Recent Progress (March 8, 2026):**
-- 🔧 **Fixed**: Pointer arithmetic segfault in jda1 (commit 6b8542e)
-  - Issue: jda0 codegen miscalculates struct offsets through byte pointers (`&i8`)
-  - Fix: Use stack-allocated Token array instead of heap-allocated byte buffer
-  - Result: ✅ jda1 now successfully compiles hello.jda and produces working binaries!
-
-**Remaining Blocker:**
-- ❌ jda1 crashes in **lex() phase** when processing jda1.jda (3500+ lines)
-- Possible causes:
-  - Token buffer overflow (increased to 15K but may need more)
-  - Edge case in lexer when handling large input or specific syntax
-  - Memory corruption in lex() internals
-- **Next step:** Debug which specific construct in jda1.jda causes lex() to crash
+**Progress (March 10, 2026 — branch: selfhost-inline-compile):**
+- ✅ jda0 → jda1_new: works
+- ✅ jda1_new → jda1_sh2: exits 0, binary produced
+- ✅ Bug 1 fixed: `codegen_expr_inline` eliminates dangling AST pointer crashes
+- ✅ Bug 2 fixed: global const table means all `TOK_*`/`NODE_*`/`OP_*` constants resolve correctly
+- ✅ Block limit raised to 256 (was 64, real functions need 50–200+ blocks)
+- 🔧 **Needs testing:** jda1_sh2 compiling hello.jda end-to-end
 
 **Why:** Once achieved, Jda compiler has zero external dependencies. The language bootstraps itself.
 
@@ -733,14 +732,14 @@ jda1 must support every feature used in its own source code (~1900 lines).
     ↓ unblocks
 #7 Else-if chains ✅
     ↓ unblocks
-#8 Constants ❌ ← NEXT TARGET
+#8 Constants ✅
     ↓ unblocks
-#9 Logical operators ❌
+#9 Logical operators ✅
     ↓ unblocks
 #10 SELF-HOSTING ROUNDTRIP 🎯 (jda1 compiles jda1.jda)
 ```
 **Goal:** True self-hosting compiler with zero external dependencies.
-**Progress:** 7 of 9 P0 blockers complete (78%). Next: constants (needed for jda1 self-hosting).
+**Progress:** 9 of 9 P0 blockers complete (100%). Self-hosting roundtrip testing in progress.
 
 ---
 
@@ -812,14 +811,8 @@ jda1 must support every feature used in its own source code (~1900 lines).
 
 ---
 
-### Current Focus (Updated March 8, 2026)
-1. ✅ **#1-7 COMPLETE** — Multi-function, structs, arrays, pointers, string escapes, print(int), else-if chains
-2. 🔴 **#8 NEXT: Constants** → jda1 has 40+ const declarations throughout codebase
-3. **#9 Logical operators** → and/or/>=/<= operators needed for jda1 parsing
-4. **#10 Self-hosting** → jda1 compiles jda1.jda (final P0 gate)
+### Current Focus (Updated March 10, 2026)
+1. ✅ **#1-9 ALL COMPLETE** — Multi-function, structs, arrays, pointers, string escapes, print(int), else-if chains, constants, logical operators
+2. 🔧 **#10 IN PROGRESS: Self-hosting roundtrip** — jda1_sh2 produced, needs end-to-end test (branch: `selfhost-inline-compile`)
 
 **After Self-Hosting (#10):** Phase 2 (installers, type checking, error handling) and beyond.
-**Remaining P0 blockers:**
-- Constants (#8): `const NAME = value` parsing and compile-time resolution
-- Logical operators (#9): `and`, `or`, `>=`, `<=` in lexer and parser
-- Once both complete: jda1 can self-host and bootstrap chain is fully self-contained
