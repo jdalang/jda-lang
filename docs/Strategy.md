@@ -38,7 +38,11 @@ Status: partially done
 - removed the stage-0 `streq(...)` hot-path crash by replacing the per-function `main` check with a direct guarded compare
 - flattened more of `lex(...)` off fragile compound boolean forms
 - added a fast path for `ident = ident +/- int`
+- extended those fast paths to cover `let` / assignment forms using `ident +/- ident|int` and `ident */ ident|int`
 - fixed pointer-to-struct element typing in the field/index paths used by `out_toks[count].field`
+- flattened the remaining `helper(src[pos])` call-argument shapes in `lex(...)`
+- flattened `parse_const_decl(...)` and `skip_top_level_let(...)` to stop carrying local `Token` structs just to read `str_start` / `str_len`
+- identified a real per-basic-block instruction cap during selfhost codegen (`EMIT_SLOT 64 bb=0`) and raised the block instruction budget conservatively to `128`
 
 Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
@@ -49,8 +53,9 @@ Verified:
 - startup constant lookup now works
 - selfhost gets through multiple helper calls and struct/array expressions that used to fail much earlier
 - `./jda1 ../stage1/jda1.jda jda1_sh2` no longer fails on the old stage-0 `main` patch bug
-- selfhost now reaches `FN#24`, which is `lex(...)`
-- the earlier `out_toks[count].type = ...` / simple `count = count + 1` blockers have been pushed forward
+- the old `lex(...)` call-argument crash at `EXPRST p=2978` / `call arg p=2986` is gone
+- the `64`-instruction basic-block limit was confirmed as a real blocker
+- the `256`-instruction experiment was too large and caused an immediate startup crash, so `128` is the current working ceiling
 
 3. Current bug
 Status: active blocker
@@ -58,41 +63,42 @@ Status: active blocker
 Current failure:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the current crash is back in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
-- the latest failure is later than before, inside `FN#24` (`lex(...)`)
+- the latest failure is now earlier again, at `FN#0`, which is `const_name_len_at(...)`
 - recent traces narrowed failures to:
-  - unsupported source shapes inside `lex(...)`
-  - later call-argument / indexed-expression handling inside `lex(...)`
-  - remaining fallback expression paths after the earlier field-store and simple-assignment fixes
+  - the old `lex(...)` call-argument blocker has been cleared
+  - the per-block instruction cap was too small at `64`
+  - the next active bug is back in postfix field/index lowering for `ident.field[idx]`-style return expressions
 - latest bounded trace reaches:
-  - `EXPRST p=2978`
-  - `call p=2985`
-  - `call arg p=2986`
-  - then dies while entering the generic primary-expression path for that call argument
+  - `FN#0`
+  - `ret1 p=981`
+  - `ce p=981`
+  - `prim enter p=981`
+  - `prim next p=982 t=33`
+  - `prim lookup p=981`
+  - then dies while compiling the return expression for `ct.names_len[idx]`
 
 Meaning:
 - the old “stage-2 binary emission is the primary blocker” theory is no longer current
 - stage 0 is healthy enough for bring-up again
 - the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
 - especially in:
-  - `lex(...)`
-  - later fallback expression parsing after `lex(...)` branch rewrites
-  - call arguments that still force the generic expression path
-  - remaining pointer/struct indexing edge cases
+  - helper return expressions like `ct.names_len[idx]`
+  - postfix field/index lowering for `ident.field[idx]`
+  - keeping the per-block instruction budget large enough for selfhost without blowing up `JirFunction` stack footprint
 
 4. Next fix
 Status: next
 
 Work in order:
-- map the latest `FN#24` (`lex(...)`) call-argument / fallback-expression crash
-- keep flattening unsupported `lex(...)` source shapes in `jda1.jda` instead of deepening the parser when a source rewrite is cheaper
+- debug the `const_name_len_at(...)` return expression path first
+- keep the `128` instruction cap unless it proves too small again
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 Concrete next edits:
-- identify the exact `lex(...)` statement behind the latest `EXPRST` / `call arg` token window
-- map tokens `2978..2986` back to the concrete source line in `lex(...)`
-- flatten that source shape to avoid the generic fallback expression path
-- if the failing arg is another nested `toks[...]` / field / index form, rewrite it into locals before the call
-- add one more narrow trace in the call-argument path only if the source mapping is still ambiguous
+- map the exact failing postfix path for `ct.names_len[idx]` in `const_name_len_at(...)`
+- fix `ident.field[idx]` lowering if the field-array path is still losing type or address information
+- keep the `EMIT_SLOT` trace until the `128` cap is proven sufficient across early helper functions
+- if needed, flatten `const_name_len_at(...)` / similar helpers to simpler locals before widening the parser again
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
