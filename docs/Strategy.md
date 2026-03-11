@@ -95,15 +95,14 @@ Status: 🟡 active
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the failure is still in `FN#54`, inside `lex_handle_int(...)`
-- first `if load_i8_at0(src, pos) < 48` now gets through
-- the old `out_toks[out_idx]` store path is no longer the immediate blocker
-- the current failing form is the assignment `out_idx = count[0]`
+- the current best checkpoint keeps the first `if cur < 48` branch flattened inline
+- reintroducing `emit_lex_int(...)` in that first branch regressed the failure to an earlier point
+- the current failing form is still in that first branch’s inline emit sequence, around `out_idx = count[0]`
 
 🟡 Latest evidence:
-- bounded trace now reaches the emit block after the first `if`
-- `EXPRST p=4442` appears for the `out_idx = count[0]` statement
-- the generic postfix/index path still gets entered for the RHS `count[0]`
-- parse drift now happens around token positions `4444..4446`
+- the farther checkpoint is the inline first branch, not the helper-call version
+- when the helper call was restored there, the failure moved earlier and the `< 48` condition stopped advancing cleanly
+- with the safer inline branch, the failing window remains centered on the local `out_idx` sequence in the first emit block
 
 🟡 Why it matters:
 - stage 0 is healthy enough for bring-up again
@@ -111,26 +110,27 @@ Status: 🟡 active
   - `p0` setup
   - helper-call arg corruption
   - indexed token-store writes
-- the current highest-signal area is getting `ident = ident[index]` to stay on the assignment fast path reliably
+- the current highest-signal area is simplifying that first inline emit block without reintroducing helper-call regressions
 
 4. Next fix
 Status: 🟡 next
 
 🟡 Work in order:
-- harden `compile_expr_stmt_inline(...)` so `out_idx = count[0]` stays on the `ident = ident[index]` fast path
+- keep the inline first branch in `lex_handle_int(...)` and simplify it further
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 🟡 Concrete next edits:
-- patch the assignment fast path around `ident = ident[index]` so it commits for `out_idx = count[0]`
-- if that remains brittle, flatten this one assignment further in `lex_handle_int(...)` instead of widening generic parser logic
+- flatten or replace the remaining `out_idx` temp sequence in the first `if cur < 48` branch
+- avoid reintroducing `emit_lex_int(...)` in that branch, since that version is confirmed worse
+- if needed, use one more dedicated helper instead of widening generic parser logic
 - keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 🟡 Expected outcome of next fix:
-- get past `out_idx = count[0]` in `lex_handle_int(...)`
+- get past the remaining inline first-branch emit sequence in `lex_handle_int(...)`
 - move the blocker beyond `FN#54` to the next concrete source form
 
 5. Final testing
