@@ -74,7 +74,14 @@ Verified:
 - the old `FN#0` `ret ct.names_len[idx]` postfix/index crash is fixed
 - selfhost now gets through far later helper/lowering functions before failing
 - exact token dumps are now available for mapping failing windows directly back to source
-- the current `FN#52` / `lex_handle_int(...)` token window has been identified and partially simplified
+- the old `lex_handle_int(...)` signature-parser failure is fixed
+- top-level param parsing now uses raw token spans instead of local `Token` copies
+- `compile_let_inline(...)` now binds names by raw span instead of a local `Token`
+- `peek_token(...)` now reads through `tok_type_at(...)`
+- `codegen_call_inline(...)` now uses raw token metadata for the callee name and delimiter checks
+- `lex_handle_string(...)` and `emit_lex_tok(...)` were moved off the fragile `out_toks[count[0]].field` write shape
+- `lex_handle_int(...)` has been simplified repeatedly to remove unstable `let ... = call(...)`, `ret call(...)`, and some nested index forms
+- selfhost now reaches `FN#54`
 
 3. Current bug
 Status: active blocker
@@ -82,45 +89,43 @@ Status: active blocker
 Current failure:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the current crash is still in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
-- the latest failure has moved later than the old `regalloc_init(...)` / `FN#0` blockers and is now in the top-level function signature parser
-- exact token mapping shows the active window is the `lex_handle_int(...)` function header
+- the latest failure has moved beyond the old top-level signature-parser bug and is now inside `lex_handle_int(...)`
+- exact token mapping and bounded traces show the active function is `FN#54`
 - the failing range is:
-  - `4422 fn`
-  - `4423 lex_handle_int`
-  - params continue through the final `count: &i64`
-  - `4448 )`
+  - the loop body inside `lex_handle_int(...)`
+  - specifically the indexed comparison form around `if src[p0] < 48`
 - latest bounded trace reaches:
-  - `SP pos=4422`
-  - then parse errors at `4444`, `4445` and nearby
-  - then parser state drifts and panics
-- this indicates the current bug is no longer the `lex_handle_int(...)` body or token-emission path
-- the active bug is the main compile-loop parameter parser drifting while reading the final `count: &i64` parameter in that function signature
+  - `FN#54`
+  - entry through the `loop pos[0] < src_len`
+  - then postfix/index lowering for `src[p0]`
+  - then parse drift around token positions `4448..4451`
+- the current active bug is the postfix/index path for `ident[ident]` inside a condition expression
+- earlier `let ... = call(...)` and call-arg delimiter bugs in the same function were real and partially fixed, but the nested index form still corrupts parser state
 
 Meaning:
 - stage 0 is healthy enough for bring-up again
-- the active work is still stabilizing the stage-1 top-level parser/codegen on real `jda1.jda` source patterns
-- the current highest-signal area is the parameter parser in `main()` that walks function signatures before live body compilation starts
+- the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
+- the current highest-signal area is postfix/index lowering in condition expressions, not the old top-level signature parser
 
 4. Next fix
 Status: next
 
 Work in order:
-- harden the main function-signature parameter parser in `main()`
+- fix the postfix/index lowering for `ident[ident]` in `codegen_postfix_inline(...)` / related live expression paths
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 Concrete next edits:
-- stop storing local `Token` structs in the top-level param loop where possible
-- read parameter name/type spans directly from `toks[pos]` and `tok_type_at(...)`
-- simplify parsing of trailing params like `count: &i64`
-- keep direct token-window dumps for the failing range instead of inferring from `FN#` numbering alone
+- harden the indexed postfix path used by `src[p0]`
+- if the postfix fix is too invasive, flatten `lex_handle_int(...)` one more step to avoid `ident[ident]` in condition expressions
+- keep raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 Expected outcome of next fix:
-- get past the `lex_handle_int(...)` function signature cleanly
-- return to body compilation of the next real function and move the blocker to the next concrete source form
+- get past the `src[p0]` comparison path in `lex_handle_int(...)`
+- move the blocker beyond `FN#54` to the next concrete source form
 
 5. Final testing
 Status: pending
