@@ -81,6 +81,7 @@ Verified:
 - `codegen_call_inline(...)` now uses raw token metadata for the callee name and delimiter checks
 - `lex_handle_string(...)` and `emit_lex_tok(...)` were moved off the fragile `out_toks[count[0]].field` write shape
 - `lex_handle_int(...)` has been simplified repeatedly to remove unstable `let ... = call(...)`, `ret call(...)`, and some nested index forms
+- the `ident[ident]` postfix fast path in `codegen_postfix_inline(...)` was hardened to use raw token metadata and raw-span lookup
 - selfhost now reaches `FN#54`
 
 3. Current bug
@@ -93,38 +94,39 @@ Current failure:
 - exact token mapping and bounded traces show the active function is `FN#54`
 - the failing range is:
   - the loop body inside `lex_handle_int(...)`
-  - specifically the indexed comparison form around `if src[p0] < 48`
+  - currently the trivial local-init / assignment setup just before the first `if`
 - latest bounded trace reaches:
   - `FN#54`
   - entry through the `loop pos[0] < src_len`
-  - then postfix/index lowering for `src[p0]`
-  - then parse drift around token positions `4448..4451`
-- the current active bug is the postfix/index path for `ident[ident]` inside a condition expression
-- earlier `let ... = call(...)` and call-arg delimiter bugs in the same function were real and partially fixed, but the nested index form still corrupts parser state
+  - then parse drift at token position `4439`
+  - `expected=23` (`TOK_EQ`) while compiling the `let p0 = 0; p0 = pos[0]` sequence
+- the current active bug is no longer just the `src[p0]` postfix/index form
+- the latest postfix/index hardening was real, but the failure snapped back earlier to `compile_let_inline(...)` / simple local assignment handling in `lex_handle_int(...)`
 
 Meaning:
 - stage 0 is healthy enough for bring-up again
 - the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
-- the current highest-signal area is postfix/index lowering in condition expressions, not the old top-level signature parser
+- the current highest-signal area is simple `let` / assignment handling in the live inline compiler, not the old top-level signature parser
 
 4. Next fix
 Status: next
 
 Work in order:
-- fix the postfix/index lowering for `ident[ident]` in `codegen_postfix_inline(...)` / related live expression paths
+- harden `compile_let_inline(...)` further for trivial local-init and follow-up assignment sequences
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 Concrete next edits:
-- harden the indexed postfix path used by `src[p0]`
-- if the postfix fix is too invasive, flatten `lex_handle_int(...)` one more step to avoid `ident[ident]` in condition expressions
+- simplify or special-case `let p0 = 0`
+- simplify or special-case the following `p0 = pos[0]`
+- if needed, flatten `lex_handle_int(...)` again so it avoids that two-statement local setup entirely
 - keep raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 Expected outcome of next fix:
-- get past the `src[p0]` comparison path in `lex_handle_int(...)`
+- get past the `let p0 = 0; p0 = pos[0]` setup in `lex_handle_int(...)`
 - move the blocker beyond `FN#54` to the next concrete source form
 
 5. Final testing
