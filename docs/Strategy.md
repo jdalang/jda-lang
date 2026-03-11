@@ -35,6 +35,10 @@ Status: partially done
 - removed the unsupported `break` in `lex(...)`
 - added live lowering for `arr[idx].field = rhs`
 - temporarily disabled `fold_constants` and `dce` during selfhost bring-up
+- removed the stage-0 `streq(...)` hot-path crash by replacing the per-function `main` check with a direct guarded compare
+- flattened more of `lex(...)` off fragile compound boolean forms
+- added a fast path for `ident = ident +/- int`
+- fixed pointer-to-struct element typing in the field/index paths used by `out_toks[count].field`
 
 Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
@@ -45,6 +49,8 @@ Verified:
 - startup constant lookup now works
 - selfhost gets through multiple helper calls and struct/array expressions that used to fail much earlier
 - `./jda1 ../stage1/jda1.jda jda1_sh2` no longer fails on the old stage-0 `main` patch bug
+- selfhost now reaches `FN#24`, which is `lex(...)`
+- the earlier `out_toks[count].type = ...` / simple `count = count + 1` blockers have been pushed forward
 
 3. Current bug
 Status: active blocker
@@ -52,33 +58,41 @@ Status: active blocker
 Current failure:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the current crash is back in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
-- the latest failure is during top-level `let` processing / early function compilation after `A/B/C/D`
+- the latest failure is later than before, inside `FN#24` (`lex(...)`)
 - recent traces narrowed failures to:
-  - unsupported control-flow / expression forms in `lex(...)`
-  - nested assignment forms like `out_toks[count].type = ...`
-  - later boolean-expression lowering around `TOK_AND`
+  - unsupported source shapes inside `lex(...)`
+  - later call-argument / indexed-expression handling inside `lex(...)`
+  - remaining fallback expression paths after the earlier field-store and simple-assignment fixes
+- latest bounded trace reaches:
+  - `EXPRST p=2978`
+  - `call p=2985`
+  - `call arg p=2986`
+  - then dies while entering the generic primary-expression path for that call argument
 
 Meaning:
 - the old “stage-2 binary emission is the primary blocker” theory is no longer current
 - stage 0 is healthy enough for bring-up again
 - the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
 - especially in:
-  - top-level `skip_top_level_let(...)`
   - `lex(...)`
-  - boolean expressions using `and` / `or`
-  - nested indexed/field assignments
+  - later fallback expression parsing after `lex(...)` branch rewrites
+  - call arguments that still force the generic expression path
+  - remaining pointer/struct indexing edge cases
 
 4. Next fix
 Status: next
 
 Work in order:
-- map the latest `TOK_AND` / indexed-expression crash in the active selfhost path
-- keep flattening unsupported boolean and assignment shapes in `jda1.jda` instead of deepening the parser when a source rewrite is cheaper
+- map the latest `FN#24` (`lex(...)`) call-argument / fallback-expression crash
+- keep flattening unsupported `lex(...)` source shapes in `jda1.jda` instead of deepening the parser when a source rewrite is cheaper
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 Concrete next edits:
-- identify which top-level `let` / helper function owns the latest `3188..3193` token window
-- flatten the next `and` / indexed expression shape to a simpler supported form
+- identify the exact `lex(...)` statement behind the latest `EXPRST` / `call arg` token window
+- map tokens `2978..2986` back to the concrete source line in `lex(...)`
+- flatten that source shape to avoid the generic fallback expression path
+- if the failing arg is another nested `toks[...]` / field / index form, rewrite it into locals before the call
+- add one more narrow trace in the call-argument path only if the source mapping is still ambiguous
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
