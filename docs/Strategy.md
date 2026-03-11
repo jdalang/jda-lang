@@ -70,56 +70,59 @@ Verified:
 - the old `skip_top_level_let(...)` bare-`[` blocker is gone
 - selfhost now reaches `FN#45`
 - the old `char_to_tok(...)`, `classify_keyword(...)`, and main `lex(...)` helper-pressure blockers are no longer the immediate failure
+- the old `regalloc_init(...)` crash after `J4` is fixed
+- the old `FN#0` `ret ct.names_len[idx]` postfix/index crash is fixed
+- selfhost now gets through far later helper/lowering functions before failing
+- exact token dumps are now available for mapping failing windows directly back to source
+- the current `FN#52` / `lex_handle_int(...)` token window has been identified and partially simplified
 
 3. Current bug
 Status: active blocker
 
 Current failure:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
-- the current crash is back in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
-- the latest failure is now later, after `FN#45`
-- recent traces narrowed failures to:
-  - the old `skip_top_level_let(...)` and `lex(...)` blockers are no longer the immediate issue
-  - the current failure is parser desynchronization at the next function boundary after `FN#45`
-  - the parser is seeing corrupted-looking token values starting around positions `4443..4450`
+- the current crash is still in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
+- the latest failure has moved much later than before and is no longer the old post-`FN#45` function-boundary theory
+- `regalloc_init(...)` now survives consistently; the crash moved past the old `J4` lowerer setup point
+- the current active failure is in the function currently traced as `FN#52`
+- exact token mapping shows that this region corresponds to `lex_handle_int(...)`
 - latest bounded trace reaches:
-  - `FN#45`
-  - then a series of parse errors:
-    - `unexpected token at position 4443`
-    - `unexpected token at position 4444`
-    - ...
-    - `unexpected token at position 4450`
-  - with corrupted-looking token values, followed by panic
-  - this indicates parser state or token consumption is being disturbed around the boundary after `FN#45`, not a simple unresolved identifier in the old hot path
+  - `FN#52`
+  - `loop keep == 1`
+  - `if pos[0] >= src_len { ... }`
+  - then later statement parsing in the same function drifts into garbage around token positions `4446..4455`
+  - latest panic is after:
+    - `EXPRST p=4446`
+    - then corrupted token values at `p=4447+`
+- this indicates the active bug is now a statement-boundary / token-buffer corruption issue inside `lex_handle_int(...)` or its immediate token-emission path, not the earlier broad function-boundary parse theory
 
 Meaning:
-- the old “stage-2 binary emission is the primary blocker” theory is no longer current
 - stage 0 is healthy enough for bring-up again
 - the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
-- especially in:
-  - the parser/function-boundary transition after `FN#45`
-  - remaining direct indexed token reads in early parser helpers
-  - keeping the stable `32 x 128` block-storage layout while simplifying hot helper functions instead of growing global limits again
+- the current highest-signal area is small lexer helper code, especially:
+  - `lex_handle_int(...)`
+  - token emission into `out_toks[count]`
+  - simple loops/ifs that still mix nested index expressions and helper calls
 
 4. Next fix
 Status: next
 
 Work in order:
-- identify the exact parser helper/function boundary that goes bad immediately after `FN#45`
+- finish simplifying the active `FN#52` / `lex_handle_int(...)` body
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 Concrete next edits:
-- map `FN#45` and the following function start precisely in the main compile loop
-- inspect the parser helpers involved at the next function boundary, especially remaining direct `toks[pos[0]]` reads and `pos[0]` mutations
-- fix the parser desynchronization before widening any limits again
-- keep `EMIT_SLOT` and parse-error traces until the first post-`FN#45` boundary is stable
+- keep flattening `lex_handle_int(...)` off nested token/index/helper-call shapes until its statement stream stays aligned
+- simplify token emission paths that still write through `out_toks[count[0]].field`
+- keep direct token-window dumps for the failing range instead of inferring from `FN#` numbering alone
+- keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 Expected outcome of next fix:
-- get `./jda1 ../stage1/jda1.jda jda1_sh2` to complete again
-- move the blocker back to `jda1_sh2 -> hello` or to the next specific source form, rather than a broad stage-1 crash
+- get past the current `FN#52` failure in `lex_handle_int(...)`
+- move the blocker to the next concrete function/source form, not a broad parser corruption report
 
 5. Final testing
 Status: pending
