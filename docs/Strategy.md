@@ -47,6 +47,11 @@ Status: partially done
 - replaced the temp-heavy `pos` increment rewrites in `skip_top_level_let(...)` with `inc_i64_at0(...)`
 - flattened the remaining `let ... = pos[0]` reads in `skip_top_level_let(...)` to `load_i64_at0(pos)`
 - confirmed and cleared the temporary `BIND_OVF 32` local-table exhaustion caused by the earlier temp-heavy flattening
+- split `char_to_tok(...)` into smaller helpers
+- split `classify_keyword(...)` into length-based helpers
+- factored most of `lex(...)` into smaller helper functions
+- rewrote the remaining hot `skip_top_level_let(...)` indexed RHS through helpers so the old bare-`[` bug there is cleared
+- simplified `parse_type(...)` into a straighter-line shape to reduce parser-state fragility
 
 Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
@@ -61,8 +66,10 @@ Verified:
 - the `64`-instruction basic-block limit was confirmed as a real blocker
 - the `256`-instruction experiment was too large and caused an immediate startup crash, so `128` is the current working ceiling
 - the `32 x 128` block-storage rebalance moves selfhost past the old `FN#0` `ct.names_len[idx]` crash
-- selfhost now reaches `FN#10`
 - the temporary `BIND_OVF 32` failure in `skip_top_level_let(...)` is gone after the `inc_i64_at0(...)` rewrite
+- the old `skip_top_level_let(...)` bare-`[` blocker is gone
+- selfhost now reaches `FN#45`
+- the old `char_to_tok(...)`, `classify_keyword(...)`, and main `lex(...)` helper-pressure blockers are no longer the immediate failure
 
 3. Current bug
 Status: active blocker
@@ -70,43 +77,43 @@ Status: active blocker
 Current failure:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the current crash is back in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
-- the latest failure is now later, at `FN#10`, which is `skip_top_level_let(...)`
+- the latest failure is now later, after `FN#45`
 - recent traces narrowed failures to:
-  - the old `FN#0` `ct.names_len[idx]` blocker has been cleared by the block-storage rebalance
-  - the `skip_top_level_let(...)` local-table overflow introduced by earlier flattening is fixed
-  - the next active bug is a partially consumed indexed shape that leaves a bare `[` token behind
+  - the old `skip_top_level_let(...)` and `lex(...)` blockers are no longer the immediate issue
+  - the current failure is parser desynchronization at the next function boundary after `FN#45`
+  - the parser is seeing corrupted-looking token values starting around positions `4443..4450`
 - latest bounded trace reaches:
-  - `FN#10`
-  - several `EXPRST` call statements in `skip_top_level_let(...)`
-  - then:
-    - `EXPRST p=1772 t=10 n=23`
-    - `EXPRST p=1777 t=17 n=10`
-    - `ce p=1777`
-    - `cu p=1777 t=17`
-  - which means a statement in `skip_top_level_let(...)` is still leaving a raw `[` token behind for the next expression path
+  - `FN#45`
+  - then a series of parse errors:
+    - `unexpected token at position 4443`
+    - `unexpected token at position 4444`
+    - ...
+    - `unexpected token at position 4450`
+  - with corrupted-looking token values, followed by panic
+  - this indicates parser state or token consumption is being disturbed around the boundary after `FN#45`, not a simple unresolved identifier in the old hot path
 
 Meaning:
 - the old “stage-2 binary emission is the primary blocker” theory is no longer current
 - stage 0 is healthy enough for bring-up again
 - the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
 - especially in:
-  - `skip_top_level_let(...)`
-  - indexed token / bracket-consumption paths in top-level global/type parsing
-  - keeping the `32 x 128` block-storage layout unless a later function proves it insufficient
+  - the parser/function-boundary transition after `FN#45`
+  - remaining direct indexed token reads in early parser helpers
+  - keeping the stable `32 x 128` block-storage layout while simplifying hot helper functions instead of growing global limits again
 
 4. Next fix
 Status: next
 
 Work in order:
-- identify the exact `skip_top_level_let(...)` statement that still leaves the bare `[` token behind
-- keep the `32 x 128` block-storage layout unless it proves too small again
+- identify the exact parser helper/function boundary that goes bad immediately after `FN#45`
+- keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 Concrete next edits:
-- use the new `EXPRST` traces to map the exact `skip_top_level_let(...)` statement behind `p=1772..1777`
-- flatten that remaining indexed/bracket source shape so it fully consumes the `[` / `]`
-- keep `BIND_OVF` and `EMIT_SLOT` traces until `skip_top_level_let(...)` and the next few functions are stable
-- if necessary, replace one more `pos[0]`-derived statement with a helper instead of adding new locals
+- map `FN#45` and the following function start precisely in the main compile loop
+- inspect the parser helpers involved at the next function boundary, especially remaining direct `toks[pos[0]]` reads and `pos[0]` mutations
+- fix the parser desynchronization before widening any limits again
+- keep `EMIT_SLOT` and parse-error traces until the first post-`FN#45` boundary is stable
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
