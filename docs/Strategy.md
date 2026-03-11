@@ -3,20 +3,20 @@ Strategy
 1. Stage 0 bootstrap stability
 Status: ✅ done
 
-Done:
+✅ Done:
 - moved large stage-0 buffers off `.bss` and onto `mmap`
 - fixed the `gen_stmt` stack leak
 - fixed `gen_fn` frame-size patch ordering
 - fixed stage-0 pointer handling needed for selfhost bring-up
 
-Verified:
+✅ Verified:
 - `jda0` builds and runs
 - `jda0 -> jda1 -> hello.jda` works
 - current hello output is `Hello Bare Metal`
 - stage 0 now patches `main` correctly for the current `jda1.jda` again
 
 2. Stage 1 selfhost progress
-Status: partially done
+Status: 🟡 in progress
 
 ✅ Done:
 - removed the earlier top-level global recorder crash
@@ -53,7 +53,7 @@ Status: partially done
 - rewrote the remaining hot `skip_top_level_let(...)` indexed RHS through helpers so the old bare-`[` bug there is cleared
 - simplified `parse_type(...)` into a straighter-line shape to reduce parser-state fragility
 
-Verified:
+✅ Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
 - stage 0 pass 1 now records `main` and stage 0 pass 2 patches the startup call for `jda1`
 - selfhost gets through const parsing and struct parsing (`A/B/C/D`)
@@ -82,57 +82,59 @@ Verified:
 - `lex_handle_string(...)` and `emit_lex_tok(...)` were moved off the fragile `out_toks[count[0]].field` write shape
 - `lex_handle_int(...)` has been simplified repeatedly to remove unstable `let ... = call(...)`, `ret call(...)`, and some nested index forms
 - the `ident[ident]` postfix fast path in `codegen_postfix_inline(...)` was hardened to use raw token metadata and raw-span lookup
+- targeted fast paths were added for `let ident = ident[index]` and `ident = ident[index]`
+- the `p0` setup in `lex_handle_int(...)` is no longer the immediate blocker
+- the `load_i8_at0(src, pos)` comparison path now gets through
 - selfhost now reaches `FN#54`
 
 3. Current bug
-Status: active blocker
+Status: 🟡 active blocker
 
-Current failure:
+🟡 Current failure:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the current crash is still in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
 - the latest failure has moved beyond the old top-level signature-parser bug and is now inside `lex_handle_int(...)`
 - exact token mapping and bounded traces show the active function is `FN#54`
 - the failing range is:
   - the loop body inside `lex_handle_int(...)`
-  - currently the trivial local-init / assignment setup just before the first `if`
+  - currently the indexed store path `out_toks[out_idx].type = TOK_INT`
 - latest bounded trace reaches:
   - `FN#54`
-  - entry through the `loop pos[0] < src_len`
-  - then parse drift at token position `4439`
-  - `expected=23` (`TOK_EQ`) while compiling the `let p0 = 0; p0 = pos[0]` sequence
-- the current active bug is no longer just the `src[p0]` postfix/index form
-- the latest postfix/index hardening was real, but the failure snapped back earlier to `compile_let_inline(...)` / simple local assignment handling in `lex_handle_int(...)`
+  - first `if load_i8_at0(src, pos) < 48` now gets through
+  - then parse drift happens around token positions `4441..4445`
+  - the current dying form is the inner indexed store base `out_toks[out_idx]`
+- the `p0` setup and helper-call argument issues were real and are now behind us
+- the current active bug is back in postfix/index lowering, but this time in the store path `ident[ident].field`
 
-Meaning:
+🟡 Meaning:
 - stage 0 is healthy enough for bring-up again
 - the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
-- the current highest-signal area is simple `let` / assignment handling in the live inline compiler, not the old top-level signature parser
+- the current highest-signal area is indexed store lowering in the live inline compiler, not the old top-level signature parser
 
 4. Next fix
-Status: next
+Status: 🟡 next
 
-Work in order:
-- harden `compile_let_inline(...)` further for trivial local-init and follow-up assignment sequences
+🟡 Work in order:
+- harden the indexed store path for `ident[ident].field` / `ident[ident]` writes
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
-Concrete next edits:
-- simplify or special-case `let p0 = 0`
-- simplify or special-case the following `p0 = pos[0]`
-- if needed, flatten `lex_handle_int(...)` again so it avoids that two-statement local setup entirely
-- keep raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
+🟡 Concrete next edits:
+- flatten or special-case `out_toks[out_idx].type = TOK_INT`
+- if needed, flatten the neighboring `out_toks[out_idx].imm = val` store too
+- keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
-Expected outcome of next fix:
-- get past the `let p0 = 0; p0 = pos[0]` setup in `lex_handle_int(...)`
+🟡 Expected outcome of next fix:
+- get past the `out_toks[out_idx].type` indexed store in `lex_handle_int(...)`
 - move the blocker beyond `FN#54` to the next concrete source form
 
 5. Final testing
-Status: pending
+Status: ⏳ pending
 
-Selfhost is complete only if both pass:
+⏳ Selfhost is complete only if both pass:
 
 Step 1:
 ```sh
