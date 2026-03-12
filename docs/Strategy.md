@@ -113,45 +113,32 @@ Status: 🟡 in progress
 - `lex_emit_marked_string()`
 - `lex_sync_pos_ptr(...)`
 - selfhost now gets past `FN#59`
-- the new active blocker is `FN#60`, `lex_handle_comment(src, src_len, pos)`
-- in `FN#60`, the current best checkpoint gets through:
-- the loop header
-- `let c = load_i8_at0(src, pos)`
-- `if c != 10`
-- the remaining failing shape is the branch-body `inc_i64_at0(pos)` call
+- `lex(...)` now uses the global token output pointer consistently (`g_lex_out_toks`) with a 2-arg signature
+- fixed `lex_handle_minus(...)` lookahead read so `->` is tokenized as `TOK_ARROW` again
+- removed the temporary selfhost-only `Token` struct sanity gate that blocked normal user programs
+- selfhost now reaches and enters `FN#60` body, but still fails later in that function
 
 3. Current Blocker
 Status: 🟡 active
 
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
-- the old `FN#59` string-helper blocker is fixed
-- the active blocker is now `FN#60`, which maps to `lex_handle_comment(src, src_len, pos)`
-- the current best checkpoint in `FN#60` gets through:
-- the loop condition
-- the byte-load local `let c = load_i8_at0(src, pos)`
-- the `if c != 10` comparison
-- the remaining unstable shape is the branch body call `inc_i64_at0(pos)`
+- failure is now inside `FN#60` (`lex(...)` body), after entering the function body
+- current failing window:
+- `g_lex_count_ptr = &count`
+- `g_lex_src_len = src_len`
+- parser then reports token corruption (`Parse error ... got=... expected=23`) around `p=4427..4435`
 
 🟡 Latest evidence:
-- extracting string-start and string-emit setup into helpers was the right direction for `FN#59`
-- `FN#59` is no longer where selfhost stops
-- the comment-handler rewrites that were tried and rejected were:
-- comment-step helper extraction
-- keep-flag loop rewrite
-- direct indexed increment in the branch body
-- comment-specific advance helper
-- the best verified `FN#60` shape remains:
-- `let c = load_i8_at0(src, pos)`
-- `if c != 10 { inc_i64_at0(pos) } else { ret 0 }`
+- token stream is correct right after lexing in the failing window (`4422..4434`)
+- corruption appears later during live parse/codegen, not in lex output
+- removing `compile_let_inline(...)` `LET_HEAD/LET_RHS` debug prints moved the symptom forward but did not eliminate it
+- this points to remaining parser/codegen state clobber in the `FN#60` assignment/expression path
 
 🟡 Why it matters:
-- stage 0 is healthy enough for bring-up again
-- several earlier lexer/runtime blockers are now behind us:
-- the old `==`, `>=`, and `!=` tokenization failures
-- the operator-handler condition overconsume
-- the old closing-quote/string-handler failure band (`FN#59`)
-- the current highest-signal area is now the reduced comment handler (`FN#60`), which is narrower than the earlier monolithic lexer failures
+- stage 0 remains healthy (`make clean all stage1` passes)
+- stage 1 still compiles and runs `hello.jda` (`Hello Bare Metal`)
+- the remaining selfhost blocker is now a narrow, reproducible `FN#60` assignment window
 
 4. Next fix
 Status: 🟡 next
@@ -162,18 +149,21 @@ Status: 🟡 next
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 🟡 Concrete next edits:
-- keep the current operator-handler fixes and reduced string helpers in place
-- keep the helper-based string baseline that cleared `FN#59`
-- keep `lex_handle_comment(...)` on the current best in-body checkpoint
-- target only the remaining branch-body increment in `FN#60`
-- keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
-- keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
-- keep the optimizer passes disabled until raw selfhost compilation is stable
-- only after `jda1_sh2` is produced, revisit optimizer and cleanup work
+- keep the current lexer fixes (`TOK_ARROW`, `g_lex_out_toks`) unchanged
+- reduce/disable remaining hot-path debug prints in expression/codegen helpers
+- isolate assignment handling for:
+- `ident = &ident`
+- `ident = ident`
+- specifically around:
+- `g_lex_count_ptr = &count`
+- `g_lex_src_len = src_len`
+- keep using token-window dumps to verify whether corruption happens pre-parse or during parse
+- keep optimizer passes disabled until raw selfhost compilation is stable
 
 🟡 Expected outcome of next fix:
-- get past the remaining `lex_handle_comment(...)` branch-body instability
-- move the blocker beyond `FN#60` to the next concrete source form
+- clear the current `FN#60` assignment corruption window
+- complete `./jda1 ../stage1/jda1.jda jda1_sh2`
+- then run `jda1_sh2 -> hello_sh2`
 
 5. Final testing
 Status: ⏳ pending
