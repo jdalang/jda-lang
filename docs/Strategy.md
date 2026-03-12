@@ -93,31 +93,40 @@ Status: 🟡 in progress
 - integer scanning is now split into a one-parameter `lex_scan_int(pos)` helper backed by lexer globals
 - the digit loop inside `lex_scan_int(...)` now uses a simpler `if / else if / else` chain
 - `lex_handle_int(...)` is now reduced to a let-call plus a one-parameter emit helper
+- the old `==` mis-tokenization in `lex_skip_string_body(...)` is fixed
+- the old `>=` mis-tokenization in `skip_top_level_let(...)` is fixed
+- the old `!=` mis-tokenization in `streq(...)` / `try_escape(...)` is fixed
+- the operator-handler condition overconsume in `lex_handle_minus(...)`, `lex_handle_eq(...)`, `lex_handle_bang(...)`, `lex_handle_gt(...)`, and `lex_handle_lt(...)` is fixed by hoisting the `load_i64_at0(pos)` result before comparing with `g_lex_src_len`
+- `lex_skip_string_body(...)` is now reduced to a one-parameter global-backed helper
+- `lex_handle_string(...)` now routes the closing-quote tail through `lex_maybe_close_string(...)`
+- selfhost now gets past the operator-handler cluster and into the later string helper path
 
 3. Current Blocker
 Status: 🟡 active
 
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
-- the failure is still in `FN#54`, inside `lex_handle_int(...)`
-- the current best checkpoint is the helper-based split:
-- `lex_scan_int(pos)` handles digit scanning with lexer globals
-- `lex_handle_int(...)` now only calls `lex_scan_int(...)`, then emits through `lex_emit_int(...)`
-- the remaining failure is later than the old body-entry crash and is now inside the reduced helper path rather than the old multi-local `lex_handle_int(...)` body setup
+- the old `FN#54` `lex_handle_int(...)` blocker is no longer the active one
+- the current best checkpoint is in the later string-helper band, after the operator-handler fixes
+- the active blocker is the string-token emission path reached from `lex_handle_string(...)`
+- the unstable shape is the multi-argument `emit_lex_span(...)` call currently routed through `lex_emit_str(...)`
 
 🟡 Latest evidence:
-- splitting integer scanning into a one-parameter helper moved the failure materially deeper
-- collapsing the old `if / if / if` digit-loop boundary into `if / else if / else` was a real improvement
-- replacing the increment with a manual load/update/store regressed slightly earlier, so that experiment was reverted
-- the current trace shows the remaining unstable edge is still inside the reduced `lex_scan_int(...)` / `lex_emit_int(...)` path, not the old `lex_handle_int(...)` signature/body entry
+- the helper-defined `lex_emit_str(...)` baseline moves farther than the older inline `emit_lex_span(...)` call inside `lex_handle_string(...)`
+- rewriting `lex_emit_str(...)` to direct token-field stores was a regression and was reverted
+- the current best trace gets through:
+- `lex_skip_string_body(...)`
+- `lex_maybe_close_string(...)`
+- the operator-handler cluster
+- and then fails later in the string-emission path rather than on the earlier operator-token bugs
 
 🟡 Why it matters:
 - stage 0 is healthy enough for bring-up again
-- several earlier `lex_handle_int(...)` blockers are now behind us:
-  - signature pressure from the old 5-parameter shape
-  - the old body-entry local setup
-  - the earlier emit-block/indexed-store failures
-- the current highest-signal area is the reduced helper path, which is narrower and easier to debug than the original monolithic `lex_handle_int(...)`
+- several earlier lexer/runtime blockers are now behind us:
+- the old `==`, `>=`, and `!=` tokenization failures
+- the operator-handler condition overconsume
+- the old inline closing-quote index shape in `lex_handle_string(...)`
+- the current highest-signal area is now the reduced string-emission path, which is narrower than the older monolithic lexer failures
 
 4. Next fix
 Status: 🟡 next
@@ -128,20 +137,17 @@ Status: 🟡 next
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 🟡 Concrete next edits:
-- keep the one-parameter `lex_scan_int(pos)` helper and the one-parameter `lex_emit_int(val)` tail
-- continue simplifying the remaining digit-path tail inside `lex_scan_int(...)` and the emit tail inside `lex_emit_int(...)`
-- avoid reopening the earlier regressing experiments:
-  - extra helper parameters
-  - single-declaration `limit` init
-  - manual load/update/store increment in place of `inc_i64_at0(pos)`
+- keep the current operator-handler fixes and reduced string helpers in place
+- keep the helper-based `lex_emit_str(...)` baseline, not the regressing direct-store rewrite
+- continue simplifying the remaining string-token emission path until `lex_handle_string(...)` is fully clear
 - keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 🟡 Expected outcome of next fix:
-- get past the remaining helper-tail instability in `lex_scan_int(...)` / `lex_emit_int(...)`
-- move the blocker beyond `FN#54` to the next concrete source form
+- get past the remaining string-emission instability in `lex_handle_string(...)` / `lex_emit_str(...)`
+- move the blocker beyond the current string-helper band to the next concrete source form
 
 5. Final testing
 Status: ⏳ pending
