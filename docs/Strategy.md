@@ -90,6 +90,9 @@ Status: 🟡 in progress
 - selfhost now reaches `FN#54`
 - `compile_let_inline(...)` now has a direct fast path for `let name = helper(...)` so simple call RHS forms can bypass the more fragile generic expression path
 - `lex_handle_int(...)` was reworked to a no-early-return loop shape so digit parsing now has a single final emit path instead of repeated emit-and-return blocks inside the loop
+- integer scanning is now split into a one-parameter `lex_scan_int(pos)` helper backed by lexer globals
+- the digit loop inside `lex_scan_int(...)` now uses a simpler `if / else if / else` chain
+- `lex_handle_int(...)` is now reduced to a let-call plus a one-parameter emit helper
 
 3. Current Blocker
 Status: 🟡 active
@@ -97,42 +100,47 @@ Status: 🟡 active
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the failure is still in `FN#54`, inside `lex_handle_int(...)`
-- the current best checkpoint is the no-early-return loop form in `lex_handle_int(...)`
-- predeclaring extra loop locals regressed the failure earlier, so the current baseline keeps the farther checkpoint with inner `let p0 = pos[0]` and `let cur = load_i8_at(src, p0)`
-- the current failing form is now the inner setup around those two `let` statements before the loop body reaches the digit checks cleanly
+- the current best checkpoint is the helper-based split:
+- `lex_scan_int(pos)` handles digit scanning with lexer globals
+- `lex_handle_int(...)` now only calls `lex_scan_int(...)`, then emits through `lex_emit_int(...)`
+- the remaining failure is later than the old body-entry crash and is now inside the reduced helper path rather than the old multi-local `lex_handle_int(...)` body setup
 
 🟡 Latest evidence:
-- the new let-call fast path in `compile_let_inline(...)` is valid, but it did not clear `FN#54`
-- switching `lex_handle_int(...)` to a no-early-return loop moved the failure away from the old emit/return branch boundary
-- reverting the predeclared-local experiment restored the farther checkpoint, which confirms the active drift is in the loop-local setup rather than the old final emit block
+- splitting integer scanning into a one-parameter helper moved the failure materially deeper
+- collapsing the old `if / if / if` digit-loop boundary into `if / else if / else` was a real improvement
+- replacing the increment with a manual load/update/store regressed slightly earlier, so that experiment was reverted
+- the current trace shows the remaining unstable edge is still inside the reduced `lex_scan_int(...)` / `lex_emit_int(...)` path, not the old `lex_handle_int(...)` signature/body entry
 
 🟡 Why it matters:
 - stage 0 is healthy enough for bring-up again
-- several earlier `lex_handle_int(...)` blockers are already behind us:
-  - `p0` setup
-  - helper-call arg corruption
-  - indexed token-store writes
-- the current highest-signal area is simplifying the inner `let p0 = pos[0]` / `let cur = ...` setup without regressing back to the earlier emit-branch failures
+- several earlier `lex_handle_int(...)` blockers are now behind us:
+  - signature pressure from the old 5-parameter shape
+  - the old body-entry local setup
+  - the earlier emit-block/indexed-store failures
+- the current highest-signal area is the reduced helper path, which is narrower and easier to debug than the original monolithic `lex_handle_int(...)`
 
 4. Next fix
 Status: 🟡 next
 
 🟡 Work in order:
-- keep the current no-early-return `lex_handle_int(...)` baseline
+- keep the current helper-based lexer baseline
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 🟡 Concrete next edits:
-- flatten or replace the inner `let p0 = pos[0]` / `let cur = load_i8_at(src, p0)` setup in `lex_handle_int(...)`
-- keep the new `compile_let_inline(...)` let-call fast path, but avoid leaning on forms that already regressed earlier than the current checkpoint
-- if needed, route one of those loop-local reads through a simpler assignment form instead of widening generic parser logic
+- keep the one-parameter `lex_scan_int(pos)` helper and the one-parameter `lex_emit_int(val)` tail
+- continue simplifying the remaining digit-path tail inside `lex_scan_int(...)` and the emit tail inside `lex_emit_int(...)`
+- avoid reopening the earlier regressing experiments:
+  - extra helper parameters
+  - single-declaration `limit` init
+  - manual load/update/store increment in place of `inc_i64_at0(pos)`
 - keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 🟡 Expected outcome of next fix:
-- get past the remaining loop-local setup in `lex_handle_int(...)`
+- get past the remaining helper-tail instability in `lex_scan_int(...)` / `lex_emit_int(...)`
 - move the blocker beyond `FN#54` to the next concrete source form
 
 5. Final testing
