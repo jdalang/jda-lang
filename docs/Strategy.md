@@ -117,6 +117,7 @@ Status: 🟡 in progress
 - fixed `lex_handle_minus(...)` lookahead read so `->` is tokenized as `TOK_ARROW` again
 - removed the temporary selfhost-only `Token` struct sanity gate that blocked normal user programs
 - selfhost now reaches and enters `FN#60` body, but still fails later in that function
+- removed the hottest expression/call trace prints (`EXPRST`, `cu*`, `call arg*`) from stage-1 inline codegen paths to reduce clobber risk in the failing window
 
 3. Current Blocker
 Status: 🟡 active
@@ -133,6 +134,7 @@ Status: 🟡 active
 - token stream is correct right after lexing in the failing window (`4422..4434`)
 - corruption appears later during live parse/codegen, not in lex output
 - removing `compile_let_inline(...)` `LET_HEAD/LET_RHS` debug prints moved the symptom forward but did not eliminate it
+- removing `EXPRST` / `cu*` / `call arg*` traces reduced noise but the same `FN#60` corruption still reproduces
 - this points to remaining parser/codegen state clobber in the `FN#60` assignment/expression path
 
 🟡 Why it matters:
@@ -150,7 +152,7 @@ Status: 🟡 next
 
 🟡 Concrete next edits:
 - keep the current lexer fixes (`TOK_ARROW`, `g_lex_out_toks`) unchanged
-- reduce/disable remaining hot-path debug prints in expression/codegen helpers
+- continue reducing remaining hot-path traces (`prim enter/next/lookup/load`, `rel/ce`) in the same `FN#60` path
 - isolate assignment handling for:
 - `ident = &ident`
 - `ident = ident`
