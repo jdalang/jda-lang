@@ -105,42 +105,53 @@ Status: 🟡 in progress
 - `lex_skip_string_body()`
 - `lex_maybe_close_string()`
 - `lex_sync_pos_ptr(...)`
-- the current best local form of `lex_maybe_close_string()` gets through:
-- the outer bounds check
-- `let idx = g_lex_pos_i`
-- `let cur = g_lex_src_ptr[idx]`
-- the remaining branch-local increment is still the active edge
+- the old `FN#59` string-close helper blocker is gone
+- `lex_handle_string(...)` is now reduced to helper calls for:
+- `lex_set_pos_ptr(...)`
+- `lex_mark_string_start()`
+- `lex_skip_string_body()`
+- `lex_emit_marked_string()`
+- `lex_sync_pos_ptr(...)`
+- selfhost now gets past `FN#59`
+- the new active blocker is `FN#60`, `lex_handle_comment(src, src_len, pos)`
+- in `FN#60`, the current best checkpoint gets through:
+- the loop header
+- `let c = load_i8_at0(src, pos)`
+- `if c != 10`
+- the remaining failing shape is the branch-body `inc_i64_at0(pos)` call
 
 3. Current Blocker
 Status: 🟡 active
 
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
-- the old `FN#54` `lex_handle_int(...)` blocker is no longer the active one
-- the active blocker has narrowed further inside the later string-helper band
-- the current best checkpoint is now `FN#59`, which maps to `lex_maybe_close_string()`
-- the remaining unstable shape is inside the closing-quote helper, after the indexed character load already succeeds
+- the old `FN#59` string-helper blocker is fixed
+- the active blocker is now `FN#60`, which maps to `lex_handle_comment(src, src_len, pos)`
+- the current best checkpoint in `FN#60` gets through:
+- the loop condition
+- the byte-load local `let c = load_i8_at0(src, pos)`
+- the `if c != 10` comparison
+- the remaining unstable shape is the branch body call `inc_i64_at0(pos)`
 
 🟡 Latest evidence:
-- rewriting `lex_emit_str(...)` to direct token-field stores was a regression and was reverted
-- the global-index string-scan path moves farther than the earlier direct `pos`-mutation variants
-- the current best trace gets through:
-- `lex_skip_string_body(...)`
-- `lex_maybe_close_string(...)`
-- the operator-handler cluster
-- and now fails late inside `lex_maybe_close_string()`, not on the earlier operator-token bugs
-- the current best local form keeps:
-- `let idx = g_lex_pos_i`
-- `let cur = g_lex_src_ptr[idx]`
-- and still treats the final increment as the remaining active edge
+- extracting string-start and string-emit setup into helpers was the right direction for `FN#59`
+- `FN#59` is no longer where selfhost stops
+- the comment-handler rewrites that were tried and rejected were:
+- comment-step helper extraction
+- keep-flag loop rewrite
+- direct indexed increment in the branch body
+- comment-specific advance helper
+- the best verified `FN#60` shape remains:
+- `let c = load_i8_at0(src, pos)`
+- `if c != 10 { inc_i64_at0(pos) } else { ret 0 }`
 
 🟡 Why it matters:
 - stage 0 is healthy enough for bring-up again
 - several earlier lexer/runtime blockers are now behind us:
 - the old `==`, `>=`, and `!=` tokenization failures
 - the operator-handler condition overconsume
-- the old inline closing-quote index shape in `lex_handle_string(...)`
-- the current highest-signal area is now the reduced closing-quote helper, which is narrower than the older monolithic lexer failures
+- the old closing-quote/string-handler failure band (`FN#59`)
+- the current highest-signal area is now the reduced comment handler (`FN#60`), which is narrower than the earlier monolithic lexer failures
 
 4. Next fix
 Status: 🟡 next
@@ -152,17 +163,17 @@ Status: 🟡 next
 
 🟡 Concrete next edits:
 - keep the current operator-handler fixes and reduced string helpers in place
-- keep the helper-based `lex_emit_str(...)` baseline, not the regressing direct-store rewrite
-- keep the current global-index string-scan path in place
-- continue simplifying the remaining branch tail in `lex_maybe_close_string()` until that helper is clear
+- keep the helper-based string baseline that cleared `FN#59`
+- keep `lex_handle_comment(...)` on the current best in-body checkpoint
+- target only the remaining branch-body increment in `FN#60`
 - keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 🟡 Expected outcome of next fix:
-- get past the remaining `lex_maybe_close_string()` branch-tail instability
-- move the blocker beyond the current string-helper band to the next concrete source form
+- get past the remaining `lex_handle_comment(...)` branch-body instability
+- move the blocker beyond `FN#60` to the next concrete source form
 
 5. Final testing
 Status: ⏳ pending
