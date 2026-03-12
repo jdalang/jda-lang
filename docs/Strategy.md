@@ -88,6 +88,8 @@ Status: 🟡 in progress
 - the indexed token writes in `lex_handle_int(...)` now route through `tok_set_int_at(...)`
 - direct `count[0]` RHS loads in `lex_handle_int(...)` were replaced with `load_i64_at0(count)`
 - selfhost now reaches `FN#54`
+- `compile_let_inline(...)` now has a direct fast path for `let name = helper(...)` so simple call RHS forms can bypass the more fragile generic expression path
+- `lex_handle_int(...)` was reworked to a no-early-return loop shape so digit parsing now has a single final emit path instead of repeated emit-and-return blocks inside the loop
 
 3. Current Blocker
 Status: 🟡 active
@@ -95,14 +97,14 @@ Status: 🟡 active
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the failure is still in `FN#54`, inside `lex_handle_int(...)`
-- the current best checkpoint keeps the first `if cur < 48` branch flattened inline
-- reintroducing `emit_lex_int(...)` in that first branch regressed the failure to an earlier point
-- the current failing form is still in that first branch’s inline emit sequence, around `out_idx = count[0]`
+- the current best checkpoint is the no-early-return loop form in `lex_handle_int(...)`
+- predeclaring extra loop locals regressed the failure earlier, so the current baseline keeps the farther checkpoint with inner `let p0 = pos[0]` and `let cur = load_i8_at(src, p0)`
+- the current failing form is now the inner setup around those two `let` statements before the loop body reaches the digit checks cleanly
 
 🟡 Latest evidence:
-- the farther checkpoint is the inline first branch, not the helper-call version
-- when the helper call was restored there, the failure moved earlier and the `< 48` condition stopped advancing cleanly
-- with the safer inline branch, the failing window remains centered on the local `out_idx` sequence in the first emit block
+- the new let-call fast path in `compile_let_inline(...)` is valid, but it did not clear `FN#54`
+- switching `lex_handle_int(...)` to a no-early-return loop moved the failure away from the old emit/return branch boundary
+- reverting the predeclared-local experiment restored the farther checkpoint, which confirms the active drift is in the loop-local setup rather than the old final emit block
 
 🟡 Why it matters:
 - stage 0 is healthy enough for bring-up again
@@ -110,27 +112,27 @@ Status: 🟡 active
   - `p0` setup
   - helper-call arg corruption
   - indexed token-store writes
-- the current highest-signal area is simplifying that first inline emit block without reintroducing helper-call regressions
+- the current highest-signal area is simplifying the inner `let p0 = pos[0]` / `let cur = ...` setup without regressing back to the earlier emit-branch failures
 
 4. Next fix
 Status: 🟡 next
 
 🟡 Work in order:
-- keep the inline first branch in `lex_handle_int(...)` and simplify it further
+- keep the current no-early-return `lex_handle_int(...)` baseline
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 🟡 Concrete next edits:
-- flatten or replace the remaining `out_idx` temp sequence in the first `if cur < 48` branch
-- avoid reintroducing `emit_lex_int(...)` in that branch, since that version is confirmed worse
-- if needed, use one more dedicated helper instead of widening generic parser logic
+- flatten or replace the inner `let p0 = pos[0]` / `let cur = load_i8_at(src, p0)` setup in `lex_handle_int(...)`
+- keep the new `compile_let_inline(...)` let-call fast path, but avoid leaning on forms that already regressed earlier than the current checkpoint
+- if needed, route one of those loop-local reads through a simpler assignment form instead of widening generic parser logic
 - keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 🟡 Expected outcome of next fix:
-- get past the remaining inline first-branch emit sequence in `lex_handle_int(...)`
+- get past the remaining loop-local setup in `lex_handle_int(...)`
 - move the blocker beyond `FN#54` to the next concrete source form
 
 5. Final testing
