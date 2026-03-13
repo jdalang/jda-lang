@@ -60,6 +60,8 @@ Status: 🟡 in progress
 - seeded `argv_ptr` from `rsi` in lowered stage-1 `main()` so the skipped inline `asm` still preserves argv behavior
 - fixed skipped-function resync so legacy/parser functions now scan forward to the next top-level `fn`/`let` using the same raw-text fallback as the main top-level loop
 - simplified `emit_lea_rip(...)` so selfhost now gets past that previous top-level frontier
+- extracted `lower_print_int(...)` out of `lower_instr(...)` to shrink the hottest late-lowering function without changing emitted behavior
+- extracted `lower_syscall(...)` out of `lower_instr(...)` and kept the same syscall argument shuffle logic
 
 ✅ Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
@@ -134,21 +136,26 @@ Status: 🟡 in progress
 - successful `jda1_a -> jda1_b` runs now get much further through top-level function compilation after the skipped-function resync fix, moving the frontier from the old `parse_*` cluster into later lowering/live-codegen helpers
 - the top-level scanner now reliably reaches the real end of file (`... syscall(...)\n}`), so the earlier “premature EOF” suspicion was ruled out
 - the current top-level frontier has moved past `emit_lea_rip(...)` into later helpers, and the latest runtime crash signal on `hello` points at the `live_codegen_primary_inline(...)` band
+- the `lower_print_int(...)` extraction is a keeper: the high selfhost path now clears that helper and pushes through `lower_instr(...)` much more often
+- the `lower_syscall(...)` extraction is also a keeper: the best current selfhost runs now clear `lower_instr(...)`, `lower_block(...)`, `lower_fn(...)`, `write_elf(...)`, `get_argv(...)`, and reach `main`
+- the restored 5-run sample on the current kept baseline showed a spread of `111 / 85 / 26 / 213 / 67`, which confirms the build is still nondeterministic but the ceiling is now `main`
 
 3. Current Blocker
 Status: 🟡 active
 
 🟡 Active blocker:
-- the old stage-0 global token-pointer miscompile is fixed, and stage-1 `main()` now executes far enough to print path/write probes, but `jda1_a -> jda1_b` is still intermittent
-- successful self-compile runs now reach `PH done_top`, patch `main`, write `jda1_b`, and then `jda1_b` crashes while compiling `hello.jda`
-- the latest compile-time frontier moved out of the old parser band and into later lowering/live-codegen helpers, with recent progress through `emit_call_rel32`, `emit_lea_rip`, and nearby helpers
-- the latest runtime clue from `jda1_b ../../examples/hello.jda ...` is a partial `prim t=` print, pointing at `live_codegen_primary_inline(...)` as the next exact crash window
+- the old stage-0 global token-pointer miscompile is fixed, but `jda1_a -> jda1_b` is still intermittent
+- the latest kept late-lowering reductions moved the best selfhost path all the way through `lower_instr(...)`, `lower_fn(...)`, `write_elf(...)`, and `get_argv(...)`, and successful runs now reach `main`
+- despite that higher ceiling, the build is still nondeterministic and often falls back to earlier crash bands (`26`, `67`, `85`, `111`) on other runs
+- the next exact question is whether the `main`-reaching path prints `PH enter`; that will tell us if the remaining crash is before the first executable line of `main` or inside early bootstrap code
 
 🟡 Latest evidence:
 - the dedicated stage-0 repros showed the real root cause was global `&Token` field/index access through helpers
 - after the stage-0 fix, `jda1_a` again tokenizes `hello.jda`, finds `main`, patches entry, and emits a working `hello_out`
 - adding the stage-1 `asm` skip + `argv_ptr` seed changed `jda1_b` from “exit 0 without output” to a real runtime crash, which confirms the earlier emitted-`main`/silent-noop bug was real and is now past us
 - fixing skipped-function resync moved successful `jda1_a -> jda1_b` runs from stopping near the legacy `parse_*` cluster to stopping much later in the lowering/live-codegen band
+- the current kept `lower_instr(...)` refactors (`lower_print_int(...)`, `lower_syscall(...)`) are the first late-lowering changes that improved the best frontier without obviously regressing semantics
+- rejected refactors in the same area (`lower_call(...)`, `lower_alloc(...)`) reduced the ceiling and were reverted, so the remaining progress is coming from small targeted changes, not broad rewrites
 - the remaining failure is still intermittent rather than a single deterministic `FN#` stop, which points to another runtime/codegen stability bug rather than the earlier fixed token-pointer or empty-`main` bug
 
 🟡 Why it matters:
@@ -163,13 +170,16 @@ Status: 🟡 next
 - keep the fixed stage-0 typed-global path and the current helper-based lexer baseline
 - keep the stable `32 x 128` block-storage layout
 - keep the new skipped-function resync and `main()`/`asm` handling fixes
+- keep the current `lower_print_int(...)` / `lower_syscall(...)` reductions
 - make `jda1_a -> jda1_b` deterministic again before trusting any later `jda1_b -> hello` result
 
 🟡 Concrete next edits:
 - keep the current stage-0 global metadata fix unchanged
 - keep the current skipped-function resync logic unchanged
-- use the named `CFN` trace to map the intermittent self-compile crash window to exact later helper functions
-- narrow the next failing band around `emit_lea_rip(...)`, `live_codegen_primary_inline(...)`, and nearby live-codegen helpers instead of making broad parser edits
+- use the named `CFN` trace to keep sampling for the `CFN 213 main` path
+- once a `main`-reaching run appears, check whether `PH enter` fires before making more structural changes
+- if `PH enter` does not fire, continue shrinking `lower_instr(...)` only with small helper extractions that directly affect early `main` bootstrap code
+- if `PH enter` does fire, move the next debug window into the earliest `main` bootstrap allocation / argv setup only
 - keep debug probes minimal and targeted (only around the active crash window) to reduce clobber risk
 - keep optimizer passes disabled until raw selfhost compilation is stable
 
