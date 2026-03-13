@@ -27,7 +27,7 @@ STR_SZ           equ 3104
 FN_SZ            equ 288
 PRM_SZ           equ 32
 LOC_SZ           equ 48
-GLB_SZ           equ 32
+GLB_SZ           equ 48
 TOK_BUF_CAP      equ 8388608
 CST_TBL_CAP      equ 65536
 STT_TBL_CAP      equ 262144
@@ -117,6 +117,10 @@ section .bss
     lv_sid resb 8
     lv_esz resb 8
     lv_isptr resb 8
+    lv_glb resb 8
+    p1_glb_tkind resb 8
+    p1_glb_sid   resb 8
+    p1_glb_esz   resb 8
     ga_from_dot resb 8      ; 1 if last .ga_post_loop entry came from .ga_dot
     ga_acnt     resb 8      ; array count from field; >0 means embedded array
     glb_tbl_ptr resb 8
@@ -1398,10 +1402,73 @@ p1_scan:
     syscall
     call    adv_tok         ; skip 'let'
     call    get_cur_tok_ptr
-    mov     r8,  [rax+8]    ; var name_start
-    mov     r9,  [rax+16]   ; var name_len
+    mov     r14, [rax+8]    ; var name_start
+    mov     r15, [rax+16]   ; var name_len
     call    adv_tok         ; skip NAME
-    ; optional type annotation: skip until '='
+    mov     qword [p1_glb_tkind], -1 ; type_id / tkind = unknown scalar
+    mov     qword [p1_glb_sid], -1   ; sid = unknown
+    mov     qword [p1_glb_esz], 8    ; esz = qword by default
+    call    cur_tok_type
+    cmp     rax, TOK_COLON
+    jne     .p1_let_find_eq
+    call    adv_tok         ; skip ':'
+    xor     ebx, ebx        ; is_ptr = 0
+    call    cur_tok_type
+    cmp     rax, TOK_AMP
+    jne     .p1_let_type_tok
+    mov     ebx, 1
+    call    adv_tok         ; skip '&'
+.p1_let_type_tok:
+    call    cur_tok_type
+    cmp     rax, TOK_I8
+    jne     .p1_let_type_i32
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     qword [p1_glb_tkind], TK_PTR
+    mov     qword [p1_glb_esz], 1
+    jmp     .p1_let_find_eq
+.p1_let_type_i32:
+    cmp     rax, TOK_I32
+    jne     .p1_let_type_i64
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     qword [p1_glb_tkind], TK_PTR
+    mov     qword [p1_glb_esz], 4
+    jmp     .p1_let_find_eq
+.p1_let_type_i64:
+    cmp     rax, TOK_I64
+    jne     .p1_let_type_f64
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     qword [p1_glb_tkind], TK_PTR
+    mov     qword [p1_glb_esz], 8
+    jmp     .p1_let_find_eq
+.p1_let_type_f64:
+    cmp     rax, TOK_F64
+    jne     .p1_let_type_ident
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     qword [p1_glb_tkind], TK_PTR
+    mov     qword [p1_glb_esz], 8
+    jmp     .p1_let_find_eq
+.p1_let_type_ident:
+    cmp     rax, TOK_IDENT
+    jne     .p1_let_find_eq
+    call    get_cur_tok_ptr
+    mov     r8, [rax+8]
+    mov     r9, [rax+16]
+    call    lookup_struct
+    cmp     rax, -1
+    je      .p1_let_find_eq
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     [p1_glb_sid], rax
+    mov     qword [p1_glb_tkind], TK_PTR
+    imul    rax, rax, STR_SZ
+    mov     rdx, [stt_tbl_ptr]
+    add     rax, rdx
+    mov     rax, [rax+16]
+    mov     [p1_glb_esz], rax
 .p1_let_find_eq:
     call    cur_tok_type
     cmp     rax, TOK_EQ
@@ -1456,8 +1523,11 @@ p1_scan:
 .p1_let_brack_done:
     call    adv_tok         ; skip final ']'
 .p1_let_store:
-    ; register as global with type i64
-    mov     r10, -1         ; type_id = i64 (untyped)
+    mov     r8, r14
+    mov     r9, r15
+    mov     r10, [p1_glb_tkind]
+    mov     r11, [p1_glb_sid]
+    mov     r12, [p1_glb_esz]
     call    add_global
     jmp     .p1_loop
 
@@ -2099,7 +2169,7 @@ lookup_local:
     ret
 
 ; =============================================================================
-; add_global: r8=ns, r9=nl, r10=tkind -> rax=r15_offset
+; add_global: r8=ns, r9=nl, r10=tkind, r11=sid, r12=esz -> rax=r15_offset
 ; =============================================================================
 add_global:
     mov     rax, [glb_r15]
@@ -2111,6 +2181,8 @@ add_global:
     mov     [rbx+8],  r9
     mov     [rbx+16], rax
     mov     [rbx+24], r10
+    mov     [rbx+32], r11
+    mov     [rbx+40], r12
     add     qword [glb_r15], 8
     inc     qword [glb_cnt]
     ret
@@ -2307,6 +2379,7 @@ gen_expr:
     mov     qword [lv_sid], -1
     mov     qword [lv_esz], 8
     mov     qword [lv_isptr], 0
+    mov     qword [lv_glb], 0
     call    gen_expr_and
 .lp:
     call    cur_tok_type
@@ -3489,10 +3562,13 @@ gen_addr:
     call    lookup_global
     cmp     rax, 0
     je      .ga_done
+    mov     [lv_glb], rax
     mov     r14, [rax+16]
     mov     r15, [rax+24]
-    mov     qword [lv_sid], -1
-    mov     qword [lv_esz], 8
+    mov     rdx, [rax+32]
+    mov     rcx, [rax+40]
+    mov     [lv_sid], rdx
+    mov     [lv_esz], rcx
     cmp     r15, TK_PTR
     jne     .ga_glb_addr
     mov     qword [lv_isptr], 1
@@ -4772,14 +4848,33 @@ gen_expr_stmt:
     ; push address
     mov     rdi, 0x50
     call    emit1
+    push    qword [lv_glb]
     ; rhs expr -> rax
     push    qword [lv_sid]
     push    qword [lv_esz]
     push    qword [lv_isptr]
     call    gen_expr
+    mov     r11, [lv_sid]
+    mov     r12, [lv_esz]
+    mov     r13, [lv_isptr]
     pop     qword [lv_isptr]
     pop     qword [lv_esz]
     pop     qword [lv_sid]
+    pop     rbx             ; lhs global entry, if any
+    mov     qword [lv_glb], 0
+    cmp     rbx, 0
+    je      .ges_assign_pop_addr
+    cmp     r13, 0
+    je      .ges_clear_glb_meta
+    mov     qword [rbx+24], TK_PTR
+    mov     [rbx+32], r11
+    mov     [rbx+40], r12
+    jmp     .ges_assign_pop_addr
+.ges_clear_glb_meta:
+    mov     qword [rbx+24], -1
+    mov     qword [rbx+32], -1
+    mov     qword [rbx+40], 8
+.ges_assign_pop_addr:
     ; pop address into r10
     mov     rdi, 0x41
     call    emit1

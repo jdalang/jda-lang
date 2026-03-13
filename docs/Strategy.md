@@ -8,12 +8,14 @@ Status: ✅ done
 - fixed the `gen_stmt` stack leak
 - fixed `gen_fn` frame-size patch ordering
 - fixed stage-0 pointer handling needed for selfhost bring-up
+- fixed stage-0 global typed struct-pointer codegen for helper/global access paths
 
 ✅ Verified:
 - `jda0` builds and runs
 - `jda0 -> jda1 -> hello.jda` works
 - current hello output is `Hello Bare Metal`
 - stage 0 now patches `main` correctly for the current `jda1.jda` again
+- the minimal global `&Token` repro now works through helper writes and reads (`11 / 22 / 33 / 44`)
 
 2. Stage 1 selfhost progress
 Status: 🟡 in progress
@@ -57,6 +59,8 @@ Status: 🟡 in progress
 
 ✅ Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
+- `jda0 -> jda1_a -> hello.jda -> hello_out` now works again and prints `Hello Bare Metal`
+- `jda1_a -> jda1_b` can now complete and patch `main` correctly on successful runs
 - stage 0 pass 1 now records `main` and stage 0 pass 2 patches the startup call for `jda1`
 - selfhost gets through const parsing and struct parsing (`A/B/C/D`)
 - selfhost gets through many top-level `let` records again
@@ -127,46 +131,41 @@ Status: 🟡 in progress
 Status: 🟡 active
 
 🟡 Active blocker:
-- `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
-- stage-1 self-compile now gets much farther (through `F#60` and into later functions), but is still unstable in late parse/codegen paths
-- latest frequent failure windows are in higher `F#` ranges (`F#8x` and beyond), with many parser mismatches and eventual crash
-- even when `SELF_EXIT:0` occurs, produced `jda1_sh2` is malformed and segfaults on `hello.jda`
+- the old stage-0 global token-pointer miscompile is fixed, but `jda1_a -> jda1_b` is still intermittent
+- successful self-compile runs now reach `PH done_top`, patch `main`, and write `jda1_b`
+- failing self-compile runs still segfault during top-level function compilation, before `jda1_b` is reliably produced every time
+- latest named frontier in the failing run is around the early helper/const band, reaching `lookup_const` and then crashing later in the same self-compile window
 
 🟡 Latest evidence:
-- panic output now prints real strings plus token position/type/span context
-- top-level parser now reliably reaches function parsing (`F#0..`) before failure
-- live parser path was hardened to re-read tokens from global token pointer each loop
-- `live_compile_if(...)`/`live_compile_loop(...)` now use direct token checks (not `expect(...)`) for brace boundaries
-- old `FN#24` `TOK_DOT` non-advance blocker is cleared
-- old `FN#60`/`FN#61` hard-stop blockers were pushed forward; current failures are later-stage parse/codegen corruption and fixup instability
-- unresolved call fixups are still observed, and output ELF metadata remains invalid in failed selfhost outputs
-- crash is still inside top-level function compile phase (`PH=4` reached, `PH=5` not reached in targeted tracing), so remaining work is late stage-1 parse/codegen stability rather than stage-0 bootstrap
+- the dedicated stage-0 repros showed the real root cause was global `&Token` field/index access through helpers
+- after the stage-0 fix, `jda1_a` again tokenizes `hello.jda`, finds `main`, patches entry, and emits a working `hello_out`
+- `jda1_a -> jda1_b` now sometimes succeeds and reaches much later function counts again (`CFN 57`, `CFN 81`, `CFN 96`, and one named crashing trace reached `lookup_const`)
+- the remaining failure is intermittent rather than a single deterministic `FN#` stop, which points to another runtime/codegen stability bug rather than the earlier fixed token-pointer bug
 
 🟡 Why it matters:
 - stage 0 remains healthy (`make clean all stage1` passes)
-- stage 1 still compiles and runs `hello.jda` (`Hello Bare Metal`)
-- the remaining selfhost blocker is now late-stage stability (parse/codegen/fixup consistency) before final selfhost artifact validity
+- stage 1 again compiles and runs `hello.jda` (`Hello Bare Metal`) from `jda1_a`
+- the remaining selfhost blocker is now intermittent `jda1_a -> jda1_b` stability before final roundtrip validation
 
 4. Next fix
 Status: 🟡 next
 
 🟡 Work in order:
-- keep the current helper-based lexer baseline
+- keep the fixed stage-0 typed-global path and the current helper-based lexer baseline
 - keep the stable `32 x 128` block-storage layout
-- once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
+- make `jda1_a -> jda1_b` deterministic again before trusting any later `jda1_b -> hello` result
 
 🟡 Concrete next edits:
-- keep the current lexer fixes (`TOK_ARROW`, `g_lex_out_toks`) unchanged
-- remove remaining ad-hoc recovery hacks that can corrupt later IR/fixups
-- harden late compile paths (`codegen_expr_inline` / postfix / call args) to avoid invalid token/field fallthrough
-- stabilize call-fixup resolution and unresolved-call behavior so generated code remains executable
+- keep the current stage-0 global metadata fix unchanged
+- use the named `CFN` trace to map the intermittent self-compile crash window to exact stage-1 helper functions
+- narrow the next failing band after `lookup_const` / nearby helper functions instead of making broad parser edits
 - keep debug probes minimal and targeted (only around the active crash window) to reduce clobber risk
 - keep optimizer passes disabled until raw selfhost compilation is stable
 
 🟡 Expected outcome of next fix:
-- produce a structurally valid `jda1_sh2` (no malformed ELF / no immediate segfault)
-- complete `./jda1 ../stage1/jda1.jda jda1_sh2`
-- then run `jda1_sh2 -> hello_sh2` successfully
+- make `jda1_a -> jda1_b` complete reliably, not just intermittently
+- then re-run `jda1_b -> hello.jda`
+- then proceed to the final selfhost roundtrip
 
 5. Final testing
 Status: ⏳ pending
