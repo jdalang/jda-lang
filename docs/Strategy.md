@@ -56,6 +56,10 @@ Status: 🟡 in progress
 - simplified `parse_type(...)` into a straighter-line shape to reduce parser-state fragility
 - added bounds-guarded token access in `parse_const_decl(...)` and `skip_top_level_let(...)` to avoid out-of-range reads during top-level scans
 - added top-level `fn` header guard so malformed `TOK_FN` sequences without an identifier are skipped instead of entering function compile
+- added a minimal inline `asm { ... }` skip path so stage-1 `main()` no longer dies immediately on `asm { out argv_ptr = rsi }`
+- seeded `argv_ptr` from `rsi` in lowered stage-1 `main()` so the skipped inline `asm` still preserves argv behavior
+- fixed skipped-function resync so legacy/parser functions now scan forward to the next top-level `fn`/`let` using the same raw-text fallback as the main top-level loop
+- simplified `emit_lea_rip(...)` so selfhost now gets past that previous top-level frontier
 
 ✅ Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
@@ -126,26 +130,31 @@ Status: 🟡 in progress
 - removed the hottest expression/call trace prints (`EXPRST`, `cu*`, `call arg*`) from stage-1 inline codegen paths to reduce clobber risk in the failing window
 - `make selfhost-stage1` still passes on Docker after the latest parser hardening (`Hello Bare Metal`)
 - `make ci-selfhost-roundtrip` still segfaults at `stage1_a -> stage1_b` (exit `139`)
+- the old `jda1_b exits 0 without writing hello output` symptom is gone; after the stage-1 `main()`/`asm` fix it now reaches runtime and segfaults instead of silently doing nothing
+- successful `jda1_a -> jda1_b` runs now get much further through top-level function compilation after the skipped-function resync fix, moving the frontier from the old `parse_*` cluster into later lowering/live-codegen helpers
+- the top-level scanner now reliably reaches the real end of file (`... syscall(...)\n}`), so the earlier “premature EOF” suspicion was ruled out
+- the current top-level frontier has moved past `emit_lea_rip(...)` into later helpers, and the latest runtime crash signal on `hello` points at the `live_codegen_primary_inline(...)` band
 
 3. Current Blocker
 Status: 🟡 active
 
 🟡 Active blocker:
-- the old stage-0 global token-pointer miscompile is fixed, but `jda1_a -> jda1_b` is still intermittent
-- successful self-compile runs now reach `PH done_top`, patch `main`, and write `jda1_b`
-- failing self-compile runs still segfault during top-level function compilation, before `jda1_b` is reliably produced every time
-- latest named frontier in the failing run is around the early helper/const band, reaching `lookup_const` and then crashing later in the same self-compile window
+- the old stage-0 global token-pointer miscompile is fixed, and stage-1 `main()` now executes far enough to print path/write probes, but `jda1_a -> jda1_b` is still intermittent
+- successful self-compile runs now reach `PH done_top`, patch `main`, write `jda1_b`, and then `jda1_b` crashes while compiling `hello.jda`
+- the latest compile-time frontier moved out of the old parser band and into later lowering/live-codegen helpers, with recent progress through `emit_call_rel32`, `emit_lea_rip`, and nearby helpers
+- the latest runtime clue from `jda1_b ../../examples/hello.jda ...` is a partial `prim t=` print, pointing at `live_codegen_primary_inline(...)` as the next exact crash window
 
 🟡 Latest evidence:
 - the dedicated stage-0 repros showed the real root cause was global `&Token` field/index access through helpers
 - after the stage-0 fix, `jda1_a` again tokenizes `hello.jda`, finds `main`, patches entry, and emits a working `hello_out`
-- `jda1_a -> jda1_b` now sometimes succeeds and reaches much later function counts again (`CFN 57`, `CFN 81`, `CFN 96`, and one named crashing trace reached `lookup_const`)
-- the remaining failure is intermittent rather than a single deterministic `FN#` stop, which points to another runtime/codegen stability bug rather than the earlier fixed token-pointer bug
+- adding the stage-1 `asm` skip + `argv_ptr` seed changed `jda1_b` from “exit 0 without output” to a real runtime crash, which confirms the earlier emitted-`main`/silent-noop bug was real and is now past us
+- fixing skipped-function resync moved successful `jda1_a -> jda1_b` runs from stopping near the legacy `parse_*` cluster to stopping much later in the lowering/live-codegen band
+- the remaining failure is still intermittent rather than a single deterministic `FN#` stop, which points to another runtime/codegen stability bug rather than the earlier fixed token-pointer or empty-`main` bug
 
 🟡 Why it matters:
 - stage 0 remains healthy (`make clean all stage1` passes)
 - stage 1 again compiles and runs `hello.jda` (`Hello Bare Metal`) from `jda1_a`
-- the remaining selfhost blocker is now intermittent `jda1_a -> jda1_b` stability before final roundtrip validation
+- the remaining selfhost blocker is now intermittent `jda1_a -> jda1_b` stability plus the later `jda1_b -> hello.jda` runtime crash before final roundtrip validation
 
 4. Next fix
 Status: 🟡 next
@@ -153,18 +162,20 @@ Status: 🟡 next
 🟡 Work in order:
 - keep the fixed stage-0 typed-global path and the current helper-based lexer baseline
 - keep the stable `32 x 128` block-storage layout
+- keep the new skipped-function resync and `main()`/`asm` handling fixes
 - make `jda1_a -> jda1_b` deterministic again before trusting any later `jda1_b -> hello` result
 
 🟡 Concrete next edits:
 - keep the current stage-0 global metadata fix unchanged
-- use the named `CFN` trace to map the intermittent self-compile crash window to exact stage-1 helper functions
-- narrow the next failing band after `lookup_const` / nearby helper functions instead of making broad parser edits
+- keep the current skipped-function resync logic unchanged
+- use the named `CFN` trace to map the intermittent self-compile crash window to exact later helper functions
+- narrow the next failing band around `emit_lea_rip(...)`, `live_codegen_primary_inline(...)`, and nearby live-codegen helpers instead of making broad parser edits
 - keep debug probes minimal and targeted (only around the active crash window) to reduce clobber risk
 - keep optimizer passes disabled until raw selfhost compilation is stable
 
 🟡 Expected outcome of next fix:
 - make `jda1_a -> jda1_b` complete reliably, not just intermittently
-- then re-run `jda1_b -> hello.jda`
+- then stabilize the current `jda1_b -> hello.jda` crash
 - then proceed to the final selfhost roundtrip
 
 5. Final testing
