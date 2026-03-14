@@ -124,21 +124,23 @@ Status: 🟡 active
 
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
-- current failure moved earlier to `FN#24`
-- exact panic now: `expr stmt did not advance` at `pos=1667` (`TOK_DOT`)
-- failing token window: `IDENT RBRACK DOT IDENT IDENT EQ ...`
+- stage-1 self-compile now gets much farther (through `F#60` and into later functions), but is still unstable in late parse/codegen paths
+- latest frequent failure windows are in higher `F#` ranges (`F#8x` and beyond), with many parser mismatches and eventual crash
+- even when `SELF_EXIT:0` occurs, produced `jda1_sh2` is malformed and segfaults on `hello.jda`
 
 🟡 Latest evidence:
 - panic output now prints real strings plus token position/type/span context
 - top-level parser now reliably reaches function parsing (`F#0..`) before failure
 - live parser path was hardened to re-read tokens from global token pointer each loop
 - `live_compile_if(...)`/`live_compile_loop(...)` now use direct token checks (not `expect(...)`) for brace boundaries
-- unresolved-ident panic in the prior `FN#60` path was pushed forward; current reproducible stopper is the `TOK_DOT` non-advance in `FN#24`
+- old `FN#24` `TOK_DOT` non-advance blocker is cleared
+- old `FN#60`/`FN#61` hard-stop blockers were pushed forward; current failures are later-stage parse/codegen corruption and fixup instability
+- unresolved call fixups are still observed, and output ELF metadata remains invalid in failed selfhost outputs
 
 🟡 Why it matters:
 - stage 0 remains healthy (`make clean all stage1` passes)
 - stage 1 still compiles and runs `hello.jda` (`Hello Bare Metal`)
-- the remaining selfhost blocker is now a narrow, reproducible statement-parser non-advance at a dot-chain expression window
+- the remaining selfhost blocker is now late-stage stability (parse/codegen/fixup consistency) before final selfhost artifact validity
 
 4. Next fix
 Status: 🟡 next
@@ -150,15 +152,16 @@ Status: 🟡 next
 
 🟡 Concrete next edits:
 - keep the current lexer fixes (`TOK_ARROW`, `g_lex_out_toks`) unchanged
-- patch `compile_expr_stmt_inline(...)` / postfix handling so dot-chain continuations always consume tokens after `]`
-- ensure `codegen_expr_inline(...)` cannot return with unchanged `pos` when current token is `TOK_DOT`
-- keep the token-window dump around `pos=1667` until the non-advance panic is eliminated
+- remove remaining ad-hoc recovery hacks that can corrupt later IR/fixups
+- harden late compile paths (`codegen_expr_inline` / postfix / call args) to avoid invalid token/field fallthrough
+- stabilize call-fixup resolution and unresolved-call behavior so generated code remains executable
+- keep debug probes minimal and targeted (only around the active crash window) to reduce clobber risk
 - keep optimizer passes disabled until raw selfhost compilation is stable
 
 🟡 Expected outcome of next fix:
-- clear the current `FN#24` dot-expression non-advance window
+- produce a structurally valid `jda1_sh2` (no malformed ELF / no immediate segfault)
 - complete `./jda1 ../stage1/jda1.jda jda1_sh2`
-- then run `jda1_sh2 -> hello_sh2`
+- then run `jda1_sh2 -> hello_sh2` successfully
 
 5. Final testing
 Status: ⏳ pending
