@@ -319,23 +319,7 @@ let g_lex_src_ptr = 0
 ; 2. LEXER
 ; ============================================================
 
-fn const_name_len_at(ct: &ConstTable, idx: i64) -> i64 {
-    ret ct.names_len[idx]
-}
-
-fn const_name_start_at(ct: &ConstTable, idx: i64) -> i64 {
-    ret ct.names_start[idx]
-}
-
-fn const_value_at(ct: &ConstTable, idx: i64) -> i64 {
-    ret ct.values[idx]
-}
-
-fn struct_size_at(stab: &StructTable, sid: i64) -> i64 {
-    ret stab.sizes[sid]
-}
-
-fn load_i64_at0(p: &i64) -> i64 {
+fn load_i64_at0(p: &i64) {
     ret p[0]
 }
 
@@ -348,7 +332,12 @@ fn inc_i64_at0(p: &i64) {
     p[0] = cur + 1
 }
 
-fn load_i64_at(p: &i64, idx: i64) -> i64 {
+fn inc_i64_at0_twice(p: &i64) {
+    inc_i64_at0(p)
+    inc_i64_at0(p)
+}
+
+fn load_i64_at(p: &i64, idx: i64) {
     ret p[idx]
 }
 
@@ -356,19 +345,19 @@ fn store_i64_at(p: &i64, idx: i64, v: i64) {
     p[idx] = v
 }
 
-fn load_i8_at(p: &i8, idx: i64) -> i8 {
+fn load_i8_at(p: &i8, idx: i64) {
     ret p[idx]
 }
 
-fn load_i8_at0(p: &i8, idxp: &i64) -> i8 {
+fn load_i8_at0(p: &i8, idxp: &i64) {
     ret p[idxp[0]]
 }
 
-fn char_at_pos(src: &i8, pos: &i64) -> i8 {
+fn char_at_pos(src: &i8, pos: &i64) {
     ret load_i8_at0(src, pos)
 }
 
-fn lex_scan_int(pos: &i64) -> i64 {
+fn lex_scan_int(pos: &i64) {
     let val = 0
     loop pos[0] < g_lex_src_len {
         let cur = char_at_pos(g_lex_src_ptr, pos)
@@ -386,23 +375,59 @@ fn lex_scan_int(pos: &i64) -> i64 {
     ret val
 }
 
-fn tok_type_at0(toks: &Token, pos: &i64) -> i32 {
+fn lex_skip_escaped_char(pos: &i64, src_len: i64) {
+    inc_i64_at0(pos)
+    if load_i64_at0(pos) < src_len {
+        inc_i64_at0(pos)
+    }
+}
+
+fn lex_skip_string_body(pos: &i64) {
+    loop load_i64_at0(pos) < g_lex_src_len {
+        let sc = load_i8_at0(g_lex_src_ptr, pos)
+        if sc == 34 {
+            ret 0
+        } else if sc == 92 {
+            lex_skip_escaped_char(pos, g_lex_src_len)
+        } else {
+            inc_i64_at0(pos)
+        }
+    }
+    ret 0
+}
+
+fn lex_handle_gt_next(pos: &i64) {
+    let next = load_i64_at0(pos)
+    let nxt = load_i8_at(g_lex_src_ptr, next + 1)
+    if nxt == 62 {
+        emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_SHR)
+        inc_i64_at0_twice(pos)
+    } else if nxt == 61 {
+        emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_GTE)
+        inc_i64_at0_twice(pos)
+    } else {
+        emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(62))
+        inc_i64_at0(pos)
+    }
+}
+
+fn tok_type_at0(toks: &Token, pos: &i64) {
     ret toks[pos[0]].type
 }
 
-fn tok_type_at(toks: &Token, idx: i64) -> i32 {
+fn tok_type_at(toks: &Token, idx: i64) {
     ret toks[idx].type
 }
 
-fn tok_imm_at(toks: &Token, idx: i64) -> i64 {
+fn tok_imm_at(toks: &Token, idx: i64) {
     ret toks[idx].imm
 }
 
-fn tok_str_start_at(toks: &Token, idx: i64) -> i64 {
+fn tok_str_start_at(toks: &Token, idx: i64) {
     ret toks[idx].str_start
 }
 
-fn tok_str_len_at(toks: &Token, idx: i64) -> i64 {
+fn tok_str_len_at(toks: &Token, idx: i64) {
     ret toks[idx].str_len
 }
 
@@ -415,15 +440,14 @@ fn tok_copy_at(toks: &Token, dst: i64, src: i64) {
 
 fn tok_set_int_at(toks: &Token, idx: i64, imm: i64) {
     toks[idx].type = TOK_INT
+    tok_set_imm_at(toks, idx, imm)
+}
+
+fn tok_set_imm_at(toks: &Token, idx: i64, imm: i64) {
     toks[idx].imm = imm
 }
 
-fn const_name_matches(ct: &ConstTable, idx: i64, src: &i8, name_start: i64, name_len: i64) -> i64 {
-    let base = const_name_start_at(ct, idx)
-    ret str_match(src, base, name_start, name_len)
-}
-
-fn lookup_const(src: &i8, name_start: i64, name_len: i64) -> i64 {
+fn lookup_const(src: &i8, name_start: i64, name_len: i64) {
     let i = 0
     loop i < g_const_cnt {
         let cur_len = g_const_name_len_tbl[i]
@@ -462,10 +486,10 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
     let name_len = toks[pos[0]].str_len
     expect(toks, pos, TOK_IDENT)
     expect(toks, pos, TOK_EQ)
-    let t = toks[pos[0]].type
-    if g_glob_name_off == 0 { panic("Global table missing") }
+    let t = tok_type_at0(toks, pos)
+    if g_glob_name_off == 0 { panic_global_table_missing() }
     let gidx = g_glob_cnt
-    if gidx >= 256 { panic("Too many globals") }
+    if gidx >= 256 { panic_too_many_globals() }
     g_glob_name_off[gidx] = name_start
     g_glob_name_len[gidx] = name_len
     g_glob_off[gidx]      = g_glob_total_sz
@@ -473,8 +497,8 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
     g_glob_stype[gidx]    = TYPE_I64
     g_glob_is_addr[gidx]  = 0
     if t == TOK_INT {
-        if streq(src, name_start, name_len, "g_consts") == 1 {
-            let sid = lookup_struct_kw(stab, src, "ConstTable", 10)
+        if is_g_consts_name(src, name_start, name_len) == 1 {
+            let sid = lookup_consttable_sid(stab, src)
             if sid >= 0 { g_glob_stype[gidx] = sid }
         }
         inc_i64_at0(pos)
@@ -487,7 +511,7 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
             let type_len = tok_str_len_at(toks, type_idx)
             let sid = lookup_struct(stab, src, type_start, type_len)
             if sid >= 0 {
-                elem_sz = struct_size_at(stab, sid)
+                elem_sz = stab.sizes[sid]
                 stype = sid
             }
         }
@@ -518,13 +542,11 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
 }
 
 fn panic(msg: &i8) {
-    print("PANIC: ")
     print(msg)
-    print("\n")
     syscall(60, 1, 0, 0)
 }
 
-fn streq(src: &i8, start: i64, len: i64, kw: &i8) -> i32 {
+fn streq(src: &i8, start: i64, len: i64, kw: &i8) {
     let i = 0
     loop i < len {
         if src[start + i] != kw[i] { ret 0 }
@@ -534,7 +556,7 @@ fn streq(src: &i8, start: i64, len: i64, kw: &i8) -> i32 {
     ret 1
 }
 
-fn str_match(src: &i8, s1: i64, s2: i64, len: i64) -> i32 {
+fn str_match(src: &i8, s1: i64, s2: i64, len: i64) {
     let i = 0
     loop i < len {
         if src[s1 + i] != src[s2 + i] { ret 0 }
@@ -545,7 +567,7 @@ fn str_match(src: &i8, s1: i64, s2: i64, len: i64) -> i32 {
 
 ; Check if character is backslash and process escape
 ; Returns: converted value if escape, or -1 if not escape
-fn try_escape(c: i8, next_c: i8) -> i64 {
+fn try_escape(c: i8, next_c: i8) {
     ; Check for backslash followed by escape char
     if c != 92 { ret -1 }  ; Not backslash
     if next_c == 110 { ret 10 }   ; \n -> newline
@@ -556,30 +578,30 @@ fn try_escape(c: i8, next_c: i8) -> i64 {
 }
 
 ; Type system helpers
-fn is_pointer_type(t: i32) -> i32 {
+fn is_pointer_type(t: i32) {
     ret (t & TYPE_PTR_FLAG) != 0
 }
 
-fn base_type(t: i32) -> i32 {
+fn base_type(t: i32) {
     let shifted = t << 1
     ret shifted >> 1
 }
 
-fn ptr_of(base: i32) -> i32 {
+fn ptr_of(base: i32) {
     ret base | TYPE_PTR_FLAG
 }
 
-fn is_alpha(c: i8) -> i32 {
+fn is_alpha(c: i8) {
     if c >= 97 and c <= 122 { ret 1 }
     if c >= 65 and c <= 90 { ret 1 }
     ret 0
 }
 
-fn is_digit(c: i8) -> i32 {
+fn is_digit(c: i8) {
     ret c >= 48 and c <= 57
 }
 
-fn is_space_char(c: i8) -> i32 {
+fn is_space_char(c: i8) {
     if c == 32 { ret 1 }
     if c == 9 { ret 1 }
     if c == 10 { ret 1 }
@@ -587,20 +609,20 @@ fn is_space_char(c: i8) -> i32 {
     ret 0
 }
 
-fn is_ident_continue(c: i8) -> i32 {
+fn is_ident_continue(c: i8) {
     if is_alpha(c) == 1 { ret 1 }
     if is_digit(c) == 1 { ret 1 }
     if c == 95 { ret 1 }
     ret 0
 }
 
-fn is_ident_start(c: i8) -> i32 {
+fn is_ident_start(c: i8) {
     if is_alpha(c) == 1 { ret 1 }
     if c == 95 { ret 1 }
     ret 0
 }
 
-fn char_to_tok_lo(c: i8) -> i32 {
+fn char_to_tok_lo(c: i8) {
     if c == 38 { ret TOK_AMP }
     if c == 40 { ret TOK_LPAREN }
     if c == 41 { ret TOK_RPAREN }
@@ -612,7 +634,7 @@ fn char_to_tok_lo(c: i8) -> i32 {
     ret TOK_EOF
 }
 
-fn char_to_tok_mid(c: i8) -> i32 {
+fn char_to_tok_mid(c: i8) {
     if c == 47 { ret TOK_SLASH }
     if c == 58 { ret TOK_COLON }
     if c == 60 { ret TOK_LT }
@@ -623,7 +645,7 @@ fn char_to_tok_mid(c: i8) -> i32 {
     ret TOK_EOF
 }
 
-fn char_to_tok_hi(c: i8) -> i32 {
+fn char_to_tok_hi(c: i8) {
     if c == 123 { ret TOK_LBRACE }
     if c == 124 { ret TOK_PIPE }
     if c == 125 { ret TOK_RBRACE }
@@ -631,7 +653,7 @@ fn char_to_tok_hi(c: i8) -> i32 {
     ret TOK_EOF
 }
 
-fn char_to_tok(c: i8) -> i32 {
+fn char_to_tok(c: i8) {
     let tok = char_to_tok_lo(c)
     if tok != TOK_EOF { ret tok }
     let mid = char_to_tok_mid(c)
@@ -639,48 +661,48 @@ fn char_to_tok(c: i8) -> i32 {
     ret char_to_tok_hi(c)
 }
 
-fn classify_keyword_len2(src: &i8, start: i64, len: i64) -> i32 {
-    if streq(src, start, len, "fn") { ret TOK_FN }
-    if streq(src, start, len, "if") { ret TOK_IF }
-    if streq(src, start, len, "or") { ret TOK_OR }
-    if streq(src, start, len, "i8") { ret TOK_I8 }
+fn classify_keyword_len2(src: &i8, start: i64, len: i64) {
+    if src[start] == 102 and src[start + 1] == 110 { ret TOK_FN }
+    if src[start] == 105 and src[start + 1] == 102 { ret TOK_IF }
+    if src[start] == 111 and src[start + 1] == 114 { ret TOK_OR }
+    if src[start] == 105 and src[start + 1] == 56 { ret TOK_I8 }
     ret TOK_IDENT
 }
 
-fn classify_keyword_len3(src: &i8, start: i64, len: i64) -> i32 {
-    if streq(src, start, len, "let") { ret TOK_LET }
-    if streq(src, start, len, "ret") { ret TOK_RET }
-    if streq(src, start, len, "and") { ret TOK_AND }
-    if streq(src, start, len, "i64") { ret TOK_I64 }
-    if streq(src, start, len, "i32") { ret TOK_I32 }
-    if streq(src, start, len, "f64") { ret TOK_F64 }
+fn classify_keyword_len3(src: &i8, start: i64, len: i64) {
+    if src[start] == 108 and src[start + 1] == 101 and src[start + 2] == 116 { ret TOK_LET }
+    if src[start] == 114 and src[start + 1] == 101 and src[start + 2] == 116 { ret TOK_RET }
+    if src[start] == 97 and src[start + 1] == 110 and src[start + 2] == 100 { ret TOK_AND }
+    if src[start] == 105 and src[start + 1] == 54 and src[start + 2] == 52 { ret TOK_I64 }
+    if src[start] == 105 and src[start + 1] == 51 and src[start + 2] == 50 { ret TOK_I32 }
+    if src[start] == 102 and src[start + 1] == 54 and src[start + 2] == 52 { ret TOK_F64 }
     ret TOK_IDENT
 }
 
-fn classify_keyword_len4(src: &i8, start: i64, len: i64) -> i32 {
-    if streq(src, start, len, "else") { ret TOK_ELSE }
-    if streq(src, start, len, "loop") { ret TOK_LOOP }
+fn classify_keyword_len4(src: &i8, start: i64, len: i64) {
+    if src[start] == 101 and src[start + 1] == 108 and src[start + 2] == 115 and src[start + 3] == 101 { ret TOK_ELSE }
+    if src[start] == 108 and src[start + 1] == 111 and src[start + 2] == 111 and src[start + 3] == 112 { ret TOK_LOOP }
     ret TOK_IDENT
 }
 
-fn classify_keyword_len5(src: &i8, start: i64, len: i64) -> i32 {
-    if streq(src, start, len, "match") { ret TOK_MATCH }
-    if streq(src, start, len, "print") { ret TOK_PRINT }
-    if streq(src, start, len, "const") { ret TOK_CONST }
+fn classify_keyword_len5(src: &i8, start: i64, len: i64) {
+    if src[start] == 109 and src[start + 1] == 97 and src[start + 2] == 116 and src[start + 3] == 99 and src[start + 4] == 104 { ret TOK_MATCH }
+    if src[start] == 112 and src[start + 1] == 114 and src[start + 2] == 105 and src[start + 3] == 110 and src[start + 4] == 116 { ret TOK_PRINT }
+    if src[start] == 99 and src[start + 1] == 111 and src[start + 2] == 110 and src[start + 3] == 115 and src[start + 4] == 116 { ret TOK_CONST }
     ret TOK_IDENT
 }
 
-fn classify_keyword_len6(src: &i8, start: i64, len: i64) -> i32 {
-    if streq(src, start, len, "struct") { ret TOK_STRUCT }
+fn classify_keyword_len6(src: &i8, start: i64, len: i64) {
+    if src[start] == 115 and src[start + 1] == 116 and src[start + 2] == 114 and src[start + 3] == 117 and src[start + 4] == 99 and src[start + 5] == 116 { ret TOK_STRUCT }
     ret TOK_IDENT
 }
 
-fn classify_keyword_len7(src: &i8, start: i64, len: i64) -> i32 {
-    if streq(src, start, len, "syscall") { ret TOK_SYSCALL }
+fn classify_keyword_len7(src: &i8, start: i64, len: i64) {
+    if src[start] == 115 and src[start + 1] == 121 and src[start + 2] == 115 and src[start + 3] == 99 and src[start + 4] == 97 and src[start + 5] == 108 and src[start + 6] == 108 { ret TOK_SYSCALL }
     ret TOK_IDENT
 }
 
-fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
+fn classify_keyword(src: &i8, start: i64, len: i64) {
     if len == 2 { ret classify_keyword_len2(src, start, len) }
     if len == 3 { ret classify_keyword_len3(src, start, len) }
     if len == 4 { ret classify_keyword_len4(src, start, len) }
@@ -691,14 +713,14 @@ fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
 }
 
 fn emit_lex_tok(out_toks: &Token, count: &i64, tok: i32) {
-    if count[0] >= 65535 { panic("Token buffer overflow") }
+    if count[0] >= 65535 { panic_token_buffer_overflow() }
     let idx = load_i64_at0(count)
     out_toks[idx].type = tok
     inc_i64_at0(count)
 }
 
 fn emit_lex_span(out_toks: &Token, count: &i64, tok: i32, start: i64, len: i64) {
-    if count[0] >= 65535 { panic("Token buffer overflow") }
+    if count[0] >= 65535 { panic_token_buffer_overflow() }
     let idx = load_i64_at0(count)
     out_toks[idx].type = tok
     out_toks[idx].str_start = start
@@ -706,92 +728,87 @@ fn emit_lex_span(out_toks: &Token, count: &i64, tok: i32, start: i64, len: i64) 
     inc_i64_at0(count)
 }
 
-fn lex_handle_minus(src: &i8, pos: &i64, next_ok: i64, out_toks: &Token, count: &i64) {
-    print("LEX_MINUS\n")
-    if next_ok == 1 {
-        if src[pos[0] + 1] == 62 {
-            emit_lex_tok(out_toks, count, TOK_ARROW)
-            pos[0] = pos[0] + 2
+fn lex_handle_minus(pos: &i64) {
+    let next = load_i64_at0(pos)
+    if next + 1 < g_lex_src_len {
+        let nxt = g_lex_src_ptr[pos[0] + 1]
+        if nxt == 62 {
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_ARROW)
+            inc_i64_at0_twice(pos)
         } else {
-            emit_lex_tok(out_toks, count, char_to_tok(45))
-            pos[0] = pos[0] + 1
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(45))
+            inc_i64_at0(pos)
         }
     } else {
-        emit_lex_tok(out_toks, count, char_to_tok(45))
-        pos[0] = pos[0] + 1
+        emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(45))
+        inc_i64_at0(pos)
     }
 }
 
-fn lex_handle_eq(src: &i8, pos: &i64, next_ok: i64, out_toks: &Token, count: &i64) {
-    print("LEX_EQ\n")
-    if next_ok == 1 {
-        if src[pos[0] + 1] == 61 {
-            emit_lex_tok(out_toks, count, TOK_EQEQ)
-            pos[0] = pos[0] + 2
-        } else if src[pos[0] + 1] == 62 {
-            emit_lex_tok(out_toks, count, TOK_FATARROW)
-            pos[0] = pos[0] + 2
+fn lex_handle_eq(pos: &i64) {
+    let next = load_i64_at0(pos)
+    if next + 1 < g_lex_src_len {
+        let nxt = load_i8_at(g_lex_src_ptr, next + 1)
+        if nxt == 61 {
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_EQEQ)
+            inc_i64_at0_twice(pos)
+        } else if nxt == 62 {
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_FATARROW)
+            inc_i64_at0_twice(pos)
         } else {
-            emit_lex_tok(out_toks, count, char_to_tok(61))
-            pos[0] = pos[0] + 1
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(61))
+            inc_i64_at0(pos)
         }
     } else {
-        emit_lex_tok(out_toks, count, char_to_tok(61))
-        pos[0] = pos[0] + 1
+        emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(61))
+        inc_i64_at0(pos)
     }
 }
 
-fn lex_handle_bang(src: &i8, pos: &i64, next_ok: i64, out_toks: &Token, count: &i64) {
-    print("LEX_BANG\n")
-    if next_ok == 1 {
-        if src[pos[0] + 1] == 61 {
-            emit_lex_tok(out_toks, count, TOK_NEQ)
-            pos[0] = pos[0] + 2
+fn lex_handle_bang(pos: &i64) {
+    let next = load_i64_at0(pos)
+    if next + 1 < g_lex_src_len {
+        let nxt = load_i8_at(g_lex_src_ptr, next + 1)
+        if nxt == 61 {
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_NEQ)
+            inc_i64_at0_twice(pos)
         } else {
-            emit_lex_tok(out_toks, count, char_to_tok(33))
-            pos[0] = pos[0] + 1
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(33))
+            inc_i64_at0(pos)
         }
     } else {
-        emit_lex_tok(out_toks, count, char_to_tok(33))
-        pos[0] = pos[0] + 1
+        emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(33))
+        inc_i64_at0(pos)
     }
 }
 
-fn lex_handle_gt(src: &i8, pos: &i64, next_ok: i64, out_toks: &Token, count: &i64) {
-    print("LEX_GT\n")
-    if next_ok == 1 {
-        if src[pos[0] + 1] == 62 {
-            emit_lex_tok(out_toks, count, TOK_SHR)
-            pos[0] = pos[0] + 2
-        } else if src[pos[0] + 1] == 61 {
-            emit_lex_tok(out_toks, count, TOK_GTE)
-            pos[0] = pos[0] + 2
-        } else {
-            emit_lex_tok(out_toks, count, char_to_tok(62))
-            pos[0] = pos[0] + 1
-        }
+fn lex_handle_gt(pos: &i64) {
+    let next = load_i64_at0(pos)
+    if next + 1 < g_lex_src_len {
+        lex_handle_gt_next(pos)
     } else {
-        emit_lex_tok(out_toks, count, char_to_tok(62))
-        pos[0] = pos[0] + 1
+        emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(62))
+        inc_i64_at0(pos)
     }
 }
 
-fn lex_handle_lt(src: &i8, pos: &i64, next_ok: i64, out_toks: &Token, count: &i64) {
-    print("LEX_LT\n")
-    if next_ok == 1 {
-        if src[pos[0] + 1] == 60 {
-            emit_lex_tok(out_toks, count, TOK_SHL)
-            pos[0] = pos[0] + 2
-        } else if src[pos[0] + 1] == 61 {
-            emit_lex_tok(out_toks, count, TOK_LTE)
-            pos[0] = pos[0] + 2
+fn lex_handle_lt(pos: &i64) {
+    let next = load_i64_at0(pos)
+    if next + 1 < g_lex_src_len {
+        let nxt = load_i8_at(g_lex_src_ptr, next + 1)
+        if nxt == 60 {
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_SHL)
+            inc_i64_at0_twice(pos)
+        } else if nxt == 61 {
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_LTE)
+            inc_i64_at0_twice(pos)
         } else {
-            emit_lex_tok(out_toks, count, char_to_tok(60))
-            pos[0] = pos[0] + 1
+            emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(60))
+            inc_i64_at0(pos)
         }
     } else {
-        emit_lex_tok(out_toks, count, char_to_tok(60))
-        pos[0] = pos[0] + 1
+        emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, char_to_tok(60))
+        inc_i64_at0(pos)
     }
 }
 
@@ -808,34 +825,25 @@ fn lex_handle_comment(src: &i8, src_len: i64, pos: &i64) {
     }
 }
 
-fn lex_handle_string(src: &i8, src_len: i64, pos: &i64, out_toks: &Token, count: &i64) {
-    pos[0] = pos[0] + 1
-    let start = pos[0]
-    let keep_string = 1
-    loop keep_string == 1 {
-        if pos[0] >= src_len {
-            keep_string = 0
-        } else {
-            let sc = src[pos[0]]
-            if sc == 34 {
-                keep_string = 0
-            } else if sc == 92 {
-                pos[0] = pos[0] + 1
-                if pos[0] < src_len {
-                    pos[0] = pos[0] + 1
-                }
-            } else {
-                pos[0] = pos[0] + 1
-            }
-        }
-    }
-    let len = pos[0] - start
-    emit_lex_span(out_toks, count, TOK_STR, start, len)
-    if pos[0] < src_len {
-        if src[pos[0]] == 34 {
+fn lex_maybe_close_string(pos: &i64) {
+    if pos[0] < g_lex_src_len {
+        if load_i8_at0(g_lex_src_ptr, pos) == 34 {
             pos[0] = pos[0] + 1
         }
     }
+}
+
+fn lex_emit_str(start: i64, len: i64) {
+    emit_lex_span(g_lex_out_toks, g_lex_count_ptr, TOK_STR, start, len)
+}
+
+fn lex_handle_string(pos: &i64) {
+    pos[0] = pos[0] + 1
+    let start = pos[0]
+    lex_skip_string_body(pos)
+    let len = pos[0] - start
+    lex_emit_str(start, len)
+    lex_maybe_close_string(pos)
 }
 
 fn lex_handle_int(src: &i8, pos: &i64) {
@@ -847,14 +855,32 @@ fn lex_handle_int(src: &i8, pos: &i64) {
 fn emit_lex_int(out_toks: &Token, count: &i64, val: i64) {
     let out_idx = load_i64_at0(count)
     if out_idx >= 65535 { panic("Token buffer overflow") }
-    tok_set_int_at(out_toks, out_idx, val)
-    inc_i64_at0(count)
+    emit_lex_tok(out_toks, count, TOK_INT)
+    tok_set_imm_at(out_toks, out_idx, val)
 }
 
 fn lex_emit_int(val: i64) {
-    let out_idx = load_i64_at0(g_lex_count_ptr)
-    tok_set_int_at(g_lex_out_toks, out_idx, val)
-    inc_i64_at0(g_lex_count_ptr)
+    emit_lex_int(g_lex_out_toks, g_lex_count_ptr, val)
+}
+
+fn panic_global_table_missing() {
+    panic("Global table missing")
+}
+
+fn panic_too_many_globals() {
+    panic("Too many globals")
+}
+
+fn is_g_consts_name(src: &i8, name_start: i64, name_len: i64) -> i64 {
+    ret streq(src, name_start, name_len, "g_consts")
+}
+
+fn lookup_consttable_sid(stab: &StructTable, src: &i8) -> i64 {
+    ret lookup_struct_kw(stab, src, "ConstTable", 10)
+}
+
+fn panic_token_buffer_overflow() {
+    panic("Token buffer overflow")
 }
 
 fn lex_handle_ident(src: &i8, src_len: i64, pos: &i64, out_toks: &Token, count: &i64) {
@@ -906,7 +932,7 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
 
         ; String literal: "=34
         else if c == 34 {
-            lex_handle_string(src, src_len, &pos, out_toks, &count)
+            lex_handle_string(&pos)
         }
 
         ; Integer literal: 0=48 9=57
@@ -921,19 +947,19 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
 
         ; Two-char operators: -=45 >=62 ==61 !=33 <=60
         else if c == 45 {
-            lex_handle_minus(src, &pos, next_ok, out_toks, &count)
+            lex_handle_minus(&pos)
         }
         else if c == 61 {
-            lex_handle_eq(src, &pos, next_ok, out_toks, &count)
+            lex_handle_eq(&pos)
         }
         else if c == 33 {
-            lex_handle_bang(src, &pos, next_ok, out_toks, &count)
+            lex_handle_bang(&pos)
         }
         else if c == 62 {
-            lex_handle_gt(src, &pos, next_ok, out_toks, &count)
+            lex_handle_gt(&pos)
         }
         else if c == 60 {
-            lex_handle_lt(src, &pos, next_ok, out_toks, &count)
+            lex_handle_lt(&pos)
         }
 
         ; Single-char operators
@@ -2721,14 +2747,12 @@ fn compile_expr_stmt_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i
         let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
         expect(toks, pos, TOK_RBRACK)
         if toks[pos[0]].type == TOK_DOT {
-            print("IDXFIELD1\n")
             pos[0] = pos[0] + 1
             let field = toks[pos[0]]
             expect(toks, pos, TOK_IDENT)
             let base_stype = lookup_ident_stype(jfn, &base)
             if base_stype == -1 { panic("Unknown base type") }
             let field_sid = base_type(base_stype)
-            print("IDXFIELD2\n")
             let fi = lookup_field_idx_any(stab, src, field_sid, field.str_start, field.str_len)
             if fi == -1 {
                 print("NOFIELD sid=")
@@ -2739,26 +2763,21 @@ fn compile_expr_stmt_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i
                 panic("Unknown field")
             }
             expect(toks, pos, TOK_EQ)
-            print("IDXFIELD3\n")
             let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
             let base_id = emit_ident_value(jfn, bb, &base)
-            print("IDXFIELD4\n")
             let elem_sz = emit_const(jfn, bb, TYPE_I64, 8)
             if field_sid >= 0 and field_sid < jfn.stab.cnt {
                 elem_sz = emit_const(jfn, bb, TYPE_I64, jfn.stab.sizes[field_sid])
             }
-            print("IDXFIELD5\n")
             let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
             let elem_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
             let field_off = emit_const(jfn, bb, TYPE_I64, stab.foffs[fi])
             let field_addr = emit_binop(jfn, bb, OP_ADD, elem_addr, field_off)
-            print("IDXFIELD6\n")
             let st = Instr{}
             st.op = OP_STORE_MEM
             st.operand0 = rhs_id
             st.operand1 = field_addr
             emit(jfn, bb, &st)
-            print("IDXFIELD7\n")
             ret bb
         }
         if toks[pos[0]].type == TOK_EQ {
