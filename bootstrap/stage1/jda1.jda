@@ -313,6 +313,7 @@ let g_cmp_name_len = 0
 let g_lex_count_ptr = 0
 let g_lex_out_toks = 0
 let g_lex_src_len = 0
+let g_lex_src_ptr = 0
 
 ; ============================================================
 ; 2. LEXER
@@ -365,6 +366,24 @@ fn load_i8_at0(p: &i8, idxp: &i64) -> i8 {
 
 fn char_at_pos(src: &i8, pos: &i64) -> i8 {
     ret load_i8_at0(src, pos)
+}
+
+fn lex_scan_int(pos: &i64) -> i64 {
+    let val = 0
+    loop pos[0] < g_lex_src_len {
+        let cur = char_at_pos(g_lex_src_ptr, pos)
+        if cur < 48 {
+            ret val
+        } else if cur > 57 {
+            ret val
+        } else {
+            val = val * 10
+            val = val + cur
+            val = val - 48
+            inc_i64_at0(pos)
+        }
+    }
+    ret val
 }
 
 fn tok_type_at0(toks: &Token, pos: &i64) -> i32 {
@@ -820,28 +839,8 @@ fn lex_handle_string(src: &i8, src_len: i64, pos: &i64, out_toks: &Token, count:
 }
 
 fn lex_handle_int(src: &i8, pos: &i64) {
-    let val = 0
-    let limit = 0
-    limit = g_lex_src_len
-    let out_idx = 0
-    loop pos[0] < limit {
-        let cur = char_at_pos(src, pos)
-        if cur < 48 {
-            limit = pos[0]
-        }
-        if cur > 57 {
-            limit = pos[0]
-        }
-        if pos[0] < limit {
-            val = val * 10
-            val = val + cur
-            val = val - 48
-            pos[0] = pos[0] + 1
-        }
-    }
-    out_idx = g_lex_count_ptr[0]
-    tok_set_int_at(g_lex_out_toks, out_idx, val)
-    inc_i64_at0(g_lex_count_ptr)
+    let val = lex_scan_int(pos)
+    lex_emit_int(val)
     ret 0
 }
 
@@ -850,6 +849,12 @@ fn emit_lex_int(out_toks: &Token, count: &i64, val: i64) {
     if out_idx >= 65535 { panic("Token buffer overflow") }
     tok_set_int_at(out_toks, out_idx, val)
     inc_i64_at0(count)
+}
+
+fn lex_emit_int(val: i64) {
+    let out_idx = load_i64_at0(g_lex_count_ptr)
+    tok_set_int_at(g_lex_out_toks, out_idx, val)
+    inc_i64_at0(g_lex_count_ptr)
 }
 
 fn lex_handle_ident(src: &i8, src_len: i64, pos: &i64, out_toks: &Token, count: &i64) {
@@ -883,6 +888,7 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
     g_lex_count_ptr = &count
     g_lex_out_toks = out_toks
     g_lex_src_len = src_len
+    g_lex_src_ptr = src
 
     loop pos < src_len {
         let c = src[pos]
