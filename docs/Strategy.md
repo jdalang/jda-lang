@@ -139,29 +139,45 @@ Status: 🟡 in progress
 - the `lower_print_int(...)` extraction is a keeper: the high selfhost path now clears that helper and pushes through `lower_instr(...)` much more often
 - the `lower_syscall(...)` extraction is also a keeper: the best current selfhost runs now clear `lower_instr(...)`, `lower_block(...)`, `lower_fn(...)`, `write_elf(...)`, `get_argv(...)`, and reach `main`
 - the restored 5-run sample on the current kept baseline showed a spread of `111 / 85 / 26 / 213 / 67`, which confirms the build is still nondeterministic but the ceiling is now `main`
+- stable early helper wrappers for `ok(...)`, `lookup_const(...)`, `print_span(...)`, `live_codegen_expr_inline(...)`, and `regalloc_free(...)` reduced unresolved helper calls from `178` to `0`
+- fixing the `argv_ptr` bootstrap-let path restored real `main()` compilation:
+- `PH mlet 86`
+- `PH mpr 44`
+- `PH mstr 412` to `428`
+- removing dead default `OP_CONST` emission from skipped bootstrap lets moved runtime from `PH g0` to `PH argvs`
 
 3. Current Blocker
 Status: 🟡 active
 
 🟡 Active blocker:
-- the old stage-0 global token-pointer miscompile is fixed, but `jda1_a -> jda1_b` is still intermittent
-- the latest kept late-lowering reductions moved the best selfhost path all the way through `lower_instr(...)`, `lower_fn(...)`, `write_elf(...)`, and `get_argv(...)`, and successful runs now reach `main`
-- despite that higher ceiling, the build is still nondeterministic and often falls back to earlier crash bands (`26`, `67`, `85`, `111`) on other runs
-- the next exact question is whether the `main`-reaching path prints `PH enter`; that will tell us if the remaining crash is before the first executable line of `main` or inside early bootstrap code
+- `jda1_a -> jda1_b` is still intermittent, but successful runs now produce a `jda1_b` with:
+- `PH unres 0`
+- non-empty generated `main()`
+- the active blocker is now runtime after `PH argvs` in selfhosted `jda1_b`
+- this is no longer the old silent-exit bug, the unresolved-call bug, or the empty-`main` bug
 
 🟡 Latest evidence:
-- the dedicated stage-0 repros showed the real root cause was global `&Token` field/index access through helpers
-- after the stage-0 fix, `jda1_a` again tokenizes `hello.jda`, finds `main`, patches entry, and emits a working `hello_out`
-- adding the stage-1 `asm` skip + `argv_ptr` seed changed `jda1_b` from “exit 0 without output” to a real runtime crash, which confirms the earlier emitted-`main`/silent-noop bug was real and is now past us
-- fixing skipped-function resync moved successful `jda1_a -> jda1_b` runs from stopping near the legacy `parse_*` cluster to stopping much later in the lowering/live-codegen band
-- the current kept `lower_instr(...)` refactors (`lower_print_int(...)`, `lower_syscall(...)`) are the first late-lowering changes that improved the best frontier without obviously regressing semantics
-- rejected refactors in the same area (`lower_call(...)`, `lower_alloc(...)`) reduced the ceiling and were reverted, so the remaining progress is coming from small targeted changes, not broad rewrites
-- the remaining failure is still intermittent rather than a single deterministic `FN#` stop, which points to another runtime/codegen stability bug rather than the earlier fixed token-pointer or empty-`main` bug
+- current successful runtime path is:
+- `PH enter`
+- `PH a1`
+- `PH pre2`
+- `PH a2`
+- `PH a3`
+- `PH a3b`
+- `PH a3c`
+- `PH allocs`
+- `PH g0`
+- `PH g1`
+- `PH g2`
+- `PH argvs`
+- after `PH argvs`, `jda1_b` still times out or panics before the next visible post-argv step
+- replacing seeded `src_path` / `out_path` with normal lowered lets regressed the runtime back to `PH g1`, so the seeded path remains the stronger baseline
+- shortening the next probe strings did not move the frontier, so the post-`PH argvs` failure is not just one long string literal
 
 🟡 Why it matters:
 - stage 0 remains healthy (`make clean all stage1` passes)
 - stage 1 again compiles and runs `hello.jda` (`Hello Bare Metal`) from `jda1_a`
-- the remaining selfhost blocker is now intermittent `jda1_a -> jda1_b` stability plus the later `jda1_b -> hello.jda` runtime crash before final roundtrip validation
+- the remaining selfhost blocker is now intermittent `jda1_a -> jda1_b` stability plus the post-`PH argvs` runtime crash in `jda1_b -> hello.jda`
 
 4. Next fix
 Status: 🟡 next
@@ -171,21 +187,26 @@ Status: 🟡 next
 - keep the stable `32 x 128` block-storage layout
 - keep the new skipped-function resync and `main()`/`asm` handling fixes
 - keep the current `lower_print_int(...)` / `lower_syscall(...)` reductions
+- keep the current helper-wrapper workaround for the tiny dropped top-level functions
+- keep seeded `src_path` / `out_path`
+- keep the dead-bootstrap-let `OP_CONST` removal
 - make `jda1_a -> jda1_b` deterministic again before trusting any later `jda1_b -> hello` result
 
 🟡 Concrete next edits:
 - keep the current stage-0 global metadata fix unchanged
 - keep the current skipped-function resync logic unchanged
-- use the named `CFN` trace to keep sampling for the `CFN 213 main` path
-- once a `main`-reaching run appears, check whether `PH enter` fires before making more structural changes
-- if `PH enter` does not fire, continue shrinking `lower_instr(...)` only with small helper extractions that directly affect early `main` bootstrap code
-- if `PH enter` does fire, move the next debug window into the earliest `main` bootstrap allocation / argv setup only
+- keep the current main-body probes until the post-`PH argvs` crash is localized
+- narrow the next runtime window to the first statement after `PH argvs`
+- verify whether the next bad step is:
+- the first `print(...)` after `PH argvs`
+- the first `syscall(1, 1, src_path, 1)`
+- or the first `cstr_len(src_path)`
 - keep debug probes minimal and targeted (only around the active crash window) to reduce clobber risk
 - keep optimizer passes disabled until raw selfhost compilation is stable
 
 🟡 Expected outcome of next fix:
 - make `jda1_a -> jda1_b` complete reliably, not just intermittently
-- then stabilize the current `jda1_b -> hello.jda` crash
+- then move `jda1_b -> hello.jda` past `PH argvs`
 - then proceed to the final selfhost roundtrip
 
 5. Final testing
