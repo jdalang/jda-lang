@@ -3,30 +3,32 @@ Strategy
 Latest checkpoint (2026-03-14, current session):
 
 ✅ Done in this cycle:
-- stabilized multiple intermittent `139` failures into deterministic `emit slot overflow` blockers
-- split/refactored hot stage-1 functions to reduce block pressure:
-- `lower_instr_memarith` split into `lower_instr_mem` / `lower_instr_arith` / `lower_instr_cmpbit`
-- `lex(...)` split into `lex_try_*` helpers and dispatch loop
-- `codegen_primary_inline(...)` split with `codegen_primary_ident_inline(...)`
-- fixed a real token classification bug by making `tok_type_at0(...)` / `tok_type_at(...)` return stored token `type` directly
-- reduced a call-arity corruption source by refactoring `skip_top_level_let_rhs(...)` from 7 args to global-backed helper args
-- added/kept targeted name-based skips for dead legacy parser/codegen functions and removed fragile duplicate skip checks
-- adjusted lowered stack frame policy to a tiered model:
-- `main` uses a large frame
-- non-main functions use smaller frame
+- replaced the old nondeterministic stage-1 crash with deterministic frontier tracking in Docker
+- fixed bounds safety in lowering use tracking paths (`mark_use` / `consume_use` style guards and related flow)
+- split `lower_fn(...)` into small helpers to remove its previous `emit slot overflow` blocker:
+- `lower_fn_emit_prologue`
+- `lower_fn_store_params`
+- `lower_fn_collect_uses`
+- `lower_fn_emit_blocks`
+- `lower_fn_emit_epilogue`
+- `lower_fn_patch_fixups`
+- added targeted legacy skips for dead `live_codegen_*` helper cluster to avoid crashing in unused path compilation
+- removed large non-functional debug print scaffolding from stage-1 `main()` hot path to reduce block pressure
+- fixed top-level function table hard limit mismatch (`fi >= 256`) to match allocated `i64[512]` tables
 
 🟡 Current blocker:
 - `jda1_a -> jda1_b` still fails during stage-1 selfhost compile
 - latest deterministic failure is:
-- `PANIC emit slot overflow` while compiling `lookup_field_idx_kw(...)` (current FI around mid-80s)
-- failure is no longer at old `lex_handle_int(...)` / `fn main not found` / unresolved-call paths
+- compile reaches `F 254 main` and then panics (`pos=42116`) while compiling stage-1 `main()` itself
+- remaining failure is now late in pipeline, after most helper/lowering functions compile successfully
 
 🟡 Next work:
-- fix `lookup_field_idx_kw(...)` in a small isolated chunk (split or simplify condition paths)
+- split stage-1 `main()` compile path into smaller helper chunks (same approach that fixed `lower_fn`)
+- keep only minimal deterministic frontier tracing, then remove temporary trace once `main` compiles cleanly
 - rerun full Docker chain after each tiny change:
 - `./jda0 ../stage1/jda1.jda /tmp/jda1_new`
 - `/tmp/jda1_new ../stage1/jda1.jda /tmp/jda1_b`
-- continue converting intermittent crashes into deterministic single-function blockers until `jda1_b` is produced reliably
+- continue converting late blockers into deterministic single-function fixes until `jda1_b` is produced reliably
 
 1. Stage 0 bootstrap stability
 Status: ✅ done
