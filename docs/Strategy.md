@@ -1,5 +1,31 @@
 Strategy
 
+Latest checkpoint (2026-03-14, later session):
+
+✅ Done in this cycle:
+- stabilized two earlier lower-FI hotspots with kept structural fixes:
+- simplified `is_main_fn_src(...)` loop control (removed fragile break-style flow)
+- split `should_skip_old_fn(...)` into short/long helpers to reduce lowering pressure
+- added/kept narrow legacy skip guard for parser cluster (`fi 79..86`)
+- added `create_block_live(...)` and switched active callsites to it
+- marked old dead `create_block(...)` as skippable
+- simplified `codegen_call_inline(...)` by removing duplicate early `alloc_pages` fast path
+- simplified call-argument ident handling to local span vars (removed `g_tok_span_*` temp writes there)
+- identified `emit_print_int` as dead-path hotspot and marked it skippable
+
+🟡 Current blocker:
+- baseline still fails at `jda1_a -> jda1_b` with `139` after `PH top`
+- active unstable lowering window is now around `fi ~123..126`
+- best current probe behavior:
+- `fi 123` mostly pass
+- `fi 124` mixed
+- `fi 125` improved from mostly-fail to mixed after `emit_print_int` skip
+
+🟡 Next work:
+- continue one-function-at-a-time triage in `fi 123..126`
+- target only active functions (`codegen_call_inline` / nearby lowering helpers)
+- keep trap disabled in committed baseline (`fi == 9999`) and keep debug prints out
+
 Latest checkpoint (2026-03-14):
 
 ✅ Done in this cycle:
