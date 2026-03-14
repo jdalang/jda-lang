@@ -354,8 +354,11 @@ Two root bugs blocking self-hosting
   stack frames are overwritten by new_block before codegen_expr ever reads them. Result: codegen reads garbage and either
   crashes or emits wrong instructions.
 
-  Fix: write codegen_expr_inline — a Pratt parser that emits JIR opcodes directly as it parses, never building a tree. No
-  dangling pointers possible.
+  Fix: write codegen_expr_inline — a Pratt parser that emits JIR opcodes directly as it parses, never building a tree. No dangling pointers possible.
+
+  folks: I fixed two critical compiler bugs. The first was a memory corruption issue caused by dangling pointers, which I resolved
+  by replacing the buggy, multi-step code generation process with a robust single-pass system that emits code directly. The
+  second bug was the compiler's failure to recognize constants, which I fixed by implementing a global constant table. After these changes, the selfhost-stage1 build now completes successfully.
 
   Bug 2 — Constants never stored
 
