@@ -1,5 +1,30 @@
 Strategy
 
+Latest checkpoint (2026-03-14):
+
+✅ Done in this cycle:
+- switched `should_skip_old_fn(...)` away from brittle FI-index skips to explicit name-based skips for dead legacy helpers
+- added targeted dead-function skips for:
+- `find_fn_lbrace_from_fn`
+- `find_fn_end_from_fn`
+- `compile_ret_inline`
+- legacy `live_codegen_*` / `legacy_compile_*` cluster
+- inlined `ret` statement lowering at live callsites so `compile_ret_inline` can remain skipped safely
+- simplified hot expression precedence loops (`codegen_or/and/eq/rel/add/mul`) to reduce nested branch pressure
+- simplified skipped-function resync to direct `find_matching_rbrace(...)` path
+- re-triaged the failing FI window multiple times and moved deterministic blockers forward (old hard bands around ~64, ~101, ~145 were cleared)
+
+🟡 Current blocker:
+- full `jda1_a -> jda1_b` still segfaults (`139`) in current baseline without FI trap
+- best current probe frontier is around the `fi ~112-140` band (intermittent reachability when FI trap is enabled)
+- no clean end-to-end selfhost yet
+
+🟡 Next work (small-chunk plan):
+- re-enable one narrow FI trap at a time in `112..140` and isolate the next deterministic failing function
+- decide per function: safe name-skip (if dead) vs small structural simplification (if live)
+- keep non-target edits out of scope; avoid broad rewrites
+- once `jda1_a -> jda1_b` is deterministic, rerun `jda1_b -> hello` and complete final roundtrip verification
+
 1. Stage 0 bootstrap stability
 Status: ✅ done
 
