@@ -31,7 +31,7 @@ Latest checkpoint (2026-03-14, current session):
 1. Stage 0 bootstrap stability
 Status: ✅ done
 
-✅ Done:
+✅ Stage 0 fixes:
 - moved large stage-0 buffers off `.bss` and onto `mmap`
 - fixed the `gen_stmt` stack leak
 - fixed `gen_fn` frame-size patch ordering
@@ -48,7 +48,7 @@ Status: ✅ done
 2. Stage 1 selfhost progress
 Status: 🟡 in progress
 
-✅ Done:
+✅ Stage 1 fixes:
 - removed the earlier top-level global recorder crash
 - added minimal top-level global tracking for stage 1
 - extended `OP_CALL` handling from 3 args to 6 args
@@ -174,50 +174,6 @@ Status: 🟡 in progress
 - `PH mstr 412` to `428`
 - removing dead default `OP_CONST` emission from skipped bootstrap lets moved runtime from `PH g0` to `PH argvs`
 
-3. Current Blocker
-Status: 🟡 active
-
-🟡 Active blocker:
-- `jda1_a -> jda1_b` is still intermittent, but successful runs now produce a `jda1_b` with:
-- `PH unres 0`
-- non-empty generated `main()`
-- the active blocker is now runtime after `PH argvs` in selfhosted `jda1_b`
-- this is no longer the old silent-exit bug, the unresolved-call bug, or the empty-`main` bug
-
-🟡 Latest evidence:
-- current successful runtime path is:
-- `PH enter`
-- `PH a1`
-- `PH pre2`
-- `PH a2`
-- `PH a3`
-- `PH a3b`
-- `PH a3c`
-- `PH allocs`
-- `PH g0`
-- `PH g1`
-- `PH g2`
-- `PH argvs`
-- after `PH argvs`, `jda1_b` still times out or panics before the next visible post-argv step
-- replacing seeded `src_path` / `out_path` with normal lowered lets regressed the runtime back to `PH g1`, so the seeded path remains the stronger baseline
-- shortening the next probe strings did not move the frontier, so the post-`PH argvs` failure is not just one long string literal
-
-🟡 Why it matters:
-- stage 0 remains healthy (`make clean all stage1` passes)
-- stage 1 again compiles and runs `hello.jda` (`Hello Bare Metal`) from `jda1_a`
-- the remaining selfhost blocker is now intermittent `jda1_a -> jda1_b` stability plus the post-`PH argvs` runtime crash in `jda1_b -> hello.jda`
-
-4. Next fix
-Status: 🟡 next
-
-🟡 Work in order:
-- keep the fixed stage-0 typed-global path and the current helper-based lexer baseline
-- keep the stable `32 x 128` block-storage layout
-- keep the new skipped-function resync and `main()`/`asm` handling fixes
-- keep the current `lower_print_int(...)` / `lower_syscall(...)` reductions
-- keep the current helper-wrapper workaround for the tiny dropped top-level functions
-- keep seeded `src_path` / `out_path`
-- keep the dead-bootstrap-let `OP_CONST` removal
 - make `jda1_a -> jda1_b` deterministic again before trusting any later `jda1_b -> hello` result
 
 🟡 Concrete next edits:
