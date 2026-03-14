@@ -36,8 +36,8 @@ LOC_TBL_CAP      equ 65536
 GLB_TBL_CAP      equ 32768
 COD_BUF_CAP      equ 16777216
 SDT_BUF_CAP      equ 1048576
-FIX_BUF_CAP      equ 32768
-SFX_TBL_CAP      equ 32768
+FIX_BUF_CAP      equ 1048576
+SFX_TBL_CAP      equ 262144
 
 ; Token type constants
 TOK_FN           equ 0
@@ -184,6 +184,12 @@ section .data
     dbg_eq_l equ $-dbg_eq-1
     dbg_done db `D`,0
     dbg_done_l equ $-dbg_done-1
+    dbg_main_seen db `m`,0
+    dbg_main_seen_l equ $-dbg_main_seen-1
+    dbg_main_fix db `M`,0
+    dbg_main_fix_l equ $-dbg_main_fix-1
+    dbg_main_miss db `!`,0
+    dbg_main_miss_l equ $-dbg_main_miss-1
 
     ; keywords — order matters for classify_kw()
     kw_fn db "fn",0
@@ -1395,8 +1401,61 @@ p1_scan:
     mov     r8,  [rax+8]    ; var name_start
     mov     r9,  [rax+16]   ; var name_len
     call    adv_tok         ; skip NAME
+    ; optional type annotation: skip until '='
+.p1_let_find_eq:
+    call    cur_tok_type
+    cmp     rax, TOK_EQ
+    je      .p1_let_got_eq
+    cmp     rax, TOK_EOF
+    je      .p1_let_store
+    call    adv_tok
+    jmp     .p1_let_find_eq
+.p1_let_got_eq:
     call    adv_tok         ; skip '='
-    call    adv_tok         ; skip VALUE
+    call    adv_tok         ; skip first VALUE token
+    ; handle top-level initializers like Node{} and Node[16]
+    call    cur_tok_type
+    cmp     rax, TOK_LBRACE
+    je      .p1_let_skip_brace_init
+    cmp     rax, TOK_LBRACK
+    je      .p1_let_skip_brack_init
+    jmp     .p1_let_store
+.p1_let_skip_brace_init:
+    call    adv_tok         ; skip '{'
+    mov     rcx, 1
+.p1_let_brace_lp:
+    call    cur_tok_type
+    cmp     rax, TOK_EOF
+    je      .p1_let_store
+    cmp     rax, TOK_LBRACE
+    jne     .p1_let_brace_r
+    inc     rcx
+    jmp     .p1_let_brace_adv
+.p1_let_brace_r:
+    cmp     rax, TOK_RBRACE
+    jne     .p1_let_brace_adv
+    dec     rcx
+    cmp     rcx, 0
+    je      .p1_let_brace_done
+.p1_let_brace_adv:
+    call    adv_tok
+    jmp     .p1_let_brace_lp
+.p1_let_brace_done:
+    call    adv_tok         ; skip final '}'
+    jmp     .p1_let_store
+.p1_let_skip_brack_init:
+    call    adv_tok         ; skip '['
+.p1_let_brack_lp:
+    call    cur_tok_type
+    cmp     rax, TOK_EOF
+    je      .p1_let_store
+    cmp     rax, TOK_RBRACK
+    je      .p1_let_brack_done
+    call    adv_tok
+    jmp     .p1_let_brack_lp
+.p1_let_brack_done:
+    call    adv_tok         ; skip final ']'
+.p1_let_store:
     ; register as global with type i64
     mov     r10, -1         ; type_id = i64 (untyped)
     call    add_global
@@ -1652,6 +1711,36 @@ p1_scan:
     mov     qword [r14+32], 0   ; body_tok (fill in later)
     mov     qword [r14+40], -1  ; code_off
     mov     qword [r14+48], 0   ; ret_type
+    cmp     r13, 4
+    jne     .p1_fn_after_dbg
+    lea     rdx, [src_buf]
+    add     rdx, r12
+    cmp     byte [rdx], 'm'
+    jne     .p1_fn_after_dbg
+    cmp     byte [rdx+1], 'a'
+    jne     .p1_fn_after_dbg
+    cmp     byte [rdx+2], 'i'
+    jne     .p1_fn_after_dbg
+    cmp     byte [rdx+3], 'n'
+    jne     .p1_fn_after_dbg
+    push    rax
+    push    rbx
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_main_seen]
+    mov     edx, dbg_main_seen_l
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rax
+.p1_fn_after_dbg:
     ; parse params
     call    adv_tok         ; skip '('
     xor     rbx, rbx        ; param count
@@ -5201,7 +5290,7 @@ p2_gen:
     xor     rcx, rcx
 .p2_find_main:
     cmp     rcx, [fn_cnt]
-    jge     .p2_fix_next
+    jge     .p2_fix_main_miss
     mov     rax, rcx
     imul    rax, rax, FN_SZ
     mov     r14, [fn_tbl_ptr]
@@ -5222,11 +5311,47 @@ p2_gen:
     cmp     byte [rdx+3], 'n'
     jne     .p2_find_main_next
     ; found main — r14=fn_tbl entry, r13=patch_off, r12=outer idx (all intact)
+    push    rax
+    push    rbx
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_main_fix]
+    mov     edx, dbg_main_fix_l
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rax
     mov     r15, [r14+40]  ; code_off
     jmp     .p2_fix_patch
 .p2_find_main_next:
     inc     rcx
     jmp     .p2_find_main
+.p2_fix_main_miss:
+    push    rax
+    push    rbx
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_main_miss]
+    mov     edx, dbg_main_miss_l
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rax
+    jmp     .p2_fix_next
 .p2_fix_patch:
     ; patch cod_buf[r13] = r15 - (r13 + 4)
     mov     rax, r13
