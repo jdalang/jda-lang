@@ -82,47 +82,45 @@ Status: active blocker
 Current failure:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the current crash is still in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
-- the latest failure has moved much later than before and is no longer the old post-`FN#45` function-boundary theory
-- `regalloc_init(...)` now survives consistently; the crash moved past the old `J4` lowerer setup point
-- the current active failure is in the function currently traced as `FN#52`
-- exact token mapping shows that this region corresponds to `lex_handle_int(...)`
+- the latest failure has moved later than the old `regalloc_init(...)` / `FN#0` blockers and is now in the top-level function signature parser
+- exact token mapping shows the active window is the `lex_handle_int(...)` function header
+- the failing range is:
+  - `4422 fn`
+  - `4423 lex_handle_int`
+  - params continue through the final `count: &i64`
+  - `4448 )`
 - latest bounded trace reaches:
-  - `FN#52`
-  - `loop keep == 1`
-  - `if pos[0] >= src_len { ... }`
-  - then later statement parsing in the same function drifts into garbage around token positions `4446..4455`
-  - latest panic is after:
-    - `EXPRST p=4446`
-    - then corrupted token values at `p=4447+`
-- this indicates the active bug is now a statement-boundary / token-buffer corruption issue inside `lex_handle_int(...)` or its immediate token-emission path, not the earlier broad function-boundary parse theory
+  - `SP pos=4422`
+  - then parse errors at `4444`, `4445` and nearby
+  - then parser state drifts and panics
+- this indicates the current bug is no longer the `lex_handle_int(...)` body or token-emission path
+- the active bug is the main compile-loop parameter parser drifting while reading the final `count: &i64` parameter in that function signature
 
 Meaning:
 - stage 0 is healthy enough for bring-up again
-- the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
-- the current highest-signal area is small lexer helper code, especially:
-  - `lex_handle_int(...)`
-  - token emission into `out_toks[count]`
-  - simple loops/ifs that still mix nested index expressions and helper calls
+- the active work is still stabilizing the stage-1 top-level parser/codegen on real `jda1.jda` source patterns
+- the current highest-signal area is the parameter parser in `main()` that walks function signatures before live body compilation starts
 
 4. Next fix
 Status: next
 
 Work in order:
-- finish simplifying the active `FN#52` / `lex_handle_int(...)` body
+- harden the main function-signature parameter parser in `main()`
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 Concrete next edits:
-- keep flattening `lex_handle_int(...)` off nested token/index/helper-call shapes until its statement stream stays aligned
-- simplify token emission paths that still write through `out_toks[count[0]].field`
+- stop storing local `Token` structs in the top-level param loop where possible
+- read parameter name/type spans directly from `toks[pos]` and `tok_type_at(...)`
+- simplify parsing of trailing params like `count: &i64`
 - keep direct token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 Expected outcome of next fix:
-- get past the current `FN#52` failure in `lex_handle_int(...)`
-- move the blocker to the next concrete function/source form, not a broad parser corruption report
+- get past the `lex_handle_int(...)` function signature cleanly
+- return to body compilation of the next real function and move the blocker to the next concrete source form
 
 5. Final testing
 Status: pending
