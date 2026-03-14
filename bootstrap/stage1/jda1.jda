@@ -293,6 +293,16 @@ struct ConstTable {
 
 ; Global constant table pointer
 let g_consts = 0
+let g_glob_name_off = 0
+let g_glob_name_len = 0
+let g_glob_off      = 0
+let g_glob_size     = 0
+let g_glob_stype    = 0
+let g_glob_is_addr  = 0
+let g_glob_cnt      = 0
+let g_glob_total_sz = 0
+let g_emit_glob_buf = 0
+let g_emit_glob_len = 0
 
 ; ============================================================
 ; 2. LEXER
@@ -349,6 +359,7 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
     expect(toks, pos, TOK_IDENT)
     expect(toks, pos, TOK_EQ)
     let t = toks[pos[0]].type
+    if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
     if gidx >= 256 { panic("Too many globals") }
     g_glob_name_off[gidx] = name.str_start
@@ -358,6 +369,10 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
     g_glob_stype[gidx]    = TYPE_I64
     g_glob_is_addr[gidx]  = 0
     if t == TOK_INT {
+        if streq(src, name.str_start, name.str_len, "g_consts") == 1 {
+            let sid = lookup_struct_kw(stab, src, "ConstTable", 10)
+            if sid >= 0 { g_glob_stype[gidx] = sid }
+        }
         pos[0] = pos[0] + 1
     } else if t == TOK_I64 or t == TOK_I32 or t == TOK_I8 or t == TOK_F64 or t == TOK_IDENT {
         let elem_sz = 8
@@ -815,6 +830,7 @@ fn lookup_field_idx_any(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64
 }
 
 fn lookup_global(name_start: i64, name_len: i64, src: &i8) -> i64 {
+    if g_glob_name_off == 0 { ret -1 }
     let i = 0
     loop i < g_glob_cnt {
         if g_glob_name_len[i] == name_len {
@@ -832,16 +848,6 @@ let g_const_names_start = i64[512]
 let g_const_names_len   = i64[512]
 let g_const_values      = i64[512]
 let g_const_cnt         = 0
-let g_glob_name_off     = i64[256]
-let g_glob_name_len     = i64[256]
-let g_glob_off          = i64[256]
-let g_glob_size         = i64[256]
-let g_glob_stype        = i64[256]
-let g_glob_is_addr      = i64[256]
-let g_glob_cnt          = 0
-let g_glob_total_sz     = 0
-let g_emit_glob_buf     = 0
-let g_emit_glob_len     = 0
 
 fn lookup_const(src: &i8, name_start: i64, name_len: i64) -> i64 {
     let i = 0
@@ -4600,6 +4606,12 @@ fn main() {
 
     ; Initialize global constant table (Bug 2 fix)
     g_consts = alloc_pages(4)
+    g_glob_name_off = alloc_pages(1)
+    g_glob_name_len = alloc_pages(1)
+    g_glob_off      = alloc_pages(1)
+    g_glob_size     = alloc_pages(1)
+    g_glob_stype    = alloc_pages(1)
+    g_glob_is_addr  = alloc_pages(1)
     let src_path = get_argv(argv_ptr, 1)
     let out_path = get_argv(argv_ptr, 2)
 
@@ -4609,9 +4621,13 @@ fn main() {
 
     let tok_cnt = 0
     lex(src_buf, src_len, toks, &tok_cnt)
+    print("A\n")
     fix_char_literals(src_buf, toks, &tok_cnt)
+    print("B\n")
     g_glob_cnt = 0
     g_glob_total_sz = 0
+    g_emit_glob_buf = 0
+    g_emit_glob_len = 0
 
     ; ---- Parse/compile functions ----
     let fn_name_off = i64[256]
@@ -4624,11 +4640,13 @@ fn main() {
     loop pos < tok_cnt and toks[pos].type == TOK_CONST {
         parse_const_decl(toks, &pos)
     }
+    print("C\n")
 
     ; Parse and record top-level structs
     loop pos < tok_cnt and toks[pos].type == TOK_STRUCT {
         parse_struct_decl(toks, &pos, stab, src_buf)
     }
+    print("D\n")
 
     ; Prepare output buffers
     let code_buf    = alloc_pages(256)
@@ -4658,8 +4676,10 @@ fn main() {
     ; ---- Parse and compile each function immediately ----
     loop pos < tok_cnt and (toks[pos].type == TOK_FN or toks[pos].type == TOK_LET) {
         if toks[pos].type == TOK_LET {
+            print("L\n")
             skip_top_level_let(toks, &pos, stab, src_buf)
         } else {
+            print("S\n")
             let cur_name_off = toks[pos + 1].str_start
             let cur_name_len = toks[pos + 1].str_len
 
@@ -4702,13 +4722,18 @@ fn main() {
             if toks[pos].type == TOK_LBRACE {
                 let fi = fn_cnt
                 if fi >= 256 { panic("Too many functions") }
+                print("F\n")
                 fn_name_off[fi] = cur_name_off
                 fn_name_len[fi] = cur_name_len
                 fn_cnt = fn_cnt + 1
 
+                print("G\n")
                 let start_bb = create_block(&jfn)
+                print("H\n")
                 expect(toks, &pos, TOK_LBRACE)
+                print("I\n")
                 live_compile_block(toks, &pos, stab, src_buf, &jfn, start_bb)
+                print("J\n")
                 expect(toks, &pos, TOK_RBRACE)
 
                 fold_constants(&jfn)
@@ -4720,7 +4745,9 @@ fn main() {
                 fn_code_off[fi] = code_len
                 let ctx = LowerCtx{}
                 regalloc_init(&ctx.ra)
+                print("K\n")
                 lower_fn(&jfn, &ctx, code_buf, &code_len, is_main)
+                print("M\n")
 
                 ; Collect fixups from this function
                 let ci = 0
