@@ -1,5 +1,33 @@
 Strategy
 
+Latest checkpoint (2026-03-14, current session):
+
+✅ Done in this cycle:
+- stabilized multiple intermittent `139` failures into deterministic `emit slot overflow` blockers
+- split/refactored hot stage-1 functions to reduce block pressure:
+- `lower_instr_memarith` split into `lower_instr_mem` / `lower_instr_arith` / `lower_instr_cmpbit`
+- `lex(...)` split into `lex_try_*` helpers and dispatch loop
+- `codegen_primary_inline(...)` split with `codegen_primary_ident_inline(...)`
+- fixed a real token classification bug by making `tok_type_at0(...)` / `tok_type_at(...)` return stored token `type` directly
+- reduced a call-arity corruption source by refactoring `skip_top_level_let_rhs(...)` from 7 args to global-backed helper args
+- added/kept targeted name-based skips for dead legacy parser/codegen functions and removed fragile duplicate skip checks
+- adjusted lowered stack frame policy to a tiered model:
+- `main` uses a large frame
+- non-main functions use smaller frame
+
+🟡 Current blocker:
+- `jda1_a -> jda1_b` still fails during stage-1 selfhost compile
+- latest deterministic failure is:
+- `PANIC emit slot overflow` while compiling `lookup_field_idx_kw(...)` (current FI around mid-80s)
+- failure is no longer at old `lex_handle_int(...)` / `fn main not found` / unresolved-call paths
+
+🟡 Next work:
+- fix `lookup_field_idx_kw(...)` in a small isolated chunk (split or simplify condition paths)
+- rerun full Docker chain after each tiny change:
+- `./jda0 ../stage1/jda1.jda /tmp/jda1_new`
+- `/tmp/jda1_new ../stage1/jda1.jda /tmp/jda1_b`
+- continue converting intermittent crashes into deterministic single-function blockers until `jda1_b` is produced reliably
+
 Latest checkpoint (2026-03-14, later session):
 
 ✅ Done in this cycle:
