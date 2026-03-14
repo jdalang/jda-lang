@@ -52,6 +52,8 @@ Status: 🟡 in progress
 - factored most of `lex(...)` into smaller helper functions
 - rewrote the remaining hot `skip_top_level_let(...)` indexed RHS through helpers so the old bare-`[` bug there is cleared
 - simplified `parse_type(...)` into a straighter-line shape to reduce parser-state fragility
+- added bounds-guarded token access in `parse_const_decl(...)` and `skip_top_level_let(...)` to avoid out-of-range reads during top-level scans
+- added top-level `fn` header guard so malformed `TOK_FN` sequences without an identifier are skipped instead of entering function compile
 
 ✅ Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
@@ -118,6 +120,8 @@ Status: 🟡 in progress
 - removed the temporary selfhost-only `Token` struct sanity gate that blocked normal user programs
 - selfhost now reaches and enters `FN#60` body, but still fails later in that function
 - removed the hottest expression/call trace prints (`EXPRST`, `cu*`, `call arg*`) from stage-1 inline codegen paths to reduce clobber risk in the failing window
+- `make selfhost-stage1` still passes on Docker after the latest parser hardening (`Hello Bare Metal`)
+- `make ci-selfhost-roundtrip` still segfaults at `stage1_a -> stage1_b` (exit `139`)
 
 3. Current Blocker
 Status: 🟡 active
@@ -136,6 +140,7 @@ Status: 🟡 active
 - old `FN#24` `TOK_DOT` non-advance blocker is cleared
 - old `FN#60`/`FN#61` hard-stop blockers were pushed forward; current failures are later-stage parse/codegen corruption and fixup instability
 - unresolved call fixups are still observed, and output ELF metadata remains invalid in failed selfhost outputs
+- crash is still inside top-level function compile phase (`PH=4` reached, `PH=5` not reached in targeted tracing), so remaining work is late stage-1 parse/codegen stability rather than stage-0 bootstrap
 
 🟡 Why it matters:
 - stage 0 remains healthy (`make clean all stage1` passes)
