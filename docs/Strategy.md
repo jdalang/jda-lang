@@ -124,23 +124,21 @@ Status: 🟡 active
 
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
-- failure is now inside `FN#60` (`lex(...)` body), after entering the function body
-- current failing window:
-- `g_lex_count_ptr = &count`
-- `g_lex_src_len = src_len`
-- parser then reports token corruption (`Parse error ... got=... expected=23`) around `p=4427..4435`
+- current failure moved earlier to `FN#24`
+- exact panic now: `expr stmt did not advance` at `pos=1667` (`TOK_DOT`)
+- failing token window: `IDENT RBRACK DOT IDENT IDENT EQ ...`
 
 🟡 Latest evidence:
-- token stream is correct right after lexing in the failing window (`4422..4434`)
-- corruption appears later during live parse/codegen, not in lex output
-- removing `compile_let_inline(...)` `LET_HEAD/LET_RHS` debug prints moved the symptom forward but did not eliminate it
-- removing `EXPRST` / `cu*` / `call arg*` traces reduced noise but the same `FN#60` corruption still reproduces
-- this points to remaining parser/codegen state clobber in the `FN#60` assignment/expression path
+- panic output now prints real strings plus token position/type/span context
+- top-level parser now reliably reaches function parsing (`F#0..`) before failure
+- live parser path was hardened to re-read tokens from global token pointer each loop
+- `live_compile_if(...)`/`live_compile_loop(...)` now use direct token checks (not `expect(...)`) for brace boundaries
+- unresolved-ident panic in the prior `FN#60` path was pushed forward; current reproducible stopper is the `TOK_DOT` non-advance in `FN#24`
 
 🟡 Why it matters:
 - stage 0 remains healthy (`make clean all stage1` passes)
 - stage 1 still compiles and runs `hello.jda` (`Hello Bare Metal`)
-- the remaining selfhost blocker is now a narrow, reproducible `FN#60` assignment window
+- the remaining selfhost blocker is now a narrow, reproducible statement-parser non-advance at a dot-chain expression window
 
 4. Next fix
 Status: 🟡 next
@@ -152,18 +150,13 @@ Status: 🟡 next
 
 🟡 Concrete next edits:
 - keep the current lexer fixes (`TOK_ARROW`, `g_lex_out_toks`) unchanged
-- continue reducing remaining hot-path traces (`prim enter/next/lookup/load`, `rel/ce`) in the same `FN#60` path
-- isolate assignment handling for:
-- `ident = &ident`
-- `ident = ident`
-- specifically around:
-- `g_lex_count_ptr = &count`
-- `g_lex_src_len = src_len`
-- keep using token-window dumps to verify whether corruption happens pre-parse or during parse
+- patch `compile_expr_stmt_inline(...)` / postfix handling so dot-chain continuations always consume tokens after `]`
+- ensure `codegen_expr_inline(...)` cannot return with unchanged `pos` when current token is `TOK_DOT`
+- keep the token-window dump around `pos=1667` until the non-advance panic is eliminated
 - keep optimizer passes disabled until raw selfhost compilation is stable
 
 🟡 Expected outcome of next fix:
-- clear the current `FN#60` assignment corruption window
+- clear the current `FN#24` dot-expression non-advance window
 - complete `./jda1 ../stage1/jda1.jda jda1_sh2`
 - then run `jda1_sh2 -> hello_sh2`
 
