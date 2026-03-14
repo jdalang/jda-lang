@@ -43,6 +43,10 @@ Status: partially done
 - flattened the remaining `helper(src[pos])` call-argument shapes in `lex(...)`
 - flattened `parse_const_decl(...)` and `skip_top_level_let(...)` to stop carrying local `Token` structs just to read `str_start` / `str_len`
 - identified a real per-basic-block instruction cap during selfhost codegen (`EMIT_SLOT 64 bb=0`) and raised the block instruction budget conservatively to `128`
+- rebalanced `JirFunction` block storage to `32 x 128` so the larger per-block budget does not immediately blow up startup stack usage
+- replaced the temp-heavy `pos` increment rewrites in `skip_top_level_let(...)` with `inc_i64_at0(...)`
+- flattened the remaining `let ... = pos[0]` reads in `skip_top_level_let(...)` to `load_i64_at0(pos)`
+- confirmed and cleared the temporary `BIND_OVF 32` local-table exhaustion caused by the earlier temp-heavy flattening
 
 Verified:
 - `jda0 -> jda1 -> hello.jda` works again after the recent source changes
@@ -56,6 +60,9 @@ Verified:
 - the old `lex(...)` call-argument crash at `EXPRST p=2978` / `call arg p=2986` is gone
 - the `64`-instruction basic-block limit was confirmed as a real blocker
 - the `256`-instruction experiment was too large and caused an immediate startup crash, so `128` is the current working ceiling
+- the `32 x 128` block-storage rebalance moves selfhost past the old `FN#0` `ct.names_len[idx]` crash
+- selfhost now reaches `FN#10`
+- the temporary `BIND_OVF 32` failure in `skip_top_level_let(...)` is gone after the `inc_i64_at0(...)` rewrite
 
 3. Current bug
 Status: active blocker
@@ -63,42 +70,43 @@ Status: active blocker
 Current failure:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the current crash is back in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
-- the latest failure is now earlier again, at `FN#0`, which is `const_name_len_at(...)`
+- the latest failure is now later, at `FN#10`, which is `skip_top_level_let(...)`
 - recent traces narrowed failures to:
-  - the old `lex(...)` call-argument blocker has been cleared
-  - the per-block instruction cap was too small at `64`
-  - the next active bug is back in postfix field/index lowering for `ident.field[idx]`-style return expressions
+  - the old `FN#0` `ct.names_len[idx]` blocker has been cleared by the block-storage rebalance
+  - the `skip_top_level_let(...)` local-table overflow introduced by earlier flattening is fixed
+  - the next active bug is a partially consumed indexed shape that leaves a bare `[` token behind
 - latest bounded trace reaches:
-  - `FN#0`
-  - `ret1 p=981`
-  - `ce p=981`
-  - `prim enter p=981`
-  - `prim next p=982 t=33`
-  - `prim lookup p=981`
-  - then dies while compiling the return expression for `ct.names_len[idx]`
+  - `FN#10`
+  - several `EXPRST` call statements in `skip_top_level_let(...)`
+  - then:
+    - `EXPRST p=1772 t=10 n=23`
+    - `EXPRST p=1777 t=17 n=10`
+    - `ce p=1777`
+    - `cu p=1777 t=17`
+  - which means a statement in `skip_top_level_let(...)` is still leaving a raw `[` token behind for the next expression path
 
 Meaning:
 - the old “stage-2 binary emission is the primary blocker” theory is no longer current
 - stage 0 is healthy enough for bring-up again
 - the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
 - especially in:
-  - helper return expressions like `ct.names_len[idx]`
-  - postfix field/index lowering for `ident.field[idx]`
-  - keeping the per-block instruction budget large enough for selfhost without blowing up `JirFunction` stack footprint
+  - `skip_top_level_let(...)`
+  - indexed token / bracket-consumption paths in top-level global/type parsing
+  - keeping the `32 x 128` block-storage layout unless a later function proves it insufficient
 
 4. Next fix
 Status: next
 
 Work in order:
-- debug the `const_name_len_at(...)` return expression path first
-- keep the `128` instruction cap unless it proves too small again
+- identify the exact `skip_top_level_let(...)` statement that still leaves the bare `[` token behind
+- keep the `32 x 128` block-storage layout unless it proves too small again
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 Concrete next edits:
-- map the exact failing postfix path for `ct.names_len[idx]` in `const_name_len_at(...)`
-- fix `ident.field[idx]` lowering if the field-array path is still losing type or address information
-- keep the `EMIT_SLOT` trace until the `128` cap is proven sufficient across early helper functions
-- if needed, flatten `const_name_len_at(...)` / similar helpers to simpler locals before widening the parser again
+- use the new `EXPRST` traces to map the exact `skip_top_level_let(...)` statement behind `p=1772..1777`
+- flatten that remaining indexed/bracket source shape so it fully consumes the `[` / `]`
+- keep `BIND_OVF` and `EMIT_SLOT` traces until `skip_top_level_let(...)` and the next few functions are stable
+- if necessary, replace one more `pos[0]`-derived statement with a helper instead of adding new locals
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
