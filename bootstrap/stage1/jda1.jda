@@ -145,6 +145,7 @@ const OP_ALLOC    = 26
 const OP_PRINT_INT= 27
 const OP_SHR      = 28  ; Logical right shift
 const OP_SHL      = 29  ; Left shift
+const OP_GADDR    = 30
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -278,6 +279,8 @@ struct StructTable {
     fnames:     i64[4096]
     flens:      i64[4096]
     foffs:      i64[4096]
+    ftypes:     i64[4096]
+    fis_array:  i64[4096]
     fowners:    i64[4096]
 }
 
@@ -340,34 +343,52 @@ fn parse_const_decl(toks: &Token, pos: &i64) {
     ct.cnt = idx + 1
 }
 
-fn skip_top_level_let(toks: &Token, pos: &i64) {
+fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
     expect(toks, pos, TOK_LET)
+    let name = toks[pos[0]]
     expect(toks, pos, TOK_IDENT)
     expect(toks, pos, TOK_EQ)
     let t = toks[pos[0]].type
+    let gidx = g_glob_cnt
+    if gidx >= 256 { panic("Too many globals") }
+    g_glob_name_off[gidx] = name.str_start
+    g_glob_name_len[gidx] = name.str_len
+    g_glob_off[gidx]      = g_glob_total_sz
+    g_glob_size[gidx]     = 8
+    g_glob_stype[gidx]    = TYPE_I64
+    g_glob_is_addr[gidx]  = 0
     if t == TOK_INT {
         pos[0] = pos[0] + 1
-    } else if t == TOK_IDENT {
-        pos[0] = pos[0] + 1 ; type name
-        if toks[pos[0]].type == TOK_LBRACE {
-            pos[0] = pos[0] + 1 ; {
-            pos[0] = pos[0] + 1 ; }
-        } else if toks[pos[0]].type == TOK_LBRACK {
-            pos[0] = pos[0] + 1 ; [
-            pos[0] = pos[0] + 1 ; N
-            expect(toks, pos, TOK_RBRACK)
+    } else if t == TOK_I64 or t == TOK_I32 or t == TOK_I8 or t == TOK_F64 or t == TOK_IDENT {
+        let elem_sz = 8
+        let stype = TYPE_I64
+        if t == TOK_IDENT {
+            let sid = lookup_struct(stab, src, toks[pos[0]].str_start, toks[pos[0]].str_len)
+            if sid >= 0 {
+                elem_sz = stab.sizes[sid]
+                stype = sid
+            }
         }
-    } else if t == TOK_NODE {
-        pos[0] = pos[0] + 1 ; NODE
+        g_glob_size[gidx] = elem_sz
+        g_glob_stype[gidx] = stype
+        g_glob_is_addr[gidx] = 1
+        pos[0] = pos[0] + 1
         if toks[pos[0]].type == TOK_LBRACK {
-            pos[0] = pos[0] + 1 ; [
-            pos[0] = pos[0] + 1 ; N
+            pos[0] = pos[0] + 1
+            let n = toks[pos[0]].imm
+            pos[0] = pos[0] + 1
             expect(toks, pos, TOK_RBRACK)
+            g_glob_size[gidx] = elem_sz * n
+        } else if toks[pos[0]].type == TOK_LBRACE {
+            pos[0] = pos[0] + 1
+            expect(toks, pos, TOK_RBRACE)
         }
     } else {
         ; Fallback: just skip one token
         pos[0] = pos[0] + 1
     }
+    g_glob_total_sz = g_glob_total_sz + g_glob_size[gidx]
+    g_glob_cnt = gidx + 1
 }
 
 fn panic(msg: &i8) {
@@ -514,6 +535,7 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
                 }
             }
             let len = pos - start
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type      = TOK_STR
             out_toks[count].str_start = start
             out_toks[count].str_len   = len
@@ -533,6 +555,7 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
                 val = tmp + digit
                 pos = pos + 1
             }
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_INT
             out_toks[count].imm  = val
             count = count + 1
@@ -546,6 +569,7 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
             }
             let len = pos - start
             let kw = classify_keyword(src, start, len)
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type      = kw
             out_toks[count].str_start = start
             out_toks[count].str_len   = len
@@ -554,41 +578,49 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
 
         ; Two-char operators: -=45 >=62 ==61 !=33 <=60
         else if c == 45 and next_ok and src[pos+1] == 62 {
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_ARROW
             count = count + 1
             pos = pos + 2
         }
         else if c == 61 and next_ok and src[pos+1] == 61 {
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_EQEQ
             count = count + 1
             pos = pos + 2
         }
         else if c == 33 and next_ok and src[pos+1] == 61 {
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_NEQ
             count = count + 1
             pos = pos + 2
         }
         else if c == 61 and next_ok and src[pos+1] == 62 {
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_FATARROW
             count = count + 1
             pos = pos + 2
         }
         else if c == 62 and next_ok and src[pos+1] == 62 {
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_SHR
             count = count + 1
             pos = pos + 2
         }
         else if c == 60 and next_ok and src[pos+1] == 60 {
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_SHL
             count = count + 1
             pos = pos + 2
         }
         else if c == 62 and next_ok and src[pos+1] == 61 {
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_GTE
             count = count + 1
             pos = pos + 2
         }
         else if c == 60 and next_ok and src[pos+1] == 61 {
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = TOK_LTE
             count = count + 1
             pos = pos + 2
@@ -597,12 +629,14 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
         ; Single-char operators
         else {
             let ct = char_to_tok(c)
+            if count >= 65535 { panic("Token buffer overflow") }
             out_toks[count].type = ct
             count = count + 1
             pos = pos + 1
         }
     }
 
+    if count >= 65535 { panic("Token buffer overflow") }
     out_toks[count].type = TOK_EOF
     out_cnt[0] = count
     ret ok(0)
@@ -721,6 +755,23 @@ fn lookup_struct(stab: &StructTable, src: &i8, ns: i64, nl: i64) -> i64 {
     ret -1
 }
 
+fn lookup_struct_kw(stab: &StructTable, src: &i8, kw: &i8, kw_len: i64) -> i64 {
+    let si = 0
+    loop si < stab.cnt {
+        if stab.nlens[si] == kw_len {
+            let i = 0
+            let ok = 1
+            loop i < kw_len {
+                if src[stab.names[si] + i] != kw[i] { ok = 0 }
+                i = i + 1
+            }
+            if ok == 1 { ret si }
+        }
+        si = si + 1
+    }
+    ret -1
+}
+
 fn lookup_field_off(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64) -> i64 {
     let base = stab.fbases[sid]
     let cnt  = stab.fcnts[sid]
@@ -750,11 +801,47 @@ fn lookup_field_off_any(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64
     ret -1
 }
 
+fn lookup_field_idx_any(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64) -> i64 {
+    let i = 0
+    loop i < stab.field_cnt {
+        if stab.fowners[i] == sid and stab.flens[i] == fl {
+            if str_match(src, fs, stab.fnames[i], fl) == 1 {
+                ret i
+            }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
+fn lookup_global(name_start: i64, name_len: i64, src: &i8) -> i64 {
+    let i = 0
+    loop i < g_glob_cnt {
+        if g_glob_name_len[i] == name_len {
+            if str_match(src, name_start, g_glob_name_off[i], name_len) == 1 {
+                ret i
+            }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
 ; Global constant table for Bug 2
 let g_const_names_start = i64[512]
 let g_const_names_len   = i64[512]
 let g_const_values      = i64[512]
 let g_const_cnt         = 0
+let g_glob_name_off     = i64[256]
+let g_glob_name_len     = i64[256]
+let g_glob_off          = i64[256]
+let g_glob_size         = i64[256]
+let g_glob_stype        = i64[256]
+let g_glob_is_addr      = i64[256]
+let g_glob_cnt          = 0
+let g_glob_total_sz     = 0
+let g_emit_glob_buf     = 0
+let g_emit_glob_len     = 0
 
 fn lookup_const(src: &i8, name_start: i64, name_len: i64) -> i64 {
     let i = 0
@@ -784,7 +871,7 @@ fn parse_const_decl(toks: &Token, pos: &i64) {
     g_const_cnt = g_const_cnt + 1
 }
 
-fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
+fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
     ; Check if this is actually a struct declaration
     if toks[pos[0]].type != TOK_STRUCT {
         ret
@@ -806,13 +893,24 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
         let fname = toks[pos[0]]
         expect(toks, pos, TOK_IDENT)
         expect(toks, pos, TOK_COLON)
-        ; consume pointer prefix if present (&)
+        let field_t = TYPE_I64
+        let arr = 0
+        let type_tok = toks[pos[0]]
         if toks[pos[0]].type == TOK_AMP {
             pos[0] = pos[0] + 1
+            type_tok = toks[pos[0]]
         }
-        ; consume type token (scalar or struct name) and optional [N]
+        if type_tok.type == TOK_I64 { field_t = TYPE_I64 }
+        if type_tok.type == TOK_I32 { field_t = TYPE_I32 }
+        if type_tok.type == TOK_I8  { field_t = TYPE_I8 }
+        if type_tok.type == TOK_F64 { field_t = TYPE_F64 }
+        if type_tok.type == TOK_IDENT {
+            let sid2 = lookup_struct(stab, src, type_tok.str_start, type_tok.str_len)
+            if sid2 >= 0 { field_t = sid2 }
+        }
         pos[0] = pos[0] + 1
         if toks[pos[0]].type == TOK_LBRACK {
+            arr = 1
             pos[0] = pos[0] + 1
             pos[0] = pos[0] + 1
             expect(toks, pos, TOK_RBRACK)
@@ -821,6 +919,8 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
         stab.fnames[fi]  = fname.str_start
         stab.flens[fi]   = fname.str_len
         stab.foffs[fi]   = off
+        stab.ftypes[fi]  = field_t
+        stab.fis_array[fi]= arr
         stab.fowners[fi] = sid
         off = off + 8
         fcnt = fcnt + 1
@@ -1850,6 +1950,13 @@ fn emit_strlit(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
     ret emit_strlit_raw(jfn, bb, tok.str_start, tok.str_len)
 }
 
+fn emit_global_addr(jfn: &JirFunction, bb: i64, glob_idx: i64) -> i64 {
+    let ins = Instr{}
+    ins.op  = OP_GADDR
+    ins.imm = glob_idx
+    ret emit(jfn, bb, &ins)
+}
+
 fn emit_strlen(jfn: &JirFunction, bb: i64, str_id: i64) -> i64 {
     let ins = Instr{}
     ins.op       = OP_STRLEN
@@ -1857,13 +1964,38 @@ fn emit_strlen(jfn: &JirFunction, bb: i64, str_id: i64) -> i64 {
     ret emit(jfn, bb, &ins)
 }
 
+fn emit_ident_value(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
+    let slot = lookup(jfn, tok)
+    if slot != -1 {
+        let ld = Instr{}
+        ld.op = OP_LOAD
+        ld.operand0 = slot
+        ret emit(jfn, bb, &ld)
+    }
+    let gi = lookup_global(tok.str_start, tok.str_len, jfn.src)
+    if gi != -1 {
+        let addr = emit_global_addr(jfn, bb, gi)
+        if g_glob_is_addr[gi] == 1 { ret addr }
+        let ldg = Instr{}
+        ldg.op = OP_LOAD_MEM
+        ldg.operand0 = addr
+        ret emit(jfn, bb, &ldg)
+    }
+    ret -1
+}
+
 fn compile_let_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     expect(toks, pos, TOK_LET)
     let name = toks[pos[0]]
     expect(toks, pos, TOK_IDENT)
     expect(toks, pos, TOK_EQ)
+    let rhs_stype = TYPE_I64
+    if toks[pos[0]].type == TOK_IDENT and peek_token(toks, pos[0]) != TOK_LPAREN {
+        rhs_stype = lookup_ident_stype(jfn, &toks[pos[0]])
+        if rhs_stype == -1 { rhs_stype = TYPE_I64 }
+    }
     let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-    let slot = bind(jfn, &name, TYPE_I64)
+    let slot = bind(jfn, &name, rhs_stype)
     let ins = Instr{}
     ins.op = OP_STORE
     ins.operand0 = rhs_id
@@ -1901,6 +2033,96 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
 }
 
 fn compile_expr_stmt_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    if toks[pos[0]].type == TOK_IDENT and peek_token(toks, pos[0]) == TOK_EQ {
+        let name = toks[pos[0]]
+        pos[0] = pos[0] + 1
+        expect(toks, pos, TOK_EQ)
+        let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        let slot = lookup(jfn, &name)
+        if slot != -1 {
+            let st = Instr{}
+            st.op = OP_STORE
+            st.operand0 = rhs_id
+            st.operand1 = slot
+            emit(jfn, bb, &st)
+            ret bb
+        }
+        let gi = lookup_global(name.str_start, name.str_len, src)
+        if gi != -1 {
+            let gaddr = emit_global_addr(jfn, bb, gi)
+            let stg = Instr{}
+            stg.op = OP_STORE_MEM
+            stg.operand0 = rhs_id
+            stg.operand1 = gaddr
+            emit(jfn, bb, &stg)
+            ret bb
+        }
+    }
+    if toks[pos[0]].type == TOK_IDENT and peek_token(toks, pos[0]) == TOK_DOT {
+        let base = toks[pos[0]]
+        let save = pos[0]
+        pos[0] = pos[0] + 1
+        expect(toks, pos, TOK_DOT)
+        let field = toks[pos[0]]
+        expect(toks, pos, TOK_IDENT)
+        let base_stype = lookup_ident_stype(jfn, &base)
+        if base_stype == -1 { panic("Unknown base type") }
+        let fi = lookup_field_idx_any(stab, src, base_stype, field.str_start, field.str_len)
+        if fi == -1 { panic("Unknown field") }
+        let base_id = emit_ident_value(jfn, bb, &base)
+        let off_id = emit_const(jfn, bb, TYPE_I64, stab.foffs[fi])
+        let field_addr = emit_binop(jfn, bb, OP_ADD, base_id, off_id)
+        if toks[pos[0]].type == TOK_LBRACK {
+            pos[0] = pos[0] + 1
+            let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+            expect(toks, pos, TOK_RBRACK)
+            expect(toks, pos, TOK_EQ)
+            let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+            let elem_sz = emit_const(jfn, bb, TYPE_I64, 8)
+            let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
+            let addr = emit_binop(jfn, bb, OP_ADD, field_addr, byte_off)
+            let st = Instr{}
+            st.op = OP_STORE_MEM
+            st.operand0 = rhs_id
+            st.operand1 = addr
+            emit(jfn, bb, &st)
+            ret bb
+        }
+        if toks[pos[0]].type == TOK_EQ {
+            pos[0] = pos[0] + 1
+            let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+            let st = Instr{}
+            st.op = OP_STORE_MEM
+            st.operand0 = rhs_id
+            st.operand1 = field_addr
+            emit(jfn, bb, &st)
+            ret bb
+        }
+        pos[0] = save
+    }
+    if toks[pos[0]].type == TOK_IDENT and peek_token(toks, pos[0]) == TOK_LBRACK {
+        let base = toks[pos[0]]
+        let save = pos[0]
+        pos[0] = pos[0] + 1
+        expect(toks, pos, TOK_LBRACK)
+        let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        expect(toks, pos, TOK_RBRACK)
+        if toks[pos[0]].type == TOK_EQ {
+            pos[0] = pos[0] + 1
+            let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+            let base_id = emit_ident_value(jfn, bb, &base)
+            let elem_sz = emit_const(jfn, bb, TYPE_I64, 8)
+            let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
+            let addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
+            let st = Instr{}
+            st.op = OP_STORE_MEM
+            st.operand0 = rhs_id
+            st.operand1 = addr
+            emit(jfn, bb, &st)
+            ret bb
+        }
+        pos[0] = save
+    }
     codegen_expr_inline(toks, pos, stab, src, jfn, bb)
     ret bb
 }
@@ -2208,6 +2430,14 @@ fn lookup_stype_name(jfn: &JirFunction, name_start: i64, name_len: i64) -> i64 {
     let idx = lookup_idx_name(jfn, name_start, name_len)
     if idx < 0 { ret -1 }
     ret jfn.vars[idx].stype
+}
+
+fn lookup_ident_stype(jfn: &JirFunction, tok: &Token) -> i64 {
+    let st = lookup_stype(jfn, tok)
+    if st != -1 { ret st }
+    let gi = lookup_global(tok.str_start, tok.str_len, jfn.src)
+    if gi != -1 { ret g_glob_stype[gi] }
+    ret -1
 }
 
 fn codegen_call(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
@@ -2791,10 +3021,33 @@ fn codegen_binop_inline(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTab
 }
 
 fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let start_pos = pos[0]
     let expr_id = codegen_primary_inline(toks, pos, stab, src, jfn, bb)
+    let cur_stype = TYPE_I64
+    if toks[start_pos].type == TOK_IDENT {
+        cur_stype = lookup_ident_stype(jfn, &toks[start_pos])
+    }
     loop {
         let tok_type = toks[pos[0]].type
-        if tok_type == TOK_LBRACK {
+        if tok_type == TOK_DOT {
+            pos[0] = pos[0] + 1
+            let field = toks[pos[0]]
+            expect(toks, pos, TOK_IDENT)
+            let sid = cur_stype
+            let fi = lookup_field_idx_any(stab, src, sid, field.str_start, field.str_len)
+            if fi == -1 { panic("Unknown field") }
+            let off_id = emit_const(jfn, bb, TYPE_I64, stab.foffs[fi])
+            let addr = emit_binop(jfn, bb, OP_ADD, expr_id, off_id)
+            cur_stype = stab.ftypes[fi]
+            if stab.fis_array[fi] == 1 {
+                expr_id = addr
+            } else {
+                let ld = Instr{}
+                ld.op = OP_LOAD_MEM
+                ld.operand0 = addr
+                expr_id = emit(jfn, bb, &ld)
+            }
+        } else if tok_type == TOK_LBRACK {
             pos[0] = pos[0] + 1
             let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
             expect(toks, pos, TOK_RBRACK)
@@ -2805,6 +3058,7 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
             ld.op = OP_LOAD_MEM
             ld.operand0 = addr
             expr_id = emit(jfn, bb, &ld)
+            cur_stype = TYPE_I64
         } else {
             ret expr_id
         }
@@ -2831,6 +3085,18 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
             if cval != -1 {
                 pos[0] = pos[0] + 1
                 ret emit_const(jfn, bb, TYPE_I64, cval)
+            }
+            let gi = lookup_global(t.str_start, t.str_len, src)
+            if gi != -1 {
+                pos[0] = pos[0] + 1
+                let addr = emit_global_addr(jfn, bb, gi)
+                if g_glob_is_addr[gi] == 1 {
+                    ret addr
+                }
+                let ldg = Instr{}
+                ldg.op = OP_LOAD_MEM
+                ldg.operand0 = addr
+                ret emit(jfn, bb, &ldg)
             }
             ret -1
         }
@@ -3576,6 +3842,17 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
+    if ins.op == OP_GADDR {
+        let dst = regalloc_alloc(&ctx.ra, out, pos, ins.id)
+        let fix_idx = ctx.fix_cnt
+        ctx.fixups[fix_idx].code_off  = pos[0] + 3
+        ctx.fixups[fix_idx].target_bb = ins.imm
+        ctx.fixups[fix_idx].kind      = 3
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_lea_rip(out, pos, dst, 0)
+        ret ok(0)
+    }
+
     if ins.op == OP_STRLEN {
         ; Walk strtab from str_id to first 0 byte and return count.
         ; At runtime the pointer is in the register for operand0.
@@ -4259,7 +4536,7 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
     let load_va   = 0x400000
     let hdr_size  = 120
     let code_va   = load_va + hdr_size
-    let total     = hdr_size + code_len + strtab_len
+    let total     = hdr_size + code_len + strtab_len + g_emit_glob_len
 
     emit_byte(buf, &pos, 0x7F)
     emit_byte(buf, &pos, 0x45)
@@ -4299,6 +4576,9 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
     if strtab_len > 0 {
         let w3 = syscall(1, out_fd, strtab, strtab_len)
     }
+    if g_emit_glob_len > 0 {
+        let w4 = syscall(1, out_fd, g_emit_glob_buf, g_emit_glob_len)
+    }
 }
 
 fn get_argv(base: &i64, n: i64) -> &i8 {
@@ -4330,6 +4610,8 @@ fn main() {
     let tok_cnt = 0
     lex(src_buf, src_len, toks, &tok_cnt)
     fix_char_literals(src_buf, toks, &tok_cnt)
+    g_glob_cnt = 0
+    g_glob_total_sz = 0
 
     ; ---- Parse/compile functions ----
     let fn_name_off = i64[256]
@@ -4345,7 +4627,7 @@ fn main() {
 
     ; Parse and record top-level structs
     loop pos < tok_cnt and toks[pos].type == TOK_STRUCT {
-        parse_struct_decl(toks, &pos, stab)
+        parse_struct_decl(toks, &pos, stab, src_buf)
     }
 
     ; Prepare output buffers
@@ -4353,6 +4635,7 @@ fn main() {
     let code_len    = 0
     let merged_str  = alloc_pages(4)
     let merged_pos  = 0
+    let glob_buf    = alloc_pages(32)
 
     ; Emit JMP rel32 placeholder (5 bytes) - entry point jumps to main
     emit_byte(code_buf, &code_len, 0xE9)
@@ -4375,7 +4658,7 @@ fn main() {
     ; ---- Parse and compile each function immediately ----
     loop pos < tok_cnt and (toks[pos].type == TOK_FN or toks[pos].type == TOK_LET) {
         if toks[pos].type == TOK_LET {
-            skip_top_level_let(toks, &pos)
+            skip_top_level_let(toks, &pos, stab, src_buf)
         } else {
             let cur_name_off = toks[pos + 1].str_start
             let cur_name_len = toks[pos + 1].str_len
@@ -4392,12 +4675,21 @@ fn main() {
             loop toks[pos].type != TOK_RPAREN {
                 let p_name = toks[pos]
                 expect(toks, &pos, TOK_IDENT)
+                let p_stype = TYPE_I64
                 if toks[pos].type == TOK_COLON {
                     pos = pos + 1
-                    if toks[pos].type == TOK_AMP { pos = pos + 1 }
-                    pos = pos + 1 ; type name
+                    let p_type_tok = toks[pos]
+                    if toks[pos].type == TOK_AMP {
+                        pos = pos + 1
+                        p_type_tok = toks[pos]
+                    }
+                    if p_type_tok.type == TOK_IDENT {
+                        let sid = lookup_struct(stab, src_buf, p_type_tok.str_start, p_type_tok.str_len)
+                        if sid >= 0 { p_stype = sid }
+                    }
+                    pos = pos + 1
                 }
-                bind(&jfn, &p_name, TYPE_I64)
+                bind(&jfn, &p_name, p_stype)
                 if toks[pos].type == TOK_COMMA { pos = pos + 1 }
             }
             expect(toks, &pos, TOK_RPAREN)
@@ -4434,12 +4726,17 @@ fn main() {
                 let ci = 0
                 loop ci < ctx.fix_cnt {
                     let fk = ctx.fixups[ci].kind
-                    if fk == 1 {
-                        gf_strtab_co[gf_strtab_cnt]   = ctx.fixups[ci].code_off
-                        gf_strtab_tgt[gf_strtab_cnt]  = ctx.fixups[ci].target_bb
-                        gf_strtab_base[gf_strtab_cnt] = merged_pos
-                        gf_strtab_cnt = gf_strtab_cnt + 1
-                    } else if fk == 2 {
+                if fk == 1 {
+                    gf_strtab_co[gf_strtab_cnt]   = ctx.fixups[ci].code_off
+                    gf_strtab_tgt[gf_strtab_cnt]  = ctx.fixups[ci].target_bb
+                    gf_strtab_base[gf_strtab_cnt] = merged_pos
+                    gf_strtab_cnt = gf_strtab_cnt + 1
+                } else if fk == 3 {
+                    gf_strtab_co[gf_strtab_cnt]   = ctx.fixups[ci].code_off
+                    gf_strtab_tgt[gf_strtab_cnt]  = -1 - ctx.fixups[ci].target_bb
+                    gf_strtab_base[gf_strtab_cnt] = 0
+                    gf_strtab_cnt = gf_strtab_cnt + 1
+                } else if fk == 2 {
                         gf_call_co[gf_call_cnt]   = ctx.fixups[ci].code_off
                         gf_call_name[gf_call_cnt] = ctx.fixups[ci].target_bb
                         gf_call_nlen[gf_call_cnt] = ctx.fixups[ci].str_len
@@ -4472,8 +4769,14 @@ fn main() {
     let si = 0
     loop si < gf_strtab_cnt {
         let co = gf_strtab_co[si]
-        let str_off = gf_strtab_base[si] + gf_strtab_tgt[si]
-        let str_va = strtab_va + str_off
+        let str_va = 0
+        if gf_strtab_tgt[si] < 0 {
+            let gi = 0 - gf_strtab_tgt[si] - 1
+            str_va = strtab_va + merged_pos + g_glob_off[gi]
+        } else {
+            let str_off = gf_strtab_base[si] + gf_strtab_tgt[si]
+            str_va = strtab_va + str_off
+        }
         let rel = str_va - (0x400000 + 120 + co + 4)
         poke_byte(code_buf, co,     rel & 0xFF)
         poke_byte(code_buf, co + 1, (rel >> 8) & 0xFF)
@@ -4505,6 +4808,8 @@ fn main() {
     }
 
     let out_fd = syscall(2, out_path, 577, 493)
+    g_emit_glob_buf = glob_buf
+    g_emit_glob_len = g_glob_total_sz
     write_elf(out_fd, code_buf, code_len, merged_str, merged_pos)
     syscall(3, out_fd, 0, 0)
     syscall(60, 0, 0, 0)
