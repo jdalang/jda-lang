@@ -17,7 +17,7 @@ Verified:
 2. Stage 1 selfhost progress
 Status: partially done
 
-Done:
+✅ Done:
 - removed the earlier top-level global recorder crash
 - added minimal top-level global tracking for stage 1
 - extended `OP_CALL` handling from 3 args to 6 args

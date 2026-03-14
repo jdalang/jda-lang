@@ -327,6 +327,10 @@ fn const_value_at(ct: &ConstTable, idx: i64) -> i64 {
     ret ct.values[idx]
 }
 
+fn struct_size_at(stab: &StructTable, sid: i64) -> i64 {
+    ret stab.sizes[sid]
+}
+
 fn const_name_matches(ct: &ConstTable, idx: i64, src: &i8, name_start: i64, name_len: i64) -> i64 {
     let base = const_name_start_at(ct, idx)
     ret str_match(src, base, name_start, name_len)
@@ -395,7 +399,7 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
             let type_len = type_tok.str_len
             let sid = lookup_struct(stab, src, type_start, type_len)
             if sid >= 0 {
-                elem_sz = stab.sizes[sid]
+                elem_sz = struct_size_at(stab, sid)
                 stype = sid
             }
         }
@@ -403,13 +407,16 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
         g_glob_stype[gidx] = stype
         g_glob_is_addr[gidx] = 1
         pos[0] = pos[0] + 1
-        if toks[pos[0]].type == TOK_LBRACK {
+        let next_idx = pos[0]
+        let next_tok = toks[next_idx]
+        let next_type = next_tok.type
+        if next_type == TOK_LBRACK {
             pos[0] = pos[0] + 1
             let n = toks[pos[0]].imm
             pos[0] = pos[0] + 1
             expect(toks, pos, TOK_RBRACK)
             g_glob_size[gidx] = elem_sz * n
-        } else if toks[pos[0]].type == TOK_LBRACE {
+        } else if next_type == TOK_LBRACE {
             pos[0] = pos[0] + 1
             expect(toks, pos, TOK_RBRACE)
         }
@@ -2213,7 +2220,23 @@ fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         pos[0] = pos[0] + 1
         let right_id = codegen_unary_inline(toks, pos, stab, src, jfn, bb)
         let jir_op = tok_to_jir_op(op)
-        ret emit_binop(jfn, bb, jir_op, left_id, right_id)
+        let expr_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
+        loop toks[pos[0]].type == TOK_OR or toks[pos[0]].type == TOK_PIPE or toks[pos[0]].type == TOK_AND or toks[pos[0]].type == TOK_AMP {
+            let lop = toks[pos[0]].type
+            pos[0] = pos[0] + 1
+            let rleft_id = codegen_unary_inline(toks, pos, stab, src, jfn, bb)
+            let rhs_id = rleft_id
+            let cmp_op = toks[pos[0]].type
+            if cmp_op == TOK_EQEQ or cmp_op == TOK_NEQ or cmp_op == TOK_LT or cmp_op == TOK_GT or cmp_op == TOK_LTE or cmp_op == TOK_GTE {
+                pos[0] = pos[0] + 1
+                let rright_id = codegen_unary_inline(toks, pos, stab, src, jfn, bb)
+                let cmp_jir = tok_to_jir_op(cmp_op)
+                rhs_id = emit_binop(jfn, bb, cmp_jir, rleft_id, rright_id)
+            }
+            let lop_jir = tok_to_jir_op(lop)
+            expr_id = emit_binop(jfn, bb, lop_jir, expr_id, rhs_id)
+        }
+        ret expr_id
     }
     if (toks[pos[0]].type == TOK_IDENT or toks[pos[0]].type == TOK_INT) and
        (next_tok == TOK_RPAREN or next_tok == TOK_RBRACE or next_tok == TOK_RBRACK or
