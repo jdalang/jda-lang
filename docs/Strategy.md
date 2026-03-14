@@ -89,48 +89,48 @@ Status: 🟡 in progress
 - direct `count[0]` RHS loads in `lex_handle_int(...)` were replaced with `load_i64_at0(count)`
 - selfhost now reaches `FN#54`
 
-3. Current bug
-Status: 🟡 active blocker
+3. Current Blocker
+Status: 🟡 active
 
-🟡 Current failure:
+🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
-- the current crash is still in the live stage-1 selfhost compiler path, not stage 0 and not final ELF emission
-- the latest failure has moved beyond the old top-level signature-parser bug and is now inside `lex_handle_int(...)`
-- exact token mapping and bounded traces show the active function is `FN#54`
-- the failing range is:
-  - the loop body inside `lex_handle_int(...)`
-  - currently the next `let` boundary immediately after the first emit block
-- latest bounded trace reaches:
-  - `FN#54`
-  - first `if load_i8_at0(src, pos) < 48` now gets through
-  - the `out_toks[out_idx]` store path is no longer the immediate blocker
-  - current parse drift happens at token position `4440`, `expected=23` (`TOK_EQ`)
-- the `p0` setup, helper-call argument issues, and the old indexed-store blocker were real and are now behind us
-- the current active bug is the remaining `let` / assignment boundary in the same emit block of `lex_handle_int(...)`
+- the failure is still in `FN#54`, inside `lex_handle_int(...)`
+- first `if load_i8_at0(src, pos) < 48` now gets through
+- the old `out_toks[out_idx]` store path is no longer the immediate blocker
+- the current failing form is the assignment `out_idx = count[0]`
 
-🟡 Meaning:
+🟡 Latest evidence:
+- bounded trace now reaches the emit block after the first `if`
+- `EXPRST p=4442` appears for the `out_idx = count[0]` statement
+- the generic postfix/index path still gets entered for the RHS `count[0]`
+- parse drift now happens around token positions `4444..4446`
+
+🟡 Why it matters:
 - stage 0 is healthy enough for bring-up again
-- the active work is still stabilizing the stage-1 live parser/codegen on real `jda1.jda` source patterns
-- the current highest-signal area is the remaining `let` / assignment handling in `lex_handle_int(...)`, not the old top-level signature parser
+- several earlier `lex_handle_int(...)` blockers are already behind us:
+  - `p0` setup
+  - helper-call arg corruption
+  - indexed token-store writes
+- the current highest-signal area is getting `ident = ident[index]` to stay on the assignment fast path reliably
 
 4. Next fix
 Status: 🟡 next
 
 🟡 Work in order:
-- harden the remaining `let` / assignment path in the `lex_handle_int(...)` emit block
+- harden `compile_expr_stmt_inline(...)` so `out_idx = count[0]` stays on the `ident = ident[index]` fast path
 - keep the stable `32 x 128` block-storage layout
 - once `./jda1 ../stage1/jda1.jda jda1_sh2` completes again, re-run the full hello roundtrip immediately
 
 🟡 Concrete next edits:
-- flatten or special-case the next `let` after the first emit block
-- if needed, remove one more local temporary in `lex_handle_int(...)` instead of widening generic parser logic
+- patch the assignment fast path around `ident = ident[index]` so it commits for `out_idx = count[0]`
+- if that remains brittle, flatten this one assignment further in `lex_handle_int(...)` instead of widening generic parser logic
 - keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 🟡 Expected outcome of next fix:
-- get past the next `let` boundary in `lex_handle_int(...)`
+- get past `out_idx = count[0]` in `lex_handle_int(...)`
 - move the blocker beyond `FN#54` to the next concrete source form
 
 5. Final testing
