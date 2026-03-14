@@ -100,6 +100,16 @@ Status: 🟡 in progress
 - `lex_skip_string_body(...)` is now reduced to a one-parameter global-backed helper
 - `lex_handle_string(...)` now routes the closing-quote tail through `lex_maybe_close_string(...)`
 - selfhost now gets past the operator-handler cluster and into the later string helper path
+- the string-scan path now uses a global index (`g_lex_pos_i`) with:
+- `lex_set_pos_ptr(...)`
+- `lex_skip_string_body()`
+- `lex_maybe_close_string()`
+- `lex_sync_pos_ptr(...)`
+- the current best local form of `lex_maybe_close_string()` gets through:
+- the outer bounds check
+- `let idx = g_lex_pos_i`
+- `let cur = g_lex_src_ptr[idx]`
+- the remaining branch-local increment is still the active edge
 
 3. Current Blocker
 Status: 🟡 active
@@ -107,18 +117,22 @@ Status: 🟡 active
 🟡 Active blocker:
 - `jda1 -> jda1_sh2` still fails before producing `jda1_sh2`
 - the old `FN#54` `lex_handle_int(...)` blocker is no longer the active one
-- the current best checkpoint is in the later string-helper band, after the operator-handler fixes
-- the active blocker is the string-token emission path reached from `lex_handle_string(...)`
-- the unstable shape is the multi-argument `emit_lex_span(...)` call currently routed through `lex_emit_str(...)`
+- the active blocker has narrowed further inside the later string-helper band
+- the current best checkpoint is now `FN#59`, which maps to `lex_maybe_close_string()`
+- the remaining unstable shape is inside the closing-quote helper, after the indexed character load already succeeds
 
 🟡 Latest evidence:
-- the helper-defined `lex_emit_str(...)` baseline moves farther than the older inline `emit_lex_span(...)` call inside `lex_handle_string(...)`
 - rewriting `lex_emit_str(...)` to direct token-field stores was a regression and was reverted
+- the global-index string-scan path moves farther than the earlier direct `pos`-mutation variants
 - the current best trace gets through:
 - `lex_skip_string_body(...)`
 - `lex_maybe_close_string(...)`
 - the operator-handler cluster
-- and then fails later in the string-emission path rather than on the earlier operator-token bugs
+- and now fails late inside `lex_maybe_close_string()`, not on the earlier operator-token bugs
+- the current best local form keeps:
+- `let idx = g_lex_pos_i`
+- `let cur = g_lex_src_ptr[idx]`
+- and still treats the final increment as the remaining active edge
 
 🟡 Why it matters:
 - stage 0 is healthy enough for bring-up again
@@ -126,7 +140,7 @@ Status: 🟡 active
 - the old `==`, `>=`, and `!=` tokenization failures
 - the operator-handler condition overconsume
 - the old inline closing-quote index shape in `lex_handle_string(...)`
-- the current highest-signal area is now the reduced string-emission path, which is narrower than the older monolithic lexer failures
+- the current highest-signal area is now the reduced closing-quote helper, which is narrower than the older monolithic lexer failures
 
 4. Next fix
 Status: 🟡 next
@@ -139,14 +153,15 @@ Status: 🟡 next
 🟡 Concrete next edits:
 - keep the current operator-handler fixes and reduced string helpers in place
 - keep the helper-based `lex_emit_str(...)` baseline, not the regressing direct-store rewrite
-- continue simplifying the remaining string-token emission path until `lex_handle_string(...)` is fully clear
+- keep the current global-index string-scan path in place
+- continue simplifying the remaining branch tail in `lex_maybe_close_string()` until that helper is clear
 - keep using raw token-window dumps for the failing range instead of inferring from `FN#` numbering alone
 - keep `EMIT_SLOT`, `FN#`, and parse-error traces only as long as needed to move past the current function
 - keep the optimizer passes disabled until raw selfhost compilation is stable
 - only after `jda1_sh2` is produced, revisit optimizer and cleanup work
 
 🟡 Expected outcome of next fix:
-- get past the remaining string-emission instability in `lex_handle_string(...)` / `lex_emit_str(...)`
+- get past the remaining `lex_maybe_close_string()` branch-tail instability
 - move the blocker beyond the current string-helper band to the next concrete source form
 
 5. Final testing
