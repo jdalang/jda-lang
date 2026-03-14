@@ -314,6 +314,7 @@ let g_lex_count_ptr = 0
 let g_lex_out_toks = 0
 let g_lex_src_len = 0
 let g_lex_src_ptr = 0
+let g_lex_pos_i = 0
 
 ; ============================================================
 ; 2. LEXER
@@ -359,7 +360,7 @@ fn char_at_pos(src: &i8, pos: &i64) {
 
 fn lex_scan_int(pos: &i64) {
     let val = 0
-    loop pos[0] < g_lex_src_len {
+    loop load_i64_at0(pos) < g_lex_src_len {
         let cur = char_at_pos(g_lex_src_ptr, pos)
         if cur < 48 {
             ret val
@@ -382,18 +383,37 @@ fn lex_skip_escaped_char(pos: &i64, src_len: i64) {
     }
 }
 
-fn lex_skip_string_body(pos: &i64) {
-    loop load_i64_at0(pos) < g_lex_src_len {
-        let sc = load_i8_at0(g_lex_src_ptr, pos)
+fn lex_skip_string_body() {
+    loop g_lex_pos_i < g_lex_src_len {
+        let sc = load_i8_at(g_lex_src_ptr, g_lex_pos_i)
         if sc == 34 {
             ret 0
         } else if sc == 92 {
-            lex_skip_escaped_char(pos, g_lex_src_len)
+            g_lex_pos_i = g_lex_pos_i + 1
+            if g_lex_pos_i < g_lex_src_len {
+                g_lex_pos_i = g_lex_pos_i + 1
+            }
         } else {
-            inc_i64_at0(pos)
+            g_lex_pos_i = g_lex_pos_i + 1
         }
     }
     ret 0
+}
+
+fn lex_set_pos_ptr(pos: &i64) {
+    g_lex_pos_i = pos[0]
+}
+
+fn lex_sync_pos_ptr(pos: &i64) {
+    pos[0] = g_lex_pos_i
+}
+
+fn lex_set_pos_i(v: i64) {
+    g_lex_pos_i = v
+}
+
+fn lex_inc_pos_i() {
+    g_lex_pos_i = g_lex_pos_i + 1
 }
 
 fn lex_handle_gt_next(pos: &i64) {
@@ -825,25 +845,29 @@ fn lex_handle_comment(src: &i8, src_len: i64, pos: &i64) {
     }
 }
 
-fn lex_maybe_close_string(pos: &i64) {
-    if pos[0] < g_lex_src_len {
-        if load_i8_at0(g_lex_src_ptr, pos) == 34 {
-            pos[0] = pos[0] + 1
+fn lex_maybe_close_string() {
+    if g_lex_pos_i < g_lex_src_len {
+        let idx = g_lex_pos_i
+        let cur = g_lex_src_ptr[idx]
+        if cur == 34 {
+            lex_inc_pos_i()
         }
     }
-}
-
-fn lex_emit_str(start: i64, len: i64) {
-    emit_lex_span(g_lex_out_toks, g_lex_count_ptr, TOK_STR, start, len)
 }
 
 fn lex_handle_string(pos: &i64) {
     pos[0] = pos[0] + 1
     let start = pos[0]
-    lex_skip_string_body(pos)
-    let len = pos[0] - start
+    lex_set_pos_ptr(pos)
+    lex_skip_string_body()
+    let len = g_lex_pos_i - start
     lex_emit_str(start, len)
-    lex_maybe_close_string(pos)
+    lex_maybe_close_string()
+    lex_sync_pos_ptr(pos)
+}
+
+fn lex_emit_str(start: i64, len: i64) {
+    emit_lex_span(g_lex_out_toks, g_lex_count_ptr, TOK_STR, start, len)
 }
 
 fn lex_handle_int(src: &i8, pos: &i64) {
