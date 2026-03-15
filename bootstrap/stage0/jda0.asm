@@ -2173,13 +2173,18 @@ add_local:
     mov     rax, [loc_rbp]
     add     rax, 7
     and     rax, -8         ; align to 8
-    ; alloc_size = max(r12, 8) — each slot must hold a full 8-byte register store
-    cmp     r12, 8
+    ; alloc_size = max(effective_size, 8), but pointer locals always reserve 8 bytes
+    mov     rdx, r12
+    cmp     r10, TK_PTR
+    jne     .al_size_ready
+    mov     rdx, 8
+.al_size_ready:
+    cmp     rdx, 8
     jge     .al_big
     add     rax, 8
     jmp     .al_cont
 .al_big:
-    add     rax, r12
+    add     rax, rdx
 .al_cont:
     mov     [loc_rbp], rax
     mov     rax, [loc_rbp]      ; rbp_offset = loc_rbp (positive, use [rbp-rax])
