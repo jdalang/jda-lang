@@ -12,26 +12,35 @@ Latest checkpoint (2026-03-15, current session):
   `_start`; fix: `asm { out argv_ptr = rsi }` and subsequent g_argv_base/g_src_path/g_out_path
   assignments must be the very first statements in `main()`, before any `print()` call
 - removed all temporary diagnostic prints from stage-1 `main()` (M0/Ma/Mb/Mc/Md/Me/Mf/M1–M3)
-- confirmed `jda1_new → jda1_sh2` exits 0, produces 264,583-byte binary ✅
+- confirmed `jda1_new → jda1_sh2` exits 0, produces ~721 KB binary ✅
+- added `OP_ARGV_BASE = 31` opcode: fixes argv capture in write_elf-compiled binaries (JMP-based
+  `_start`); `compile_asm_argv_inline` detects `asm { out VAR = rsi }` and emits OP_ARGV_BASE
+  which lowers to `lea rax, [rbp+16]; store` — correct for the JMP-to-main stack layout
+- `jda1_sh2 → jda1_sh3` now produces output (721 KB binary, exits 0) ✅
+- expanded token buffer: 65535 → 131071 (alloc_pages 512→1024, all overflow checks updated)
+  — required because write_elf compiled binaries correctly lex jda1.jda's 44800 tokens
 
-🟡 Current blocker:
-- `jda1_sh2 → jda1_sh3` fails with:
-  `PANIC Too many functions pos=41889 t=16 ss=0 sl=0`
-  after printing function indices 0–255 (exactly 256 before the panic)
-- the function table or compile loop has a 256-function hard cap that the real `jda1.jda`
-  exceeds; either the cap in `main()`'s top-level compile loop is too small, or BUG 2 residue
-  (constants not fully resolved in jda1_sh2's own codegen) is miscounting tokens and inflating
-  the function count
+🟡 Current blocker — `print(integer)` causes OP_STRLEN segfault:
+- jda1 `compile_print_inline` always generates `OP_STRLEN(val)` + `write(1, val, len)` for
+  non-string-literal arguments — it treats the argument as a `&i8` pointer
+- in jda1_new (jda0-compiled), `print(integer)` works because jda0's `print` built-in dispatches
+  on type; but in jda1_sh2 (write_elf-compiled), `print(g_panic_pos)` inside `panic()` calls
+  `strlen` on the integer value of `g_panic_pos` → SIGSEGV when g_panic_pos = 0 (null)
+- this means `panic()` SIGSEGV's before reaching `syscall(60, 1, 0, 0)`, so panics in jda1_sh2
+  do NOT exit; execution continues past the panic site → cascading failures
+- additionally, the `print(tok_cnt)` diagnostic in main() also segfaults for the same reason
 
 🟡 Next work:
-- locate the `>= 256` (or `== 256`) guard in the top-level function compile loop and raise it
-  (or replace with a panic-on-overflow check against the actual allocated table size)
-- rerun full Docker chain after the cap fix:
+- fix `panic()` so it doesn't crash: change `print(g_panic_pos)` to either:
+  a) remove it entirely from panic() (simplest — just print msg and exit), OR
+  b) pass g_panic_pos through a helper that converts integer → decimal string then syscall-writes it
+- fix any other `print(integer)` calls throughout jda1.jda that are executed in write_elf-compiled
+  context (e.g., compile_print_inline should detect integer args and use OP_PRINT_INT or itoa)
+- rerun full Docker chain after panic() fix:
   - `make stage1`  (jda0 → jda1_new)
   - `./jda1 ../stage1/jda1.jda jda1_sh2`  (jda1_new → jda1_sh2)
-  - `./jda1_sh2 ../stage1/jda1.jda jda1_sh3`  (jda1_sh2 → jda1_sh3, currently blocked)
-- if the panic is instead caused by wrong token classification (constants unresolved in
-  jda1_sh2), trace which function index is the first one that shouldn't be counted
+  - `./jda1_sh2 ../stage1/jda1.jda jda1_sh3`  (verify exits 0, produces binary)
+  - compare jda1_sh2 and jda1_sh3 bytewise to confirm self-hosting roundtrip
 
 Previous checkpoint (2026-03-14):
 
