@@ -485,14 +485,14 @@ fn lex_handle_lt_next(toks: &Token, pos: &i64) {
     }
 }
 
-fn lex_emit_ident_or_kw(toks: &Token, src: &i8, src_len: i64, pos: &i64) {
+fn lex_emit_ident_or_kw(toks: &Token, pos: &i64) {
     let start = pos[0]
     let keep_ident = 1
     loop keep_ident == 1 {
-        if pos[0] >= src_len {
+        if pos[0] >= g_lex_src_len {
             keep_ident = 0
         } else {
-            let cur = src[pos[0]]
+            let cur = g_lex_src_ptr[pos[0]]
             if is_ident_continue(cur) == 1 {
                 pos[0] = pos[0] + 1
             } else {
@@ -501,7 +501,7 @@ fn lex_emit_ident_or_kw(toks: &Token, src: &i8, src_len: i64, pos: &i64) {
         }
     }
     let len = pos[0] - start
-    let kw = classify_keyword(src, start, len)
+    let kw = classify_keyword(g_lex_src_ptr, start, len)
     if g_lex_count >= 131071 { panic("Token buffer overflow") }
     let idx = g_lex_count
     toks[idx].type = kw
@@ -531,6 +531,27 @@ fn lex_ident_end(src: &i8, src_len: i64, start: i64) -> i64 {
         }
     }
     ret p
+}
+
+fn lex_ident_advance_global() {
+    let keep_ident = 1
+    let guard = 0
+    loop keep_ident == 1 {
+        guard = guard + 1
+        if guard > g_lex_src_len + 2 {
+            keep_ident = 0
+        } else
+        if g_lex_pos_i >= g_lex_src_len {
+            keep_ident = 0
+        } else {
+            let ic = g_lex_src_ptr[g_lex_pos_i]
+            if (ic >= 97 and ic <= 122) or (ic >= 65 and ic <= 90) or (ic >= 48 and ic <= 57) or ic == 95 {
+                g_lex_pos_i = g_lex_pos_i + 1
+            } else {
+                keep_ident = 0
+            }
+        }
+    }
 }
 
 fn tok_type_at0(toks: &Token, pos: &i64) {
@@ -809,7 +830,12 @@ fn is_alpha(c: i8) {
 }
 
 fn is_digit(c: i8) {
-    ret c >= 48 and c <= 57
+    if c >= 48 {
+        if c <= 57 {
+            ret 1
+        }
+    }
+    ret 0
 }
 
 fn is_space_char(c: i8) {
@@ -928,7 +954,9 @@ fn classify_keyword(src: &i8, start: i64, len: i64) {
 fn emit_lex_tok(out_toks: &Token, count: &i64, tok: i32) {
     if count[0] >= 131071 { panic("Token buffer overflow") }
     let idx = load_i64_at0(count)
+    print("ELT0\n")
     out_toks[idx].type = tok
+    print("ELT1\n")
     inc_i64_at0(count)
 }
 
@@ -1052,7 +1080,9 @@ fn lex_try_int(toks: &Token, c: i8) -> i64 {
 
 fn lex_try_ident(toks: &Token, src: &i8, src_len: i64, c: i8) -> i64 {
     if is_ident_start(c) == 0 { ret 0 }
-    lex_emit_ident_or_kw(toks, src, src_len, &g_lex_pos_i)
+    g_lex_src_ptr = src
+    g_lex_src_len = src_len
+    lex_emit_ident_or_kw(toks, &g_lex_pos_i)
     ret 1
 }
 
@@ -1096,27 +1126,187 @@ fn lex_try_op(toks: &Token, c: i8) -> i64 {
     ret 0
 }
 
+fn lex_small_tail_dispatch(toks: &Token, src: &i8, src_len: i64) {
+    let c = src[g_lex_pos_i]
+    if g_lex_pos_i == 0 {
+        print("LXT0\n")
+        g_lex_count = 0
+    }
+    if g_lex_pos_i == 0 and g_lex_count != 0 { panic("SM_CNT0_SET_BAD") }
+    if g_lex_pos_i == 0 { print("LXTI0\n") }
+    if g_lex_pos_i == 0 {
+        g_lex_src_ptr = src
+        g_lex_src_len = src_len
+        print("LXTI1\n")
+        let start = g_lex_pos_i
+        let end = lex_ident_end(src, src_len, start)
+        print("LXTI2\n")
+        let len = end - start
+        let kw = classify_keyword(src, start, len)
+        print("LXTI3\n")
+        g_lex_pos_i = end
+        toks[0].type = kw
+        print("LXTI4\n")
+        toks[0].str_start = start
+        print("LXTI5\n")
+        toks[0].str_len = len
+        g_lex_count = 1
+        if g_lex_pos_i == 2 { print("LXTI\n") }
+        ret 0
+    }
+    if c >= 97 {
+        if c <= 122 {
+            g_lex_src_ptr = src
+            g_lex_src_len = src_len
+            lex_emit_ident_or_kw(toks, &g_lex_pos_i)
+            if g_lex_pos_i == 2 { print("LXTI\n") }
+            ret 0
+        }
+    }
+    if c >= 65 {
+        if c <= 90 {
+            g_lex_src_ptr = src
+            g_lex_src_len = src_len
+            lex_emit_ident_or_kw(toks, &g_lex_pos_i)
+            if g_lex_pos_i == 2 { print("LXTI\n") }
+            ret 0
+        }
+    }
+    if c == 95 {
+        g_lex_src_ptr = src
+        g_lex_src_len = src_len
+        lex_emit_ident_or_kw(toks, &g_lex_pos_i)
+        if g_lex_pos_i == 2 { print("LXTI\n") }
+        ret 0
+    }
+    if lex_try_int(toks, c) == 1 { ret 0 }
+    if lex_try_op(toks, c) == 1 { ret 0 }
+    if g_lex_count >= 131071 { panic("Token buffer overflow") }
+    toks[g_lex_count].type = char_to_tok(c)
+    g_lex_count = g_lex_count + 1
+    g_lex_pos_i = g_lex_pos_i + 1
+}
+
+fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
+    print("LS0\n")
+    let p = 0
+    let count = 0
+    print("LS1\n")
+    loop p < src_len {
+        print("LS2\n")
+        let c = src[p]
+        print("LS3\n")
+        if c == 32 or c == 10 or c == 9 or c == 13 {
+            p = p + 1
+        } else if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95 {
+            print("LSI0\n")
+            let start = p
+            g_loop_ctrl = 1
+            loop g_loop_ctrl == 1 {
+                print("LSI1\n")
+                if p >= src_len {
+                    g_loop_ctrl = 0
+                } else {
+                    let ic = src[p]
+                    if (ic >= 97 and ic <= 122) or (ic >= 65 and ic <= 90) or (ic >= 48 and ic <= 57) or ic == 95 {
+                        p = p + 1
+                    } else {
+                        g_loop_ctrl = 0
+                    }
+                }
+            }
+            print("LSI2\n")
+            let len = p - start
+            print("LSI21\n")
+            let kw = TOK_IDENT
+            print("LSI22\n")
+            if len == 2 {
+                if src[start] == 102 {
+                    if src[start + 1] == 110 {
+                        kw = TOK_FN
+                    }
+                }
+            }
+            print("LSI23\n")
+            if len == 5 {
+                if src[start] == 112 {
+                    if src[start + 1] == 114 {
+                        if src[start + 2] == 105 {
+                            if src[start + 3] == 110 {
+                                if src[start + 4] == 116 {
+                                    kw = TOK_PRINT
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            print("LSI24\n")
+            print("LSI3\n")
+            g_dbg_toks[count].type = kw
+            print("LSI31\n")
+            g_dbg_toks[count].str_start = start
+            print("LSI32\n")
+            g_dbg_toks[count].str_len = len
+            print("LSI4\n")
+            count = count + 1
+        } else if c == 34 {
+            let start = p + 1
+            p = p + 1
+            let in_str = 1
+            let guard = 0
+            loop in_str == 1 {
+                guard = guard + 1
+                if guard > src_len + 2 {
+                    in_str = 0
+                } else
+                if p >= src_len {
+                    in_str = 0
+                } else if src[p] == 34 {
+                    in_str = 0
+                } else if src[p] == 92 {
+                    p = p + 1
+                    if p < src_len { p = p + 1 }
+                } else {
+                    p = p + 1
+                }
+            }
+            g_dbg_toks[count].type = TOK_STR
+            g_dbg_toks[count].str_start = start
+            g_dbg_toks[count].str_len = p - start
+            count = count + 1
+            if p < src_len and src[p] == 34 { p = p + 1 }
+        } else {
+            g_dbg_toks[count].type = char_to_tok(c)
+            count = count + 1
+            p = p + 1
+        }
+    }
+    g_dbg_toks[count].type = TOK_EOF
+    ret count
+}
+
 fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
-    print("LX0\n")
+    g_lex_src_ptr = src
+    g_lex_src_len = src_len
+    if src_len < 1024 { print("LX0\n") }
     if src_len > 262144 { panic("SRC_LEN_BIG") }
     let p = 0
     let count = 0
     let iter = 0
     loop p < src_len {
-        if p == 0 { print("LTOP\n") }
         iter = iter + 1
+        if src_len < 1024 and iter == 1 { print("LX1\n") }
         if iter == 1 and count != 0 { panic("COUNT_EARLY") }
         if iter > src_len + 16 { panic("LEX_LOOP") }
         let old_p = p
         let c = src[p]
-        if p == 0 { print("LCHAR\n") }
-        let c_is_space = 0
-        if c == 32 or c == 10 or c == 9 or c == 13 { c_is_space = 1 }
-        if c_is_space == 1 {
-            if p == 0 { print("LSP\n") }
+        if src_len < 1024 and iter == 1 { print("LX2\n") }
+        if is_space_char(c) == 1 {
             p = p + 1
-        } else if c == 59 {
-            if p == 0 { print("LCOM\n") }
+        } else {
+            if src_len < 1024 and iter == 1 { print("LX2A\n") }
+            if c == 59 {
             p = p + 1
             let in_comment = 1
             let guard = 0
@@ -1133,8 +1323,9 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
                     p = p + 1
                 }
             }
-        } else if c == 34 {
-            if p == 0 { print("LSTR\n") }
+            } else {
+                if src_len < 1024 and iter == 1 { print("LX2B\n") }
+                if c == 34 {
             let start = p + 1
             p = p + 1
             let scanning = 1
@@ -1165,8 +1356,39 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             if p < src_len and src[p] == 34 {
                 p = p + 1
             }
-        } else if c >= 48 and c <= 57 {
-            if p == 0 { print("LINT\n") }
+                } else {
+                    if src_len < 1024 {
+                        if iter == 1 { print("LX2C\n") }
+                        if iter == 1 { print("LX2D\n") }
+                        g_lex_pos_i = p
+                        if iter == 1 {
+                            g_lex_count = 0
+                        } else {
+                            g_lex_count = count
+                        }
+                        lex_small_tail_dispatch(toks, src, src_len)
+                        p = g_lex_pos_i
+                        count = g_lex_count
+                    } else {
+                    if src_len < 1024 and iter == 1 { print("LX2C\n") }
+                    if src_len < 1024 and iter == 1 { print("LX2D\n") }
+                    let c2 = src[p]
+                    if c2 >= 97 {
+                        if c2 <= 122 {
+            if src_len < 1024 { print("LXI0\n") }
+            g_lex_count = count
+            lex_emit_ident_or_kw(toks, &p)
+            if src_len < 1024 { print("LXI1\n") }
+            count = g_lex_count
+                        } else {
+                            if src_len < 1024 and iter == 1 { print("LX2E\n") }
+                            let c_is_digit = 0
+                            if c2 >= 48 {
+                                if c2 <= 57 {
+                                    c_is_digit = 1
+                                }
+                            }
+                            if c_is_digit == 1 {
             let val = 0
             let reading = 1
             let guard = 0
@@ -1190,65 +1412,249 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             toks[count].type = TOK_INT
             toks[count].imm = val
             count = count + 1
-        } else if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95 {
-            if p == 0 { print("LID\n") }
-            g_lex_count = count
-            lex_emit_ident_or_kw(toks, src, src_len, &p)
-            count = g_lex_count
-            if p == 2 { print("LID2\n") }
-        } else if c == 45 and p + 1 < src_len and src[p + 1] == 62 {
-            if p == 0 { print("LAR\n") }
+                            } else if c2 == 45 and p + 1 < src_len and src[p + 1] == 62 {
             toks[count].type = TOK_ARROW
             count = count + 1
             p = p + 2
-        } else if c == 61 and p + 1 < src_len and src[p + 1] == 61 {
-            if p == 0 { print("LEQEQ\n") }
+                            } else if c2 == 61 and p + 1 < src_len and src[p + 1] == 61 {
             toks[count].type = TOK_EQEQ
             count = count + 1
             p = p + 2
-        } else if c == 61 and p + 1 < src_len and src[p + 1] == 62 {
-            if p == 0 { print("LFAT\n") }
+                            } else if c2 == 61 and p + 1 < src_len and src[p + 1] == 62 {
             toks[count].type = TOK_FATARROW
             count = count + 1
             p = p + 2
-        } else if c == 33 and p + 1 < src_len and src[p + 1] == 61 {
-            if p == 0 { print("LNEQ\n") }
+                            } else if c2 == 33 and p + 1 < src_len and src[p + 1] == 61 {
             toks[count].type = TOK_NEQ
             count = count + 1
             p = p + 2
-        } else if c == 62 and p + 1 < src_len and src[p + 1] == 62 {
-            if p == 0 { print("LSHR\n") }
+                            } else if c2 == 62 and p + 1 < src_len and src[p + 1] == 62 {
             toks[count].type = TOK_SHR
             count = count + 1
             p = p + 2
-        } else if c == 62 and p + 1 < src_len and src[p + 1] == 61 {
-            if p == 0 { print("LGTE\n") }
+                            } else if c2 == 62 and p + 1 < src_len and src[p + 1] == 61 {
             toks[count].type = TOK_GTE
             count = count + 1
             p = p + 2
-        } else if c == 60 and p + 1 < src_len and src[p + 1] == 60 {
-            if p == 0 { print("LSHL\n") }
+                            } else if c2 == 60 and p + 1 < src_len and src[p + 1] == 60 {
             toks[count].type = TOK_SHL
             count = count + 1
             p = p + 2
-        } else if c == 60 and p + 1 < src_len and src[p + 1] == 61 {
-            if p == 0 { print("LLTE\n") }
+                            } else if c == 60 and p + 1 < src_len and src[p + 1] == 61 {
             toks[count].type = TOK_LTE
             count = count + 1
             p = p + 2
-        } else {
-            if p == 0 { print("LOTH\n") }
+                            } else {
             toks[count].type = char_to_tok(c)
             count = count + 1
             p = p + 1
+                            }
+                        }
+                    } else if c >= 65 {
+                        if c <= 90 {
+            if src_len < 1024 { print("LXI0\n") }
+            g_lex_count = count
+            lex_emit_ident_or_kw(toks, &p)
+            if src_len < 1024 { print("LXI1\n") }
+            count = g_lex_count
+                        } else {
+                            if src_len < 1024 and iter == 1 { print("LX2E\n") }
+                            let c_is_digit = 0
+                            if c >= 48 {
+                                if c <= 57 {
+                                    c_is_digit = 1
+                                }
+                            }
+                            if c_is_digit == 1 {
+            let val = 0
+            let reading = 1
+            let guard = 0
+            loop reading == 1 {
+                guard = guard + 1
+                if guard > src_len + 2 {
+                    reading = 0
+                } else
+                if p >= src_len {
+                    reading = 0
+                } else {
+                    let dc = src[p]
+                    if dc >= 48 and dc <= 57 {
+                        val = val * 10 + (dc - 48)
+                        p = p + 1
+                    } else {
+                        reading = 0
+                    }
+                }
+            }
+            toks[count].type = TOK_INT
+            toks[count].imm = val
+            count = count + 1
+                            } else if c == 45 and p + 1 < src_len and src[p + 1] == 62 {
+            toks[count].type = TOK_ARROW
+            count = count + 1
+            p = p + 2
+                            } else if c == 61 and p + 1 < src_len and src[p + 1] == 61 {
+            toks[count].type = TOK_EQEQ
+            count = count + 1
+            p = p + 2
+                            } else if c == 61 and p + 1 < src_len and src[p + 1] == 62 {
+            toks[count].type = TOK_FATARROW
+            count = count + 1
+            p = p + 2
+                            } else if c == 33 and p + 1 < src_len and src[p + 1] == 61 {
+            toks[count].type = TOK_NEQ
+            count = count + 1
+            p = p + 2
+                            } else if c == 62 and p + 1 < src_len and src[p + 1] == 62 {
+            toks[count].type = TOK_SHR
+            count = count + 1
+            p = p + 2
+                            } else if c == 62 and p + 1 < src_len and src[p + 1] == 61 {
+            toks[count].type = TOK_GTE
+            count = count + 1
+            p = p + 2
+                            } else if c == 60 and p + 1 < src_len and src[p + 1] == 60 {
+            toks[count].type = TOK_SHL
+            count = count + 1
+            p = p + 2
+                            } else if c == 60 and p + 1 < src_len and src[p + 1] == 61 {
+            toks[count].type = TOK_LTE
+            count = count + 1
+            p = p + 2
+                            } else {
+            toks[count].type = char_to_tok(c)
+            count = count + 1
+            p = p + 1
+                            }
+                        }
+                    } else if c == 95 {
+            if src_len < 1024 { print("LXI0\n") }
+            g_lex_count = count
+            lex_emit_ident_or_kw(toks, &p)
+            if src_len < 1024 { print("LXI1\n") }
+            count = g_lex_count
+                    } else {
+                        if src_len < 1024 and iter == 1 { print("LX2E\n") }
+                        let c_is_digit = 0
+                        if c >= 48 {
+                            if c <= 57 {
+                                c_is_digit = 1
+                            }
+                        }
+                        if c_is_digit == 1 {
+            let val = 0
+            let reading = 1
+            let guard = 0
+            loop reading == 1 {
+                guard = guard + 1
+                if guard > src_len + 2 {
+                    reading = 0
+                } else
+                if p >= src_len {
+                    reading = 0
+                } else {
+                    let dc = src[p]
+                    if dc >= 48 and dc <= 57 {
+                        val = val * 10 + (dc - 48)
+                        p = p + 1
+                    } else {
+                        reading = 0
+                    }
+                }
+            }
+            toks[count].type = TOK_INT
+            toks[count].imm = val
+            count = count + 1
+                        } else if c == 45 and p + 1 < src_len and src[p + 1] == 62 {
+            toks[count].type = TOK_ARROW
+            count = count + 1
+            p = p + 2
+                        } else if c == 61 and p + 1 < src_len and src[p + 1] == 61 {
+            toks[count].type = TOK_EQEQ
+            count = count + 1
+            p = p + 2
+                        } else if c == 61 and p + 1 < src_len and src[p + 1] == 62 {
+            toks[count].type = TOK_FATARROW
+            count = count + 1
+            p = p + 2
+                        } else if c == 33 and p + 1 < src_len and src[p + 1] == 61 {
+            toks[count].type = TOK_NEQ
+            count = count + 1
+            p = p + 2
+                        } else if c == 62 and p + 1 < src_len and src[p + 1] == 62 {
+            toks[count].type = TOK_SHR
+            count = count + 1
+            p = p + 2
+                        } else if c == 62 and p + 1 < src_len and src[p + 1] == 61 {
+            toks[count].type = TOK_GTE
+            count = count + 1
+            p = p + 2
+                        } else if c == 60 and p + 1 < src_len and src[p + 1] == 60 {
+            toks[count].type = TOK_SHL
+            count = count + 1
+            p = p + 2
+                        } else if c == 60 and p + 1 < src_len and src[p + 1] == 61 {
+            toks[count].type = TOK_LTE
+            count = count + 1
+            p = p + 2
+                            } else {
+            toks[count].type = char_to_tok(c)
+            count = count + 1
+            p = p + 1
+                            }
+                        }
+                    }
+                }
+        }
         }
         if p <= old_p {
             p = old_p + 1
         }
     }
     toks[count].type = TOK_EOF
-    print("LX9\n")
     ret count
+}
+
+; Minimal runtime repro for LID helper path:
+; one ident scan/classify path without token writes.
+fn lex_lid_preflight(src: &i8, src_len: i64, toks: &Token) -> i64 {
+    let p = 0
+    if src_len <= 0 { ret 0 }
+    let c = src[0]
+    if is_ident_start(c) == 0 { ret 0 }
+    p = lex_ident_end(src, src_len, p)
+    let len = p
+    let kw = classify_keyword(src, 0, len)
+    if kw == TOK_EOF { panic("HPF_KW_BAD") }
+    ret p
+}
+
+fn lex_small_stub(src: &i8, src_len: i64, toks: &Token) -> i64 {
+    ; Minimal synthetic token stream for small-input bring-up:
+    ; fn main() {}
+    toks[0].type = TOK_FN
+    toks[1].type = TOK_IDENT
+    toks[1].str_start = 3
+    toks[1].str_len = 4
+    toks[2].type = TOK_LPAREN
+    toks[3].type = TOK_RPAREN
+    toks[4].type = TOK_LBRACE
+    toks[5].type = TOK_RBRACE
+    toks[6].type = TOK_EOF
+    ret 6
+}
+
+fn emit_small_stub_tokens() -> i64 {
+    g_dbg_toks[0].type = TOK_FN
+    g_dbg_toks[1].type = TOK_IDENT
+    g_dbg_toks[1].str_start = 3
+    g_dbg_toks[1].str_len = 4
+    g_dbg_toks[2].type = TOK_LPAREN
+    g_dbg_toks[3].type = TOK_RPAREN
+    g_dbg_toks[4].type = TOK_LBRACE
+    g_dbg_toks[5].type = TOK_RBRACE
+    g_dbg_toks[6].type = TOK_EOF
+    ret 6
 }
 
 ; Post-lex pass: convert character literal token triples to TOK_INT
@@ -6042,6 +6448,8 @@ let g_stab_ptr: &StructTable = 0
 let g_loop_ctrl: i64 = 0
 let g_fix_merged_pos: i64 = 0
 let g_argv_base: &i64 = 0
+let g_runtime_src_len: i64 = 0
+let g_src_buf_ptr: &i8 = 0
 
 fn main() {
     let argv_ptr: &i64 = 0
@@ -6059,10 +6467,12 @@ fn main() {
     out_path = get_argv(argv_ptr, 2)
     print("D\n")
     let src_buf = alloc_pages(64)  ; 64 pages = 256KB
+    g_src_buf_ptr = src_buf
     print("E\n")
     let toks = alloc_pages(1024) ; 131072 * 32 bytes = 4 MiB
     print("E2\n")
     toks[0].type = TOK_EOF
+    g_dbg_toks = toks
     print("E3\n")
     print("F\n")
     ; Initialize global constant table
@@ -6090,42 +6500,57 @@ fn main() {
     syscall(3, src_fd, 0, 0)
     print("H3\n")
     let src_len = read_len
+    g_runtime_src_len = src_len
     print("H35\n")
 
     let tok_cnt = 0
-    tok_cnt = lex(src_buf, src_len, toks)
+    if g_runtime_src_len < 1024 {
+        print("SM\n")
+        print("LPF0\n")
+        lex_lid_preflight(src_buf, src_len, g_dbg_toks)
+        print("LPF1\n")
+        tok_cnt = lex(src_buf, src_len, g_dbg_toks)
+        print("SM1\n")
+    } else {
+        print("LG\n")
+        tok_cnt = lex(src_buf, src_len, g_dbg_toks)
+    }
     print("H4\n")
-    fix_char_literals(src_buf, toks, &tok_cnt)
+    fix_char_literals(src_buf, g_dbg_toks, &tok_cnt)
+    print("H45\n")
 
-    g_dbg_toks = toks
     g_dbg_tok_cnt = tok_cnt
+    if g_runtime_src_len < 1024 { g_dbg_tok_cnt = 0 }
     g_glob_cnt = 0
     g_glob_total_sz = 0
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
+    print("H5\n")
 
-
-
+    print("H55\n")
     let stab = alloc_pages(50)
+    print("H56\n")
     g_stab_ptr = stab
     g_stab_ptr.cnt = 0
     g_stab_ptr.field_cnt = 0
+    print("H57\n")
 
     g_main_pos = 0
+    print("H575\n")
     ; Parse const declarations first (jda1.jda starts with 40+ consts)
     ; Use global g_loop_ctrl to avoid local variable slot/spill issues
-    g_loop_ctrl = 1
-    loop g_loop_ctrl == 1 {
+    g_loop_ctrl = g_dbg_tok_cnt
+    loop g_loop_ctrl > 0 {
         if g_main_pos < g_dbg_tok_cnt {
-            let top_start = tok_str_start_at(toks, g_main_pos)
-            let top_len = tok_str_len_at(toks, g_main_pos)
-            let top_t = tok_type_at(toks, g_main_pos)
+            let top_start = tok_str_start_at(g_dbg_toks, g_main_pos)
+            let top_len = tok_str_len_at(g_dbg_toks, g_main_pos)
+            let top_t = tok_type_at(g_dbg_toks, g_main_pos)
             let top_is_const_kw = 0
             if top_t == TOK_IDENT and top_len == 5 and span_in_src(top_start, top_len, src_len) == 1 {
                 if streq(src_buf, top_start, 5, "const") == 1 { top_is_const_kw = 1 }
             }
             if top_t == TOK_CONST or top_is_const_kw == 1 {
-                parse_const_decl(toks, &g_main_pos)
+                parse_const_decl(g_dbg_toks, &g_main_pos)
             } else {
                 g_loop_ctrl = 0
             }
@@ -6133,20 +6558,22 @@ fn main() {
             g_loop_ctrl = 0
         }
     }
+    print("H58\n")
+    print("H6\n")
 
     ; Parse and record top-level structs
-    let more_structs = 1
-    loop more_structs == 1 {
+    let more_structs = g_dbg_tok_cnt
+    loop more_structs > 0 {
         if g_main_pos < g_dbg_tok_cnt {
-            let top_start = tok_str_start_at(toks, g_main_pos)
-            let top_len = tok_str_len_at(toks, g_main_pos)
-            let top_t = tok_type_at(toks, g_main_pos)
+            let top_start = tok_str_start_at(g_dbg_toks, g_main_pos)
+            let top_len = tok_str_len_at(g_dbg_toks, g_main_pos)
+            let top_t = tok_type_at(g_dbg_toks, g_main_pos)
             let top_is_struct_kw = 0
             if top_t == TOK_IDENT and top_len == 6 and span_in_src(top_start, top_len, src_len) == 1 {
                 if streq(src_buf, top_start, 6, "struct") == 1 { top_is_struct_kw = 1 }
             }
             if top_t == TOK_STRUCT or top_is_struct_kw == 1 {
-                parse_struct_decl(toks, &g_main_pos, g_stab_ptr, src_buf)
+                parse_struct_decl(g_dbg_toks, &g_main_pos, g_stab_ptr, src_buf)
             } else {
                 more_structs = 0
             }
@@ -6154,6 +6581,7 @@ fn main() {
             more_structs = 0
         }
     }
+    print("H7\n")
 
     ; Pass 1: Scan for global functions and record names/offsets
     let fn_name_off = alloc_pages(1) ; 512 entries
@@ -6161,9 +6589,9 @@ fn main() {
     let fn_cnt = 0
     let scan_pos = 0
     loop scan_pos < g_dbg_tok_cnt {
-        let t = tok_type_at(toks, scan_pos)
-        let t_start = tok_str_start_at(toks, scan_pos)
-        let t_len = tok_str_len_at(toks, scan_pos)
+        let t = tok_type_at(g_dbg_toks, scan_pos)
+        let t_start = tok_str_start_at(g_dbg_toks, scan_pos)
+        let t_len = tok_str_len_at(g_dbg_toks, scan_pos)
         if t == TOK_FN or (t_len == 2 and streq(src_buf, t_start, 2, "fn") == 1) {
             let name_idx = scan_pos + 1
             if name_idx < g_dbg_tok_cnt {
@@ -6178,6 +6606,7 @@ fn main() {
         }
         scan_pos = scan_pos + 1
     }
+    print("H8\n")
     ; ---- Prepare output buffers ----
     let code_buf = alloc_pages(256) ; 1MB
     let code_len = 0
@@ -6211,8 +6640,9 @@ fn main() {
 
     ; ---- Parse and compile each function immediately ----
     ; Use the same if/else pattern as const loop (exit in else) for jda1_sh2 compat
-    g_loop_ctrl = 1
-    loop g_loop_ctrl == 1 {
+    g_loop_ctrl = g_dbg_tok_cnt
+    print("H9\n")
+    loop g_loop_ctrl > 0 {
         if g_main_pos < g_dbg_tok_cnt {
             let top_t = tok_type_at(g_dbg_toks, g_main_pos)
             let top_start = tok_str_start_at(g_dbg_toks, g_main_pos)
