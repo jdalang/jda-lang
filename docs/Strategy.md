@@ -1,8 +1,41 @@
 Strategy
 
-Latest checkpoint (2026-03-14, current session):
+Latest checkpoint (2026-03-15, current session):
 
 ✅ Done in this cycle:
+- fixed stage-1 `main()` stack overflow: `JirFunction{}` (6.3 MB) and `LowerCtx{}` (100 KB) were
+  declared inside `loop more_top == 1`; jda0 allocates full `sizeof(struct)` on the frame per
+  declaration, so each iteration grew the frame by ~6.4 MB — after ~46 functions the 524 MB ulimit
+  was exceeded; fix: move both allocations outside the loop
+- fixed argv clobber: diagnostic `print("M0\n")` was placed before `asm { out argv_ptr = rsi }`;
+  jda0's `print` built-in uses `rsi` as the write-syscall buffer → clobbers the argv base from
+  `_start`; fix: `asm { out argv_ptr = rsi }` and subsequent g_argv_base/g_src_path/g_out_path
+  assignments must be the very first statements in `main()`, before any `print()` call
+- removed all temporary diagnostic prints from stage-1 `main()` (M0/Ma/Mb/Mc/Md/Me/Mf/M1–M3)
+- confirmed `jda1_new → jda1_sh2` exits 0, produces 264,583-byte binary ✅
+
+🟡 Current blocker:
+- `jda1_sh2 → jda1_sh3` fails with:
+  `PANIC Too many functions pos=41889 t=16 ss=0 sl=0`
+  after printing function indices 0–255 (exactly 256 before the panic)
+- the function table or compile loop has a 256-function hard cap that the real `jda1.jda`
+  exceeds; either the cap in `main()`'s top-level compile loop is too small, or BUG 2 residue
+  (constants not fully resolved in jda1_sh2's own codegen) is miscounting tokens and inflating
+  the function count
+
+🟡 Next work:
+- locate the `>= 256` (or `== 256`) guard in the top-level function compile loop and raise it
+  (or replace with a panic-on-overflow check against the actual allocated table size)
+- rerun full Docker chain after the cap fix:
+  - `make stage1`  (jda0 → jda1_new)
+  - `./jda1 ../stage1/jda1.jda jda1_sh2`  (jda1_new → jda1_sh2)
+  - `./jda1_sh2 ../stage1/jda1.jda jda1_sh3`  (jda1_sh2 → jda1_sh3, currently blocked)
+- if the panic is instead caused by wrong token classification (constants unresolved in
+  jda1_sh2), trace which function index is the first one that shouldn't be counted
+
+Previous checkpoint (2026-03-14):
+
+✅ Done in that cycle:
 - replaced the old nondeterministic stage-1 crash with deterministic frontier tracking in Docker
 - fixed bounds safety in lowering use tracking paths (`mark_use` / `consume_use` style guards and related flow)
 - split `lower_fn(...)` into small helpers to remove its previous `emit slot overflow` blocker:
@@ -16,19 +49,9 @@ Latest checkpoint (2026-03-14, current session):
 - removed large non-functional debug print scaffolding from stage-1 `main()` hot path to reduce block pressure
 - fixed top-level function table hard limit mismatch (`fi >= 256`) to match allocated `i64[512]` tables
 
-🟡 Current blocker:
-- `jda1_a -> jda1_b` still fails during stage-1 selfhost compile
-- latest deterministic failure is:
-- compile reaches `F 254 main` and then panics (`pos=42116`) while compiling stage-1 `main()` itself
-- remaining failure is now late in pipeline, after most helper/lowering functions compile successfully
-
-🟡 Next work:
-- split stage-1 `main()` compile path into smaller helper chunks (same approach that fixed `lower_fn`)
-- keep only minimal deterministic frontier tracing, then remove temporary trace once `main` compiles cleanly
-- rerun full Docker chain after each tiny change:
-- `./jda0 ../stage1/jda1.jda /tmp/jda1_new`
-- `/tmp/jda1_new ../stage1/jda1.jda /tmp/jda1_b`
-- continue converting late blockers into deterministic single-function fixes until `jda1_b` is produced reliably
+Previous blocker (2026-03-14, now superseded):
+- `jda1_a -> jda1_b` compile reached `F 254 main` and panicked (`pos=42116`) while compiling
+  stage-1 `main()` itself → resolved by the stack-overflow + argv-clobber fixes above
 
 1. Stage 0 bootstrap stability
 Status: ✅ done
