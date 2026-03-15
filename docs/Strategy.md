@@ -1,8 +1,85 @@
 Strategy
 
-Latest checkpoint (2026-03-15, current session):
+Latest checkpoint (2026-03-15, session 3 — jda0 P2 crash investigation):
 
-✅ Done in this cycle:
+⚠️  Upstream changes to `jda0.asm` and `jda1.jda` introduced a new regression:
+`make stage1` (jda0 → jda1_new) now segfaults in jda0's Pass 2 at function index 97.
+
+✅ Context from session 2 (preserved for reference):
+- fixed stage-1 `main()` stack overflow: `JirFunction{}` + `LowerCtx{}` moved outside main loop
+- fixed argv clobber: `asm { out argv_ptr = rsi }` must precede any `print()` call
+- confirmed `jda1_new → jda1_sh2` exits 0, produces ~721 KB binary ✅
+- added `OP_ARGV_BASE = 31` opcode for correct argv capture in write_elf-compiled binaries
+- `jda1_sh2 → jda1_sh3` exits 0, produces output ✅
+- expanded token buffer: 65535 → 131071
+- session 2 blocker (now superseded): `print(integer)` causes OP_STRLEN segfault in write_elf
+  compiled binaries because `compile_print_inline` always treats the arg as `&i8`
+
+🔴 Current blocker — jda0 crashes in P2 at function 97 (`parse_let`):
+
+### Crash symptoms
+- `make stage1` exits 139 (SIGSEGV) in jda0 Pass 2
+- P2 debug output: `P2 0123456789+++...+` — exactly 97 characters printed → crash at function 97
+- Function 97 (0-indexed) = `parse_let` (jda1.jda line 1846)
+- Function 96 (`parse_block`) compiled successfully; crash is in the first function after it
+
+### Register state (extracted from ELF core dump)
+```
+RIP = 0x0000000020000000   ← cod_buf start (jda0's mmap'd code output buffer, COD_BUF_CAP=16 MB)
+r15 = 0xffff80001fc60b92   ← corrupted (kernel-space address, impossible user value)
+r14 = 0x81 (= 129)
+rbp = 0x00007ffffffffbf0
+rbx = 0x00007ffffffffbf8  ← rbp+8 (points to the return address slot in gen_fn's frame)
+rsp = 0x0000efffffff8000   ← valid given 500 MB ulimit stack shift
+```
+
+### Root cause hypothesis
+`gen_fn`'s return address on jda0's execution stack was overwritten with the cod_buf pointer
+value (0x20000000).  When `gen_fn` executes `ret`, it pops 0x20000000 into RIP and jumps to
+the start of the generated-code buffer — which contains the machine code emitted for jda1.jda
+function 0 (`ok`), not a valid return continuation.
+
+Evidence:
+- RIP == cod_buf_ptr exactly (0x20000000 is mmap'd at that address with `MAP_FIXED`)
+- rbx == rbp+8 (return address slot is at rbp+8 in gen_fn; unusual but observed in frame layout)
+- r15 is corrupted — r15 is used as a scratch register in `.ges_call` (`mov r15, [rax+40]`
+  for code_off) but is NOT saved/restored by gen_fn, so any caller that depends on r15 across
+  a gen_fn call would see the clobbered value
+
+### What was ruled out
+- Stale jda0_structs.asm: already reflects `Instr[256]` (BasicBlock=24600 bytes) ✅
+- Stale jda0_constants.asm: all constants match jda1.jda values ✅
+- Stack overflow from deep recursion: frame depth ~5 levels, ~150–200 bytes per frame ✅
+- loc_tbl overflow: parse_let has ~10 locals, LOC_TBL_CAP=65536 bytes ✅
+- gen_expr clobbering r12/r13: gen_expr_base saves/restores both ✅
+- Prototype handling: body_tok=0 check correctly skips prototypes ✅
+- Fall-through into .gs_emit_mmap: preceded by `jmp .gs_done` ✅
+
+### Leading suspect
+`.ges_call` in jda0.asm uses r15 as a temp for `code_off` (`mov r15, [rax+40]`) while also
+using r11 for the pre-resolved fn entry pointer.  If a call expression is emitted inside the
+body of function 97 and something in the surrounding context placed cod_buf_ptr (0x20000000)
+in r15 before gen_fn was invoked, the corrupted r15 could propagate into a stack write path
+that overwrites the return address.  Alternatively, the _start emission push/pop sequence in
+`p2_gen` or an unbalanced push/pop in `gen_addr`'s `.ga_index` section could shift the stack
+such that a later `mov` or `call` clobbers [rbp+8].
+
+🟡 Next work:
+- instrument jda0 P2 gen_fn entry/exit with a canary check (write 0xDEADBEEF to [rbp+8] on
+  entry, verify on exit) to confirm the return address is being overwritten inside gen_fn
+- add `push r15` / `pop r15` to gen_fn prologue/epilogue (r15 not currently saved; may not fix
+  the crash but will isolate whether r15 clobber is the vector)
+- audit `.ges_call` to ensure cod_buf_ptr never aliases a general-purpose scratch register that
+  could reach a stack write site
+- once the overwrite path is identified and fixed, rebuild and verify:
+  - `make stage1`  (jda0 → jda1_new) exits 0
+  - `./jda1 ../stage1/jda1.jda jda1_sh2`  (jda1_new → jda1_sh2) exits 0
+  - `./jda1_sh2 ../stage1/jda1.jda jda1_sh3`  exits 0, matches jda1_sh2 bytewise
+- after jda0 is stable again, resume session-2 `print(integer)` / panic() fix for roundtrip
+
+Latest checkpoint (2026-03-15, session 2):
+
+✅ Done in session 2:
 - fixed stage-1 `main()` stack overflow: `JirFunction{}` (6.3 MB) and `LowerCtx{}` (100 KB) were
   declared inside `loop more_top == 1`; jda0 allocates full `sizeof(struct)` on the frame per
   declaration, so each iteration grew the frame by ~6.4 MB — after ~46 functions the 524 MB ulimit
@@ -20,27 +97,8 @@ Latest checkpoint (2026-03-15, current session):
 - expanded token buffer: 65535 → 131071 (alloc_pages 512→1024, all overflow checks updated)
   — required because write_elf compiled binaries correctly lex jda1.jda's 44800 tokens
 
-🟡 Current blocker — `print(integer)` causes OP_STRLEN segfault:
-- jda1 `compile_print_inline` always generates `OP_STRLEN(val)` + `write(1, val, len)` for
-  non-string-literal arguments — it treats the argument as a `&i8` pointer
-- in jda1_new (jda0-compiled), `print(integer)` works because jda0's `print` built-in dispatches
-  on type; but in jda1_sh2 (write_elf-compiled), `print(g_panic_pos)` inside `panic()` calls
-  `strlen` on the integer value of `g_panic_pos` → SIGSEGV when g_panic_pos = 0 (null)
-- this means `panic()` SIGSEGV's before reaching `syscall(60, 1, 0, 0)`, so panics in jda1_sh2
-  do NOT exit; execution continues past the panic site → cascading failures
-- additionally, the `print(tok_cnt)` diagnostic in main() also segfaults for the same reason
-
-🟡 Next work:
-- fix `panic()` so it doesn't crash: change `print(g_panic_pos)` to either:
-  a) remove it entirely from panic() (simplest — just print msg and exit), OR
-  b) pass g_panic_pos through a helper that converts integer → decimal string then syscall-writes it
-- fix any other `print(integer)` calls throughout jda1.jda that are executed in write_elf-compiled
-  context (e.g., compile_print_inline should detect integer args and use OP_PRINT_INT or itoa)
-- rerun full Docker chain after panic() fix:
-  - `make stage1`  (jda0 → jda1_new)
-  - `./jda1 ../stage1/jda1.jda jda1_sh2`  (jda1_new → jda1_sh2)
-  - `./jda1_sh2 ../stage1/jda1.jda jda1_sh3`  (verify exits 0, produces binary)
-  - compare jda1_sh2 and jda1_sh3 bytewise to confirm self-hosting roundtrip
+Session 2 blocker (superseded by jda0 P2 crash above):
+- `print(integer)` causes OP_STRLEN segfault in write_elf-compiled binaries
 
 Previous checkpoint (2026-03-14):
 

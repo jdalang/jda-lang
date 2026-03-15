@@ -31,12 +31,12 @@ GLB_SZ           equ 48
 TOK_BUF_CAP      equ 8388608
 CST_TBL_CAP      equ 65536
 STT_TBL_CAP      equ 262144
-FN_TBL_CAP       equ 134217728
+FN_TBL_CAP       equ 268435456
 LOC_TBL_CAP      equ 65536
 GLB_TBL_CAP      equ 32768
 COD_BUF_CAP      equ 16777216
-SDT_BUF_CAP      equ 1048576
-FIX_BUF_CAP      equ 1048576
+SDT_BUF_CAP      equ 4194304
+FIX_BUF_CAP      equ 4194304
 SFX_TBL_CAP      equ 262144
 
 ; Token type constants
@@ -511,6 +511,33 @@ strncmp_mem:
     ret
 
 ; =============================================================================
+; print_rax: print RAX as decimal integer to stderr
+print_rax:
+    push    rbp
+    mov     rbp, rsp
+    sub     rsp, 32
+    mov     rbx, 10
+    lea     rcx, [rbp-1]
+    mov     byte [rcx], 0
+.pr_loop:
+    xor     rdx, rdx
+    div     rbx
+    add     dl, '0'
+    dec     rcx
+    mov     [rcx], dl
+    test    rax, rax
+    jnz     .pr_loop
+    ; print it
+    mov     rax, SYS_WRITE
+    mov     rsi, rcx
+    mov     rdi, 2          ; stderr
+    ; compute length
+    lea     rdx, [rbp-1]
+    sub     rdx, rsi
+    syscall
+    leave
+    ret
+
 ; mmap_anon: rdi=size -> rax=ptr (PROT_RW MAP_PA fd=-1)
 ; =============================================================================
 mmap_anon:
@@ -1203,6 +1230,7 @@ src_name_eq:
 ; lookup_const: r8=name_start, r9=name_len -> rax=value, rdx=1/0 (found)
 ; =============================================================================
 lookup_const:
+    push    rbx
     xor     rcx, rcx
 .lc_lp:
     cmp     rcx, [cst_cnt]
@@ -1219,16 +1247,18 @@ lookup_const:
     pop     rcx
     pop     rbx
     cmp     rax, 1
-    jne     .lc_next
+    jne     .lc_nx
     mov     rax, [rbx+16]   ; value
     mov     edx, 1
+    pop     rbx
     ret
-.lc_next:
+.lc_nx:
     inc     rcx
     jmp     .lc_lp
 .lc_no:
     xor     eax, eax
     xor     edx, edx
+    pop     rbx
     ret
 
 ; =============================================================================
@@ -1253,6 +1283,8 @@ lookup_struct:
     cmp     r9, r13         ; compare lengths first
     jne     .ls_next
     ; compare bytes
+    push    r14
+    push    r15
     mov     r14, r8         ; src offset for lookup name
     mov     r15, r12        ; src offset for stored name
     xor     rdx, rdx        ; index
@@ -1262,10 +1294,12 @@ lookup_struct:
     mov     al, [src_buf + r14 + rdx]
     mov     bl, [src_buf + r15 + rdx]
     cmp     al, bl
-    jne     .ls_next
+    jne     .ls_ne
     inc     rdx
     jmp     .ls_cmp
 .ls_found:
+    pop     r15
+    pop     r14
     mov     rax, rcx
     pop     r15
     pop     r14
@@ -1273,6 +1307,9 @@ lookup_struct:
     pop     r12
     pop     rbx
     ret
+.ls_ne:
+    pop     r15
+    pop     r14
 .ls_next:
     inc     rcx
     jmp     .ls_lp
@@ -1479,7 +1516,27 @@ p1_scan:
     jmp     .p1_let_find_eq
 .p1_let_got_eq:
     call    adv_tok         ; skip '='
-    call    adv_tok         ; skip first VALUE token
+    ; peek at the value token to see if it's a type name
+    call    get_cur_tok_ptr
+    mov     r8, [rax+8]
+    mov     r9, [rax+16]
+    push    r8
+    push    r9
+    call    lookup_struct
+    pop     r9
+    pop     r8
+    cmp     rax, -1
+    je      .p1_let_val_scalar
+    ; it is a struct type!
+    mov     [p1_glb_sid], rax
+    mov     qword [p1_glb_tkind], TK_STRUCT
+    imul    rax, rax, STR_SZ
+    mov     rdx, [stt_tbl_ptr]
+    add     rax, rdx
+    mov     rax, [rax+16]   ; struct size
+    mov     [p1_glb_esz], rax
+.p1_let_val_scalar:
+    call    adv_tok         ; skip the Type name or Value
     ; handle top-level initializers like Node{} and Node[16]
     call    cur_tok_type
     cmp     rax, TOK_LBRACE
@@ -1512,16 +1569,16 @@ p1_scan:
     jmp     .p1_let_store
 .p1_let_skip_brack_init:
     call    adv_tok         ; skip '['
-.p1_let_brack_lp:
+    call    get_cur_tok_ptr
+    mov     rax, [rax+24]   ; rax = array count (ival)
+    imul    rax, qword [p1_glb_esz]
+    mov     [p1_glb_esz], rax ; p1_glb_esz now holds total size
+    call    adv_tok         ; skip count
     call    cur_tok_type
-    cmp     rax, TOK_EOF
-    je      .p1_let_store
     cmp     rax, TOK_RBRACK
-    je      .p1_let_brack_done
-    call    adv_tok
-    jmp     .p1_let_brack_lp
-.p1_let_brack_done:
-    call    adv_tok         ; skip final ']'
+    jne     .p1_let_store
+    call    adv_tok         ; skip ']'
+    jmp     .p1_let_store
 .p1_let_store:
     mov     r8, r14
     mov     r9, r15
@@ -1992,6 +2049,7 @@ p1_scan:
     jmp     .p1_skip_ret
 .p1_proto:
     call    adv_tok         ; skip ';'
+    inc     qword [rbp-8]   ; must count the prototype too!
     jmp     .p1_loop
 .p1_no_ret:
     ; expect '{', record body start
@@ -2038,10 +2096,12 @@ p1_scan:
 ; lookup_fn: r8=ns, r9=nl -> rax=fn entry ptr, or 0 if not found
 ; =============================================================================
 lookup_fn:
-    xor     rcx, rcx
+    push    rbx
+    mov     rcx, [fn_cnt]
+    dec     rcx
 .lf_lp:
-    cmp     rcx, [fn_cnt]
-    jge     .lf_no
+    cmp     rcx, 0
+    jl      .lf_no
     mov     rax, rcx
     imul    rax, rax, FN_SZ
     mov     rbx, [fn_tbl_ptr]
@@ -2056,12 +2116,14 @@ lookup_fn:
     cmp     rax, 1
     jne     .lf_nx
     mov     rax, rbx
+    pop     rbx
     ret
 .lf_nx:
-    inc     rcx
+    dec     rcx
     jmp     .lf_lp
 .lf_no:
     xor     eax, eax
+    pop     rbx
     ret
 
 ; =============================================================================
@@ -2183,7 +2245,12 @@ add_global:
     mov     [rbx+24], r10
     mov     [rbx+32], r11
     mov     [rbx+40], r12
-    add     qword [glb_r15], 8
+    mov     r13, r12
+    cmp     r10, TK_PTR
+    jne     .ag_not_ptr
+    mov     r13, 8          ; all pointers allocate 8 bytes
+.ag_not_ptr:
+    add     qword [glb_r15], r13
     inc     qword [glb_cnt]
     ret
 
@@ -2974,8 +3041,16 @@ gen_expr_base:
     jmp     .call_arg_loop
 .call_done_args:
     call    adv_tok         ; skip ')'
+    ; --- FIX: Resolve fn target BEFORE popping r8/r9 arg registers ---
+    push    r12
+    push    r13
+    mov     r8, r12
+    mov     r9, r13
+    call    lookup_fn
+    mov     r11, rax        ; save fn entry ptr in r11
     pop     r13
     pop     r12
+    ; -----------------------------------------------------------------
     ; pop into arg regs (rdi, rsi, rdx, rcx, r8, r9)
     cmp     r14, 6
     jl      .cpop5
@@ -3011,16 +3086,10 @@ gen_expr_base:
     mov     rdi, 0x5F
     call    emit1 ; pop rdi
 .call_emit_done:
+    ; we already have fn in r11, just need to push/pop name info for the fixup if needed
     push    r12
     push    r13
     push    r14
-    mov     r8, r12
-    mov     r9, r13
-    call    lookup_fn
-    mov     r11, rax
-    pop     r14
-    pop     r13
-    pop     r12
     mov     rdi, 0xE8
     call    emit1
     cmp     r11, 0
@@ -3050,6 +3119,9 @@ gen_expr_base:
     mov     rdi, 0
     call    emit4
 .call_emit_ret:
+    pop     r14
+    pop     r13
+    pop     r12
     jmp     .maybe_binary
 
 .do_syscall_expr:
@@ -3598,13 +3670,14 @@ gen_addr:
     jne     .ga_post_loop       ; struct local
     jmp     .ga_post_loop       ; scalar/pointer: caller (.do_lvalue) loads the value
 .ga_post_nav:
-    ; Navigation follows: pointers must be derefed to get the heap address.
-    ; Struct locals stored on stack navigate from the stack address (no deref).
     cmp     qword [lv_isptr], 0
-    jne     .ga_post_do_deref   ; pointer → deref to load heap address
+    jne     .ga_post_do_deref   ; pointer -> deref
     cmp     qword [lv_sid], -1
-    jne     .ga_post_loop       ; struct local → navigate from stack addr
-    ; scalar with navigation (e.g. int used as pointer) → deref
+    je      .ga_post_do_deref   ; scalar -> deref
+    ; it is a struct or array. Is it global or local?
+    cmp     qword [lv_glb], 0
+    jne     .ga_post_loop       ; global struct is inline -> NO deref
+    ; local struct is an mmap pointer on the stack -> MUST deref!
     jmp     .ga_post_do_deref
 .ga_post_do_deref:
     ; emit: mov rax, [rax]
@@ -3841,44 +3914,56 @@ gen_syscall:
     jmp     .gs_arg_loop
 .gs_done_args:
     call    adv_tok         ; skip ')'
-    cmp     r14, 7
+    ; Syscall arguments are pushed in order: arg0, arg1, ..., argN
+    ; We must pop them in REVERSE order into the syscall registers:
+    ; arg5 -> r9
+    ; arg4 -> r8
+    ; arg3 -> r10
+    ; arg2 -> rdx
+    ; arg1 -> rsi
+    ; arg0 -> rdi
+    ; Syscall number (rax) is ALREADY pushed by the caller of gen_syscall. Wait.
+    ; gen_syscall caller (gen_stmt) calls gen_expr for the syscall number first.
+    ; So rax is the LAST thing pushed? No, the arg loop pushes them.
+    ; Let's fix this properly.
+    cmp     r14, 6
     jl      .gs_pop_r8
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x59
-    call    emit1           ; pop r9
+    call    emit1           ; pop r9 (arg5)
 .gs_pop_r8:
-    cmp     r14, 6
+    cmp     r14, 5
     jl      .gs_pop_r10
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x58
-    call    emit1           ; pop r8
+    call    emit1           ; pop r8 (arg4)
 .gs_pop_r10:
-    cmp     r14, 5
+    cmp     r14, 4
     jl      .gs_pop_rdx
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x5A
-    call    emit1           ; pop r10
+    call    emit1           ; pop r10 (arg3)
 .gs_pop_rdx:
-    cmp     r14, 4
+    cmp     r14, 3
     jl      .gs_pop_rsi
     mov     rdi, 0x5A
-    call    emit1           ; pop rdx
+    call    emit1           ; pop rdx (arg2)
 .gs_pop_rsi:
-    cmp     r14, 3
+    cmp     r14, 2
     jl      .gs_pop_rdi
     mov     rdi, 0x5E
-    call    emit1           ; pop rsi
+    call    emit1           ; pop rsi (arg1)
 .gs_pop_rdi:
-    cmp     r14, 2
+    cmp     r14, 1
     jl      .gs_pop_rax
     mov     rdi, 0x5F
-    call    emit1           ; pop rdi
+    call    emit1           ; pop rdi (arg0)
 .gs_pop_rax:
-    cmp     r14, 1
-    jl      .gs_emit_sys
+    ; The syscall number was the VERY FIRST thing pushed in gen_syscall.
+    ; So it's at the BOTTOM of the stack. We must pop it LAST into rax.
     mov     rdi, 0x58
     call    emit1           ; pop rax
 .gs_emit_sys:
@@ -4764,6 +4849,16 @@ gen_expr_stmt:
     jmp     .ges_arg_loop
 .ges_args_done:
     call    adv_tok
+    ; --- FIX: Resolve fn target BEFORE popping r8/r9 arg registers ---
+    push    r12
+    push    r13
+    mov     r8, r12
+    mov     r9, r13
+    call    lookup_fn
+    mov     r11, rax        ; save fn entry ptr in r11
+    pop     r13
+    pop     r12
+    ; -----------------------------------------------------------------
     ; pop into arg regs (descending: rcx/rdx/rsi/rdi so arg0→rdi, arg1→rsi, ...)
     cmp     r14, 6
     jl      .ges_pop5
@@ -4800,17 +4895,12 @@ gen_expr_stmt:
     call    emit1
 .ges_call:
     ; emit call with fixup
-    mov     rdi, 0xE8
-    call    emit1
     push    r12
     push    r13
     push    r14
-    mov     r8, r12
-    mov     r9, r13
-    call    lookup_fn
-    pop     r14
-    pop     r13
-    pop     r12
+    mov     rdi, 0xE8
+    call    emit1
+    mov     rax, r11        ; use pre-resolved fn in r11
     cmp     rax, 0
     je      .ges_fixup
     cmp     qword [rax+40], -1
@@ -4821,7 +4911,7 @@ gen_expr_stmt:
     sub     r15, rax
     mov     rdi, r15
     call    emit4
-    jmp     .ges_done
+    jmp     .ges_call_done
 .ges_fixup:
     mov     rax, [fix_cnt]
     imul    rax, rax, 32
@@ -4836,6 +4926,10 @@ gen_expr_stmt:
     inc     qword [fix_cnt]
     mov     rdi, 0
     call    emit4
+.ges_call_done:
+    pop     r14
+    pop     r13
+    pop     r12
     jmp     .ges_done
 
 .assign_lvalue:
@@ -5022,11 +5116,11 @@ gen_fn:
     mov     r10, TK_SCALAR
     mov     r11, -1
     mov     r12, [r13+16]   ; elem_size
-    mov     r15, [r13+24]   ; type_id
-    bt      r15, 63         ; test PTR_FLAG (bit 63) — test r15,imm64 broken in x86
+    mov     rax, [r13+24]   ; type_id (Use rax, NOT r15!)
+    bt      rax, 63         ; test PTR_FLAG (bit 63)
     jnc     .gf_param_type_done
     mov     r10, TK_PTR
-    mov     rax, r15
+    ; rax already has type_id
     shl     rax, 1
     shr     rax, 1          ; clear PTR_FLAG
     ; if scalar pointer, keep sid=-1
@@ -5221,8 +5315,8 @@ p2_gen:
     ; emit: mov eax,9 (mmap); xor edi,edi; mov esi,GLB_SIZE; mov edx,3; mov r10d,0x22; mov r8d,-1; xor r9d,r9d; syscall; mov r15,rax
     ; GLB_SIZE = [glb_r15] (total globals allocated so far + some headroom)
     mov     rax, [glb_r15]
-    add     rax, 4096       ; headroom
-    mov     r15, rax        ; save glb_size (emit1 clobbers rax)
+    add     rax, 1048576    ; 1MB headroom
+    push    rax             ; save glb_size on stack
     ; emit _start preamble
     ; mov eax, 9
     mov     rdi, 0xB8
@@ -5237,7 +5331,9 @@ p2_gen:
     ; mov esi, glb_size (imm32)
     mov     rdi, 0xBE
     call    emit1
-    mov     rdi, r15        ; restore glb_size
+    pop     rax
+    push    rax
+    mov     rdi, rax
     call    emit4
     ; mov edx, 3
     mov     rdi, 0xBA
@@ -5277,6 +5373,7 @@ p2_gen:
     call    emit1
     mov     rdi, 0xC7
     call    emit1
+    pop     rax             ; glb_size no longer needed on stack
     ; pass argv to main: lea rsi, [rsp+8]  (rsi = pointer to argv array)
     mov     rdi, 0x48
     call    emit1
@@ -5324,11 +5421,11 @@ p2_gen:
 
     ; now compile each function
 .p2_loop:
-    mov     r12, [rbp-8]
-    cmp     r12, [rbp-16]
+    mov     rax, [rbp-8]
+    cmp     rax, [rbp-16]
     jge     .p2_done
-    ; debug: print function index as '0'-'9' then '+'
-    mov     rax, r12
+    mov     r12, rax        ; r12 = current index
+    ; debug: print index
     cmp     rax, 9
     jg      .p2_dbg_plus
     add     rax, '0'
@@ -5343,17 +5440,40 @@ p2_gen:
     mov     edx, 1
     syscall
     pop     rax
+
     mov     rax, r12
     imul    rax, rax, FN_SZ
     mov     rbx, [fn_tbl_ptr]
     add     rbx, rax
+    ; Skip if no body (prototype)
+    cmp     qword [rbx+32], 0
+    je      .p2_skip_fn
     mov     rdi, rbx
     call    gen_fn
-    mov     r12, [rbp-8]
-    inc     r12
-    mov     [rbp-8], r12
+.p2_skip_fn:
+    inc     qword [rbp-8]
     jmp     .p2_loop
 .p2_done:
+    ; debug: print total code length
+    mov     rax, [cod_len]
+    call    print_rax
+    push    10
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    mov     rsi, rsp
+    mov     edx, 1
+    syscall
+    pop     rax
+    ; debug: print sdt_len
+    mov     rax, [sdt_len]
+    call    print_rax
+    push    10
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    mov     rsi, rsp
+    mov     edx, 1
+    syscall
+    pop     rax
     ; Patch call fixups
     xor     r12, r12
 .p2_fix_loop:
