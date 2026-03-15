@@ -229,13 +229,13 @@ struct VarEntry {
 struct JirFunction {
     src:        &i8
     src_len:    i64
-    blocks:     BasicBlock[32]
+    blocks:     BasicBlock[256]
     block_cnt:  i64
     vars:       VarEntry[128]
     var_cnt:    i64
     next_slot_off: i64
     next_id:    i64
-    strtab:     i8[512]
+    strtab:     i8[4096]
     strtab_pos: i64
     stab:       &StructTable
     param_cnt:  i64
@@ -732,18 +732,33 @@ fn ok(x: i64) {
 }
 
 fn lookup_const(src: &i8, name_start: i64, name_len: i64) {
+    print("LC cnt=")
+    print(g_const_cnt)
+    print(" nlen=")
+    print(name_len)
+    print("\n")
     let i = 0
     loop i < g_const_cnt {
         let cur_len = g_const_name_len_tbl[i]
         let cur_val = g_const_val_tbl[i]
         if cur_len == name_len {
             let cur_off = g_const_name_off_tbl[i]
-            if str_match(src, cur_off, name_start, name_len) == 1 {
+            let sm = str_match(src, cur_off, name_start, name_len)
+            print("LC sm=")
+            print(sm)
+            print(" i=")
+            print(i)
+            print("\n")
+            if sm == 1 {
+                print("LC HIT val=")
+                print(cur_val)
+                print("\n")
                 ret cur_val
             }
         }
         i = i + 1
     }
+    print("LC MISS ALL\n")
     ret -1
 }
 
@@ -1374,14 +1389,46 @@ fn lookup_global(name_start: i64, name_len: i64, src: &i8) -> i64 {
     ret -1
 }
 
+fn dump_globals(src: &i8) {
+    print("GLOB DUMP cnt=")
+    print(g_glob_cnt)
+    print("\n")
+    let di = 0
+    loop di < g_glob_cnt {
+        let dn = g_glob_name_off[di]
+        let dl = g_glob_name_len[di]
+        print("G")
+        print(di)
+        print(" len=")
+        print(dl)
+        print(" [")
+        syscall(1, 1, src + dn, dl)
+        print("]\n")
+        di = di + 1
+    }
+}
+
 fn lookup_global2(name_start: i64, name_len: i64, src: &i8) -> i64 {
-    if g_glob_name_off == 0 { ret -1 }
+    if g_glob_name_off == 0 { print("LG2: no table\n") ret -1 }
+    print("LG2cnt=")
+    print(g_glob_cnt)
+    print("nlen=")
+    print(name_len)
+    print("\n")
     let i = 0
     loop i < g_glob_cnt {
         let glen = g_glob_name_len[i]
         if glen == name_len {
             let goff = g_glob_name_off[i]
-            if str_match(src, name_start, goff, name_len) == 1 {
+            let sm_res = str_match(src, name_start, goff, name_len)
+            if sm_res == 0 {
+                print("LG2 MISS [")
+                syscall(1, 1, src + name_start, name_len)
+                print("] vs [")
+                syscall(1, 1, src + goff, glen)
+                print("]\n")
+            }
+            if sm_res == 1 {
                 ret i
             }
         }
@@ -2373,7 +2420,7 @@ fn new_block(jfn: &JirFunction) -> i64 {
 
 fn create_block_live(jfn: &JirFunction) -> i64 {
     let id = jfn.block_cnt
-    if id >= 32 { ret 31 }
+    if id >= 256 { ret 255 }
     jfn.blocks[id].id        = id
     jfn.blocks[id].instr_cnt = 0
     jfn.blocks[id].label_off = -1
@@ -2386,8 +2433,8 @@ fn create_block(jfn: &JirFunction) -> i64 {
     if id < 0 {
         ret 0
     }
-    if id >= 32 {
-        ret 31
+    if id >= 256 {
+        ret 255
     }
     jfn.blocks[id].id        = id
     jfn.blocks[id].instr_cnt = 0
@@ -2412,11 +2459,19 @@ fn copy_instr(dst: &Instr, src: &Instr) {
 
 fn emit(jfn: &JirFunction, bb: i64, ins: &Instr) -> i64 {
     if bb < 0 or bb >= 256 {
+        print("EMIT_BB_OVF bb=")
+        print(bb)
+        print("\n")
         panic("emit bb overflow")
         ret -1
     }
     let slot = jfn.blocks[bb].instr_cnt
     if slot < 0 or slot >= 256 {
+        print("EMIT_SLOT_OVF slot=")
+        print(slot)
+        print(" bb=")
+        print(bb)
+        print("\n")
         panic("emit slot overflow")
         ret -1
     }
@@ -2467,17 +2522,35 @@ fn emit_strlit_raw(jfn: &JirFunction, bb: i64, str_start: i64, str_len: i64) -> 
     let out_len = 0
     loop i < str_len {
         let spos = jfn.strtab_pos
-        if spos < 511 {
+        if spos < 4095 {
             let src_i = str_start + i
             let c = load_i8_at(jfn.src, src_i)
-            jfn.strtab[spos] = c
-            jfn.strtab_pos = spos + 1
-            out_len = out_len + 1
+            let consumed = 0
+            if c == 92 {
+                if i + 1 < str_len {
+                    let nc = load_i8_at(jfn.src, src_i + 1)
+                    let esc = try_escape(c, nc)
+                    if esc != -1 {
+                        jfn.strtab[spos] = esc
+                        jfn.strtab_pos = spos + 1
+                        out_len = out_len + 1
+                        i = i + 2
+                        consumed = 1
+                    }
+                }
+            }
+            if consumed == 0 {
+                jfn.strtab[spos] = c
+                jfn.strtab_pos = spos + 1
+                out_len = out_len + 1
+                i = i + 1
+            }
+        } else {
+            i = i + 1
         }
-        i = i + 1
     }
     let end_pos = jfn.strtab_pos
-    if end_pos < 511 {
+    if end_pos < 4095 {
         jfn.strtab[end_pos] = 0
         jfn.strtab_pos = end_pos + 1
     }
@@ -3101,7 +3174,10 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
     let slot = lookup_slot_name(jfn, t_start, t_len)
     print("P4 slot=\n")
     if slot == -1 {
-        print("P5\n")
+        print("P5 ident=[")
+        syscall(1, 1, src + t_start, t_len)
+        print("]\n")
+        dump_globals(src)
         let gi = lookup_global2(t_start, t_len, src)
         if gi != -1 {
             pos[0] = pos[0] + 1
@@ -4910,6 +4986,7 @@ fn lower_print_int(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
 }
 
 fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
     let nr_r = get_or_load(ctx.ra, out, pos, ins.operand0)
     emit_push_r(out, pos, nr_r)
@@ -4925,12 +5002,14 @@ fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_pop_r(out, pos, PHYS_RAX)
     emit_syscall_instr(out, pos)
     if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
-        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
         emit_restore_pool(ctx.ra, out, pos)
-        if dst != PHYS_RAX { emit_mov_rr(out, pos, dst, PHYS_RAX) }
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
     } else {
         emit_restore_pool(ctx.ra, out, pos)
     }
+    emit_pop_r(out, pos, PHYS_R12)
     consume_use(ctx, ins.operand0)
     consume_use(ctx, ins.operand1)
     consume_use(ctx, ins.operand2)
@@ -5840,10 +5919,10 @@ let g_src_path: &i8 = 0
 let g_out_path: &i8 = 0
 
 fn main() {
-    let base_ptr = 0
-    asm { out base_ptr = rbp }
+    let argv_ptr: &i64 = 0
+    asm { out argv_ptr = rsi }
+    g_argv_base = argv_ptr
     print("A\n")
-    g_argv_base = base_ptr + 24
     g_src_path = g_argv_base[1]
     g_out_path = g_argv_base[2]
     print("JDA1_START\n")
@@ -5870,21 +5949,15 @@ fn main() {
     print("J5\n")
 
     let src_fd = syscall(2, g_src_path, 0, 0)
-    print("J6 fd=\n")
-    print(src_fd)
-    print("\n")
+    print("J6\n")
     let src_len = syscall(0, src_fd, src_buf, 262144)  ; Read up to 256KB
-    print("J7 len=\n")
-    print(src_len)
-    print("\n")
+    print("J7\n")
     syscall(3, src_fd, 0, 0)
 
     let tok_cnt = 0
     g_lex_out_toks = toks
     tok_cnt = lex(src_buf, src_len)
-    print("LEX DONE tok_cnt=")
-    print(tok_cnt)
-    print("\n")
+    print("LEX DONE\n")
     fix_char_literals(src_buf, toks, &tok_cnt)
 
     g_dbg_toks = toks
@@ -5894,20 +5967,7 @@ fn main() {
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
 
-    print("DEBUG TOKENS:\n")
-    let d_i = 0
-    loop d_i < 5 {
-        print("T")
-        print(d_i)
-        print(" type=")
-        print(tok_type_at(toks, d_i))
-        print(" len=")
-        print(tok_str_len_at(toks, d_i))
-        print(" str=")
-        syscall(1, 1, src_buf + tok_str_start_at(toks, d_i), tok_str_len_at(toks, d_i))
-        print("\n")
-        d_i = d_i + 1
-    }
+
 
     let stab = alloc_pages(50)
     g_stab_ptr = stab
@@ -5915,9 +5975,11 @@ fn main() {
     g_stab_ptr.field_cnt = 0
 
     let pos = 0
+    print("PRE-CONST\n")
     ; Parse const declarations first (jda1.jda starts with 40+ consts)
     let more_consts = 1
     loop more_consts == 1 {
+        print("CI\n")
         if pos < tok_cnt {
             let top_start = tok_str_start_at(toks, pos)
             let top_len = tok_str_len_at(toks, pos)
@@ -5936,6 +5998,7 @@ fn main() {
         }
     }
 
+    print("POST-CONST\n")
     ; Parse and record top-level structs
     let more_structs = 1
     loop more_structs == 1 {
@@ -6009,14 +6072,8 @@ fn main() {
 
     ; ---- Allocate JirFunction and LowerCtx once, reuse per function ----
     let jfn_tmp = JirFunction{}
-    print("jfn_tmp=")
-    print(jfn_tmp)
-    print("\n")
     let jfn = jfn_tmp
     let ctx_tmp = LowerCtx{}
-    print("ctx_tmp=")
-    print(ctx_tmp)
-    print("\n")
     let ctx = ctx_tmp
 
     ; ---- Parse and compile each function immediately ----
@@ -6048,9 +6105,6 @@ fn main() {
                 let fn_tok_pos = pos
                 let cur_name_off = tok_str_start_at(g_dbg_toks, pos + 1)
                 let cur_name_len = tok_str_len_at(g_dbg_toks, pos + 1)
-                print("FENTER name off=")
-                print(cur_name_off)
-                print("\n")
                 print("FENTER name str=")
                 syscall(1, 1, src_buf + cur_name_off, cur_name_len)
                 print("\n")
@@ -6065,9 +6119,6 @@ fn main() {
                     }
                     mi = mi + 1
                 }
-                print("FENTER fi=")
-                print(fi)
-                print("\n")
                 if fi == -1 {
                     if cur_name_len == 4 {
                         if streq(src_buf, cur_name_off, 4, "main") == 1 { fi = 999 }
@@ -6203,9 +6254,7 @@ fn main() {
                     jfn.strtab_pos = 0
                     g_dbg_fi = fi
                     let cb = create_block_live(jfn)
-                    print("F21 cb=")
-                    print(cb)
-                    print("\n")
+                    print("F21\n")
                     live_compile_block(g_dbg_toks, &pos, g_stab_ptr, src_buf, jfn, cb)
                     g_dbg_fi = 0
                     if tok_type_at(g_dbg_toks, pos) == TOK_RBRACE {
