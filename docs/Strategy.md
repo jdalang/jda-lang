@@ -1,5 +1,54 @@
 Strategy
 
+Latest checkpoint (2026-03-16, session 5 — spill collision fixed, fn-scan segfault):
+
+✅ Done in session 5:
+- confirmed root cause of const-loop infinite spin: **register spill / local-slot collision**
+  - jda1's regalloc starts spill slots at `[rbp-8]`, `[rbp-16]`, …
+  - local variables (via `alloc_slot`) also started at small positive offsets from 0, which after
+    negation landed in the same range — spills overwrote locals on every allocation
+  - fix: `jfn.next_slot_off = 65536` in the function-reset block (line 6165) pushes ALL local
+    variable slots beyond the spill zone (`[rbp-65544]` and down); spills stay in `[rbp-8..72]`
+  - the fix was already in jda1.jda but jda1_sh2_new was stale (compiled before the fix);
+    rebuild (jda0→jda1→jda1_sh2_new) confirmed it resolves the TKCNT_ZERO / CI infinite loop
+- confirmed jda1_sh2_new now reaches and passes POST-CONST and STRDONE ✅
+  - const-parsing loop exits correctly after processing all `const` declarations
+  - struct-parsing loop exits correctly after processing all `struct` declarations
+- identified next crash: segfault in the fn-name scan loop
+  (`loop scan_pos < tok_cnt`) inside jda1_sh2_new's `main()`; crash occurs mid-loop, after
+  many SL iterations, before SCAN_DONE — exact crash point not yet pinned
+
+🔴 Current blocker — segfault inside fn-scan loop in jda1_sh2_new
+
+### What happens
+jda1_sh2_new processes jda1.jda through LEX, const-scan, and struct-scan successfully.
+It then enters the fn-name scan loop (`loop scan_pos < tok_cnt`). The loop runs many
+iterations (SL prints) but crashes with SIGSEGV before the loop exits. SCAN_DONE never
+prints.
+
+### Candidates
+- **A — tok_type_at / tok_str_start_at / tok_str_len_at OOB**: `scan_pos` might exceed a valid
+  index into `toks` if `tok_cnt` is wrong (e.g., stale local slot with wrong value), causing
+  `toks[scan_pos]` to read unmapped memory.
+- **B — fn_name_off store OOB**: if `fn_cnt` is wrong (slot collision), the guard `fn_cnt < 512`
+  might not fire and `fn_name_off[fn_cnt]` writes past the 4 KB alloc_pages(1) buffer.
+- **C — streq null dereference**: `streq(src_buf, t_start, 2, "fn")` — if `t_start` is 0 or
+  out-of-range for `src_buf`, the byte reads inside `streq` could fault.
+- **D — residual slot collision in scan body**: the scan body locals (`t`, `t_start`, `t_len`,
+  `name_idx`) are compiled with `jfn.next_slot_off = 65536` but if any intermediate spill still
+  lands in the local zone, it could corrupt a pointer.
+
+🟡 Next work:
+- add print("SCAN_BODY\n") inside each branch of the scan loop to pin the crash to a specific
+  statement
+- print tok_cnt (as char by printing each digit via syscall) to verify the value is correct
+  (~44000 expected); if it's garbage, the local-slot for tok_cnt is wrong
+- print fn_cnt after each fn discovery to verify it stays < 512
+- once SCAN_DONE fires: check alloc_pages for code/strtab/glob buffers, then the main compile
+  loop (LOOPCHECK / FENTER / POSTLOWER sequence)
+
+---
+
 Latest checkpoint (2026-03-16, session 4 — selfhost inline-compile bring-up):
 
 ✅ Done in session 4:
