@@ -1,5 +1,33 @@
 Strategy
 
+Latest checkpoint (2026-03-19, session 7 — stage2 lexer deterministic blocker):
+
+✅ Done in session 7:
+- verified current pipeline state in Docker with one-shot containers (`docker run --rm`)
+- fixed source length bound in stage1 `main()`:
+  - changed `src_len` from null-scan logic to direct `read_len`
+  - this removed the previous unbounded source scan risk from non-null-terminated read buffers
+- narrowed `jda1_b` failure from "silent hang at `LX0`" to deterministic lexer-identifier-path failure using probes
+
+🔴 Current blocker:
+- `jda0 -> jda1_a` ✅
+- `jda1_a -> jda1_b` ✅
+- `jda1_b -> hello.jda` ❌
+  - current signature:
+    - prints `LX0`, `LTOP`, `LCHAR`, `LID`
+    - then `PANIC Token buffer overflow`
+  - this is now reproducible and localized to the identifier tokenization path inside `lex(...)`
+
+🟡 Next work:
+- remove temporary `L*` probes once the identifier-path fix is stable
+- simplify/replace the identifier branch in `lex(...)` with the least nested control flow that still preserves token correctness
+- rerun full chain after each tiny change:
+  - `./jda0 ../stage1/jda1.jda /tmp/jda1_a`
+  - `/tmp/jda1_a ../stage1/jda1.jda /tmp/jda1_b`
+  - `/tmp/jda1_b ../../examples/hello.jda /tmp/hello_sh2`
+  - `/tmp/hello_sh2`
+- once `hello` passes from `jda1_b`, continue to next self-host stage and remove diagnostic scaffolding
+
 Latest checkpoint (2026-03-16, session 6 — probe cleanup, jda1_sh2_fresh scan segfault):
 
 ✅ Done in session 6:

@@ -294,6 +294,9 @@ let g_const_cnt = 0
 let g_dbg_fi = 0
 let g_dbg_toks: &Token = 0
 let g_dbg_tok_cnt = 0
+let g_scan_tok_cnt = 0
+let g_more_top = 0
+let g_main_pos = 0
 let g_panic_pos = 0
 let g_cur_fn_name_start = 0
 let g_cur_fn_name_len = 0
@@ -319,7 +322,6 @@ let g_cmp_name_start = 0
 let g_cmp_name_len = 0
 let g_lex_count_ptr = 0
 let g_lex_count = 0
-let g_lex_out_toks: &Token = 0
 let g_lex_src_len = 0
 let g_lex_src_ptr: &i8 = 0
 let g_lex_pos_i = 0
@@ -431,59 +433,59 @@ fn lex_mark_string_start() {
     lex_inc_pos_i()
 }
 
-fn lex_emit_marked_string() {
+fn lex_emit_marked_string(toks: &Token) {
     let len = g_lex_pos_i - g_cmp_name_start
     if g_lex_count >= 131071 { panic("Token buffer overflow") }
     let idx = g_lex_count
-    g_lex_out_toks[idx].type = TOK_STR
-    g_lex_out_toks[idx].str_start = g_cmp_name_start
-    g_lex_out_toks[idx].str_len = len
+    toks[idx].type = TOK_STR
+    toks[idx].str_start = g_cmp_name_start
+    toks[idx].str_len = len
     g_lex_count = g_lex_count + 1
 }
 
-fn lex_handle_gt_next(pos: &i64) {
+fn lex_handle_gt_next(toks: &Token, pos: &i64) {
     let next = load_i64_at0(pos)
     let nxt = load_i8_at(g_lex_src_ptr, next + 1)
     if nxt == 62 {
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = TOK_SHR
+        toks[g_lex_count].type = TOK_SHR
         g_lex_count = g_lex_count + 1
         inc_i64_at0_twice(pos)
     } else if nxt == 61 {
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = TOK_GTE
+        toks[g_lex_count].type = TOK_GTE
         g_lex_count = g_lex_count + 1
         inc_i64_at0_twice(pos)
     } else {
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = char_to_tok(62)
+        toks[g_lex_count].type = char_to_tok(62)
         g_lex_count = g_lex_count + 1
         inc_i64_at0(pos)
     }
 }
 
-fn lex_handle_lt_next(pos: &i64) {
+fn lex_handle_lt_next(toks: &Token, pos: &i64) {
     let next = load_i64_at0(pos)
     let nxt = load_i8_at(g_lex_src_ptr, next + 1)
     if nxt == 60 {
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = TOK_SHL
+        toks[g_lex_count].type = TOK_SHL
         g_lex_count = g_lex_count + 1
         inc_i64_at0_twice(pos)
     } else if nxt == 61 {
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = TOK_LTE
+        toks[g_lex_count].type = TOK_LTE
         g_lex_count = g_lex_count + 1
         inc_i64_at0_twice(pos)
     } else {
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = char_to_tok(60)
+        toks[g_lex_count].type = char_to_tok(60)
         g_lex_count = g_lex_count + 1
         inc_i64_at0(pos)
     }
 }
 
-fn lex_emit_ident_or_kw(src: &i8, src_len: i64, pos: &i64) {
+fn lex_emit_ident_or_kw(toks: &Token, src: &i8, src_len: i64, pos: &i64) {
     let start = pos[0]
     let keep_ident = 1
     loop keep_ident == 1 {
@@ -502,10 +504,33 @@ fn lex_emit_ident_or_kw(src: &i8, src_len: i64, pos: &i64) {
     let kw = classify_keyword(src, start, len)
     if g_lex_count >= 131071 { panic("Token buffer overflow") }
     let idx = g_lex_count
-    g_lex_out_toks[idx].type = kw
-    g_lex_out_toks[idx].str_start = start
-    g_lex_out_toks[idx].str_len = len
+    toks[idx].type = kw
+    toks[idx].str_start = start
+    toks[idx].str_len = len
     g_lex_count = g_lex_count + 1
+}
+
+fn lex_ident_end(src: &i8, src_len: i64, start: i64) -> i64 {
+    let p = start
+    let keep_ident = 1
+    let guard = 0
+    loop keep_ident == 1 {
+        guard = guard + 1
+        if guard > src_len + 2 {
+            keep_ident = 0
+        } else
+        if p >= src_len {
+            keep_ident = 0
+        } else {
+            let ic = src[p]
+            if (ic >= 97 and ic <= 122) or (ic >= 65 and ic <= 90) or (ic >= 48 and ic <= 57) or ic == 95 {
+                p = p + 1
+            } else {
+                keep_ident = 0
+            }
+        }
+    }
+    ret p
 }
 
 fn tok_type_at0(toks: &Token, pos: &i64) {
@@ -667,6 +692,15 @@ fn panic(msg: &i8) {
     print(msg)
     print("\n")
     syscall(60, 1, 0, 0)
+}
+
+fn cstr_len_max(buf: &i8, max_len: i64) -> i64 {
+    let n = 0
+    loop n < max_len {
+        if buf[n] == 0 { ret n }
+        n = n + 1
+    }
+    ret n
 }
 
 fn streq(src: &i8, start: i64, len: i64, kw: &i8) {
@@ -898,77 +932,77 @@ fn emit_lex_tok(out_toks: &Token, count: &i64, tok: i32) {
     inc_i64_at0(count)
 }
 
-fn lex_handle_minus(pos: &i64) {
+fn lex_handle_minus(toks: &Token, pos: &i64) {
     let next = load_i64_at0(pos)
     if next + 1 < g_lex_src_len {
         let nxt = load_i8_at(g_lex_src_ptr, next + 1)
         if nxt == 62 {
             if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = TOK_ARROW
+            toks[g_lex_count].type = TOK_ARROW
             g_lex_count = g_lex_count + 1
             inc_i64_at0_twice(pos)
         } else {
             if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = char_to_tok(45)
+            toks[g_lex_count].type = char_to_tok(45)
             g_lex_count = g_lex_count + 1
             inc_i64_at0(pos)
         }
     } else {
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = char_to_tok(45)
+        toks[g_lex_count].type = char_to_tok(45)
         g_lex_count = g_lex_count + 1
         inc_i64_at0(pos)
     }
 }
 
-fn lex_handle_eq(pos: &i64) {
+fn lex_handle_eq(toks: &Token, pos: &i64) {
     let next = load_i64_at0(pos)
     if next + 1 < g_lex_src_len {
         let nxt = load_i8_at(g_lex_src_ptr, next + 1)
         if nxt == 61 {
             if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = TOK_EQEQ
+            toks[g_lex_count].type = TOK_EQEQ
             g_lex_count = g_lex_count + 1
             inc_i64_at0_twice(pos)
             ret
         }
         if nxt == 62 {
             if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = TOK_FATARROW
+            toks[g_lex_count].type = TOK_FATARROW
             g_lex_count = g_lex_count + 1
             inc_i64_at0_twice(pos)
             ret
         }
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = char_to_tok(61)
+        toks[g_lex_count].type = char_to_tok(61)
         g_lex_count = g_lex_count + 1
         inc_i64_at0(pos)
         ret
     }
     if g_lex_count >= 131071 { panic("Token buffer overflow") }
-    g_lex_out_toks[g_lex_count].type = char_to_tok(61)
+    toks[g_lex_count].type = char_to_tok(61)
     g_lex_count = g_lex_count + 1
     inc_i64_at0(pos)
 }
 
-fn lex_handle_bang(pos: &i64) {
+fn lex_handle_bang(toks: &Token, pos: &i64) {
     let next = load_i64_at0(pos)
     if next + 1 < g_lex_src_len {
         let nxt = load_i8_at(g_lex_src_ptr, next + 1)
         if nxt == 61 {
             if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = TOK_NEQ
+            toks[g_lex_count].type = TOK_NEQ
             g_lex_count = g_lex_count + 1
             inc_i64_at0_twice(pos)
         } else {
             if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = char_to_tok(33)
+            toks[g_lex_count].type = char_to_tok(33)
             g_lex_count = g_lex_count + 1
             inc_i64_at0(pos)
         }
     } else {
         if g_lex_count >= 131071 { panic("Token buffer overflow") }
-        g_lex_out_toks[g_lex_count].type = char_to_tok(33)
+        toks[g_lex_count].type = char_to_tok(33)
         g_lex_count = g_lex_count + 1
         inc_i64_at0(pos)
     }
@@ -994,54 +1028,54 @@ fn lex_try_space_or_comment(src: &i8, src_len: i64, c: i8) -> i64 {
     ret 1
 }
 
-fn lex_try_string(c: i8) -> i64 {
+fn lex_try_string(toks: &Token, c: i8) -> i64 {
     if c != 34 { ret 0 }
     lex_mark_string_start()
     lex_skip_string_body()
-    lex_emit_marked_string()
+    lex_emit_marked_string(toks)
     if g_lex_pos_i < g_lex_src_len {
         lex_inc_pos_i()
     }
     ret 1
 }
 
-fn lex_try_int(c: i8) -> i64 {
+fn lex_try_int(toks: &Token, c: i8) -> i64 {
     if is_digit(c) == 0 { ret 0 }
     let val = lex_scan_int(&g_lex_pos_i)
     let out_idx = g_lex_count
     if out_idx >= 131071 { panic("Token buffer overflow") }
-    g_lex_out_toks[out_idx].type = TOK_INT
-    g_lex_out_toks[out_idx].imm = val
+    toks[out_idx].type = TOK_INT
+    toks[out_idx].imm = val
     g_lex_count = g_lex_count + 1
     ret 1
 }
 
-fn lex_try_ident(src: &i8, src_len: i64, c: i8) -> i64 {
+fn lex_try_ident(toks: &Token, src: &i8, src_len: i64, c: i8) -> i64 {
     if is_ident_start(c) == 0 { ret 0 }
-    lex_emit_ident_or_kw(src, src_len, &g_lex_pos_i)
+    lex_emit_ident_or_kw(toks, src, src_len, &g_lex_pos_i)
     ret 1
 }
 
-fn lex_try_op(c: i8) -> i64 {
+fn lex_try_op(toks: &Token, c: i8) -> i64 {
     if c == 45 {
-        lex_handle_minus(&g_lex_pos_i)
+        lex_handle_minus(toks, &g_lex_pos_i)
         ret 1
     }
     if c == 61 {
-        lex_handle_eq(&g_lex_pos_i)
+        lex_handle_eq(toks, &g_lex_pos_i)
         ret 1
     }
     if c == 33 {
-        lex_handle_bang(&g_lex_pos_i)
+        lex_handle_bang(toks, &g_lex_pos_i)
         ret 1
     }
     if c == 62 {
         let next = g_lex_pos_i
         if next + 1 < g_lex_src_len {
-            lex_handle_gt_next(&g_lex_pos_i)
+            lex_handle_gt_next(toks, &g_lex_pos_i)
         } else {
             if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = char_to_tok(62)
+            toks[g_lex_count].type = char_to_tok(62)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + 1
         }
@@ -1050,10 +1084,10 @@ fn lex_try_op(c: i8) -> i64 {
     if c == 60 {
         let next = g_lex_pos_i
         if next + 1 < g_lex_src_len {
-            lex_handle_lt_next(&g_lex_pos_i)
+            lex_handle_lt_next(toks, &g_lex_pos_i)
         } else {
             if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = char_to_tok(60)
+            toks[g_lex_count].type = char_to_tok(60)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + 1
         }
@@ -1062,32 +1096,159 @@ fn lex_try_op(c: i8) -> i64 {
     ret 0
 }
 
-fn lex(src: &i8, src_len: i64) -> i32 {
-    g_lex_pos_i = 0
-    g_lex_count = 0
-    g_lex_src_len = src_len
-    g_lex_src_ptr = src
-    let p_local = g_lex_pos_i
-    let l_local = src_len
-    loop p_local < l_local {
-        g_lex_pos_i = p_local
-        let c = src[p_local]
-        if lex_try_space_or_comment(src, l_local, c) == 1 {
-        } else if lex_try_string(c) == 1 {
-        } else if lex_try_int(c) == 1 {
-        } else if lex_try_ident(src, l_local, c) == 1 {
-        } else if lex_try_op(c) == 1 {
+fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
+    print("LX0\n")
+    if src_len > 262144 { panic("SRC_LEN_BIG") }
+    let p = 0
+    let count = 0
+    let iter = 0
+    loop p < src_len {
+        if p == 0 { print("LTOP\n") }
+        iter = iter + 1
+        if iter == 1 and count != 0 { panic("COUNT_EARLY") }
+        if iter > src_len + 16 { panic("LEX_LOOP") }
+        let old_p = p
+        let c = src[p]
+        if p == 0 { print("LCHAR\n") }
+        let c_is_space = 0
+        if c == 32 or c == 10 or c == 9 or c == 13 { c_is_space = 1 }
+        if c_is_space == 1 {
+            if p == 0 { print("LSP\n") }
+            p = p + 1
+        } else if c == 59 {
+            if p == 0 { print("LCOM\n") }
+            p = p + 1
+            let in_comment = 1
+            let guard = 0
+            loop in_comment == 1 {
+                guard = guard + 1
+                if guard > src_len + 2 {
+                    in_comment = 0
+                } else
+                if p >= src_len {
+                    in_comment = 0
+                } else if src[p] == 10 {
+                    in_comment = 0
+                } else {
+                    p = p + 1
+                }
+            }
+        } else if c == 34 {
+            if p == 0 { print("LSTR\n") }
+            let start = p + 1
+            p = p + 1
+            let scanning = 1
+            let guard = 0
+            loop scanning == 1 {
+                guard = guard + 1
+                if guard > src_len + 2 {
+                    scanning = 0
+                } else
+                if p >= src_len {
+                    scanning = 0
+                } else {
+                    let sc = src[p]
+                    if sc == 34 {
+                        scanning = 0
+                    } else if sc == 92 {
+                        p = p + 1
+                        if p < src_len { p = p + 1 }
+                    } else {
+                        p = p + 1
+                    }
+                }
+            }
+            toks[count].type = TOK_STR
+            toks[count].str_start = start
+            toks[count].str_len = p - start
+            count = count + 1
+            if p < src_len and src[p] == 34 {
+                p = p + 1
+            }
+        } else if c >= 48 and c <= 57 {
+            if p == 0 { print("LINT\n") }
+            let val = 0
+            let reading = 1
+            let guard = 0
+            loop reading == 1 {
+                guard = guard + 1
+                if guard > src_len + 2 {
+                    reading = 0
+                } else
+                if p >= src_len {
+                    reading = 0
+                } else {
+                    let dc = src[p]
+                    if dc >= 48 and dc <= 57 {
+                        val = val * 10 + (dc - 48)
+                        p = p + 1
+                    } else {
+                        reading = 0
+                    }
+                }
+            }
+            toks[count].type = TOK_INT
+            toks[count].imm = val
+            count = count + 1
+        } else if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95 {
+            if p == 0 { print("LID\n") }
+            g_lex_count = count
+            lex_emit_ident_or_kw(toks, src, src_len, &p)
+            count = g_lex_count
+            if p == 2 { print("LID2\n") }
+        } else if c == 45 and p + 1 < src_len and src[p + 1] == 62 {
+            if p == 0 { print("LAR\n") }
+            toks[count].type = TOK_ARROW
+            count = count + 1
+            p = p + 2
+        } else if c == 61 and p + 1 < src_len and src[p + 1] == 61 {
+            if p == 0 { print("LEQEQ\n") }
+            toks[count].type = TOK_EQEQ
+            count = count + 1
+            p = p + 2
+        } else if c == 61 and p + 1 < src_len and src[p + 1] == 62 {
+            if p == 0 { print("LFAT\n") }
+            toks[count].type = TOK_FATARROW
+            count = count + 1
+            p = p + 2
+        } else if c == 33 and p + 1 < src_len and src[p + 1] == 61 {
+            if p == 0 { print("LNEQ\n") }
+            toks[count].type = TOK_NEQ
+            count = count + 1
+            p = p + 2
+        } else if c == 62 and p + 1 < src_len and src[p + 1] == 62 {
+            if p == 0 { print("LSHR\n") }
+            toks[count].type = TOK_SHR
+            count = count + 1
+            p = p + 2
+        } else if c == 62 and p + 1 < src_len and src[p + 1] == 61 {
+            if p == 0 { print("LGTE\n") }
+            toks[count].type = TOK_GTE
+            count = count + 1
+            p = p + 2
+        } else if c == 60 and p + 1 < src_len and src[p + 1] == 60 {
+            if p == 0 { print("LSHL\n") }
+            toks[count].type = TOK_SHL
+            count = count + 1
+            p = p + 2
+        } else if c == 60 and p + 1 < src_len and src[p + 1] == 61 {
+            if p == 0 { print("LLTE\n") }
+            toks[count].type = TOK_LTE
+            count = count + 1
+            p = p + 2
         } else {
-            if g_lex_count >= 131071 { panic("Token buffer overflow") }
-            g_lex_out_toks[g_lex_count].type = char_to_tok(c)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + 1
+            if p == 0 { print("LOTH\n") }
+            toks[count].type = char_to_tok(c)
+            count = count + 1
+            p = p + 1
         }
-        p_local = g_lex_pos_i
+        if p <= old_p {
+            p = old_p + 1
+        }
     }
-    if g_lex_count >= 131071 { panic("Token buffer overflow") }
-    g_lex_out_toks[g_lex_count].type = TOK_EOF
-    ret g_lex_count
+    toks[count].type = TOK_EOF
+    print("LX9\n")
+    ret count
 }
 
 ; Post-lex pass: convert character literal token triples to TOK_INT
@@ -1386,15 +1547,7 @@ fn lookup_global2(name_start: i64, name_len: i64, src: &i8) -> i64 {
         let glen = g_glob_name_len[i]
         if glen == name_len {
             let goff = g_glob_name_off[i]
-            let sm_res = str_match(src, name_start, goff, name_len)
-            if sm_res == 0 {
-                print("LG2 MISS [")
-                syscall(1, 1, src + name_start, name_len)
-                print("] vs [")
-                syscall(1, 1, src + goff, glen)
-                print("]\n")
-            }
-            if sm_res == 1 {
+            if str_match(src, name_start, goff, name_len) == 1 {
                 ret i
             }
         }
@@ -2612,7 +2765,7 @@ fn try_compile_field_store_inline(toks: &Token, pos: &i64, stab: &StructTable, s
         if gi0 != -1 {
             base_stype = g_glob_stype[gi0]
             base_id = emit_gaddr(jfn, bb, gi0)
-            if g_glob_is_addr[gi0] == 0 {
+            if g_glob_is_addr[gi0] == 1 {
                 let ldg0 = Instr{}
                 ldg0.op = OP_LOAD_MEM
                 ldg0.operand0 = base_id
@@ -2663,7 +2816,7 @@ fn try_compile_index_store_inline(toks: &Token, pos: &i64, stab: &StructTable, s
         let gi2 = lookup_global2(name_start, name_len, src)
         if gi2 != -1 {
             base_id = emit_gaddr(jfn, bb, gi2)
-            if g_glob_is_addr[gi2] == 0 {
+            if g_glob_is_addr[gi2] == 1 {
                 let ldg = Instr{}
                 ldg.op = OP_LOAD_MEM
                 ldg.operand0 = base_id
@@ -2893,14 +3046,11 @@ fn is_term_tok(tok: i32) -> i64 {
 }
 
 fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    print("EXPR1\n")
     ret codegen_or_inline(toks, pos, stab, src, jfn, bb)
 }
 
 fn codegen_or_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    print("OR1\n")
     let left_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
-    print("OR2\n")
     loop {
         let op = tok_type_at(toks, pos[0])
         if op != TOK_OR and op != TOK_PIPE {
@@ -2915,9 +3065,7 @@ fn codegen_or_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn:
 }
 
 fn codegen_and_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    print("AND1\n")
     let left_id = codegen_eq_inline(toks, pos, stab, src, jfn, bb)
-    print("AND2\n")
     loop {
         let op = tok_type_at(toks, pos[0])
         if op != TOK_AND and op != TOK_AMP {
@@ -2932,9 +3080,7 @@ fn codegen_and_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
 }
 
 fn codegen_eq_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    print("EQ1\n")
     let left_id = codegen_rel_inline(toks, pos, stab, src, jfn, bb)
-    print("EQ2\n")
     loop {
         let op = tok_type_at(toks, pos[0])
         if op != TOK_EQEQ and op != TOK_NEQ {
@@ -3102,23 +3248,16 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                 expr_id = emit(jfn, bb, &ld)
             }
         } else if tok_type == TOK_LBRACK {
-            print("X1\n")
             pos[0] = pos[0] + 1
             let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-            print("X2\n")
             expect(toks, pos, TOK_RBRACK)
-            print("X3\n")
             let elem_sz = emit_const(jfn, bb, TYPE_I64, 8)
-            print("X4\n")
             let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
-            print("X5\n")
             let addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
-            print("X6\n")
             let ld = Instr{}
             ld.op = OP_LOAD_MEM
             ld.operand0 = addr
             expr_id = emit(jfn, bb, &ld)
-            print("X7\n")
         } else {
             ret expr_id
         }
@@ -3127,30 +3266,19 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
 }
 
 fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    print("P1\n")
     let t_start = tok_str_start_at(toks, pos[0])
     let t_len = tok_str_len_at(toks, pos[0])
-    print("P2\n")
     pos[0] = pos[0] + 1
     if tok_type_at(toks, pos[0]) == TOK_LPAREN {
         ret codegen_call_inline(toks, pos, stab, src, jfn, bb)
     }
-    print("P3\n")
     pos[0] = pos[0] - 1
     let slot = lookup_slot_name(jfn, t_start, t_len)
-    print("P4 slot=\n")
     if slot == -1 {
-        print("P5 ident=[")
-        syscall(1, 1, src + t_start, t_len)
-        print("]\n")
-        dump_globals(src)
         let gi = lookup_global2(t_start, t_len, src)
         if gi != -1 {
             pos[0] = pos[0] + 1
             let addr = emit_gaddr(jfn, bb, gi)
-            if g_glob_is_addr[gi] == 1 {
-                ret addr
-            }
             let ldg = Instr{}
             ldg.op = OP_LOAD_MEM
             ldg.operand0 = addr
@@ -3189,14 +3317,11 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
         }
         ret -1
     }
-    print("P6 slot ok\n")
     pos[0] = pos[0] + 1
     let ld = Instr{}
     ld.op = OP_LOAD
     ld.operand0 = slot
-    print("P7 calling emit\n")
     let ret_emit = emit(jfn, bb, &ld)
-    print("P8 emit ok\n")
     ret ret_emit
 }
 
@@ -3248,9 +3373,6 @@ fn codegen_arg_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         let agi = lookup_global2(a_start, a_len, src)
         if agi != -1 {
             let aaddr = emit_gaddr(jfn, bb, agi)
-            if g_glob_is_addr[agi] == 1 {
-                ret aaddr
-            }
             let aldg = Instr{}
             aldg.op = OP_LOAD_MEM
             aldg.operand0 = aaddr
@@ -4122,9 +4244,6 @@ fn live_codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src:
             if gi != -1 {
                 pos[0] = pos[0] + 1
                 let addr = emit_gaddr(jfn, bb, gi)
-                if g_glob_is_addr[gi] == 1 {
-                    ret addr
-                }
                 let ldg = Instr{}
                 ldg.op = OP_LOAD_MEM
                 ldg.operand0 = addr
@@ -4477,6 +4596,13 @@ fn dce(jfn: &JirFunction) {
             if op == OP_STORE {
                 if o0 >= 0 { used[o0] = 1 }
             }
+            if op == OP_LOAD_MEM {
+                if o0 >= 0 { used[o0] = 1 }
+            }
+            if op == OP_STORE_MEM {
+                if o0 >= 0 { used[o0] = 1 }
+                if o1 >= 0 { used[o1] = 1 }
+            }
             if op == OP_SYSCALL {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
@@ -4500,6 +4626,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_STORE   { used[id] = 1 }
             if op == OP_PRINT_INT { used[id] = 1 }
             if op == OP_ARGV_BASE { used[id] = 1 }
+            if op == OP_STORE_MEM { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -4897,13 +5024,41 @@ fn emit_store_spill(out: &i8, pos: &i64, off: i64, src: i32) {
 fn emit_load_mem_reg(out: &i8, pos: &i64, dst: i32, base: i32) {
     emit_byte(out, pos, rex_byte(1, dst >> 3, 0, base >> 3))
     emit_byte(out, pos, 0x8B)
-    emit_byte(out, pos, modrm_rr(dst, base))
+    let dst3 = dst & 7
+    let base3 = base & 7
+    if base3 == 4 {
+        ; [rsp]/[r12] requires SIB byte (index=none, scale=1)
+        emit_byte(out, pos, 0x00 | (dst3 << 3) | 0x04)
+        emit_byte(out, pos, 0x20 | base3)
+        ret ok(0)
+    }
+    if base3 == 5 {
+        ; [rbp]/[r13] cannot use mod=00; use mod=01 with disp8=0
+        emit_byte(out, pos, 0x40 | (dst3 << 3) | base3)
+        emit_byte(out, pos, 0)
+        ret ok(0)
+    }
+    emit_byte(out, pos, 0x00 | (dst3 << 3) | base3)
 }
 
 fn emit_store_mem_reg(out: &i8, pos: &i64, base: i32, src: i32) {
     emit_byte(out, pos, rex_byte(1, src >> 3, 0, base >> 3))
     emit_byte(out, pos, 0x89)
-    emit_byte(out, pos, modrm_rr(src, base))
+    let src3 = src & 7
+    let base3 = base & 7
+    if base3 == 4 {
+        ; [rsp]/[r12] requires SIB byte (index=none, scale=1)
+        emit_byte(out, pos, 0x00 | (src3 << 3) | 0x04)
+        emit_byte(out, pos, 0x20 | base3)
+        ret ok(0)
+    }
+    if base3 == 5 {
+        ; [rbp]/[r13] cannot use mod=00; use mod=01 with disp8=0
+        emit_byte(out, pos, 0x40 | (src3 << 3) | base3)
+        emit_byte(out, pos, 0)
+        ret ok(0)
+    }
+    emit_byte(out, pos, 0x00 | (src3 << 3) | base3)
 }
 
 ; SETNE al / SETE al after CMP, then MOVZX rax, al
@@ -5510,11 +5665,9 @@ fn live_compile_let_stmt(toks0: &Token, pos: &i64, stab: &StructTable, src: &i8,
 }
 
 fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    print("B1\n")
     let cur = bb
     let keep_going = 1
     loop keep_going == 1 {
-        print("B2\n")
         let before_stmt = pos[0]
         let toks0 = g_dbg_toks
         g_panic_pos = pos[0]
@@ -5533,24 +5686,16 @@ fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         } else if t == TOK_LET {
             live_compile_let_stmt(toks0, pos, stab, src, jfn, cur)
         } else if t == TOK_RET {
-            print("RET1\n")
             pos[0] = pos[0] + 1
-            print("RET2\n")
             let val_id = emit_const(jfn, cur, TYPE_I64, 0)
-            print("RET3\n")
             let rt = tok_type_at0(toks0, pos)
-            print("RET4\n")
             if rt == TOK_INT or rt == TOK_IDENT or rt == TOK_LPAREN or rt == TOK_MINUS or rt == TOK_TILDE or rt == TOK_AMP or rt == TOK_SYSCALL {
-                print("RET5\n")
                 val_id = codegen_expr_inline(toks0, pos, stab, src, jfn, cur)
-                print("RET6\n")
             }
             let rins = Instr{}
             rins.op = OP_RET
             rins.operand0 = val_id
-            print("RET7\n")
             emit(jfn, cur, &rins)
-            print("RET8\n")
         } else if t == TOK_PRINT {
             if g_cur_fn_name_len == 4 {
                 if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
@@ -5862,7 +6007,7 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
     emit_byte(buf, &pos, 0)  emit_byte(buf, &pos, 0)
 
     emit_i32_le(buf, &pos, 1)
-    emit_i32_le(buf, &pos, 5)
+    emit_i32_le(buf, &pos, 7)  ; PF_R|PF_W|PF_X — globals must be writable
     emit_i64_le(buf, &pos, 0)
     emit_i64_le(buf, &pos, load_va)
     emit_i64_le(buf, &pos, load_va)
@@ -5895,122 +6040,113 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
 
 let g_stab_ptr: &StructTable = 0
 let g_loop_ctrl: i64 = 0
+let g_fix_merged_pos: i64 = 0
 let g_argv_base: &i64 = 0
-let g_src_path: &i8 = 0
-let g_out_path: &i8 = 0
 
 fn main() {
     let argv_ptr: &i64 = 0
+    let src_path: &i8 = 0
+    let out_path: &i8 = 0
     asm { out argv_ptr = rsi }
+    print("ASTART\n")
     g_argv_base = argv_ptr
-    print("A\n")
-    g_src_path = g_argv_base[1]
-    g_out_path = g_argv_base[2]
-    print("JDA1_START\n")
+    print("B\n")
+    src_path = get_argv(argv_ptr, 1)
+    print("C\n")
+    print("SP ")
+    syscall(1, 1, src_path, 32)
+    print("\n")
+    out_path = get_argv(argv_ptr, 2)
+    print("D\n")
     let src_buf = alloc_pages(64)  ; 64 pages = 256KB
-    print("J1\n")
+    print("E\n")
     let toks = alloc_pages(1024) ; 131072 * 32 bytes = 4 MiB
-    print("J2\n")
-
+    print("E2\n")
+    toks[0].type = TOK_EOF
+    print("E3\n")
+    print("F\n")
     ; Initialize global constant table
     g_const_cnt = 0
-    print("J3\n")
     g_const_name_off_tbl = alloc_pages(8)
     g_const_name_len_tbl = alloc_pages(8)
     g_const_val_tbl = alloc_pages(8)
-    g_const_cnt = 0
-    print("J4\n")
-
+    print("G\n")
     g_glob_name_off = alloc_pages(8)
     g_glob_name_len = alloc_pages(8)
     g_glob_off      = alloc_pages(8)
     g_glob_size     = alloc_pages(8)
     g_glob_stype    = alloc_pages(8)
     g_glob_is_addr  = alloc_pages(8)
-    print("J5\n")
 
-    let src_fd = syscall(2, g_src_path, 0, 0)
-    print("J6\n")
-    let src_len = syscall(0, src_fd, src_buf, 262144)  ; Read up to 256KB
-    print("J7\n")
+    let src_fd = syscall(2, src_path, 0, 0)
+    print("H1\n")
+    if src_fd < 0 { panic("open src failed") }
+    let read_len = syscall(0, src_fd, src_buf, 262144)  ; Read up to 256KB
+    print("H2\n")
+    if read_len < 0 { panic("read src failed") }
+    print("SRC ")
+    syscall(1, 1, src_buf, 16)
+    print("\n")
     syscall(3, src_fd, 0, 0)
+    print("H3\n")
+    let src_len = read_len
+    print("H35\n")
 
     let tok_cnt = 0
-    g_lex_out_toks = toks
-    tok_cnt = lex(src_buf, src_len)
-    print("LEX DONE\n")
+    tok_cnt = lex(src_buf, src_len, toks)
+    print("H4\n")
     fix_char_literals(src_buf, toks, &tok_cnt)
 
     g_dbg_toks = toks
     g_dbg_tok_cnt = tok_cnt
-    if g_dbg_tok_cnt > 0 { print("GDTC_OK\n") } else { print("GDTC_ZERO\n") }
     g_glob_cnt = 0
-    if g_dbg_tok_cnt > 0 { print("A1_OK\n") } else { print("A1_ZERO\n") }
     g_glob_total_sz = 0
-    if g_dbg_tok_cnt > 0 { print("A2_OK\n") } else { print("A2_ZERO\n") }
     g_emit_glob_buf = 0
-    if g_dbg_tok_cnt > 0 { print("A3_OK\n") } else { print("A3_ZERO\n") }
     g_emit_glob_len = 0
-    if g_dbg_tok_cnt > 0 { print("A4_OK\n") } else { print("A4_ZERO\n") }
 
 
 
     let stab = alloc_pages(50)
-    if g_dbg_tok_cnt > 0 { print("B1_OK\n") } else { print("B1_ZERO\n") }
     g_stab_ptr = stab
-    if g_dbg_tok_cnt > 0 { print("B2_OK\n") } else { print("B2_ZERO\n") }
     g_stab_ptr.cnt = 0
-    if g_dbg_tok_cnt > 0 { print("B3_OK\n") } else { print("B3_ZERO\n") }
     g_stab_ptr.field_cnt = 0
-    if g_dbg_tok_cnt > 0 { print("B4_OK\n") } else { print("B4_ZERO\n") }
 
-    let pos = 0
-    if g_dbg_tok_cnt > 0 { print("B5_OK\n") } else { print("B5_ZERO\n") }
-    print("PRE-CONST\n")
-    if g_dbg_tok_cnt > 0 { print("TKCNT_OK\n") } else { print("TKCNT_ZERO\n") }
+    g_main_pos = 0
     ; Parse const declarations first (jda1.jda starts with 40+ consts)
     ; Use global g_loop_ctrl to avoid local variable slot/spill issues
     g_loop_ctrl = 1
     loop g_loop_ctrl == 1 {
-        print("CI\n")
-        if pos < g_dbg_tok_cnt {
-            print("CI_IN\n")
-            let top_start = tok_str_start_at(toks, pos)
-            let top_len = tok_str_len_at(toks, pos)
-            let top_t = tok_type_at(toks, pos)
+        if g_main_pos < g_dbg_tok_cnt {
+            let top_start = tok_str_start_at(toks, g_main_pos)
+            let top_len = tok_str_len_at(toks, g_main_pos)
+            let top_t = tok_type_at(toks, g_main_pos)
             let top_is_const_kw = 0
             if top_t == TOK_IDENT and top_len == 5 and span_in_src(top_start, top_len, src_len) == 1 {
                 if streq(src_buf, top_start, 5, "const") == 1 { top_is_const_kw = 1 }
             }
             if top_t == TOK_CONST or top_is_const_kw == 1 {
-                print("CI_CONST\n")
-                parse_const_decl(toks, &pos)
-                print("CI_CONST_DONE\n")
+                parse_const_decl(toks, &g_main_pos)
             } else {
-                print("CI_NONCONST\n")
                 g_loop_ctrl = 0
             }
         } else {
-            print("CI_OUT\n")
             g_loop_ctrl = 0
-            print("CI_OUT_AFTER\n")
         }
     }
 
-    print("POST-CONST\n")
     ; Parse and record top-level structs
     let more_structs = 1
     loop more_structs == 1 {
-        if pos < tok_cnt {
-            let top_start = tok_str_start_at(toks, pos)
-            let top_len = tok_str_len_at(toks, pos)
-            let top_t = tok_type_at(toks, pos)
+        if g_main_pos < g_dbg_tok_cnt {
+            let top_start = tok_str_start_at(toks, g_main_pos)
+            let top_len = tok_str_len_at(toks, g_main_pos)
+            let top_t = tok_type_at(toks, g_main_pos)
             let top_is_struct_kw = 0
             if top_t == TOK_IDENT and top_len == 6 and span_in_src(top_start, top_len, src_len) == 1 {
                 if streq(src_buf, top_start, 6, "struct") == 1 { top_is_struct_kw = 1 }
             }
             if top_t == TOK_STRUCT or top_is_struct_kw == 1 {
-                parse_struct_decl(toks, &pos, g_stab_ptr, src_buf)
+                parse_struct_decl(toks, &g_main_pos, g_stab_ptr, src_buf)
             } else {
                 more_structs = 0
             }
@@ -6019,23 +6155,18 @@ fn main() {
         }
     }
 
-    print("STRDONE\n")
-    print("SD1\n")
     ; Pass 1: Scan for global functions and record names/offsets
     let fn_name_off = alloc_pages(1) ; 512 entries
-    print("SD2\n")
     let fn_name_len = alloc_pages(1)
-    print("SD3\n")
     let fn_cnt = 0
     let scan_pos = 0
-    print("SD4\n")
-    loop scan_pos < tok_cnt {
+    loop scan_pos < g_dbg_tok_cnt {
         let t = tok_type_at(toks, scan_pos)
         let t_start = tok_str_start_at(toks, scan_pos)
         let t_len = tok_str_len_at(toks, scan_pos)
         if t == TOK_FN or (t_len == 2 and streq(src_buf, t_start, 2, "fn") == 1) {
             let name_idx = scan_pos + 1
-            if name_idx < tok_cnt {
+            if name_idx < g_dbg_tok_cnt {
                 if tok_type_at(toks, name_idx) == TOK_IDENT {
                     if fn_cnt < 512 {
                         fn_name_off[fn_cnt] = tok_str_start_at(toks, name_idx)
@@ -6047,8 +6178,6 @@ fn main() {
         }
         scan_pos = scan_pos + 1
     }
-    print("SCAN_DONE\n")
-
     ; ---- Prepare output buffers ----
     let code_buf = alloc_pages(256) ; 1MB
     let code_len = 0
@@ -6081,37 +6210,17 @@ fn main() {
     let ctx = ctx_tmp
 
     ; ---- Parse and compile each function immediately ----
-    let more_top = 1
-    loop more_top == 1 {
-        print("LOOPCHECK\n")
-        if pos >= tok_cnt {
-            more_top = 0
-        } else {
-            let top_t = tok_type_at(g_dbg_toks, pos)
-            let top_start = tok_str_start_at(g_dbg_toks, pos)
-            let top_len = tok_str_len_at(g_dbg_toks, pos)
-            let is_top_fn = 0
+    ; Use the same if/else pattern as const loop (exit in else) for jda1_sh2 compat
+    g_loop_ctrl = 1
+    loop g_loop_ctrl == 1 {
+        if g_main_pos < g_dbg_tok_cnt {
+            let top_t = tok_type_at(g_dbg_toks, g_main_pos)
+            let top_start = tok_str_start_at(g_dbg_toks, g_main_pos)
+            let top_len = tok_str_len_at(g_dbg_toks, g_main_pos)
             if top_t == TOK_FN or (top_len == 2 and streq(src_buf, top_start, 2, "fn") == 1) {
-                is_top_fn = 1
-            }
-            let is_top_let = 0
-            if top_t == TOK_LET or (top_len == 3 and streq(src_buf, top_start, 3, "let") == 1) {
-                is_top_let = 1
-            }
-            if is_top_fn == 0 and is_top_let == 0 {
-                print("SK\n")
-                pos = pos + 1
-            } else if is_top_let == 1 {
-                print("LT\n")
-                skip_top_level_let(g_dbg_toks, &pos, g_stab_ptr, src_buf)
-            } else {
-                print("FENTER\n")
-                let fn_tok_pos = pos
-                let cur_name_off = tok_str_start_at(g_dbg_toks, pos + 1)
-                let cur_name_len = tok_str_len_at(g_dbg_toks, pos + 1)
-                print("FENTER name str=")
-                syscall(1, 1, src_buf + cur_name_off, cur_name_len)
-                print("\n")
+                let fn_tok_pos = g_main_pos
+                let cur_name_off = tok_str_start_at(g_dbg_toks, g_main_pos + 1)
+                let cur_name_len = tok_str_len_at(g_dbg_toks, g_main_pos + 1)
                 let fi = -1
                 let mi = 0
                 loop mi < fn_cnt {
@@ -6131,65 +6240,53 @@ fn main() {
                 let fn_lbrace_scan = -1
                 let fn_rbrace_scan = -1
                 let scan_i = fn_tok_pos
-                loop scan_i < tok_cnt {
+                loop scan_i < g_dbg_tok_cnt {
                     let st = tok_type_at(g_dbg_toks, scan_i)
                     if st == TOK_LBRACE {
                         fn_lbrace_scan = scan_i
                         fn_rbrace_scan = find_matching_rbrace(g_dbg_toks, scan_i)
-                        scan_i = tok_cnt
+                        scan_i = g_dbg_tok_cnt
                     } else if st == TOK_SEMI {
                         fn_rbrace_scan = scan_i
-                        scan_i = tok_cnt
+                        scan_i = g_dbg_tok_cnt
                     } else if st == TOK_EOF {
-                        scan_i = tok_cnt
+                        scan_i = g_dbg_tok_cnt
                     } else {
                         scan_i = scan_i + 1
                     }
                 }
-                print("FENTER scans done\n")
                 let skip_old_parse = 0
                 if fn_lbrace_scan == -1 { skip_old_parse = 1 }
-
-                print("F1\n")
                 jfn.src = src_buf
-                print("F2\n")
                 jfn.src_len = src_len
-                print("F3\n")
                 jfn.stab = g_stab_ptr
-                print("F4\n")
                 jfn.block_cnt = 0
-                print("F5\n")
                 jfn.var_cnt = 0
-                print("F6\n")
                 jfn.param_cnt = 0
                 jfn.strtab_pos = 0
                 jfn.next_slot_off = 65536
                 jfn.next_id = 0
-                print("F7\n")
 
-                pos = pos + 2 ; skip 'fn' and name
-                expect(g_dbg_toks, &pos, TOK_LPAREN)
-                print("F8\n")
+                g_main_pos = g_main_pos + 2 ; skip 'fn' and name
+                expect(g_dbg_toks, &g_main_pos, TOK_LPAREN)
                 let more_params = 0
-                if tok_type_at(g_dbg_toks, pos) != TOK_RPAREN { more_params = 1 }
+                if tok_type_at(g_dbg_toks, g_main_pos) != TOK_RPAREN { more_params = 1 }
                 loop more_params == 1 {
-                    print("F9 param loop\n")
-                    let p_name_start = tok_str_start_at(g_dbg_toks, pos)
-                    let p_name_len = tok_str_len_at(g_dbg_toks, pos)
-                    expect(g_dbg_toks, &pos, TOK_IDENT)
-                    print("F10\n")
+                    let p_name_start = tok_str_start_at(g_dbg_toks, g_main_pos)
+                    let p_name_len = tok_str_len_at(g_dbg_toks, g_main_pos)
+                    expect(g_dbg_toks, &g_main_pos, TOK_IDENT)
                     let p_stype = TYPE_I64
-                    if tok_type_at(g_dbg_toks, pos) == TOK_COLON {
-                        pos = pos + 1
+                    if tok_type_at(g_dbg_toks, g_main_pos) == TOK_COLON {
+                        g_main_pos = g_main_pos + 1
                         let is_ptr = 0
-                        if tok_type_at(g_dbg_toks, pos) == TOK_AMP {
+                        if tok_type_at(g_dbg_toks, g_main_pos) == TOK_AMP {
                             is_ptr = 1
-                            pos = pos + 1
+                            g_main_pos = g_main_pos + 1
                         }
-                        let p_type = tok_type_at(g_dbg_toks, pos)
-                        let p_type_start = tok_str_start_at(g_dbg_toks, pos)
-                        let p_type_len = tok_str_len_at(g_dbg_toks, pos)
-                        pos = pos + 1
+                        let p_type = tok_type_at(g_dbg_toks, g_main_pos)
+                        let p_type_start = tok_str_start_at(g_dbg_toks, g_main_pos)
+                        let p_type_len = tok_str_len_at(g_dbg_toks, g_main_pos)
+                        g_main_pos = g_main_pos + 1
                         if p_type == TOK_IDENT {
                             let sid = lookup_struct(g_stab_ptr, src_buf, p_type_start, p_type_len)
                             if sid >= 0 {
@@ -6207,80 +6304,65 @@ fn main() {
                             if is_ptr == 1 { p_stype = ptr_of(p_stype) }
                         }
                     }
-                    print("F11 calling bind_name\n")
                     let pslot = bind_name(jfn, p_name_start, p_name_len, p_stype)
-                    print("F12 bind_name ok\n")
                     if jfn.param_cnt < 16 {
                         jfn.param_slots[jfn.param_cnt] = pslot
                         jfn.param_cnt = jfn.param_cnt + 1
                     }
-                    print("F13 param slot ok\n")
-                    if tok_type_at(g_dbg_toks, pos) == TOK_COMMA {
-                        pos = pos + 1
+                    if tok_type_at(g_dbg_toks, g_main_pos) == TOK_COMMA {
+                        g_main_pos = g_main_pos + 1
                     } else {
                         more_params = 0
                     }
                 }
-                print("F14 params done\n")
-                expect(g_dbg_toks, &pos, TOK_RPAREN)
-                print("F15\n")
-                if tok_type_at(g_dbg_toks, pos) == TOK_ARROW {
-                    pos = pos + 1
-                    let ret_parsed = parse_type(g_dbg_toks, &pos)
+                expect(g_dbg_toks, &g_main_pos, TOK_RPAREN)
+                if tok_type_at(g_dbg_toks, g_main_pos) == TOK_ARROW {
+                    g_main_pos = g_main_pos + 1
+                    let ret_parsed = parse_type(g_dbg_toks, &g_main_pos)
                 }
-                print("F16\n")
                 if fn_lbrace_scan != -1 {
-                    pos = fn_lbrace_scan
+                    g_main_pos = fn_lbrace_scan
                 }
-                print("F17\n")
                 let skip_fn_body_compile = should_skip_old_fn(src_buf, cur_name_off, cur_name_len, fi)
-                print("F18\n")
-                let fn_lbrace = pos
+                let fn_lbrace = g_main_pos
                 let fn_rbrace = -1
                 if skip_fn_body_compile == 0 {
                     fn_rbrace = find_matching_rbrace(g_dbg_toks, fn_lbrace)
                 }
-                print("F19\n")
                 if skip_old_parse == 1 or skip_fn_body_compile == 1 {
                     if fn_rbrace_scan != -1 {
-                        pos = fn_rbrace_scan + 1
+                        g_main_pos = fn_rbrace_scan + 1
                     } else {
                         let skip_rbrace = find_matching_rbrace(g_dbg_toks, fn_lbrace)
                         if skip_rbrace != -1 {
-                            pos = skip_rbrace + 1
+                            g_main_pos = skip_rbrace + 1
                         } else {
-                            pos = pos + 1
+                            g_main_pos = g_main_pos + 1
                         }
                     }
                 } else {
-                    print("F20\n")
-                    expect(g_dbg_toks, &pos, TOK_LBRACE)
+                    expect(g_dbg_toks, &g_main_pos, TOK_LBRACE)
                     jfn.strtab_pos = 0
                     g_dbg_fi = fi
                     let cb = create_block_live(jfn)
-                    print("F21\n")
-                    live_compile_block(g_dbg_toks, &pos, g_stab_ptr, src_buf, jfn, cb)
+                    live_compile_block(g_dbg_toks, &g_main_pos, g_stab_ptr, src_buf, jfn, cb)
                     g_dbg_fi = 0
-                    if tok_type_at(g_dbg_toks, pos) == TOK_RBRACE {
-                        pos = pos + 1
+                    if tok_type_at(g_dbg_toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
                     }
                 }
                 ; Resync past function body; always advance to end of function
-                print("RESYNC\n")
                 if fn_rbrace >= 0 {
-                    pos = fn_rbrace + 1
+                    g_main_pos = fn_rbrace + 1
                 }
 
-                print("FNSTART\n")
                 let is_main = 0
                 if fi == 999 { is_main = 1 }
                 if cur_name_len == 4 {
-                    print("LEN4\n")
                     if streq(src_buf, cur_name_off, 4, "main") == 1 { is_main = 1 }
                 }
                 if is_main == 1 {
                     main_idx = fi
-                    print("FOUND_MAIN\n")
                 }
                 if fi >= 0 and fi < 512 {
                     fn_code_off[fi] = code_len
@@ -6293,7 +6375,6 @@ fn main() {
                     regalloc_init(ctx.ra)
                     ctx.fix_cnt = 0
                     lower_fn(jfn, ctx, code_buf, &code_len, is_main)
-                    print("POSTLOWER\n")
                     ; Collect fixups from this function
                     let ci = 0
                     loop ci < ctx.fix_cnt {
@@ -6330,7 +6411,13 @@ fn main() {
                         si_copy = si_copy + 1
                     }
                 }
+            } else if top_t == TOK_LET or (top_len == 3 and streq(src_buf, top_start, 3, "let") == 1) {
+                skip_top_level_let(g_dbg_toks, &g_main_pos, g_stab_ptr, src_buf)
+            } else {
+                g_main_pos = g_main_pos + 1
             }
+        } else {
+            g_loop_ctrl = 0
         }
     }
 
@@ -6344,10 +6431,19 @@ fn main() {
     poke_byte(code_buf, 4, (e_rel >> 24) & 0xFF)
 
     ; ---- Fix up string/global addresses in code ----
+    g_fix_merged_pos = merged_pos
     let str_va = 0x400000 + 120 + code_len
     let si_f = 0
     loop si_f < gf_strtab_cnt {
         let co = gf_strtab_co[si_f]
+        if co < 0 or co + 3 >= code_len {
+            print("BAD_STR_FIX co=")
+            print_int(co)
+            print(" len=")
+            print_int(code_len)
+            print("\n")
+            panic("bad strtab fixup")
+        }
         if co >= 5 and co + 3 < code_len {
             let rel_val = 0
             if gf_strtab_tgt[si_f] >= 0 {
@@ -6355,7 +6451,7 @@ fn main() {
             } else {
                 let gi_f = -1 - gf_strtab_tgt[si_f]
                 ; Globals are after all strings in the data segment
-                rel_val = str_va + merged_pos + g_glob_off[gi_f] - (0x400000 + 120 + co + 4)
+                rel_val = str_va + g_fix_merged_pos + g_glob_off[gi_f] - (0x400000 + 120 + co + 4)
             }
             poke_byte(code_buf, co,     rel_val & 0xFF)
             poke_byte(code_buf, co + 1, (rel_val >> 8) & 0xFF)
@@ -6367,21 +6463,59 @@ fn main() {
 
     ; ---- Fix up function calls ----
     let ci_f = 0
+    let unresolved_calls = 0
     loop ci_f < gf_call_cnt {
         let co_f = gf_call_co[ci_f]
-        let ti_f = gf_call_name[ci_f]
-        if ti_f >= 0 and ti_f < 512 {
-            let t_off = fn_code_off[ti_f]
-            let r_val = t_off - (co_f + 4)
-            poke_byte(code_buf, co_f,     r_val & 0xFF)
-            poke_byte(code_buf, co_f + 1, (r_val >> 8) & 0xFF)
-            poke_byte(code_buf, co_f + 2, (r_val >> 16) & 0xFF)
-            poke_byte(code_buf, co_f + 3, (r_val >> 24) & 0xFF)
+        let call_name = gf_call_name[ci_f]
+        let call_nlen = gf_call_nlen[ci_f]
+        if co_f < 0 or co_f + 3 >= code_len {
+            print("BAD_CALL_FIX co=")
+            print_int(co_f)
+            print(" len=")
+            print_int(code_len)
+            print("\n")
+            panic("bad call fixup")
+        }
+        let found = 0
+        let ti_f = 0
+        if co_f >= 6 and co_f + 3 < code_len and call_name >= 0 and call_nlen > 0 and call_name + call_nlen <= src_len {
+            loop ti_f < fn_cnt {
+                if call_nlen == fn_name_len[ti_f] {
+                    if str_match(src_buf, call_name, fn_name_off[ti_f], call_nlen) == 1 {
+                        let t_off = fn_code_off[ti_f]
+                        let r_val = t_off - (co_f + 4)
+                        poke_byte(code_buf, co_f,     r_val & 0xFF)
+                        poke_byte(code_buf, co_f + 1, (r_val >> 8) & 0xFF)
+                        poke_byte(code_buf, co_f + 2, (r_val >> 16) & 0xFF)
+                        poke_byte(code_buf, co_f + 3, (r_val >> 24) & 0xFF)
+                        found = 1
+                        ti_f = fn_cnt
+                    }
+                }
+                ti_f = ti_f + 1
+            }
+        }
+        if found == 0 and co_f >= 6 and co_f + 3 < code_len {
+            unresolved_calls = unresolved_calls + 1
+            ; Rewrite unresolved `call rel32` to NOPs to avoid stack corruption.
+            poke_byte(code_buf, co_f - 1, 0x90)
+            poke_byte(code_buf, co_f,     0x90)
+            poke_byte(code_buf, co_f + 1, 0x90)
+            poke_byte(code_buf, co_f + 2, 0x90)
+            poke_byte(code_buf, co_f + 3, 0x90)
         }
         ci_f = ci_f + 1
     }
+    print("UC ")
+    print(unresolved_calls)
+    print("\n")
 
-    let out_fd = syscall(2, g_out_path, 577, 493)
+    print("WRITE_ELF\n")
+    syscall(1, 1, merged_str, 20)
+    print("\n")
+    syscall(1, 1, out_path, 16)
+    print("\n")
+    let out_fd = syscall(2, out_path, 577, 493)
     g_emit_glob_buf = glob_buf
     g_emit_glob_len = g_glob_total_sz
     write_elf(out_fd, code_buf, code_len, merged_str, merged_pos)
