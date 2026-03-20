@@ -1,5 +1,59 @@
 Strategy
 
+Latest checkpoint (2026-03-20, session 10 — stage2 small-path top-fn branch narrowing):
+
+✅ Done in session 10:
+- restored the Docker pipeline after the previous `fn=main` slot-pressure regressions:
+  - `jda0 -> jda1_a` ✅
+  - `jda1_a -> jda1_b` ✅
+- kept the real stage1 backend fix in `lower_instr_cmpbit(...)`:
+  - preserve operand A in `r12` before loading operand B when pool-slot reuse would collapse
+    both compare operands into the same physical register
+- reduced `main()` block pressure enough to keep stage1 self-compile stable again
+- moved the small-input top-level function seed/scan decision out of `main()` into:
+  - `prepare_top_fn_scan(...)`
+- kept the small-input bypasses that avoid unstable top-level prelude paths in `main()`:
+  - skip top-level const prelude when `src_len < 1024`
+  - skip top-level struct prelude when `src_len < 1024`
+- verified the stage2 small-input path now gets through:
+  - source read
+  - small lexer path
+  - token-count sync
+  - top-level `fn main` seeding
+  - compile-loop entry
+  - taken top-level `fn` branch
+
+🔴 Current blocker:
+- `jda0 -> jda1_a` ✅
+- `jda1_a -> jda1_b` ✅
+- `jda1_b -> hello.jda` ❌ with exit `139`
+- current narrowed location:
+  - the crash is no longer in lexing
+  - the crash is no longer in top-level const/struct preludes
+  - the crash is no longer in the old `main not found` path
+  - the crash is now inside the taken `take_top_fn == 1` branch in `main()`, very early in
+    the function-compilation path for small input
+
+🟡 Important findings from this cycle:
+- helper extraction was a real improvement:
+  - before it, small-input stage2 crashed before reaching the top-level function branch
+  - after it, the path reaches the `fn main` branch reliably
+- the previous stdout-based trace became unreliable because the crashing stage2 binary was
+  spraying corrupted output
+- `stderr` probing showed the path reaches the top-fn branch, but the probe helper itself is
+  also not fully trustworthy in stage2 because string-length handling appears unstable
+- the active failure therefore looks like another stage2 codegen/control-flow corruption very
+  near the first statements in the top-level function-compile branch
+
+🟡 Next work:
+- keep `prepare_top_fn_scan(...)` and the small-input prelude bypasses
+- remove or minimize remaining probe helper dependence in the hot small-input branch
+- narrow the first few statements inside the taken `fn` branch using the smallest possible
+  changes so `jda1_b -> hello.jda` gets past early function-compilation setup
+- once `hello.jda` compiles successfully from `jda1_b`, run:
+  - `./hello_out`
+  - verify output is `Hello Bare Metal`
+
 Latest checkpoint (2026-03-20, session 9 — stage2 small-lexer first-token write isolation):
 
 ✅ Done in session 9:
