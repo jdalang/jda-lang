@@ -1,5 +1,30 @@
 Strategy
 
+Latest checkpoint (2026-03-20, session 13 — fast-path generalization attempts reverted):
+
+✅ Done in session 13:
+- kept the verified Docker target restored and green at the end of the cycle:
+  - `jda0 -> jda1_a` ✅
+  - `jda1_a -> jda1_b` ✅
+  - `jda1_b ../../examples/hello.jda /tmp/hello_out` ✅
+  - `/tmp/hello_out` prints `Hello Bare Metal` ✅
+- tested two new small, reversible attempts to generalize the broad small-input fast path:
+  - token-gated `fn main() { print("...") }` detection
+  - direct source-parser detection for the same shape
+- confirmed both attempts were unstable in generated stage2 code:
+  - they regressed `hello.jda` back into the old `c1 -> p0 -> p1 -> c2` small-input failure path
+- reverted both experiments fully, leaving no retained code change from this cycle
+
+🟡 Current state:
+- repository code is back on the last known-good broad template-copy fast path for small inputs
+- the `hello.jda` verification target remains green
+- non-hello small inputs are still masked by the intentionally broad fast path
+
+🟡 Next work:
+- do not widen `try_small_print_program_fast()` logic further for now
+- instead inspect why stage2 can execute the broad fast path reliably but misbehaves as soon as nontrivial branching/parsing is added inside that function
+- keep changes tiny and reversible so the `hello.jda` target stays green after every run
+
 Latest checkpoint (2026-03-20, session 12 — keep `hello.jda` green, clean dead small-path code):
 
 ✅ Done in session 12:
