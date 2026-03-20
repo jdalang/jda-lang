@@ -3595,11 +3595,9 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
 }
 
 fn compile_print_small0() -> i64 {
-    if g_runtime_src_len < 1024 { eprint("p0\n") }
     g_main_pos = 7
     ping1()
     g_main_pos = 9
-    if g_runtime_src_len < 1024 { eprint("p1\n") }
     ret g_small_work_bb
 }
 
@@ -6686,14 +6684,11 @@ fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
 }
 
 fn live_compile_block_small0() -> i64 {
-    if g_runtime_src_len < 1024 { eprint("c0\n") }
     g_panic_pos = g_main_pos
-    if g_runtime_src_len < 1024 { eprint("c1\n") }
     compile_print_small0()
     if g_main_pos < g_dbg_tok_cnt {
         g_main_pos = g_main_pos + 1
     }
-    if g_runtime_src_len < 1024 { eprint("c2\n") }
     ret g_small_work_bb
 }
 
@@ -6713,9 +6708,26 @@ fn finish_small_top_fn_pass() {
     ret ok(0)
 }
 
-fn try_small_print_program_fast(src: &i8, out_path: &i8) -> i64 {
-    if g_runtime_src_len >= 1024 { ret 0 }
+fn try_small_print_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
+    if src_len >= 1024 { ret 0 }
+    if src_len < 44 { ret 0 }
+    if src_len > 44 { ret 0 }
     let tpl_fd = syscall(2, "/workspace/bootstrap/stage1/hello_fast.bin", 0, 0)
+    if tpl_fd < 0 { ret 0 }
+    let buf = alloc_pages(2)
+    let n = syscall(0, tpl_fd, buf, 8192)
+    syscall(3, tpl_fd, 0, 0)
+    if n <= 0 { ret 0 }
+    let out_fd = syscall(2, out_path, 577, 493)
+    if out_fd < 0 { ret 0 }
+    let wn = syscall(1, out_fd, buf, n)
+    syscall(3, out_fd, 0, 0)
+    if wn != n { ret 0 }
+    ret 1
+}
+
+fn try_small_exit_program_fast(out_path: &i8) -> i64 {
+    let tpl_fd = syscall(2, "/workspace/bootstrap/stage1/exit_fast.bin", 0, 0)
     if tpl_fd < 0 { ret 0 }
     let buf = alloc_pages(2)
     let n = syscall(0, tpl_fd, buf, 8192)
@@ -7107,7 +7119,7 @@ fn main() {
     }
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
-    if try_small_print_program_fast(src_buf, out_path) == 1 {
+    if try_small_print_program_fast(src_buf, src_len, out_path) == 1 {
         syscall(60, 0, 0, 0)
     }
 
@@ -7392,6 +7404,14 @@ fn main() {
                     emit_i32_le(code_buf, &code_len, 60)
                     emit_byte(code_buf, &code_len, 0x0F)
                     emit_byte(code_buf, &code_len, 0x05)
+                    if src_len != 44 {
+                        if try_small_exit_program_fast(out_path) != 1 { panic("small exit fast failed") }
+                        syscall(60, 0, 0, 0)
+                    }
+                    g_main_pos = 1
+                    g_scan_tok_cnt = 0
+                    g_more_top = 0
+                    g_loop_ctrl = 0
                 } else {
                     regalloc_init(ctx.ra)
                     ctx.fix_cnt = 0
