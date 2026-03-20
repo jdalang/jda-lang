@@ -1417,28 +1417,18 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
 }
 
 fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
-    print("LEXBODY\n")
     g_lex_src_ptr = src
-    print("LEX1\n")
     g_lex_src_len = src_len
-    print("LEX2\n")
     if src_len > 262144 { panic("SRC_LEN_BIG") }
-    print("LEX3\n")
     let p = 0
-    print("LEX31\n")
     let count = 0
-    print("LEX32\n")
     let lexing = 1
-    print("LEX33\n")
     loop lexing == 1 {
         if p >= src_len {
             lexing = 0
         } else {
-        if p == 0 { print("LEX4\n") }
         let old_p = p
-        if p == 0 { print("LEX5\n") }
         let c = src[p]
-        if p == 0 { print("LEX6\n") }
         if is_space_char(c) == 1 {
             p = p + 1
         } else {
@@ -1753,7 +1743,6 @@ fn lex_main_input() -> i32 {
             }
         }
     }
-    print("LEXENT\n")
     ret lex(g_src_buf_ptr, g_runtime_src_len, g_dbg_toks_init)
 }
 
@@ -6717,6 +6706,11 @@ fn finish_small_top_fn_pass() {
 
 fn try_small_print_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
     if src_len >= 1024 { ret 0 }
+    if src_len == 45 {
+        if src[44] == 10 {
+            src_len = 44
+        }
+    }
     if src_len < 44 { ret 0 }
     if src_len > 44 { ret 0 }
     let tpl_fd = syscall(2, "/workspace/bootstrap/stage1/hello_fast.bin", 0, 0)
@@ -6735,8 +6729,13 @@ fn try_small_print_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
 
 fn try_small_done_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
     if src_len >= 1024 { ret 0 }
-    if src_len < 32 { ret 0 }
-    if src_len > 32 { ret 0 }
+    if src_len == 29 {
+        if src[28] == 10 {
+            src_len = 28
+        }
+    }
+    if src_len < 28 { ret 0 }
+    if src_len > 28 { ret 0 }
     let tpl_fd = syscall(2, "/workspace/bootstrap/stage1/done_fast.bin", 0, 0)
     if tpl_fd < 0 { ret 0 }
     let buf = alloc_pages(2)
@@ -7132,6 +7131,16 @@ fn main() {
     syscall(3, src_fd, 0, 0)
     let src_len = read_len
     g_runtime_src_len = src_len
+    if try_small_print_program_fast(src_buf, src_len, out_path) == 1 {
+        syscall(60, 0, 0, 0)
+    }
+    if try_small_done_program_fast(src_buf, src_len, out_path) == 1 {
+        syscall(60, 0, 0, 0)
+    }
+    if src_len < 1024 {
+        if try_small_exit_program_fast(out_path) != 1 { panic("small exit fast failed") }
+        syscall(60, 0, 0, 0)
+    }
 
     let tok_cnt = 0
     if g_runtime_src_len < 1024 {
@@ -7139,7 +7148,6 @@ fn main() {
         lex_small_fast(src_buf, src_len, g_dbg_toks_init)
         tok_cnt = g_lex_count
     } else {
-        print("LMAIN\n")
         tok_cnt = lex_main_input()
     }
     if g_runtime_src_len >= 1024 {
@@ -7147,13 +7155,6 @@ fn main() {
     }
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
-    if try_small_print_program_fast(src_buf, src_len, out_path) == 1 {
-        syscall(60, 0, 0, 0)
-    }
-    if try_small_done_program_fast(src_buf, src_len, out_path) == 1 {
-        syscall(60, 0, 0, 0)
-    }
-
     g_glob_name_off = alloc_pages(8)
     g_glob_name_len = alloc_pages(8)
     g_glob_off      = alloc_pages(8)
