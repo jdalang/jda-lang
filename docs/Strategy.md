@@ -40,19 +40,10 @@ PFT2
 PFS1
 TFP1
 BT0
-R1
-R2
-J1
 J2
 C1
 C2
-RA0
-RAp
-RAr
-RAs
-RA1
 G1
-L1
 L2
 ```
 - 🟡 `/tmp/jda1_sh2` is still not produced in that real no-template chain
@@ -61,18 +52,19 @@ Current blocker
 
 - 🔴 the real no-template blocker is now inside `lower_fn(...)` for the first large top-level function
 - 🔴 hidden-template `jda1_b ../stage1/jda1.jda /tmp/jda1_sh2` exits without producing output
-- 🔴 stage3 no longer dies in top-fn scan, `resolve_top_fn_index(...)`, `init_top_jfn(...)`, body compile, or `regalloc_init(...)`
+- 🔴 stage3 no longer dies in top-fn scan, top-fn resolution, `init_top_jfn(...)`, body compile, or `regalloc_init(...)`
 - 🔴 the current failing slice is after `L2` and before `L3`, which points at `lower_fn_store_params(...)`
 - 🔴 the final self-host gate is still satisfied by template/wrapper fast paths, not yet by a fully repaired generic large-input stage-2 compiler path
 
 This session
 
-- ✅ narrowed the stage-3 crash with minimal probes from `BT0` down to the exact `lower_fn(...)` subphase
-- ✅ proved `resolve_top_fn_index(...)` is not the crash (`R1`, `R2` both print in stage3)
-- ✅ proved `init_top_jfn(...)` and `live_compile_block(...)` are not the crash (`J1`, `J2`, `C1`, `C2` all print in stage3)
+- ✅ narrowed the stage-3 crash with minimal probes from `BT0` down to the current `lower_fn(...)` subphase
+- ✅ removed the dead large-path `F0..F6` debug branches from `lower_fn(...)`; stage3 was incorrectly taking them due to a misread large-mode/global path
+- ✅ simplified `lower_fn_store_params(...)` by replacing the broken `loop a and b` condition with an explicit bounded `loop pi < 6` plus `if pi >= jfn.param_cnt` exit
+- ✅ moved parameter slot loads behind `load_param_slot_at(...)` to avoid direct embedded-array reads in the hot self-hosted path
 - ✅ fixed a real stage-3 `regalloc_init(...)` blocker by removing mutable `ra.pool[...]` dependence from the hot path via `reg_pool_at(...)`
 - ✅ fixed a second real stage-3 `regalloc_init(...)` blocker by replacing the failing `ra.val2reg[...]` / `ra.spill_off[...]` reset path with `fill_bytes(...)` and `fill_i64_words(...)`
-- ✅ after those fixes, stage3 now survives all of `regalloc_init(...)` and enters `lower_fn(...)`
+- ✅ after those fixes, stage3 now survives all of `regalloc_init(...)`, reaches `G1`, and reaches the `L2` boundary inside `lower_fn(...)`
 
 Next work
 
@@ -134,19 +126,10 @@ PFT2
 PFS1
 TFP1
 BT0
-R1
-R2
-J1
 J2
 C1
 C2
-RA0
-RAp
-RAr
-RAs
-RA1
 G1
-L1
 L2
 ```
 
