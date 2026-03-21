@@ -5716,22 +5716,17 @@ fn dce(jfn: &JirFunction) {
 ; Pool: rax rcx rdx rbx rsi rdi r10 r11
 
 fn regalloc_init(ra: &RegAlloc) {
-    print("RA0\n")
-    print("RAp\n")
     let i = 0
     loop i < N_ALLOC_REGS {
         ra.reg2val[i] = -1
         i = i + 1
     }
-    print("RAr\n")
     let ra_bytes = ra as &i8
     fill_bytes(ra_bytes + 32, 16384, 255)
     fill_i64_words((ra_bytes + 16480) as &i64, 4096, -1)
-    print("RAs\n")
     ; Spill slots start at 8 (growing up). Local variable slots now start at
     ; jfn.next_slot_off = 65536 (set in function reset), so no collision.
     ra.sp_top = 8
-    print("RA1\n")
 }
 
 fn fill_bytes(buf: &i8, len: i64, val: i8) {
@@ -5748,6 +5743,11 @@ fn fill_i64_words(buf: &i64, count: i64, val: i64) {
         buf[i] = val
         i = i + 1
     }
+}
+
+fn load_param_slot_at(jfn: &JirFunction, idx: i64) -> i64 {
+    let jfnw = jfn as &i64
+    ret load_i64_at(jfnw, 788233 + idx)
 }
 
 fn reg_pool_at(idx: i64) -> i32 {
@@ -7688,15 +7688,20 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
 
 fn lower_fn_store_params(jfn: &JirFunction, out: &i8, pos: &i64) {
     let pi = 0
-    loop pi < jfn.param_cnt and pi < 6 {
+    loop pi < 6 {
+        if pi >= jfn.param_cnt {
+            pi = 6
+        } else {
         let pr = PHYS_RDI
         if pi == 1 { pr = PHYS_RSI }
         if pi == 2 { pr = PHYS_RDX }
         if pi == 3 { pr = PHYS_RCX }
         if pi == 4 { pr = PHYS_R8 }
         if pi == 5 { pr = PHYS_R9 }
-        emit_store_spill(out, pos, jfn.param_slots[pi], pr)
+        let pslot = load_param_slot_at(jfn, pi)
+        emit_store_spill(out, pos, pslot, pr)
         pi = pi + 1
+        }
     }
 }
 
@@ -7766,28 +7771,16 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
 }
 
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
-    print("L1\n")
     g_lower_is_main = is_main
-    if g_runtime_src_len < 1024 { eprint("F0\n") }
     lower_fn_emit_prologue(jfn, out, pos, is_main)
     print("L2\n")
-    if g_runtime_src_len < 1024 { eprint("F1\n") }
     lower_fn_store_params(jfn, out, pos)
     print("L3\n")
-    if g_runtime_src_len < 1024 { eprint("F2\n") }
     lower_fn_collect_uses(jfn, ctx)
-    print("L4\n")
-    if g_runtime_src_len < 1024 { eprint("F3\n") }
     lower_fn_emit_blocks(jfn, ctx, out, pos)
-    print("L5\n")
-    if g_runtime_src_len < 1024 { eprint("F4\n") }
     lower_fn_emit_epilogue(out, pos, is_main)
-    print("L6\n")
     g_lower_is_main = 0
-    if g_runtime_src_len < 1024 { eprint("F5\n") }
     lower_fn_patch_fixups(jfn, ctx, out, pos)
-    print("L7\n")
-    if g_runtime_src_len < 1024 { eprint("F6\n") }
 }
 
 fn write_elf(out_fd: i64, code: &i8, code_len: i64,
@@ -8044,11 +8037,8 @@ fn main() {
                 let skip_old_parse = 0
                 let fi = 999
                 if src_len >= 1024 {
-                    print("R1\n")
                     fi = resolve_top_fn_index(src_buf, cur_name_off, cur_name_len, fn_name_off, fn_name_len)
-                    print("R2\n")
                     init_top_jfn(jfn, src_buf, src_len, g_stab_ptr)
-                    print("J1\n")
                 }
                 let hdr_pos = loop_pos + 2
                 if src_len < 1024 {
