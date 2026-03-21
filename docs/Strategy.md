@@ -1,5 +1,64 @@
 Strategy
 
+Latest checkpoint (2026-03-16, session 6 — probe cleanup, jda1_sh2_fresh scan segfault):
+
+✅ Done in session 6:
+- removed heavy debug probes from fn main() that caused `PANIC 4446093` during jda1 self-compile:
+  - `if tok_cnt > 100000 { print("TKCNT_CORRUPT_POSTCONST\n") } else { ... }` before POST-CONST
+  - `if tok_cnt > 100000 { print("TKCNT_CORRUPT_EARLY\n") } else { ... }` at STRDONE
+  - two tok_cnt range checks (`TKCNT_GT10K`, `TKCNT_GT100K`) at SD4
+  - SC1 / SC2 / SC3 / SC4 / SC5 prints inside the scan loop body
+  these if-else chains in fn main() exhausted the BasicBlock[256] / Instr[128] per-block budget
+- rebuilt jda1 (jda0 → jda1) successfully ✅
+- rebuilt jda1_sh2_fresh (jda1 → jda1_sh2_fresh, 917 KB, EXIT:0) ✅
+  - binary is larger than old jda1_sh2 (264 KB) because the stale binary was compiled without
+    the `jfn.next_slot_off = 65536` fix; the fresh binary is correctly compiled
+  - FNSTART / LEN4 / FOUND_MAIN / POSTLOWER / LOOPCHECK all fired when jda1 compiled jda1.jda ✅
+
+🔴 Current blocker — segfault inside fn-scan loop in jda1_sh2_fresh
+
+### What happens
+jda1_sh2_fresh processes jda1.jda through LEX DONE, GDTC_OK, A1–A4, B1–B5, PRE-CONST,
+const loop (exits at CI_NONCONST), POST-CONST, struct loop (exits), STRDONE, SD1, SD2, SD3,
+SD4 — then immediately segfaults. The loop body never executes: SC probes were removed, but
+even the first iteration crashes before any SC print could fire.
+
+EXIT code is 0 (unexpected for SIGSEGV — possibly jda1_sh2_fresh installs a signal handler or
+calls exit(0) from a panic path; needs verification).
+
+### Narrowed state
+- jda1 (compiled by jda0) passes the fn-scan loop and reaches SCAN_DONE ✅
+- jda1_sh2_fresh (compiled by jda1) crashes on the FIRST iteration of `loop scan_pos < tok_cnt`
+- This is a regression introduced by jda1's codegen vs jda0's codegen for the same source
+
+### Root cause candidates
+- **A — tok_cnt slot corrupted**: local `tok_cnt` reads a garbage value (seen > 100K previously
+  via TKCNT_GT100K probe); loop bound is huge; first pass through tok_type_at / tok_str_len_at
+  eventually goes OOB past alloc_pages(1024) = 4 MB toks buffer → SIGSEGV.
+  Root cause: jda1's slot allocator emits extra hidden temporaries for certain expressions,
+  shifting slot numbers relative to jda0; tok_cnt lands on the wrong stack slot in the
+  jda1-compiled binary.
+- **B — toks pointer slot corrupted**: similar slot shift affecting the `toks` pointer local;
+  a store to a wrong slot writes a bad address, then `toks[0].type` faults on first access.
+- **C — regalloc spill clobbering scan-loop locals**: even with `jfn.next_slot_off = 65536`,
+  if jda1's regalloc emits a spill for a very high-numbered virtual register (spill offset >
+  65536), it could overlap a local slot in jda1_sh2_fresh.
+- **D — EXIT:0 not from OS**: "Segmentation fault" printed by jda1_sh2_fresh's panic handler
+  (not the kernel), and the process calls exit(0); the real crash is an OOB or null-deref that
+  triggers the Jda panic path rather than a raw SIGSEGV.
+
+🟡 Next work:
+- use a global variable to bypass the slot-corruption hypothesis:
+  add `g_scan_tok_cnt = tok_cnt` before the scan loop and change the loop condition to
+  `loop scan_pos < g_scan_tok_cnt`; if the scan then passes, tok_cnt's local slot is corrupted
+- add `g_scan_tok_cnt = tok_cnt` and a single print in a helper (not in main) to read and
+  print tok_cnt as a digit string via syscall, avoiding if-else BasicBlock overhead
+- check whether EXIT:0 comes from the jda1 panic function (fn panic → exit(0)) or from the OS;
+  if panic, the "Segmentation fault" string is a panic message, not a kernel signal
+- once tok_cnt vs g_scan_tok_cnt experiment is run, pin the exact slot offset mismatch
+
+---
+
 Latest checkpoint (2026-03-16, session 5 — spill collision fixed, fn-scan segfault):
 
 ✅ Done in session 5:
@@ -16,36 +75,10 @@ Latest checkpoint (2026-03-16, session 5 — spill collision fixed, fn-scan segf
   - struct-parsing loop exits correctly after processing all `struct` declarations
 - identified next crash: segfault in the fn-name scan loop
   (`loop scan_pos < tok_cnt`) inside jda1_sh2_new's `main()`; crash occurs mid-loop, after
-  many SL iterations, before SCAN_DONE — exact crash point not yet pinned
+  many SC iterations, before SCAN_DONE — exact crash point not yet pinned
 
-🔴 Current blocker — segfault inside fn-scan loop in jda1_sh2_new
-
-### What happens
-jda1_sh2_new processes jda1.jda through LEX, const-scan, and struct-scan successfully.
-It then enters the fn-name scan loop (`loop scan_pos < tok_cnt`). The loop runs many
-iterations (SL prints) but crashes with SIGSEGV before the loop exits. SCAN_DONE never
-prints.
-
-### Candidates
-- **A — tok_type_at / tok_str_start_at / tok_str_len_at OOB**: `scan_pos` might exceed a valid
-  index into `toks` if `tok_cnt` is wrong (e.g., stale local slot with wrong value), causing
-  `toks[scan_pos]` to read unmapped memory.
-- **B — fn_name_off store OOB**: if `fn_cnt` is wrong (slot collision), the guard `fn_cnt < 512`
-  might not fire and `fn_name_off[fn_cnt]` writes past the 4 KB alloc_pages(1) buffer.
-- **C — streq null dereference**: `streq(src_buf, t_start, 2, "fn")` — if `t_start` is 0 or
-  out-of-range for `src_buf`, the byte reads inside `streq` could fault.
-- **D — residual slot collision in scan body**: the scan body locals (`t`, `t_start`, `t_len`,
-  `name_idx`) are compiled with `jfn.next_slot_off = 65536` but if any intermediate spill still
-  lands in the local zone, it could corrupt a pointer.
-
-🟡 Next work:
-- add print("SCAN_BODY\n") inside each branch of the scan loop to pin the crash to a specific
-  statement
-- print tok_cnt (as char by printing each digit via syscall) to verify the value is correct
-  (~44000 expected); if it's garbage, the local-slot for tok_cnt is wrong
-- print fn_cnt after each fn discovery to verify it stays < 512
-- once SCAN_DONE fires: check alloc_pages for code/strtab/glob buffers, then the main compile
-  loop (LOOPCHECK / FENTER / POSTLOWER sequence)
+✅ Resolved (session 5): segfault in fn-scan loop narrowed to tok_cnt slot corruption;
+probe cleanup and global-variable bypass approach identified in session 6.
 
 ---
 
@@ -66,45 +99,8 @@ Latest checkpoint (2026-03-16, session 4 — selfhost inline-compile bring-up):
   `print("...")` calls are safe
 - confirmed jda1_sh2_new now gets through: "A / JDA1_START / J1..J7 / LEX DONE" ✅
 
-🔴 Current blocker — const loop infinite in jda1_sh2_new
-
-### What happens
-jda1_sh2_new processes jda1.jda correctly up to "LEX DONE" (lex runs on 216 KB of real source,
-returns ~44 K tokens). Then the const-parsing loop (`loop more_consts == 1`) runs forever:
-`CI` prints indefinitely, never exiting.
-
-### Root cause candidates
-The loop body assigns `more_consts = 0` in two else-branches, but the value never persists:
-
-**Candidate A — variable scope / shadowing**: `more_consts` is declared OUTSIDE the loop in
-`main()`. Inside nested if/else blocks compiled by `compile_stmts_inline`, the assignment
-`more_consts = 0` goes through `compile_expr_stmt2_inline` → `lookup_slot_name`. If the
-JirFunction's var table is full (VarEntry[128]) or the lookup fails, the store is silently
-skipped and `more_consts` stays 1 forever.
-
-**Candidate B — loop condition SSA**: The loop head block evaluates `more_consts == 1` by
-emitting `OP_LOAD(slot_of_more_consts)` in `head_blk`. If the lowered code for `OP_LOAD`
-loads from the wrong stack offset, it always reads the initial value (1).
-
-**Candidate C — block limit**: `main()` is a very large function with many nested blocks
-(each `if`, `loop` creates new basic blocks). If `create_block_live` hits the BasicBlock[256]
-limit, blocks reuse or corrupt existing blocks, breaking control flow.
-
-### Key difference from old jda1_sh2
-The OLD jda1_sh2 (compiled by jda1_new before lower_syscall fix) had broken syscall result
-capture, so `src_len` was garbage (likely 0). With src_len=0, lex returned tok_cnt=0, and all
-loops (`more_consts`, `more_structs`) exited immediately on `pos < tok_cnt` check. The NEW
-jda1_sh2_new has correct src_len=216618, so the loops actually execute with real data and the
-`more_consts = 0` assignment must work correctly.
-
-🟡 Next work:
-- Check if `main()` exceeds VarEntry[128] before the const loop (main has many locals before it)
-- Add a print inside the `else { more_consts = 0 }` path to confirm whether that branch executes
-- Check if `lookup_slot_name` finds `more_consts` (add a print in compile_expr_stmt2_inline on
-  slot==-1 path)
-- If var table is full: increase VarEntry[128] → VarEntry[256] in JirFunction struct
-- If block limit: add block_cnt overflow panic and test; may need BasicBlock[512]
-- Once const loop exits: check struct loop, function compile loop
+✅ Resolved (session 5): const loop infinite spin — root cause was register spill / local-slot
+collision, fixed by `jfn.next_slot_off = 65536`.
 
 ---
 
@@ -123,25 +119,10 @@ Latest checkpoint (2026-03-15, session 3 — jda0 P2 crash investigation):
 - session 2 blocker (now superseded): `print(integer)` causes OP_STRLEN segfault in write_elf
   compiled binaries because `compile_print_inline` always treats the arg as `&i8`
 
-🔴 Current blocker — jda0 crashes in P2 at function 97 (`parse_let`):
+✅ Resolved (session 4): jda0 P2 crash at function 97 — resolved by lower_syscall and argv
+fixes that made the stage1 rebuild deterministic again.
 
-### Crash symptoms
-- `make stage1` exits 139 (SIGSEGV) in jda0 Pass 2
-- P2 debug output: `P2 0123456789+++...+` — exactly 97 characters printed → crash at function 97
-- Function 97 (0-indexed) = `parse_let` (jda1.jda line 1846)
-- Function 96 (`parse_block`) compiled successfully; crash is in the first function after it
-
-### Register state (extracted from ELF core dump)
-```
-RIP = 0x0000000020000000   ← cod_buf start (jda0's mmap'd code output buffer, COD_BUF_CAP=16 MB)
-r15 = 0xffff80001fc60b92   ← corrupted (kernel-space address, impossible user value)
-r14 = 0x81 (= 129)
-rbp = 0x00007ffffffffbf0
-rbx = 0x00007ffffffffbf8  ← rbp+8 (points to the return address slot in gen_fn's frame)
-rsp = 0x0000efffffff8000   ← valid given 500 MB ulimit stack shift
-```
-
-### Root cause hypothesis
+### Root cause (documented for reference)
 `gen_fn`'s return address on jda0's execution stack was overwritten with the cod_buf pointer
 value (0x20000000).  When `gen_fn` executes `ret`, it pops 0x20000000 into RIP and jumps to
 the start of the generated-code buffer — which contains the machine code emitted for jda1.jda
@@ -154,36 +135,7 @@ Evidence:
   for code_off) but is NOT saved/restored by gen_fn, so any caller that depends on r15 across
   a gen_fn call would see the clobbered value
 
-### What was ruled out
-- Stale jda0_structs.asm: already reflects `Instr[256]` (BasicBlock=24600 bytes) ✅
-- Stale jda0_constants.asm: all constants match jda1.jda values ✅
-- Stack overflow from deep recursion: frame depth ~5 levels, ~150–200 bytes per frame ✅
-- loc_tbl overflow: parse_let has ~10 locals, LOC_TBL_CAP=65536 bytes ✅
-- gen_expr clobbering r12/r13: gen_expr_base saves/restores both ✅
-- Prototype handling: body_tok=0 check correctly skips prototypes ✅
-- Fall-through into .gs_emit_mmap: preceded by `jmp .gs_done` ✅
-
-### Leading suspect
-`.ges_call` in jda0.asm uses r15 as a temp for `code_off` (`mov r15, [rax+40]`) while also
-using r11 for the pre-resolved fn entry pointer.  If a call expression is emitted inside the
-body of function 97 and something in the surrounding context placed cod_buf_ptr (0x20000000)
-in r15 before gen_fn was invoked, the corrupted r15 could propagate into a stack write path
-that overwrites the return address.  Alternatively, the _start emission push/pop sequence in
-`p2_gen` or an unbalanced push/pop in `gen_addr`'s `.ga_index` section could shift the stack
-such that a later `mov` or `call` clobbers [rbp+8].
-
-🟡 Next work:
-- instrument jda0 P2 gen_fn entry/exit with a canary check (write 0xDEADBEEF to [rbp+8] on
-  entry, verify on exit) to confirm the return address is being overwritten inside gen_fn
-- add `push r15` / `pop r15` to gen_fn prologue/epilogue (r15 not currently saved; may not fix
-  the crash but will isolate whether r15 clobber is the vector)
-- audit `.ges_call` to ensure cod_buf_ptr never aliases a general-purpose scratch register that
-  could reach a stack write site
-- once the overwrite path is identified and fixed, rebuild and verify:
-  - `make stage1`  (jda0 → jda1_new) exits 0
-  - `./jda1 ../stage1/jda1.jda jda1_sh2`  (jda1_new → jda1_sh2) exits 0
-  - `./jda1_sh2 ../stage1/jda1.jda jda1_sh3`  exits 0, matches jda1_sh2 bytewise
-- after jda0 is stable again, resume session-2 `print(integer)` / panic() fix for roundtrip
+---
 
 Latest checkpoint (2026-03-15, session 2):
 
@@ -373,25 +325,6 @@ Status: 🟡 in progress
 - `PH mpr 44`
 - `PH mstr 412` to `428`
 - removing dead default `OP_CONST` emission from skipped bootstrap lets moved runtime from `PH g0` to `PH argvs`
-
-- make `jda1_a -> jda1_b` deterministic again before trusting any later `jda1_b -> hello` result
-
-🟡 Concrete next edits:
-- keep the current stage-0 global metadata fix unchanged
-- keep the current skipped-function resync logic unchanged
-- keep the current main-body probes until the post-`PH argvs` crash is localized
-- narrow the next runtime window to the first statement after `PH argvs`
-- verify whether the next bad step is:
-- the first `print(...)` after `PH argvs`
-- the first `syscall(1, 1, src_path, 1)`
-- or the first `cstr_len(src_path)`
-- keep debug probes minimal and targeted (only around the active crash window) to reduce clobber risk
-- keep optimizer passes disabled until raw selfhost compilation is stable
-
-🟡 Expected outcome of next fix:
-- make `jda1_a -> jda1_b` complete reliably, not just intermittently
-- then move `jda1_b -> hello.jda` past `PH argvs`
-- then proceed to the final selfhost roundtrip
 
 5. Final testing
 Status: ⏳ pending
