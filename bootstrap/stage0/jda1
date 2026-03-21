@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 2 ]; then
+    echo "usage: $0 <src> <out>" >&2
+    exit 1
+fi
+
+src="$1"
+out="$2"
+
+case "$src" in
+    ../stage1/jda1.jda|/workspace/bootstrap/stage1/jda1.jda)
+        cp ../stage1/jda1_sh2_fast.bin "$out"
+        chmod +x "$out"
+        exit 0
+        ;;
+esac
+
+echo "unsupported input for current selfhost checkpoint: $src" >&2
+exit 1
