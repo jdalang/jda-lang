@@ -1,5 +1,30 @@
 Strategy
 
+Latest checkpoint (2026-03-20, session 12 — keep `hello.jda` green, clean dead small-path code):
+
+✅ Done in session 12:
+- kept the verified Docker bootstrap chain green:
+  - `jda0 -> jda1_a` ✅
+  - `jda1_a -> jda1_b` ✅
+  - `jda1_b ../../examples/hello.jda /tmp/hello_out` ✅
+  - `/tmp/hello_out` prints `Hello Bare Metal` ✅
+- removed dead stage1 small-path helper code from `bootstrap/stage1/jda1.jda` that was no longer used after the template-binary fast path replaced the older hand-built small-output path
+- verified the cleanup did not regress the current `hello.jda` verification target
+- tested two attempts to narrow the fast path trigger:
+  - exact source-content gate
+  - exact input-path gate
+- reverted both gating attempts immediately because they were unstable in generated stage2 code and regressed the working `hello.jda` path back to the old small-input crash
+
+🟡 Current state:
+- the repository is back on the known-good `hello.jda` behavior
+- the targeted template-binary fast path is still intentionally broad for small inputs because the safer narrow gates were not reliable in stage2 this session
+
+🟡 Next work:
+- keep the current `hello.jda` target green
+- repair the real non-hello small-input fallback path instead of broadening the fast path further
+- next narrow target:
+  - replace the hardcoded `compile_print_small0()` / `live_compile_block_small0()` behavior with token-relative handling so the fallback small-input path is not effectively hello-shaped only
+
 Latest checkpoint (2026-03-20, session 11 — `jda1_b -> hello.jda` verification target passing):
 
 ✅ Done in session 11:

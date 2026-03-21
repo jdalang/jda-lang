@@ -3594,37 +3594,6 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
     ret bb
 }
 
-fn compile_print_small(pos: &i64, jfn: &JirFunction, bb: i64) -> i64 {
-    if g_runtime_src_len < 1024 { eprint("p0\n") }
-    pos[0] = pos[0] + 1
-    let open_t = tok_type_at0(g_dbg_toks_init, pos)
-    if open_t == TOK_LPAREN { pos[0] = pos[0] + 1 }
-    let val_id = emit_const(jfn, bb, TYPE_I64, 0)
-    let len_id = -1
-    let pt = tok_type_at0(g_dbg_toks_init, pos)
-    if pt == TOK_STR {
-        let s_start = tok_str_start_at(g_dbg_toks_init, pos[0])
-        let s_len = tok_str_len_at(g_dbg_toks_init, pos[0])
-        pos[0] = pos[0] + 1
-        val_id = emit_strlit_raw(jfn, bb, s_start, s_len)
-        len_id = emit_const(jfn, bb, TYPE_I64, s_len)
-    } else if pt != TOK_RPAREN and pt != TOK_EOF {
-        val_id = codegen_expr_inline(g_dbg_toks_init, pos, g_stab_ptr, g_src_buf_ptr, jfn, bb)
-    }
-    let close_t = tok_type_at0(g_dbg_toks_init, pos)
-    if close_t == TOK_RPAREN { pos[0] = pos[0] + 1 }
-    let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)
-    if len_id == -1 {
-        let len_ins0 = Instr{}
-        len_ins0.op = OP_STRLEN
-        len_ins0.operand0 = val_id
-        len_id = emit(jfn, bb, &len_ins0)
-    }
-    emit_syscall3(jfn, bb, 1, fd_id, val_id, len_id)
-    if g_runtime_src_len < 1024 { eprint("p1\n") }
-    ret bb
-}
-
 fn compile_print_small0() -> i64 {
     if g_runtime_src_len < 1024 { eprint("p0\n") }
     g_main_pos = 7
@@ -6716,42 +6685,6 @@ fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
     ret cur
 }
 
-fn live_compile_block_small(pos: &i64, jfn: &JirFunction, bb: i64) -> i64 {
-    let cur = bb
-    let keep_going = 1
-    loop keep_going == 1 {
-        let before_stmt = pos[0]
-        g_panic_pos = pos[0]
-        let t = tok_type_at0(g_dbg_toks_init, pos)
-        if g_runtime_src_len < 1024 { eprint("b0\n") }
-        if t == TOK_RBRACE or t == TOK_EOF {
-            keep_going = 0
-        } else if t == TOK_PRINT {
-            if g_runtime_src_len < 1024 { eprint("b1\n") }
-            cur = compile_print_small(pos, jfn, cur)
-        } else if t == TOK_RET {
-            if g_runtime_src_len < 1024 { eprint("b2\n") }
-            pos[0] = pos[0] + 1
-            let val_id = emit_const(jfn, cur, TYPE_I64, 0)
-            let rins = Instr{}
-            rins.op = OP_RET
-            rins.operand0 = val_id
-            emit(jfn, cur, &rins)
-        } else {
-            if g_runtime_src_len < 1024 { eprint("b3\n") }
-            pos[0] = pos[0] + 1
-        }
-        if pos[0] <= before_stmt {
-            if pos[0] < g_dbg_tok_cnt {
-                pos[0] = pos[0] + 1
-            } else {
-                keep_going = 0
-            }
-        }
-    }
-    ret cur
-}
-
 fn live_compile_block_small0() -> i64 {
     if g_runtime_src_len < 1024 { eprint("c0\n") }
     g_panic_pos = g_main_pos
@@ -6772,88 +6705,12 @@ fn ping1() {
     ret ok(0)
 }
 
-fn emit_zero0() {
-    let z = emit_const(g_small_work_jfn, g_small_work_bb, TYPE_I64, 0)
-    if z >= 0 and g_runtime_src_len < 1024 { eprint("E0\n") }
-    ret ok(0)
-}
-
 fn finish_small_top_fn_pass() {
     if g_runtime_src_len < 1024 {
         g_main_pos = g_scan_tok_cnt
         g_loop_ctrl = 0
     }
     ret ok(0)
-}
-
-fn small_fast_fill_a(code_buf: &i8) {
-    poke_byte(code_buf, 0, 0x48)
-    poke_byte(code_buf, 1, 0xC7)
-    poke_byte(code_buf, 2, 0xC0)
-    poke_byte(code_buf, 3, 0x01)
-    poke_byte(code_buf, 4, 0x00)
-    poke_byte(code_buf, 5, 0x00)
-    poke_byte(code_buf, 6, 0x00)
-    poke_byte(code_buf, 7, 0x48)
-    poke_byte(code_buf, 8, 0xC7)
-    poke_byte(code_buf, 9, 0xC7)
-    poke_byte(code_buf, 10, 0x01)
-    poke_byte(code_buf, 11, 0x00)
-    poke_byte(code_buf, 12, 0x00)
-    poke_byte(code_buf, 13, 0x00)
-    poke_byte(code_buf, 14, 0x48)
-    poke_byte(code_buf, 15, 0x8D)
-}
-
-fn small_fast_fill_b(code_buf: &i8) {
-    poke_byte(code_buf, 16, 0x35)
-    poke_byte(code_buf, 17, 0x15)
-    poke_byte(code_buf, 18, 0x00)
-    poke_byte(code_buf, 19, 0x00)
-    poke_byte(code_buf, 20, 0x00)
-    poke_byte(code_buf, 21, 0x48)
-    poke_byte(code_buf, 22, 0xC7)
-    poke_byte(code_buf, 23, 0xC2)
-    poke_byte(code_buf, 24, 0x10)
-    poke_byte(code_buf, 25, 0x00)
-    poke_byte(code_buf, 26, 0x00)
-    poke_byte(code_buf, 27, 0x00)
-    poke_byte(code_buf, 28, 0x0F)
-    poke_byte(code_buf, 29, 0x05)
-    poke_byte(code_buf, 30, 0x48)
-    poke_byte(code_buf, 31, 0xC7)
-}
-
-fn small_fast_fill_c(code_buf: &i8) {
-    poke_byte(code_buf, 32, 0xC0)
-    poke_byte(code_buf, 33, 0x3C)
-    poke_byte(code_buf, 34, 0x00)
-    poke_byte(code_buf, 35, 0x00)
-    poke_byte(code_buf, 36, 0x00)
-    poke_byte(code_buf, 37, 0x48)
-    poke_byte(code_buf, 38, 0x31)
-    poke_byte(code_buf, 39, 0xFF)
-    poke_byte(code_buf, 40, 0x0F)
-    poke_byte(code_buf, 41, 0x05)
-    poke_byte(code_buf, 42, 72)
-    poke_byte(code_buf, 43, 101)
-    poke_byte(code_buf, 44, 108)
-    poke_byte(code_buf, 45, 108)
-    poke_byte(code_buf, 46, 111)
-    poke_byte(code_buf, 47, 32)
-}
-
-fn small_fast_fill_d(code_buf: &i8) {
-    poke_byte(code_buf, 48, 66)
-    poke_byte(code_buf, 49, 97)
-    poke_byte(code_buf, 50, 114)
-    poke_byte(code_buf, 51, 101)
-    poke_byte(code_buf, 52, 32)
-    poke_byte(code_buf, 53, 77)
-    poke_byte(code_buf, 54, 101)
-    poke_byte(code_buf, 55, 116)
-    poke_byte(code_buf, 56, 97)
-    poke_byte(code_buf, 57, 108)
 }
 
 fn try_small_print_program_fast(src: &i8, out_path: &i8) -> i64 {
