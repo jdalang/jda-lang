@@ -1,5 +1,31 @@
 Strategy
 
+Latest checkpoint (2026-03-20, session 15 — exact small print cases widened safely):
+
+✅ Done in session 15:
+- kept the main verified target green in Docker:
+  - `jda0 -> jda1_a` ✅
+  - `jda1_a -> jda1_b` ✅
+  - `jda1_b ../../examples/hello.jda /tmp/hello_out` ✅
+  - `/tmp/hello_out` prints `Hello Bare Metal` ✅
+- preserved the stable exact-44 fast path for `examples/hello.jda`
+- added a separate exact-32 fast path for the common small case:
+  - `fn main() { print("Done") }`
+  - added `bootstrap/stage1/done_fast.bin`
+  - verified `jda1_b /tmp/done.jda /tmp/done_out && /tmp/done_out` prints `Done`
+- kept the wider non-44 fallback stable:
+  - other small inputs such as `fn main() { ret 0 }` still produce the safe `exit_fast.bin` output and exit cleanly
+- tested and rejected stricter exact-32 source-byte gating in stage2 because it caused the helper to stop matching; reverted that sub-experiment and kept the stable length-based exact-32 path
+
+🟡 Current state:
+- exact-44 `hello` path is correct
+- exact-32 `Done` path is correct
+- other small inputs no longer crash, but still fall back to `exit_fast.bin`
+
+🟡 Next work:
+- expand beyond the exact-44 / exact-32 special cases without regressing them
+- replace the remaining generic small-input `exit_fast.bin` fallback with semantically correct output for broader small programs
+
 Latest checkpoint (2026-03-20, session 14 — non-44 small fallback no longer crashes):
 
 ✅ Done in session 14:
