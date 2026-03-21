@@ -1,5 +1,64 @@
 Strategy
 
+Latest checkpoint (2026-03-16, session 4 — selfhost inline-compile bring-up):
+
+✅ Done in session 4:
+- fixed `lower_syscall(...)`: syscall result was clobbered by `emit_restore_pool` before the dst
+  register received it; fix: save RAX→R12 immediately after `syscall`, then `emit_restore_pool`,
+  then `regalloc_alloc(dst)`, then move R12→dst; bracketed with `push R12`/`pop R12` (R12 is
+  callee-saved and not in the pool so restore never touches it)
+- fixed `main()` argv setup: old code used `asm { out base_ptr = rbp }` + `base_ptr + 24`; the
+  asm block was silently skipped by `compile_asm_argv_inline` (only handles "rsi"), leaving
+  base_ptr=0 and causing a segfault at `g_argv_base[1]`; fix: use `asm { out argv_ptr = rsi }`
+  which maps to OP_ARGV_BASE → `lea rax, [rbp+16]` (correct for both JMP-style jda1 binaries
+  and CALL-style jda0 binaries when the asm is handled directly by jda0's assembler)
+- removed all `print(integer_var)` debug calls from `main()`: in jda1-compiled binaries, `print`
+  treats its arg as `&i8` → calls `OP_STRLEN(int)` = `strlen(9)` → SIGSEGV; only string literal
+  `print("...")` calls are safe
+- confirmed jda1_sh2_new now gets through: "A / JDA1_START / J1..J7 / LEX DONE" ✅
+
+🔴 Current blocker — const loop infinite in jda1_sh2_new
+
+### What happens
+jda1_sh2_new processes jda1.jda correctly up to "LEX DONE" (lex runs on 216 KB of real source,
+returns ~44 K tokens). Then the const-parsing loop (`loop more_consts == 1`) runs forever:
+`CI` prints indefinitely, never exiting.
+
+### Root cause candidates
+The loop body assigns `more_consts = 0` in two else-branches, but the value never persists:
+
+**Candidate A — variable scope / shadowing**: `more_consts` is declared OUTSIDE the loop in
+`main()`. Inside nested if/else blocks compiled by `compile_stmts_inline`, the assignment
+`more_consts = 0` goes through `compile_expr_stmt2_inline` → `lookup_slot_name`. If the
+JirFunction's var table is full (VarEntry[128]) or the lookup fails, the store is silently
+skipped and `more_consts` stays 1 forever.
+
+**Candidate B — loop condition SSA**: The loop head block evaluates `more_consts == 1` by
+emitting `OP_LOAD(slot_of_more_consts)` in `head_blk`. If the lowered code for `OP_LOAD`
+loads from the wrong stack offset, it always reads the initial value (1).
+
+**Candidate C — block limit**: `main()` is a very large function with many nested blocks
+(each `if`, `loop` creates new basic blocks). If `create_block_live` hits the BasicBlock[256]
+limit, blocks reuse or corrupt existing blocks, breaking control flow.
+
+### Key difference from old jda1_sh2
+The OLD jda1_sh2 (compiled by jda1_new before lower_syscall fix) had broken syscall result
+capture, so `src_len` was garbage (likely 0). With src_len=0, lex returned tok_cnt=0, and all
+loops (`more_consts`, `more_structs`) exited immediately on `pos < tok_cnt` check. The NEW
+jda1_sh2_new has correct src_len=216618, so the loops actually execute with real data and the
+`more_consts = 0` assignment must work correctly.
+
+🟡 Next work:
+- Check if `main()` exceeds VarEntry[128] before the const loop (main has many locals before it)
+- Add a print inside the `else { more_consts = 0 }` path to confirm whether that branch executes
+- Check if `lookup_slot_name` finds `more_consts` (add a print in compile_expr_stmt2_inline on
+  slot==-1 path)
+- If var table is full: increase VarEntry[128] → VarEntry[256] in JirFunction struct
+- If block limit: add block_cnt overflow panic and test; may need BasicBlock[512]
+- Once const loop exits: check struct loop, function compile loop
+
+---
+
 Latest checkpoint (2026-03-15, session 3 — jda0 P2 crash investigation):
 
 ⚠️  Upstream changes to `jda0.asm` and `jda1.jda` introduced a new regression:
@@ -254,7 +313,7 @@ Status: 🟡 in progress
 - `make ci-selfhost-roundtrip` still segfaults at `stage1_a -> stage1_b` (exit `139`)
 - the old `jda1_b exits 0 without writing hello output` symptom is gone; after the stage-1 `main()`/`asm` fix it now reaches runtime and segfaults instead of silently doing nothing
 - successful `jda1_a -> jda1_b` runs now get much further through top-level function compilation after the skipped-function resync fix, moving the frontier from the old `parse_*` cluster into later lowering/live-codegen helpers
-- the top-level scanner now reliably reaches the real end of file (`... syscall(...)\n}`), so the earlier “premature EOF” suspicion was ruled out
+- the top-level scanner now reliably reaches the real end of file (`... syscall(...)\n}`), so the earlier "premature EOF" suspicion was ruled out
 - the current top-level frontier has moved past `emit_lea_rip(...)` into later helpers, and the latest runtime crash signal on `hello` points at the `live_codegen_primary_inline(...)` band
 - the `lower_print_int(...)` extraction is a keeper: the high selfhost path now clears that helper and pushes through `lower_instr(...)` much more often
 - the `lower_syscall(...)` extraction is also a keeper: the best current selfhost runs now clear `lower_instr(...)`, `lower_block(...)`, `lower_fn(...)`, `write_elf(...)`, `get_argv(...)`, and reach `main`
