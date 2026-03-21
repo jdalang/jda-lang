@@ -1,5 +1,100 @@
 Strategy
 
+Latest checkpoint (2026-03-20, session 9 — stage2 small-lexer first-token write isolation):
+
+✅ Done in session 9:
+- kept the compile pipeline stable in Docker:
+  - `jda0 -> jda1_a` ✅
+  - `jda1_a -> jda1_b` ✅
+- replaced the old broad `LID` crash area with a much narrower small-input helper path:
+  - `lex_small_tail_dispatch(...)`
+  - first-token-only special-case probes (`LXT*`, `LXTI*`)
+- proved the following first-token operations succeed in `jda1_b -> hello.jda`:
+  - ident preflight entry
+  - ident scan via `lex_ident_end(...)`
+  - keyword classification via `classify_keyword(...)`
+- verified that the crash is no longer in source reading or keyword detection, but in token emission
+
+🔴 Current blocker:
+- `jda0 -> jda1_a` ✅
+- `jda1_a -> jda1_b` ✅
+- `jda1_b -> hello.jda` ❌
+  - current signature:
+    - `SM`
+    - `LPF0`
+    - `LPF1`
+    - `LX0`
+    - `LX1`
+    - `LX2`
+    - `LX2A`
+    - `LX2B`
+    - `LX2C`
+    - `LX2D`
+    - `LXT0`
+    - `LXTI0`
+    - `LXTI1`
+    - `LXTI2`
+    - `LXTI3`
+    - then `Segmentation fault`
+- with direct instrumentation in `emit_lex_tok(...)`, the trace reached:
+  - `ELT0`
+  - then `Segmentation fault`
+- interpretation: the exact failing operation is the first token type/field write in the helper path
+
+🟡 Important result from this cycle:
+- switching from indexed token writes to fixed `toks[0]` writes did **not** move the crash
+- therefore the remaining bug is not just variable indexing; helper-context `Token` field stores
+  themselves are unstable in stage2 output
+
+🟡 Reverted experiment:
+- moving token metadata writes out of the helper and back into the caller briefly reintroduced:
+  - `EMIT_SLOT_OVF slot=256`
+  - `bb=255`
+- that version was reverted to preserve the last stable compile state
+
+🟡 Next work:
+- keep the current narrowed probes
+- redesign small-input token emission so helper code computes `kw/start/len` but the actual
+  `Token` struct writes happen in a simpler caller block with lower slot/block pressure
+- keep avoiding broad rewrites until `jda1_b` can tokenize `hello.jda` without crashing
+
+Latest checkpoint (2026-03-19, session 8 — stage2 lexer LID experiments, reverted):
+
+✅ Done in session 8:
+- ran repeated one-shot Docker verification loops (`--rm`) for:
+  - `jda0 -> jda1_a`
+  - `jda1_a -> jda1_b`
+  - `jda1_b -> hello.jda`
+- confirmed baseline from previous checkpoint is stable/reproducible:
+  - stage1 and stage2 build steps pass
+  - runtime failure remains in stage2 lexer identifier path (`LID`)
+- tested several focused `lex(...)` identifier-path rewrites:
+  - fully inline identifier scan + inline keyword classification
+  - `lex_ident_end(...)` + inline classification
+  - local-count helper `lex_emit_ident_or_kw_local(...)`
+  - reduced classification / TOK_IDENT-only diagnostics
+- all experimental lexer rewrites were reverted after validation because they regressed behavior
+  (segfaults or bootstrap deadlocks), so repo state is back to the committed baseline.
+
+🔴 Current blocker (unchanged):
+- `jda0 -> jda1_a` ✅
+- `jda1_a -> jda1_b` ✅
+- `jda1_b -> hello.jda` ❌
+  - observed output:
+    - `LX0`, `LTOP`, `LCHAR`, `LID`
+    - then `PANIC Token buffer overflow`
+
+🟡 Interpretation:
+- simple lexer-source logic edits alone are not sufficient
+- failures differ between helper-call and inline variants, indicating probable stage2 codegen
+  instability (call/local state clobber in hot paths) rather than a straightforward lexer bug
+
+🟡 Next work:
+- keep lexer logic close to known-good baseline and shift focus to codegen/lowering correctness
+  around local variable/call preservation in the `LID` branch path
+- use tiny probes that avoid additional nested control-flow inflation
+- only keep changes that pass all three chain steps and improve determinism
+
 Latest checkpoint (2026-03-19, session 7 — stage2 lexer deterministic blocker):
 
 ✅ Done in session 7:
