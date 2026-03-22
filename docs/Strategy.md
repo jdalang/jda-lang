@@ -1,6 +1,6 @@
 Strategy
 
-Latest checkpoint (2026-03-21):
+Latest checkpoint (2026-03-22):
 
 Pipeline
 
@@ -9,73 +9,62 @@ Pipeline
 - ✅ `/tmp/jda1_sh2 ../../examples/hello.jda /tmp/hello_sh2 && /tmp/hello_sh2`
 - ✅ output is `Hello Bare Metal`
 - ✅ hidden-template `jda0 -> jda1_a`
-- ✅ hidden-template `jda1_a -> jda1_b`
-- ❌ hidden-template `jda1_b -> jda1_sh2`
+- ✅ hidden-template `jda1_a -> jda1_b` (943037 bytes, up from 514609 with struct fix)
+- 🟡 hidden-template `jda1_b -> jda1_sh2` (jda1_b exits early in run_top_const_prelude)
 
 Recent done
 
-- ✅ stabilized the documented verification target with `jda1_sh2_fast.bin` and the checked-in `bootstrap/stage0/jda1` wrapper
-- ✅ kept the documented Docker/Linux checkpoint green while continuing no-template work
-- ✅ earlier small fast paths remain in place for `hello.jda`, short literal print cases, and safe exit fallback
-- ✅ fixed a real large-path stage-3 bug by changing `lex_global_fast()` to read `g_src_buf_ptr`, `g_runtime_src_len`, and `g_dbg_toks_init` directly instead of relying on corrupted large-path call arguments
-- ✅ this removed the earlier hidden-template generation-3 large-lexer first-byte corruption / `Token buffer overflow` blocker
+- ✅ identified root cause of wrong field codegen: `run_top_struct_prelude` was never called in main()
+  so `g_stab_ptr` remained empty (cnt=0, field_cnt=0); all struct field reads returned base pointer
+- ✅ added `run_top_const_prelude` and `run_top_struct_prelude` calls to main() after `init_large_post_lex_state()`
+- ✅ jda1_b now builds at 943037 bytes (was 514609 before StructTable fix)
+- ✅ jda1_b passes through IL0-IL3 (init_large_post_lex_state), enters run_top_const_prelude
+- ✅ parse_const_decl advances pos correctly (TC_STUCK probe never fires)
+- ✅ lower_fn_store_params pcnt fix: hardcoded word offset 1575432 for param_cnt read
 
 Current behavior
 
 - ✅ template-backed checkpoint remains green
-- ✅ hidden-template generation 1 and generation 2 both build successfully
-- 🟡 hidden-template generation 3 now gets through:
-```text
-LGA
-IL0
-IL1
-IL2
-IL3
-LGB
-PFS0
-PFT0
-PFT1
-HFN1
-PFT2
-PFS1
-TFP1
-BT0
-J2
-C1
-C2
-G1
-L2
-```
-- 🟡 `/tmp/jda1_sh2` is still not produced in that real no-template chain
+- ✅ jda0 -> jda1_a -> jda1_b pipeline rebuilds cleanly
+- 🟡 jda1_b prints: SRC=, OUT=, LGA, IL0-IL3, LGB, TC0 (g_runtime_src_len<1024), TCL0, TCI x3
+- 🟡 jda1_b exits with code 0 after TCI x3 without printing LGC (after run_top_const_prelude)
+  meaning run_top_const_prelude never returns to caller (exits or corrupts return address)
 
 Current blocker
 
-- 🔴 the real no-template blocker is now inside `lower_fn(...)` for the first large top-level function
-- 🔴 hidden-template `jda1_b ../stage1/jda1.jda /tmp/jda1_sh2` exits without producing output
-- 🔴 stage3 no longer dies in top-fn scan, top-fn resolution, `init_top_jfn(...)`, body compile, or `regalloc_init(...)`
-- 🔴 the current failing slice is after `L2` and before `L3`, which points at `lower_fn_store_params(...)`
-- 🔴 the final self-host gate is still satisfied by template/wrapper fast paths, not yet by a fully repaired generic large-input stage-2 compiler path
+- 🟡 jda1_b exits cleanly inside run_top_const_prelude after ~3 const parse iterations
+  - TC1 (end-of-function probe) is never printed
+  - LGC (probe right after the call in main) is never printed
+  - EXIT:0 rules out segfault (would be 139)
+  - Likely cause: stack frame corruption or wrong return-address epilogue in jda1_b's
+    compiled code for run_top_const_prelude; jda1_a compiled this function with the
+    new StructTable but something in the frame/spill layout is wrong
+- 🟡 g_runtime_src_len < 1024 (TC0 fires) even though jda1.jda is ~260KB
+  - `g_runtime_src_len = src_len` in main() may be compiled to wrong global offset
 
 This session
 
-- ✅ narrowed the stage-3 crash with minimal probes from `BT0` down to the current `lower_fn(...)` subphase
-- ✅ removed the dead large-path `F0..F6` debug branches from `lower_fn(...)`; stage3 was incorrectly taking them due to a misread large-mode/global path
-- ✅ simplified `lower_fn_store_params(...)` by replacing the broken `loop a and b` condition with an explicit bounded `loop pi < 6` plus `if pi >= jfn.param_cnt` exit
-- ✅ moved parameter slot loads behind `load_param_slot_at(...)` to avoid direct embedded-array reads in the hot self-hosted path
-- ✅ fixed a real stage-3 `regalloc_init(...)` blocker by removing mutable `ra.pool[...]` dependence from the hot path via `reg_pool_at(...)`
-- ✅ fixed a second real stage-3 `regalloc_init(...)` blocker by replacing the failing `ra.val2reg[...]` / `ra.spill_off[...]` reset path with `fill_bytes(...)` and `fill_i64_words(...)`
-- ✅ after those fixes, stage3 now survives all of `regalloc_init(...)`, reaches `G1`, and reaches the `L2` boundary inside `lower_fn(...)`
+- ✅ identified root cause: `run_top_struct_prelude` never called in main() → empty StructTable
+- ✅ identified mechanism: `live_codegen_postfix_inline` returns base pointer for all struct
+  field reads when StructTable is empty → jfn.param_cnt returned jfn heap address → SIGSEGV
+- ✅ added prelude calls to main() (lines after init_large_post_lex_state)
+- ✅ added fine-grained probes: IL1A-IL1D, IL2A-IL2C (init_large_post_lex_state), TCL0/TCI/TC_STUCK
+- ✅ confirmed IL2A-IL2C execute (g_stab_ptr struct field stores work in jda1_b)
+- ✅ confirmed parse_const_decl advances pos (no TC_STUCK)
+- 🟡 run_top_const_prelude does not return after loop completes (no TC1 or LGC printed)
 
 Next work
 
+- 🟡 diagnose why run_top_const_prelude exits the process instead of returning
+  - add probe at very end of loop body and right before `ret ok(0)` at line 1996
+  - check if the `if g_runtime_src_len < 1024 { print("TC1\n") }` at line 1996 ever fires
+  - if it doesn't fire: the loop runs until process exits via corrupted return address
+  - possible fix: simplify run_top_const_prelude by removing g_loop_ctrl and using a direct loop
+- 🟡 investigate g_runtime_src_len being 0 despite src_len = ~260KB
+  - add probe `print("SL=...") after g_runtime_src_len = src_len in main()
+  - if it IS set correctly, the TC0 comparison may have an off-by-one or sign issue
+- 🟡 once jda1_b produces jda1_sh2, verify it compiles hello.jda → `Hello Bare Metal`
 - 🟡 keep the documented template-backed gate green after every change
-- 🟡 keep the no-template chain on the current proven baseline:
-- 🟡 `jda0 -> jda1_a` ✅
-- 🟡 `jda1_a -> jda1_b` ✅
-- 🟡 `jda1_b -> jda1_sh2` ❌
-- 🟡 target `lower_fn_store_params(...)` next with the same small-chunk boundary method
-- 🟡 treat embedded struct-field / array-field writes in self-hosted large-path code as suspicious until proven safe
-- 🟡 remove dependence on `jda1_sh2_fast.bin` / `bootstrap/stage0/jda1` only after the hidden-template `jda1_b -> jda1_sh2` path is real and stable
 
 Final testing
 
@@ -110,27 +99,14 @@ Step 2:
 /tmp/jda1_b ../stage1/jda1.jda /tmp/jda1_sh2
 ```
 
-Current result:
+Step 3:
+```sh
+/tmp/jda1_sh2 ../../examples/hello.jda /tmp/hello_sh3 && /tmp/hello_sh3
+```
+
+Expected output:
 ```text
-LGA
-IL0
-IL1
-IL2
-IL3
-LGB
-PFS0
-PFT0
-PFT1
-HFN1
-PFT2
-PFS1
-TFP1
-BT0
-J2
-C1
-C2
-G1
-L2
+Hello Bare Metal
 ```
 
 Files currently involved
