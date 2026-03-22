@@ -12,7 +12,7 @@
 ;   - Structs: struct Name { field: type }
 ;   - Pattern matching: match x { val => expr }
 ;   - Result type: ok(val) / err(msg)  (no exceptions)
-;   - Print: 
+;   - Print: print("string")
 ;   - Inline syscall: syscall(nr, a, b, c) -> i64
 ;
 ; Stage 1 outputs JIR which is then lowered to x86-64 machine code.
@@ -230,7 +230,7 @@ struct VarEntry {
 struct JirFunction {
     src:        &i8
     src_len:    i64
-    blocks:     BasicBlock[512]
+    blocks:     BasicBlock[128]
     block_cnt:  i64
     vars:       VarEntry[64]
     var_cnt:    i64
@@ -635,9 +635,9 @@ fn tok_type_at0(toks: &Token, pos: &i64) {
 
 fn tok_type_at(toks: &Token, idx: i64) {
     if idx < 0 or idx >= g_dbg_tok_cnt { ret TOK_EOF }
-    
-    
-    
+    print("\n")
+    print("\n")
+    print("\n")
     let r = tok_type_at_raw(toks, idx)
     ret r
 }
@@ -738,7 +738,7 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     if g_main_pos < 0 or g_main_pos >= g_dbg_tok_cnt { ret ok(0) }
     let name_start = tok_str_start_at(toks, g_main_pos)
     let name_len = tok_str_len_at(toks, g_main_pos)
-    
+    print("\n")
     expect(TOK_IDENT)
     let decl_stype = TYPE_I64
     let decl_is_addr = 0
@@ -783,16 +783,16 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     g_tmp_let_is_addr = decl_is_addr
     skip_top_level_let_rhs(toks, stab, src)
     let glob_sz = load_i64_at(g_glob_size, gidx)
-    
+    print("\n")
     g_glob_total_sz = g_glob_total_sz + glob_sz
-    
+    print("\n")
     g_glob_cnt = gidx + 1
 }
 
 fn panic(msg: &i8) {
-    
-    
-    
+    print("PANIC ")
+    print(msg)
+    print("\n")
     syscall(60, 1, 0, 0)
 }
 
@@ -896,26 +896,26 @@ fn print_span(src: &i8, start: i64, len: i64) {
     syscall(1, 1, src + start, len)
 }
 
-fn  {
+fn print(msg: &i8) {
     if msg == 0 { ret 0 }
     let n = cstr_len_max(msg, 1024)
     syscall(1, 1, msg, n)
 }
 
-fn  {
+fn eprint(msg: &i8) {
     if msg == 0 { ret 0 }
     let n = cstr_len_max(msg, 1024)
     syscall(1, 2, msg, n)
 }
 
-fn  {
+fn eprint_i64(val: i64) {
     if val == 0 {
-        
+        eprint("0")
         ret 0
     }
     let v = val
     if v < 0 {
-        
+        eprint("-")
         v = 0 - v
     }
     let buf = i8[32]
@@ -932,7 +932,7 @@ fn  {
         if safety > 32 { v = 0 }
     }
     let s = &buf[i+1]
-    
+    eprint(s)
 }
 
 fn live_codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -1791,10 +1791,10 @@ fn init_top_jfn(jfn: &JirFunction, src: &i8, src_len: i64, stab: &StructTable) {
         store_i64_at0(jfnp as &i64, src)
     } else {
         let src_val = src as i64
-        
+        print("\n")
         jfn.src = src
         let check_src = jfn.src as i64
-        
+        print("\n")
         jfn.src_len = src_len
         jfn.stab = stab
         jfn.block_cnt = 0
@@ -1809,7 +1809,7 @@ fn init_top_jfn(jfn: &JirFunction, src: &i8, src_len: i64, stab: &StructTable) {
 
 fn set_cur_fn_name(cur_name_off: i64, cur_name_len: i64) {
     if 0 == 1 and g_small_err_branch == 8 {
-        
+        eprint("U2\n")
         g_small_err_branch = 9
     }
     g_cur_fn_name_start = cur_name_off
@@ -1885,12 +1885,17 @@ fn peek_token(toks: &Token, pos: i64) -> i32 {
 }
 
 fn find_matching_rbrace(toks: &Token, lbrace_idx: i64) -> i64 {
+    if 1 {
+        ret g_scan_tok_cnt - 1
+    }
     if lbrace_idx < 0 { ret -1 }
+    if lbrace_idx >= g_dbg_tok_cnt { ret -1 }
+    if tok_type_at(toks, lbrace_idx) != TOK_LBRACE { ret -1 }
     let i = lbrace_idx
     let depth = 0
-    let stop = g_scan_tok_cnt
-    loop i < stop {
-        let tt = tok_type_at_raw(toks, i)
+    loop i < g_dbg_tok_cnt {
+        let tt = tok_type_at(toks, i)
+        if tt == TOK_EOF { ret -1 }
         if tt == TOK_LBRACE { depth = depth + 1 }
         if tt == TOK_RBRACE {
             depth = depth - 1
@@ -1943,7 +1948,7 @@ fn is_main_fn_src(src: &i8, src_len: i64, fn_start: i64) -> i64 {
     }
     if i + 3 >= src_len { ret 0 }
     if src[i] == 109 and src[i+1] == 97 and src[i+2] == 105 and src[i+3] == 110 {
-        
+        print("FOUND main src\n")
         ret 1
     }
     ret 0
@@ -2133,7 +2138,7 @@ fn lookup_global(name_start: i64, name_len: i64, src: &i8) -> i64 {
 }
 
 fn dump_globals(src: &i8) {
-    
+    print("GLOB DUMP\n")
 }
 
 fn lookup_global2(name_start: i64, name_len: i64, src: &i8) -> i64 {
@@ -2487,7 +2492,7 @@ fn parse_expr_stmt(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Nod
             n.op = 2
             ret n
         }
-        
+        print("Parse error: invalid assignment target\n")
     }
     ret lhs
 }
@@ -2600,7 +2605,7 @@ fn parse_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> &Node {
         } else if st_t == TOK_RET {
             block_stmt_arena[block_arena_pos] = parse_ret(toks, pos, stab, src)
         } else if st_t == TOK_PRINT {
-            block_stmt_arena[block_arena_pos] = parse_
+            block_stmt_arena[block_arena_pos] = parse_print(toks, pos, stab, src)
         } else {
             block_stmt_arena[block_arena_pos] = parse_expr_stmt(toks, pos, stab, src)
         }
@@ -2828,7 +2833,7 @@ fn parse_ret(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     ret n
 }
 
-fn parse_ -> Node {
+fn parse_print(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     expect(TOK_PRINT)
     expect(TOK_LPAREN)
     ; Check if argument is integer literal - handle inline to avoid struct return bug
@@ -3089,7 +3094,7 @@ fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
         expect(TOK_RPAREN)
         ret inner
     }
-    
+    print("Parse error: unexpected token\n")
     ret Node{}
 }
 
@@ -3184,18 +3189,18 @@ fn copy_instr(dst: &Instr, src: &Instr) {
 
 fn emit(jfn: &JirFunction, bb: i64, ins: &Instr) -> i64 {
     if bb < 0 or bb >= 512 {
-        
-        
+        print("EMIT_BB_OVF bb=")
+        print("\n")
         panic("emit bb overflow")
         ret -1
     }
     let slot = jfn.blocks[bb].instr_cnt
     if slot < 0 or slot >= 256 {
-        
-        
-        
+        print("EMIT_SLOT_OVF slot=")
+        print(" bb=")
+        print(" fn=")
         print_span(jfn.src, g_cur_fn_name_start, g_cur_fn_name_len)
-        
+        print("\n")
         panic("emit slot overflow")
         ret -1
     }
@@ -3245,7 +3250,7 @@ fn emit_strlit_raw(jfn: &JirFunction, bb: i64, str_start: i64, str_len: i64) -> 
         if streq(jfn.src, g_cur_fn_name_start, 4, "main") == 1 {
             g_main_str_dbg = 1
             print_span(jfn.src, str_start, str_len)
-            
+            print("\n")
         }
     }
     let off = jfn.strtab_pos
@@ -4226,7 +4231,7 @@ fn alloc_slot(jfn: &JirFunction) -> i64 {
 
 fn bind(jfn: &JirFunction, tok: &Token, stype: i64) -> i64 {
     let idx = jfn.var_cnt
-    if idx >= 512 {
+    if idx >= 256 {
         panic("Too many vars")
         ret -1
     }
@@ -4240,7 +4245,7 @@ fn bind(jfn: &JirFunction, tok: &Token, stype: i64) -> i64 {
 
 fn bind_name(jfn: &JirFunction, name_start: i64, name_len: i64, stype: i64) -> i64 {
     let idx = jfn.var_cnt
-    if idx >= 512 {
+    if idx >= 128 {
         panic("Too many vars")
         ret -1
     }
@@ -4280,17 +4285,17 @@ fn lookup_stype(jfn: &JirFunction, tok: &Token) -> i64 {
 
 fn lookup_idx_name(jfn: &JirFunction, name_start: i64, name_len: i64) -> i64 {
     let jfn_addr = jfn as i64
-    
+    print("\n")
     let lin_src_len = jfn.src_len
-    
+    print("\n")
     let i = jfn.var_cnt - 1
     loop i >= 0 {
         let cur_nl = jfn.vars[i].name_len
-        
-        
+        print("\n")
+        print("\n")
         if cur_nl == name_len {
             let src_p = jfn.src as i64
-            
+            print("\n")
             if str_match(jfn.src, name_start, jfn.vars[i].name_start, name_len) == 1 {
                 ret i
             }
@@ -4731,11 +4736,11 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         ; op=7 (NODE_INT) -> integer literal stored in node.imm
         ; otherwise -> string or other expression in node.child0
         if node.op == 7 {
-            ;  -> emit print_int with immediate value
+            ; print(int_literal) -> emit print_int with immediate value
             let val_id = emit_const(jfn, bb, TYPE_I64, node.imm)
             emit_print_int(jfn, bb, val_id)
         } else {
-            ;  or  -> SYS_WRITE(1, str_ptr, str_len)
+            ; print(str) or print(variable) -> SYS_WRITE(1, str_ptr, str_len)
             let str_id = codegen_expr(node.child0, jfn, bb)
             let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)        ; stdout fd
             let len_ins1 = Instr{}
@@ -4985,9 +4990,9 @@ fn live_codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src:
                 ret emit(jfn, bb, &ldg)
             }
             if str_match(src, t.str_start, t.str_start, t.str_len) == 1 {
-                
+                print("UNRES_IDENT ")
                 print_span(src, t.str_start, t.str_len)
-                
+                print("\n")
             }
             ret -1
         }
@@ -5104,7 +5109,7 @@ fn legacy_compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src:
                 } else if st_t == TOK_RET {
                     st = parse_ret(toks, pos, stab, src)
                 } else if st_t == TOK_PRINT {
-                    st = parse_
+                    st = parse_print(toks, pos, stab, src)
                 } else {
                     st = parse_expr_stmt(toks, pos, stab, src)
                 }
@@ -7456,7 +7461,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_argv_base = argv_ptr
 
     if argc < 3 {
-        
+        eprint("Usage: jda1 <src.jda> <output_bin>\n")
         syscall(60, 1, 0, 0)
     }
 
@@ -7485,7 +7490,7 @@ fn main(argc: i64, argv_ptr: &i64) {
 
     init_large_post_lex_state()
     run_top_const_prelude(toks, src_buf, src_len)
-    run_top_struct_prelude(toks, g_stab_ptr, src_buf, src_len) run_top_let_prelude(toks, src_buf, src_len)
+    run_top_struct_prelude(toks, g_stab_ptr, src_buf, src_len)
 
     ; Pass 1: Scan for global functions
     let fn_name_off = alloc_pages(1)
@@ -7501,19 +7506,11 @@ fn main(argc: i64, argv_ptr: &i64) {
     let glob_buf = alloc_pages(128)  ; 512KB
 
     ; Emit CALL rel32 placeholder for entry point; ret falls through to exit(0)
-    ; Aligned _start stub with argc/argv
-    emit_byte(code_buf, &code_len, 0x5F)             ; pop rdi (argc)
-    emit_byte(code_buf, &code_len, 0x48)
-    emit_byte(code_buf, &code_len, 0x89)
-    emit_byte(code_buf, &code_len, 0xE6)             ; mov rsi, rsp (argv)
-    emit_byte(code_buf, &code_len, 0x48)
-    emit_byte(code_buf, &code_len, 0x83)
-    emit_byte(code_buf, &code_len, 0xE4)
-    emit_byte(code_buf, &code_len, 0xF0)             ; and rsp, -16
-    emit_byte(code_buf, &code_len, 0xE8)             ; call rel32
-    emit_i32_le(code_buf, &code_len, 0)              ; placeholder
+    emit_byte(code_buf, &code_len, 0xE8)
+    emit_i32_le(code_buf, &code_len, 0)
+    ; exit(0): mov eax, 60; xor edi, edi; syscall
     emit_byte(code_buf, &code_len, 0xB8)
-    emit_i32_le(code_buf, &code_len, 60)             ; exit(0)
+    emit_i32_le(code_buf, &code_len, 60)
     emit_byte(code_buf, &code_len, 0x31)
     emit_byte(code_buf, &code_len, 0xFF)
     emit_byte(code_buf, &code_len, 0x0F)
@@ -7692,11 +7689,11 @@ fn main(argc: i64, argv_ptr: &i64) {
 
     ; ---- Patch Entry Point ----
     let m_off = load_i64_at(fn_code_off, 0)
-    let e_rel = m_off - 13
-    poke_byte(code_buf, 9, e_rel & 0xFF)
-    poke_byte(code_buf, 10, (e_rel >> 8) & 0xFF)
-    poke_byte(code_buf, 11, (e_rel >> 16) & 0xFF)
-    poke_byte(code_buf, 12, (e_rel >> 24) & 0xFF)
+    let e_rel = m_off - 5
+    poke_byte(code_buf, 1, e_rel & 0xFF)
+    poke_byte(code_buf, 2, (e_rel >> 8) & 0xFF)
+    poke_byte(code_buf, 3, (e_rel >> 16) & 0xFF)
+    poke_byte(code_buf, 4, (e_rel >> 24) & 0xFF)
 
     ; ---- Global Fixups (String/Calls) ----
     let str_va = 0x400000 + 120 + code_len
