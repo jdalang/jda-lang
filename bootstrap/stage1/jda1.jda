@@ -4365,31 +4365,22 @@ fn codegen_rel_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
 
 fn fold_add_chain_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let left_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
-    ret fold_add_chain_rest(left_id, toks, pos, stab, src, jfn, bb)
-}
-
-fn fold_add_chain_rest(left_id: i64, toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     if left_id < 0 {
         ret left_id
     }
     let op = tok_type_at(toks, pos[0])
     let add_like = is_add_like_op(op)
-    if add_like == 0 {
-        ret left_id
+    loop add_like == 1 {
+        pos[0] = pos[0] + 1
+        let right_id = fold_add_chain_inline(toks, pos, stab, src, jfn, bb)
+        let right_bad = right_id < 0
+        if right_bad {
+            ret left_id
+        }
+        let jir_op = tok_to_jir_op(op)
+        ret emit_binop(jfn, bb, jir_op, left_id, right_id)
     }
-    ret fold_add_chain_apply(left_id, op, toks, pos, stab, src, jfn, bb)
-}
-
-fn fold_add_chain_apply(left_id: i64, op: i64, toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    pos[0] = pos[0] + 1
-    let right_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
-    let right_bad = right_id < 0
-    if right_bad {
-        ret left_id
-    }
-    let jir_op = tok_to_jir_op(op)
-    let next_left = emit_binop(jfn, bb, jir_op, left_id, right_id)
-    ret fold_add_chain_rest(next_left, toks, pos, stab, src, jfn, bb)
+    ret left_id
 }
 
 fn is_add_like_op(op: i32) -> i64 {
@@ -5477,7 +5468,13 @@ fn legacy_compile_loop_inline(toks: &Token, pos: &i64, stab: &StructTable, src: 
 ; Forward declarations for inline codegen expressions
 fn live_codegen_expr_inline_old(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
 fn live_codegen_binop_inline(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn live_codegen_binop_rest(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, left_id: i64) -> i64;
 fn live_codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn live_codegen_postfix_rest(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, expr_id: i64, cur_stype: i64) -> i64;
+fn live_codegen_primary2_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn live_codegen_primary_small_inline(toks: &Token, pos: &i64, tt: i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn live_codegen_primary_paren_inline(toks: &Token, pos: &i64, tt: i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn live_codegen_primary_ident_inline(toks: &Token, pos: &i64, t: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
 fn live_codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
 fn live_codegen_call_inline(toks: &Token, pos: &i64, name: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
 
@@ -5487,113 +5484,112 @@ fn live_codegen_expr_inline_old(toks: &Token, pos: &i64, stab: &StructTable, src
 
 fn live_codegen_binop_inline(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let left_id = live_codegen_postfix_inline(toks, pos, stab, src, jfn, bb)
-    loop {
-        let op   = tok_type_at(toks, pos[0])
-        let prec = op_precedence(op)
-        if prec == 0 { ret left_id }
-        if prec < min_prec { ret left_id }
-        pos[0] = pos[0] + 1
-        let right_id = live_codegen_binop_inline(toks, pos, prec + 1, stab, src, jfn, bb)
-        let jir_op = tok_to_jir_op(op)
-        left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
-    }
-    ret left_id
+    ret live_codegen_binop_rest(toks, pos, min_prec, stab, src, jfn, bb, left_id)
+}
+
+fn live_codegen_binop_rest(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, left_id: i64) -> i64 {
+    let op = tok_type_at(toks, pos[0])
+    let prec = op_precedence(op)
+    let keep = 1
+    if prec == 0 { keep = 0 }
+    if prec < min_prec { keep = 0 }
+    if keep != 1 { ret left_id }
+    pos[0] = pos[0] + 1
+    let right_id = live_codegen_binop_inline(toks, pos, prec + 1, stab, src, jfn, bb)
+    let jir_op = tok_to_jir_op(op)
+    let next_left = emit_binop(jfn, bb, jir_op, left_id, right_id)
+    ret live_codegen_binop_rest(toks, pos, min_prec, stab, src, jfn, bb, next_left)
 }
 
 fn live_codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let start_pos = pos[0]
-    let expr_id = live_codegen_primary_inline(toks, pos, stab, src, jfn, bb)
+    let expr_id = live_codegen_primary2_inline(toks, pos, stab, src, jfn, bb)
     let cur_stype = TYPE_I64
     if tok_type_at(toks, start_pos) == TOK_IDENT {
         cur_stype = lookup_stype_name(jfn, tok_str_start_at(toks, start_pos), tok_str_len_at(toks, start_pos))
     }
-    loop {
-        let tok_type = tok_type_at(toks, pos[0])
-        if tok_type == TOK_DOT {
-            pos[0] = pos[0] + 1
-            let field = toks[pos[0]]
-            expect(TOK_IDENT)
-            let sid = cur_stype
-            let fi = lookup_field_idx_any(stab, src, sid, field.str_start, field.str_len)
-            if fi == -1 {
-                ret expr_id
-            }
-            let off_id = emit_const(jfn, bb, TYPE_I64, stab.foffs[fi])
-            let addr = emit_binop(jfn, bb, OP_ADD, expr_id, off_id)
-            cur_stype = stab.ftypes[fi]
-            if stab.fis_array[fi] == 1 {
-                expr_id = addr
-            } else {
-                let ld = Instr{}
-                ld.op = OP_LOAD_MEM
-                ld.operand0 = addr
-                expr_id = emit(jfn, bb, &ld)
-            }
-        } else if tok_type == TOK_LBRACK {
-            pos[0] = pos[0] + 1
-            let idx_id = live_codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-            expect(TOK_RBRACK)
-            let elem_sz = emit_const(jfn, bb, TYPE_I64, 8) ; Assuming i64 array
-            let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
-            let addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
+    ret live_codegen_postfix_rest(toks, pos, stab, src, jfn, bb, expr_id, cur_stype)
+}
+
+fn live_codegen_postfix_rest(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
+    let tok_type = tok_type_at(toks, pos[0])
+    let is_dot = 0
+    if tok_type == TOK_DOT { is_dot = 1 }
+    if is_dot == 1 {
+        pos[0] = pos[0] + 1
+        let field = toks[pos[0]]
+        expect(TOK_IDENT)
+        let sid = cur_stype
+        let fi = lookup_field_idx_any(stab, src, sid, field.str_start, field.str_len)
+        let fi_ok = 1
+        if fi == -1 { fi_ok = 0 }
+        if fi_ok != 1 { ret expr_id }
+        let off_id = emit_const(jfn, bb, TYPE_I64, stab.foffs[fi])
+        let addr = emit_binop(jfn, bb, OP_ADD, expr_id, off_id)
+        let next_stype = stab.ftypes[fi]
+        let next_expr = addr
+        let is_array_field = 0
+        if stab.fis_array[fi] == 1 { is_array_field = 1 }
+        if is_array_field != 1 {
             let ld = Instr{}
             ld.op = OP_LOAD_MEM
             ld.operand0 = addr
-            expr_id = emit(jfn, bb, &ld)
-        } else {
-            ret expr_id
+            next_expr = emit(jfn, bb, &ld)
         }
+        ret live_codegen_postfix_rest(toks, pos, stab, src, jfn, bb, next_expr, next_stype)
+    }
+    let is_index = 0
+    if tok_type == TOK_LBRACK { is_index = 1 }
+    if is_index == 1 {
+        pos[0] = pos[0] + 1
+        let idx_id = live_codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        expect(TOK_RBRACK)
+        let elem_sz = emit_const(jfn, bb, TYPE_I64, 8)
+        let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
+        let addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
+        let ld = Instr{}
+        ld.op = OP_LOAD_MEM
+        ld.operand0 = addr
+        let next_expr = emit(jfn, bb, &ld)
+        ret live_codegen_postfix_rest(toks, pos, stab, src, jfn, bb, next_expr, cur_stype)
     }
     ret expr_id
 }
 
-fn live_codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    let t = toks[pos[0]]
-    if t.type == TOK_INT {
-        pos[0] = pos[0] + 1
-        ret emit_const(jfn, bb, TYPE_I64, t.imm)
+fn live_codegen_primary2_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let tt = tok_type_at(toks, pos[0])
+    let is_ident = 0
+    if tt == TOK_IDENT { is_ident = 1 }
+    if is_ident == 1 {
+        let t = toks[pos[0]]
+        ret live_codegen_primary_ident_inline(toks, pos, &t, stab, src, jfn, bb)
     }
-    if t.type == TOK_STR {
+    ret live_codegen_primary_small_inline(toks, pos, tt, stab, src, jfn, bb)
+}
+
+fn live_codegen_primary_small_inline(toks: &Token, pos: &i64, tt: i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let is_int = 0
+    if tt == TOK_INT { is_int = 1 }
+    if is_int == 1 {
+        let imm = tok_imm_at(toks, pos[0])
         pos[0] = pos[0] + 1
-        ret emit_strlit_raw(jfn, bb, t.str_start, t.str_len)
+        ret emit_const(jfn, bb, TYPE_I64, imm)
     }
-    if t.type == TOK_IDENT {
+    let is_str = 0
+    if tt == TOK_STR { is_str = 1 }
+    if is_str == 1 {
+        let ss = tok_str_start_at(toks, pos[0])
+        let sl = tok_str_len_at(toks, pos[0])
         pos[0] = pos[0] + 1
-        if toks[pos[0]].type == TOK_LPAREN {
-            ret live_codegen_call_inline(toks, pos, &t, stab, src, jfn, bb)
-        }
-        pos[0] = pos[0] - 1 ; backtrack
-        let slot = lookup(jfn, &t)
-        if slot == -1 {
-            ; Check constant table
-            let cval = lookup_const(src, t.str_start, t.str_len)
-            if cval != -1 {
-                pos[0] = pos[0] + 1
-                ret emit_const(jfn, bb, TYPE_I64, cval)
-            }
-            let gi = lookup_global2(t.str_start, t.str_len, src)
-            if gi != -1 {
-                pos[0] = pos[0] + 1
-                let addr = emit_gaddr(jfn, bb, gi)
-                let ldg = Instr{}
-                ldg.op = OP_LOAD_MEM
-                ldg.operand0 = addr
-                ret emit(jfn, bb, &ldg)
-            }
-            if str_match(src, t.str_start, t.str_start, t.str_len) == 1 {
-                
-                print_span(src, t.str_start, t.str_len)
-                
-            }
-            ret -1
-        }
-        pos[0] = pos[0] + 1
-        let ld = Instr{}
-        ld.op       = OP_LOAD
-        ld.operand0 = slot
-        ret emit(jfn, bb, &ld)
+        ret emit_strlit_raw(jfn, bb, ss, sl)
     }
-    if t.type == TOK_LPAREN {
+    ret live_codegen_primary_paren_inline(toks, pos, tt, stab, src, jfn, bb)
+}
+
+fn live_codegen_primary_paren_inline(toks: &Token, pos: &i64, tt: i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let is_paren = 0
+    if tt == TOK_LPAREN { is_paren = 1 }
+    if is_paren == 1 {
         pos[0] = pos[0] + 1
         let inner_id = live_codegen_expr_inline(toks, pos, stab, src, jfn, bb)
         expect(TOK_RPAREN)
@@ -5602,10 +5598,80 @@ fn live_codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src:
     ret -1
 }
 
+fn live_codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let t = toks[pos[0]]
+    let ttype = t.type
+    if ttype == TOK_INT {
+        pos[0] = pos[0] + 1
+        ret emit_const(jfn, bb, TYPE_I64, t.imm)
+    }
+    if ttype == TOK_STR {
+        pos[0] = pos[0] + 1
+        ret emit_strlit_raw(jfn, bb, t.str_start, t.str_len)
+    }
+    let is_ident = 0
+    if ttype == TOK_IDENT { is_ident = 1 }
+    if is_ident == 1 {
+        ret live_codegen_primary_ident_inline(toks, pos, &t, stab, src, jfn, bb)
+    }
+    let is_paren = 0
+    if ttype == TOK_LPAREN { is_paren = 1 }
+    if is_paren == 1 {
+        pos[0] = pos[0] + 1
+        let inner_id = live_codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        expect(TOK_RPAREN)
+        ret inner_id
+    }
+    ret -1
+}
+
+fn live_codegen_primary_ident_inline(toks: &Token, pos: &i64, t: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    pos[0] = pos[0] + 1
+    let is_call = 0
+    if toks[pos[0]].type == TOK_LPAREN { is_call = 1 }
+    if is_call == 1 {
+        ret live_codegen_call_inline(toks, pos, t, stab, src, jfn, bb)
+    }
+    pos[0] = pos[0] - 1
+    let slot = lookup(jfn, t)
+    let slot_missing = 0
+    if slot == -1 { slot_missing = 1 }
+    if slot_missing == 1 {
+        let cval = lookup_const(src, t.str_start, t.str_len)
+        let have_const = 0
+        if cval != -1 { have_const = 1 }
+        if have_const == 1 {
+            pos[0] = pos[0] + 1
+            ret emit_const(jfn, bb, TYPE_I64, cval)
+        }
+        let gi = lookup_global2(t.str_start, t.str_len, src)
+        let have_global = 0
+        if gi != -1 { have_global = 1 }
+        if have_global == 1 {
+            pos[0] = pos[0] + 1
+            let addr = emit_gaddr(jfn, bb, gi)
+            let ldg = Instr{}
+            ldg.op = OP_LOAD_MEM
+            ldg.operand0 = addr
+            ret emit(jfn, bb, &ldg)
+        }
+        ret -1
+    }
+    pos[0] = pos[0] + 1
+    let ld = Instr{}
+    ld.op = OP_LOAD
+    ld.operand0 = slot
+    ret emit(jfn, bb, &ld)
+}
+
 fn live_codegen_call_inline(toks: &Token, pos: &i64, name: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     expect(TOK_LPAREN)
-    if name.str_len == 11 and streq(src, name.str_start, 11, "alloc_pages") == 1 {
-        if tok_type_at(toks, pos[0]) == TOK_INT and peek_token(toks, pos[0]) == TOK_RPAREN {
+    let is_alloc_pages = 0
+    if name.str_len == 11 and streq(src, name.str_start, 11, "alloc_pages") == 1 { is_alloc_pages = 1 }
+    if is_alloc_pages == 1 {
+        let is_const_single = 0
+        if tok_type_at(toks, pos[0]) == TOK_INT and peek_token(toks, pos[0]) == TOK_RPAREN { is_const_single = 1 }
+        if is_const_single == 1 {
             let pages = tok_imm_at(toks, pos[0])
             pos[0] = pos[0] + 1
             expect(TOK_RPAREN)
@@ -5651,7 +5717,7 @@ fn live_codegen_call_inline(toks: &Token, pos: &i64, name: &Token, stab: &Struct
     }
     expect(TOK_RPAREN)
 
-    if name.str_len == 11 and streq(src, name.str_start, 11, "alloc_pages") == 1 {
+    if is_alloc_pages == 1 {
         let pages_id = arg0
         if pages_id == -1 {
             pages_id = emit_const(jfn, bb, TYPE_I64, 0)
@@ -6027,20 +6093,27 @@ fn load_param_slot_at(jfn: &JirFunction, idx: i64) -> i64 {
 }
 
 fn reg_pool_at(idx: i64) -> i32 {
-    if idx == 0 { ret PHYS_RAX }
-    if idx == 1 { ret PHYS_RCX }
-    if idx == 2 { ret PHYS_RDX }
-    if idx == 3 { ret PHYS_RBX }
-    if idx == 4 { ret PHYS_RSI }
-    if idx == 5 { ret PHYS_RDI }
-    if idx == 6 { ret PHYS_R10 }
-    if idx == 7 { ret PHYS_R11 }
-    ret PHYS_RAX
+    let tbl = i32[8]
+    tbl[0] = PHYS_RAX
+    tbl[1] = PHYS_RCX
+    tbl[2] = PHYS_RDX
+    tbl[3] = PHYS_RBX
+    tbl[4] = PHYS_RSI
+    tbl[5] = PHYS_RDI
+    tbl[6] = PHYS_R10
+    tbl[7] = PHYS_R11
+    let in_range = 1
+    if idx < 0 { in_range = 0 }
+    if idx >= 8 { in_range = 0 }
+    if in_range != 1 { ret PHYS_RAX }
+    ret tbl[idx]
 }
 
 fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
-    if val_id < 0 { ret reg_pool_at(0) }
-    if val_id >= 4096 { ret reg_pool_at(0) }
+    let valid = 1
+    if val_id < 0 { valid = 0 }
+    if val_id >= 4096 { valid = 0 }
+    if valid != 1 { ret reg_pool_at(0) }
     let i = 0
     loop i < N_ALLOC_REGS {
         if ra.reg2val[i] == -1 {
@@ -6066,37 +6139,49 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
 }
 
 fn regalloc_get(ra: &RegAlloc, val_id: i64) -> i32 {
-    if val_id < 0 { ret -1 }
-    if val_id >= 4096 { ret -1 }
+    let valid = 1
+    if val_id < 0 { valid = 0 }
+    if val_id >= 4096 { valid = 0 }
+    if valid != 1 { ret -1 }
     let idx = ra.val2reg[val_id]
-    if idx == -1 { ret -1 }
-    if idx < 0 { ret -1 }
-    if idx >= N_ALLOC_REGS { ret -1 }
+    let idx_ok = 1
+    if idx == -1 { idx_ok = 0 }
+    if idx < 0 { idx_ok = 0 }
+    if idx >= N_ALLOC_REGS { idx_ok = 0 }
+    if idx_ok != 1 { ret -1 }
     ret reg_pool_at(idx)
 }
 
 fn regalloc_free(ra: &RegAlloc, val_id: i64) {
-    if val_id < 0 { ret ok(0) }
-    if val_id >= 4096 { ret ok(0) }
+    let valid = 1
+    if val_id < 0 { valid = 0 }
+    if val_id >= 4096 { valid = 0 }
+    if valid != 1 { ret ok(0) }
     let idx = ra.val2reg[val_id]
-    if idx == -1 { ret ok(0) }
-    if idx < 0 { ret ok(0) }
-    if idx >= N_ALLOC_REGS { ret ok(0) }
+    let idx_ok = 1
+    if idx == -1 { idx_ok = 0 }
+    if idx < 0 { idx_ok = 0 }
+    if idx >= N_ALLOC_REGS { idx_ok = 0 }
+    if idx_ok != 1 { ret ok(0) }
     
     ra.reg2val[idx]    = -1
     ra.val2reg[val_id] = -1
 }
 
 fn mark_use(ctx: &LowerCtx, val_id: i64) {
-    if val_id < 0 { ret ok(0) }
-    if val_id >= 4096 { ret ok(0) }
+    let valid = 1
+    if val_id < 0 { valid = 0 }
+    if val_id >= 4096 { valid = 0 }
+    if valid != 1 { ret ok(0) }
     let cur = ctx.use_cnt[val_id]
     ctx.use_cnt[val_id] = cur + 1
 }
 
 fn consume_use(ctx: &LowerCtx, val_id: i64) {
-    if val_id < 0 { ret ok(0) }
-    if val_id >= 4096 { ret ok(0) }
+    let valid = 1
+    if val_id < 0 { valid = 0 }
+    if val_id >= 4096 { valid = 0 }
+    if valid != 1 { ret ok(0) }
     let cur = ctx.use_cnt[val_id]
     let next = cur - 1
     ctx.use_cnt[val_id] = next
@@ -6111,7 +6196,10 @@ fn consume_use(ctx: &LowerCtx, val_id: i64) {
 
 fn emit_byte(out: &i8, pos: &i64, b: i8) {
     let p = pos[0]
-    if p < 0 or p >= 16777216 { panic("emit byte overflow") }
+    let in_range = 1
+    if p < 0 { in_range = 0 }
+    if p >= 16777216 { in_range = 0 }
+    if in_range != 1 { panic("emit byte overflow") }
     out[p] = b
     pos[0] = p + 1
 }
@@ -6276,7 +6364,9 @@ fn emit_cmp_zero(out: &i8, pos: &i64, r: i32) {
 
 ; PUSH r64
 fn emit_push_r(out: &i8, pos: &i64, r: i32) {
-    if r >= 8 {
+    let ext = 0
+    if r >= 8 { ext = 1 }
+    if ext == 1 {
         emit_byte(out, pos, 0x41)
         emit_byte(out, pos, 0x50 + (r & 7))
     } else {
@@ -6286,7 +6376,9 @@ fn emit_push_r(out: &i8, pos: &i64, r: i32) {
 
 ; POP r64
 fn emit_pop_r(out: &i8, pos: &i64, r: i32) {
-    if r >= 8 {
+    let ext = 0
+    if r >= 8 { ext = 1 }
+    if ext == 1 {
         emit_byte(out, pos, 0x41)
         emit_byte(out, pos, 0x58 + (r & 7))
     } else {
@@ -9066,6 +9158,16 @@ fn main(argc: i64, argv_ptr: &i64) {
                 }
             }
             if cur_name_len == 17 {
+                if streq(src_buf, cur_name_off, 17, "codegen_addr_expr") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
                 if streq(src_buf, cur_name_off, 17, "regalloc_free_old") == 1 {
                     skip_codegen = 1
                     g_main_pos = fn_rbrace_scan + 1
@@ -9447,6 +9549,440 @@ fn main(argc: i64, argv_ptr: &i64) {
                     }
                 }
             }
+            if cur_name_len == 16 {
+                if streq(src_buf, cur_name_off, 16, "lookup_slot_name") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 13 {
+                if streq(src_buf, cur_name_off, 13, "lookup_struct") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 13, "lookup_field") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 15 {
+                if streq(src_buf, cur_name_off, 15, "lookup_struct_kw") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 15, "lookup_field_off") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 15, "codegen_syscall") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 10 {
+                if streq(src_buf, cur_name_off, 10, "span_eq_kw") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 10, "codegen_fn") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 10, "codegen_if") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 4 {
+                if streq(src_buf, cur_name_off, 4, "bind") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 6 {
+                if streq(src_buf, cur_name_off, 6, "lookup") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 9 {
+                if streq(src_buf, cur_name_off, 9, "bind_name") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 10 {
+                if streq(src_buf, cur_name_off, 10, "alloc_slot") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 10, "lookup_idx") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 12 {
+                if streq(src_buf, cur_name_off, 12, "lookup_stype") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 12, "lookup_const") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 12, "dump_globals") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 12, "codegen_stmt") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 12, "codegen_expr") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 12, "codegen_loop") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 13 {
+                if streq(src_buf, cur_name_off, 13, "lookup_struct") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 13, "lookup_top_fn") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 13, "codegen_block") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 14 {
+                if streq(src_buf, cur_name_off, 14, "lookup_global2") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 15 {
+                if streq(src_buf, cur_name_off, 15, "lookup_idx_name") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 17 {
+                if streq(src_buf, cur_name_off, 17, "lookup_stype_name") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 18 {
+                if streq(src_buf, cur_name_off, 18, "lookup_ident_stype") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 19 {
+                if streq(src_buf, cur_name_off, 19, "lookup_field_idx_kw") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 20 {
+                if streq(src_buf, cur_name_off, 20, "lookup_field_off_any") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 20, "lookup_field_idx_any") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 21 {
+                if streq(src_buf, cur_name_off, 21, "fold_add_chain_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 18 {
+                if streq(src_buf, cur_name_off, 18, "codegen_mul_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 18, "codegen_arg_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 19 {
+                if streq(src_buf, cur_name_off, 19, "codegen_call_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 20 {
+                if streq(src_buf, cur_name_off, 20, "codegen_unary_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 22 {
+                if streq(src_buf, cur_name_off, 22, "codegen_postfix_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 22, "codegen_primary_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 22, "codegen_syscall_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 28 {
+                if streq(src_buf, cur_name_off, 28, "codegen_primary_ident_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
             if cur_name_len == 25 {
                 if streq(src_buf, cur_name_off, 25, "compile_ident_stmt_inline") == 1 {
                     skip_codegen = 1
@@ -9660,6 +10196,16 @@ fn main(argc: i64, argv_ptr: &i64) {
                         g_main_pos = g_main_pos + 1
                     }
                 }
+                if streq(src_buf, cur_name_off, 24, "legacy_compile_if_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
             }
             if cur_name_len == 26 {
                 if streq(src_buf, cur_name_off, 26, "parse_expr_stmt_ident_fast") == 1 {
@@ -9683,6 +10229,16 @@ fn main(argc: i64, argv_ptr: &i64) {
                     }
                 }
                 if streq(src_buf, cur_name_off, 25, "should_skip_old_fn_long_b") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 26, "legacy_compile_loop_inline") == 1 {
                     skip_codegen = 1
                     g_main_pos = fn_rbrace_scan + 1
                     loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
@@ -9743,6 +10299,26 @@ fn main(argc: i64, argv_ptr: &i64) {
             }
             if cur_name_len == 27 {
                 if streq(src_buf, cur_name_off, 27, "parse_expr_stmt_tail_assign") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 27, "live_codegen_primary_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 27, "legacy_compile_stmts_inline") == 1 {
                     skip_codegen = 1
                     g_main_pos = fn_rbrace_scan + 1
                     loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
