@@ -28,10 +28,10 @@ FN_SZ            equ 288
 PRM_SZ           equ 32
 LOC_SZ           equ 48
 GLB_SZ           equ 48
-TOK_BUF_CAP      equ 8388608
+TOK_BUF_CAP      equ 262144
 CST_TBL_CAP      equ 65536
-STT_TBL_CAP      equ 262144
-FN_TBL_CAP       equ 268435456
+STT_TBL_CAP      equ 16384
+FN_TBL_CAP       equ 32
 LOC_TBL_CAP      equ 65536
 GLB_TBL_CAP      equ 32768
 COD_BUF_CAP      equ 16777216
@@ -100,6 +100,7 @@ TK_PTR           equ 2
 PTR_FLAG         equ 0x8000000000000000
 
 section .bss
+    align 8
     src_buf resb 1048576
     tok_buf_ptr resb 8
     tok_cnt resb 8
@@ -541,13 +542,13 @@ print_rax:
 ; mmap_anon: rdi=size -> rax=ptr (PROT_RW MAP_PA fd=-1)
 ; =============================================================================
 mmap_anon:
-    mov     r9d, 0
-    mov     r8d, -1
-    mov     r10d, MAP_PA
-    mov     edx, PROT_RW
-    mov     esi, edi
-    xor     edi, edi
-    mov     eax, SYS_MMAP
+    mov     r9, 0
+    mov     r8, -1
+    mov     r10, MAP_PA
+    mov     rdx, PROT_RW
+    mov     rsi, rdi
+    xor     rdi, rdi
+    mov     rax, SYS_MMAP
     syscall
     ret
 
