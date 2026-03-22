@@ -43,13 +43,14 @@ Exhaustive machine code analysis using `ndisasm` and trace diagnostics revealed 
 -   **Heap-Allocated Source:** Completely replaced the static `src_buf` BSS array with a heap-allocated `src_buf_ptr` initialized via `mmap`. This allows the compiler to handle source files larger than the hardcoded 1MB limit.
 -   **Stack Expansion:** Increased the `jda0` stack size to 8MB in the `Makefile` to prevent overflows during deep recursive parsing of complex functions.
 
-## 4. Current Status (March 23, 2026)
+## 4. Current Status (March 24, 2026)
 
-The "Hidden-Template" Bootstrap Roundtrip is **SUCCESSFUL**!
+Stage 1 is stable, but full self-hosting is not yet passing end-to-end.
 
--   ✅ **jda0 → jda1_a**: `jda0` (NASM) compiled `jda1.jda` into a working compiler.
--   ✅ **jda1_a → jda1_b**: `jda1_a` successfully compiled `jda1.jda` into `jda1_b`. This proves the generated code for all core language features (loops, structs, global state) is functionally correct.
--   🟡 **jda1_b Verification**: Current work is focused on resolving a segmentation fault in `jda1_b` when compiling `hello.jda`.
+-   ✅ **`jda0 -> jda1_a`**: `jda0` (NASM) compiles `jda1.jda` into a working Stage 1 compiler.
+-   ✅ **`jda1_a -> hello`**: `jda1_a` correctly receives command-line arguments and compiles `hello.jda` into a working executable.
+-   ❌ **`jda1_a -> jda1_b`**: self-hosting fails. `jda1_selfhost` (the self-hosted binary) exits 0 without producing an output file. No panic or error message is emitted; the compiler silently reaches `syscall(60, 0)` before the ELF write path.
+-   🟡 **Current focus**: dynamic frame sizing and stack-floor fixes are confirmed working; the remaining blocker is the silent early-exit during self-hosting compilation.
 
 ## 6. Command Line Argument Root Cause Analysis (March 23, 2026)
 
@@ -68,21 +69,73 @@ Detailed investigation into the `argc`/`argv` failure in `jda1` revealed a funda
 -   `jda0` compiles `main` as a zero-parameter function, meaning its prologue does not preserve `rdi` or `rsi`.
 -   `jda1`'s `main` tries to capture arguments via `asm { out argc = rdi }`. If `jda0`'s prologue clobbers `rdi` (e.g., for large stack frame adjustments or `mmap` calls), the value is lost before the `asm` block executes.
 
-### Implemented Fix (March 23-24, 2026)
+### Implemented Fixes (March 23-24, 2026)
 
 1.  **Stack-Based Argument Capture**: Modified `jda1.jda`'s `main()` to load `argc` and `argv_ptr` directly from the stack using standard parameter passing. This eliminated reliance on registers that were being clobbered.
-2.  **Structural Synchronization**: Fixed a major memory corruption issue where `JirFunction` and `LowerCtx` structures were out of sync between `jda1.jda` and the `tools/jda0_spec.py` used by the bootstrap compiler. Finalized reduced sizes (128 blocks, 64 variables) to ensure stability and performance.
+2.  **Structural Synchronization**: Fixed a major memory corruption issue where `JirFunction` and `LowerCtx` structures were out of sync between `jda1.jda` and the `tools/jda0_spec.py` used by the bootstrap compiler. The current stabilized layout uses 128 blocks and 256 variables.
 3.  **Corrected String Displacement**: Fixed a 3-byte error in `jda0.asm` string pointer math. The relative offset calculation now correctly accounts for the full 7-byte length of the `lea rax, [rip + displacement]` instruction.
 4.  **Robust Diagnostics**: Implemented `eprint_i64` without relying on unsupported operators like `%` or `as`, resolving infinite loops during early bootstrap debugging.
+5.  **Address-Of Semantics**: Fixed the `&` operator so pointer-typed expressions are no longer incorrectly dereferenced during bootstrap compilation.
+6.  **Stack Slot Reset**: Corrected `init_top_jfn()` so `jfn.next_slot_off` now starts at `0` instead of `65536`. This removes the accidental 64 KiB local-frame floor that previously affected every compiled function.
+7.  **Dynamic Frame Sizing**: Reworked `lower_fn_emit_prologue()` to reserve stack space based on actual local and spill usage. The frame size is now backpatched after lowering, and the spill allocator starts above `jfn.next_slot_off` so local slots and spills do not overlap.
 
 ## 7. Current Status & Verification
 
-- ✅ **jda0 → jda1_a**: Successfully produces a functional bootstrap compiler.
-- ✅ **jda1_a → hello_sh**: Correctly compiles simple programs with working strings and arguments.
-- ✅ **Self-Hosting (jda1_a → jda1_b)**: FULL ROUNDTRIP ACHIEVED. The compiler can now successfully compile itself and produce a functional secondary stage.
+- ✅ **`jda0 -> jda1_a`**: Successfully produces a functional bootstrap compiler.
+- ✅ **`jda1_a -> hello_sh`**: Correctly compiles simple programs with working strings and arguments.
+- ✅ **Stack-floor diagnosis validated**: the hardcoded `next_slot_off = 65536` initialization was real and has been removed.
+- ✅ **Generated prologues shrank**: Stage 1 now emits compact per-function stack frames instead of reserving a fixed 512 KiB / 2 MiB frame.
+- ✅ **`jda1_a -> jda1_selfhost`**: binary produced (no longer a segfault during compilation).
+- ❌ **`jda1_selfhost` silent exit**: the self-hosted compiler exits 0 without writing output, even for `hello.jda`. No panic or error is printed; the bug is a silent early-exit somewhere in the top-level compilation loop.
+- 🟡 **Important conclusion**: the compile-time crash is gone; the remaining blocker is a logic error causing the compiler to exit before reaching `write_elf`.
 
-## 8. Next Steps
+## 8. Phase 5 Fixes (March 24, 2026)
 
-1.  **Remove remaining debug noise**: Final audit of `jda1.jda` for any lingering trace prints.
-2.  **Upstream fixes**: Merge `selfhost-inline-compile` into main once additional conformance tests pass.
-3.  **Implement _start in write_elf**: Add a minimal `_start` stub to the ELF generator for pure standalone binaries without `jda0`'s help.
+The following fixes were applied in the current working tree to address the remaining self-hosting failures:
+
+### Return-Type Annotation Fixes
+`jda0` requires explicit `-> i64` return-type annotations to emit correct return-value handling. The following functions were missing them and have been corrected:
+`load_i8_at`, `load_i8_at0`, `char_at_pos`, `lex_scan_int`, `tok_type_at0`, `tok_type_at`,
+`tok_imm_at`, `tok_str_start_at`, `tok_str_len_at`, `parse_const_decl`,
+`skip_top_level_let_rhs`, `skip_top_level_let`, `char_to_tok`, `lower_fn_emit_prologue`.
+
+### Variable Table Expansion
+-   **`VarEntry` array**: expanded from `VarEntry[64]` to `VarEntry[256]` in `JirFunction`, eliminating "Too many vars" panics when compiling large functions.
+-   **`bind_name` limit**: guard raised from `>= 128` to `>= 256` to match.
+-   **Struct size update**: `FN_SZ` = 3,161,288 bytes; `jda0_constants.asm` and `jda0_structs.asm` regenerated accordingly.
+-   **Hardcoded field indices** in `load_param_slot_at` and `lower_fn_store_params` updated to `395145` / `395144` to reflect the new layout (was `1,575,433` / `1,575,432`).
+
+### i8 Store Instruction Support
+-   Added `emit_store_mem_reg8` to emit an 8-bit `MOV [base], src` (`0x88` opcode with REX prefix).
+-   `lower_instr_mem` now calls this variant when `ins.itype == TYPE_I8`, fixing memory corruption when storing byte-width values into `&i8` pointers.
+
+### `_start` Stub and Entry-Point Patch
+-   **23-byte `_start`**: the emitted `_start` stub now opens with `mov rdi, [rsp]` / `lea rsi, [rsp+8]` before the `call main`, so compiled binaries correctly receive `argc`/`argv` from the kernel stack.
+-   **Entry patch offset**: updated to bytes 10–13 (was 1–4); `e_rel = m_off - 14` (was `m_off - 5`).
+-   **Main detection**: `str_match` replaced with `streq(src_buf, cur_name_off, 4, "main")` for `is_main` detection; `fn_code_off[0]` is now explicitly set when `is_main == 1`, independent of function scan order.
+
+### `expect()` Signature Fix
+All call sites of `expect()` updated to pass the token array explicitly: `expect(toks, TOK_X)` instead of the old no-arg form. This was silently passing a stale/uninitialized pointer in some code paths.
+
+### `live_compile_block` Brace Fix
+Two mismatched closing braces in `live_compile_block` caused the per-iteration parser recovery guard (`if g_main_pos <= before_stmt`) to execute outside the loop rather than at the end of each iteration. The braces have been corrected so the guard is inside the loop body where it belongs.
+
+### `jda0.asm` Address-Of Fix
+-   Removed an erroneous extra `mov rax, [rax]` dereference in `gen_expr_base` that was unconditionally loading through the pointer after emitting `gen_addr` for `&ptr` expressions. This caused double-indirection for every `&` expression on a pointer-typed variable.
+-   Fixed `gen_addr` array indexing to unconditionally write `lv_isptr = 0` after processing an index expression (rather than restoring the old value), since the result of `arr[i]` is always an element, not a pointer.
+-   Removed a stale `pop rax` in `p2_gen` that was popping without a matching push, corrupting the stack during ELF generation.
+
+### Struct Size Updates
+| Constant | Old | New |
+|---|---|---|
+| `FN_SZ` | 12,603,464 | 3,161,288 |
+| `LOWER_SZ` | 102,512 | 99,440 |
+| `GLB_SZ` | 48 | 32 |
+
+## 9. Next Steps
+
+1.  **Fix silent early-exit in `jda1_selfhost`**: trace why the self-hosted compiler exits 0 before `write_elf`. Suspected cause: a `live_compile_block` brace issue causing incorrect control flow in the outer function-scan loop, or an `argc` check being triggered due to residual register state.
+2.  **Remove remaining debug noise**: one `eprint("DEBUG: argc = ...")` call remains at the top of `main()` and must be removed before shipping.
+3.  **Verify `jda1_selfhost -> hello`** compiles and runs correctly once the silent-exit is fixed.
+4.  **Stage 3 roundtrip**: run `jda1_selfhost -> jda1_selfhost2` to confirm full self-hosting stability.
+5.  **Upstream fixes**: merge into main after self-hosting and conformance both pass.
