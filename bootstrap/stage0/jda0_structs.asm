@@ -10,10 +10,10 @@ BB_INSTR_CNT              equ 24584
 BB_LABEL_OFF              equ 24592
 BB_SZ                     equ 24600
 
-; ConstVal struct (size: 12 bytes)
+; ConstVal struct (size: 16 bytes)
 CST_FOUND                 equ 0
-CST_VAL                   equ 4
-CST_SZ                    equ 12
+CST_VAL                   equ 8
+CST_SZ                    equ 16
 
 ; Fixup struct (size: 32 bytes)
 FIXUP_CODE_OFF            equ 0
@@ -22,37 +22,37 @@ FIXUP_KIND                equ 16
 FIXUP_STR_LEN             equ 24
 FIXUP_SZ                  equ 32
 
-; Instr struct (size: 96 bytes)
+; Instr struct (size: 112 bytes)
 INSTR_OP                  equ 0
-INSTR_ITYPE               equ 4
-INSTR_ID                  equ 8
-INSTR_DEAD                equ 16
-INSTR_PAD                 equ 20
-INSTR_OPERAND0            equ 24
-INSTR_OPERAND1            equ 32
-INSTR_OPERAND2            equ 40
-INSTR_OPERAND3            equ 48
-INSTR_IMM                 equ 56
-INSTR_STR_START           equ 64
-INSTR_STR_LEN             equ 72
-INSTR_BB_TARGET0          equ 80
-INSTR_BB_TARGET1          equ 88
-INSTR_SZ                  equ 96
+INSTR_ITYPE               equ 8
+INSTR_ID                  equ 16
+INSTR_DEAD                equ 24
+INSTR_PAD                 equ 32
+INSTR_OPERAND0            equ 40
+INSTR_OPERAND1            equ 48
+INSTR_OPERAND2            equ 56
+INSTR_OPERAND3            equ 64
+INSTR_IMM                 equ 72
+INSTR_STR_START           equ 80
+INSTR_STR_LEN             equ 88
+INSTR_BB_TARGET0          equ 96
+INSTR_BB_TARGET1          equ 104
+INSTR_SZ                  equ 112
 
-; JirFunction struct (size: 791873 bytes)
+; JirFunction struct (size: 6305864 bytes)
 FN_SRC                    equ 0
-FN_SRC_LEN                equ 1
-FN_BLOCKS                 equ 9
-FN_BLOCK_CNT              equ 787209
-FN_VARS                   equ 787217
-FN_VAR_CNT                equ 791313
-FN_NEXT_SLOT_OFF          equ 791321
-FN_NEXT_ID                equ 791329
-FN_STRTAB                 equ 791337
-FN_STRTAB_POS             equ 791849
-FN_STAB                   equ 791857
-FN_PARAM_CNT              equ 791865
-FN_SZ                     equ 791873
+FN_SRC_LEN                equ 8
+FN_BLOCKS                 equ 16
+FN_BLOCK_CNT              equ 6297616
+FN_VARS                   equ 6297624
+FN_VAR_CNT                equ 6301720
+FN_NEXT_SLOT_OFF          equ 6301728
+FN_NEXT_ID                equ 6301736
+FN_STRTAB                 equ 6301744
+FN_STRTAB_POS             equ 6305840
+FN_STAB                   equ 6305848
+FN_PARAM_CNT              equ 6305856
+FN_SZ                     equ 6305864
 
 ; LowerCtx struct (size: 100464 bytes)
 LOWER_RA                  equ 0
@@ -62,22 +62,22 @@ LOWER_BB_OFFSETS          equ 82032
 LOWER_USE_CNT             equ 84080
 LOWER_SZ                  equ 100464
 
-; Node struct (size: 88 bytes)
+; Node struct (size: 112 bytes)
 NODE_NODE_TYPE            equ 0
-NODE_OP                   equ 4
-NODE_IMM                  equ 8
-NODE_DATA_TYPE            equ 16
-NODE_PARAM_CNT            equ 20
-NODE_CHILD_CNT            equ 24
-NODE_RET_TYPE             equ 28
-NODE_TOKEN                equ 32
-NODE_TOKEN2               equ 40
-NODE_CHILD0               equ 48
-NODE_CHILD1               equ 56
-NODE_CHILD2               equ 64
-NODE_CHILD3               equ 72
-NODE_CHILDREN             equ 80
-NODE_SZ                   equ 88
+NODE_OP                   equ 8
+NODE_IMM                  equ 16
+NODE_DATA_TYPE            equ 24
+NODE_PARAM_CNT            equ 32
+NODE_CHILD_CNT            equ 40
+NODE_RET_TYPE             equ 48
+NODE_TOKEN                equ 56
+NODE_TOKEN2               equ 64
+NODE_CHILD0               equ 72
+NODE_CHILD1               equ 80
+NODE_CHILD2               equ 88
+NODE_CHILD3               equ 96
+NODE_CHILDREN             equ 104
+NODE_SZ                   equ 112
 
 ; RegAlloc struct (size: 49256 bytes)
 REGALLOC_POOL             equ 0
