@@ -230,7 +230,7 @@ struct VarEntry {
 struct JirFunction {
     src:        &i8
     src_len:    i64
-    blocks:     BasicBlock[128]
+    blocks:     BasicBlock[512]
     block_cnt:  i64
     vars:       VarEntry[64]
     var_cnt:    i64
@@ -945,7 +945,7 @@ fn regalloc_free_old(ra: &RegAlloc, val_id: i64) {
     let idx = ra.val2reg[val_id]
     if idx == -1 { ret ok(0) }
     if idx < 0 { ret ok(0) }
-    if idx >= 8 { ret ok(0) }
+    
     ra.reg2val[idx]    = -1
     ra.val2reg[val_id] = -1
 }
@@ -1885,17 +1885,12 @@ fn peek_token(toks: &Token, pos: i64) -> i32 {
 }
 
 fn find_matching_rbrace(toks: &Token, lbrace_idx: i64) -> i64 {
-    if 1 {
-        ret g_scan_tok_cnt - 1
-    }
     if lbrace_idx < 0 { ret -1 }
-    if lbrace_idx >= g_dbg_tok_cnt { ret -1 }
-    if tok_type_at(toks, lbrace_idx) != TOK_LBRACE { ret -1 }
     let i = lbrace_idx
     let depth = 0
-    loop i < g_dbg_tok_cnt {
-        let tt = tok_type_at(toks, i)
-        if tt == TOK_EOF { ret -1 }
+    let stop = g_scan_tok_cnt
+    loop i < stop {
+        let tt = tok_type_at_raw(toks, i)
         if tt == TOK_LBRACE { depth = depth + 1 }
         if tt == TOK_RBRACE {
             depth = depth - 1
@@ -3150,7 +3145,7 @@ fn new_block(jfn: &JirFunction) -> i64 {
 
 fn create_block_live(jfn: &JirFunction) -> i64 {
     let id = jfn.block_cnt
-    if id >= 512 { ret 511 }
+    
     jfn.blocks[id].id        = id
     jfn.blocks[id].instr_cnt = 0
     jfn.blocks[id].label_off = -1
@@ -3163,9 +3158,7 @@ fn create_block(jfn: &JirFunction) -> i64 {
     if id < 0 {
         ret 0
     }
-    if id >= 512 {
-        ret 511
-    }
+    
     jfn.blocks[id].id        = id
     jfn.blocks[id].instr_cnt = 0
     jfn.blocks[id].label_off = -1
@@ -4231,10 +4224,7 @@ fn alloc_slot(jfn: &JirFunction) -> i64 {
 
 fn bind(jfn: &JirFunction, tok: &Token, stype: i64) -> i64 {
     let idx = jfn.var_cnt
-    if idx >= 256 {
-        panic("Too many vars")
-        ret -1
-    }
+    
     jfn.vars[idx].name_start = tok.str_start
     jfn.vars[idx].name_len   = tok.str_len
     jfn.vars[idx].slot_off   = alloc_slot(jfn)
@@ -4245,10 +4235,7 @@ fn bind(jfn: &JirFunction, tok: &Token, stype: i64) -> i64 {
 
 fn bind_name(jfn: &JirFunction, name_start: i64, name_len: i64, stype: i64) -> i64 {
     let idx = jfn.var_cnt
-    if idx >= 128 {
-        panic("Too many vars")
-        ret -1
-    }
+    
     jfn.vars[idx].name_start = name_start
     jfn.vars[idx].name_len   = name_len
     jfn.vars[idx].slot_off   = alloc_slot(jfn)
@@ -5482,7 +5469,7 @@ fn regalloc_free(ra: &RegAlloc, val_id: i64) {
     let idx = ra.val2reg[val_id]
     if idx == -1 { ret ok(0) }
     if idx < 0 { ret ok(0) }
-    if idx >= 8 { ret ok(0) }
+    
     ra.reg2val[idx]    = -1
     ra.val2reg[val_id] = -1
 }
@@ -7506,11 +7493,19 @@ fn main(argc: i64, argv_ptr: &i64) {
     let glob_buf = alloc_pages(128)  ; 512KB
 
     ; Emit CALL rel32 placeholder for entry point; ret falls through to exit(0)
-    emit_byte(code_buf, &code_len, 0xE8)
-    emit_i32_le(code_buf, &code_len, 0)
-    ; exit(0): mov eax, 60; xor edi, edi; syscall
+    ; Aligned _start stub with argc/argv
+    emit_byte(code_buf, &code_len, 0x5F)             ; pop rdi (argc)
+    emit_byte(code_buf, &code_len, 0x48)
+    emit_byte(code_buf, &code_len, 0x89)
+    emit_byte(code_buf, &code_len, 0xE6)             ; mov rsi, rsp (argv)
+    emit_byte(code_buf, &code_len, 0x48)
+    emit_byte(code_buf, &code_len, 0x83)
+    emit_byte(code_buf, &code_len, 0xE4)
+    emit_byte(code_buf, &code_len, 0xF0)             ; and rsp, -16
+    emit_byte(code_buf, &code_len, 0xE8)             ; call rel32
+    emit_i32_le(code_buf, &code_len, 0)              ; placeholder
     emit_byte(code_buf, &code_len, 0xB8)
-    emit_i32_le(code_buf, &code_len, 60)
+    emit_i32_le(code_buf, &code_len, 60)             ; exit(0)
     emit_byte(code_buf, &code_len, 0x31)
     emit_byte(code_buf, &code_len, 0xFF)
     emit_byte(code_buf, &code_len, 0x0F)
@@ -7689,11 +7684,11 @@ fn main(argc: i64, argv_ptr: &i64) {
 
     ; ---- Patch Entry Point ----
     let m_off = load_i64_at(fn_code_off, 0)
-    let e_rel = m_off - 5
-    poke_byte(code_buf, 1, e_rel & 0xFF)
-    poke_byte(code_buf, 2, (e_rel >> 8) & 0xFF)
-    poke_byte(code_buf, 3, (e_rel >> 16) & 0xFF)
-    poke_byte(code_buf, 4, (e_rel >> 24) & 0xFF)
+    let e_rel = m_off - 13
+    poke_byte(code_buf, 9, e_rel & 0xFF)
+    poke_byte(code_buf, 10, (e_rel >> 8) & 0xFF)
+    poke_byte(code_buf, 11, (e_rel >> 16) & 0xFF)
+    poke_byte(code_buf, 12, (e_rel >> 24) & 0xFF)
 
     ; ---- Global Fixups (String/Calls) ----
     let str_va = 0x400000 + 120 + code_len
