@@ -126,6 +126,7 @@ OP_SHR               equ 28
 OP_SHL               equ 29
 OP_GADDR             equ 30
 OP_ARGV_BASE         equ 31
+OP_ARGC_GET          equ 32
 
 
 ; Structure sizes
@@ -133,8 +134,8 @@ BB_SZ                equ 24600
 CST_SZ               equ 16
 FIXUP_SZ             equ 32
 FLD_SZ               equ 112
-FN_SZ                equ 6305864
-LOWER_SZ             equ 100464
+FN_SZ                equ 12603464
+LOWER_SZ             equ 102512
 NODE_SZ              equ 112
 REGALLOC_SZ          equ 49256
 STRUCTTABLE_SZ       equ 199184
@@ -213,7 +214,7 @@ TK_PTR               equ 2
 
 ; Additional size constants
 LOC_SZ               equ 48
-GLB_SZ               equ 32
+GLB_SZ               equ 48
 
 ; Pointer type flag
 PTR_FLAG             equ 0x8000000000000000
