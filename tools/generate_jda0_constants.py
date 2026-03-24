@@ -34,6 +34,7 @@ VALIDATION:
 
 import sys
 import os
+import re
 
 def load_spec():
     """Load jda0_spec.py from tools directory
@@ -302,15 +303,30 @@ def main():
     print(f"   Loaded {len(spec['OPCODES'])} opcodes")
     print(f"   Loaded {len(spec['STRUCTURES'])} structures")
 
+    seen_constants = set()
+
+    def add_with_dedup(new_content):
+        nonlocal seen_constants
+        deduped = ""
+        for line in new_content.split('\n'):
+            match = re.match(r'^(\w+)\s+equ\s+', line)
+            if match:
+                const_name = match.group(1)
+                if const_name in seen_constants:
+                    continue
+                seen_constants.add(const_name)
+            deduped += line + '\n'
+        return deduped
+
     # Generate all sections
     output = generate_header()
-    output += generate_token_constants(spec)
-    output += generate_type_constants(spec)
-    output += generate_opcode_constants(spec)
-    output += generate_struct_sizes(spec)
-    output += generate_node_type_constants(spec)
-    output += generate_system_constants()
-    output += generate_compatibility_constants()
+    output += add_with_dedup(generate_token_constants(spec))
+    output += add_with_dedup(generate_type_constants(spec))
+    output += add_with_dedup(generate_opcode_constants(spec))
+    output += add_with_dedup(generate_struct_sizes(spec))
+    output += add_with_dedup(generate_node_type_constants(spec))
+    output += add_with_dedup(generate_system_constants())
+    output += add_with_dedup(generate_compatibility_constants())
 
     # Write to output file
     output_path = os.path.join(
