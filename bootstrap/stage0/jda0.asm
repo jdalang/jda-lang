@@ -5534,6 +5534,7 @@ p2_gen:
     add     r15, r14
     sub     r15, r13
     sub     r15, 7
+
     mov     rbx, [cod_buf_ptr]
     add     rbx, r13
     mov     [rbx], r15d

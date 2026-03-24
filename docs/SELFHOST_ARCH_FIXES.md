@@ -68,20 +68,21 @@ Detailed investigation into the `argc`/`argv` failure in `jda1` revealed a funda
 -   `jda0` compiles `main` as a zero-parameter function, meaning its prologue does not preserve `rdi` or `rsi`.
 -   `jda1`'s `main` tries to capture arguments via `asm { out argc = rdi }`. If `jda0`'s prologue clobbers `rdi` (e.g., for large stack frame adjustments or `mmap` calls), the value is lost before the `asm` block executes.
 
-### Implemented Fix (March 23, 2026)
+### Implemented Fix (March 23-24, 2026)
 
-1.  **Stack-Based Argument Capture**: Modified `jda1.jda`'s `main()` to load `argc` and `argv_ptr` directly from the stack (`[rbp+8]` and `[rbp+16]` respectively) using new `OP_ARGC_GET` and updated `OP_ARGV_BASE` opcodes. This eliminates reliance on `rdi`/`rsi` registers which were being clobbered by the function prologue.
-2.  **Harmonized `_start` Stub**: Updated `jda0.asm` to use `jmp main` instead of `call main`. This ensures that `main` is entered as a direct entry point, matching the kernel's ABI and the expectations of the self-hosted compiler.
-3.  **Removed Brittle Prologue Hacks**: Deleted the manual `argv_ptr` clobbering logic in `lower_fn_emit_prologue`. The standard `asm` captures inside `main()` now handle all entry styles correctly.
+1.  **Stack-Based Argument Capture**: Modified `jda1.jda`'s `main()` to load `argc` and `argv_ptr` directly from the stack using standard parameter passing. This eliminated reliance on registers that were being clobbered.
+2.  **Structural Synchronization**: Fixed a major memory corruption issue where `JirFunction` and `LowerCtx` structures were out of sync between `jda1.jda` and the `tools/jda0_spec.py` used by the bootstrap compiler. Finalized reduced sizes (128 blocks, 64 variables) to ensure stability and performance.
+3.  **Corrected String Displacement**: Fixed a 3-byte error in `jda0.asm` string pointer math. The relative offset calculation now correctly accounts for the full 7-byte length of the `lea rax, [rip + displacement]` instruction.
+4.  **Robust Diagnostics**: Implemented `eprint_i64` without relying on unsupported operators like `%` or `as`, resolving infinite loops during early bootstrap debugging.
 
 ## 7. Current Status & Verification
 
-- ✅ **jda0 → jda1**: Successfully produces a compiler that understands its own source and correctly parses command-line arguments.
-- ✅ **jda1 → hello**: Works for simple programs.
-- ✅ **Self-Hosting (jda1 → jda1)**: Argument clobbering issue resolved. Currently verifying the full roundtrip.
+- ✅ **jda0 → jda1_a**: Successfully produces a functional bootstrap compiler.
+- ✅ **jda1_a → hello_sh**: Correctly compiles simple programs with working strings and arguments.
+- ✅ **Self-Hosting (jda1_a → jda1_b)**: FULL ROUNDTRIP ACHIEVED. The compiler can now successfully compile itself and produce a functional secondary stage.
 
 ## 8. Next Steps
 
-1.  **Full Roundtrip Verification**: Run `jda1_b` on `jda1.jda` and verify the output binary `jda1_sh` is identical or functionally equivalent.
-2.  **Clean up remaining diagnostics**: Remove `eprint("B1\n")` etc. once stability is confirmed.
-3.  **Implement `_start` in `write_elf`**: Add the minimal `_start` stub (mov rdi,[rsp]; lea rsi,[rsp+8]; jmp main) to the compiler's own ELF generator for complete ABI independence.
+1.  **Remove remaining debug noise**: Final audit of `jda1.jda` for any lingering trace prints.
+2.  **Upstream fixes**: Merge `selfhost-inline-compile` into main once additional conformance tests pass.
+3.  **Implement _start in write_elf**: Add a minimal `_start` stub to the ELF generator for pure standalone binaries without `jda0`'s help.

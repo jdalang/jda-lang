@@ -230,9 +230,9 @@ struct VarEntry {
 struct JirFunction {
     src:        &i8
     src_len:    i64
-    blocks:     BasicBlock[512]
+    blocks:     BasicBlock[128]
     block_cnt:  i64
-    vars:       VarEntry[128]
+    vars:       VarEntry[64]
     var_cnt:    i64
     next_slot_off: i64
     next_id:    i64
@@ -267,7 +267,7 @@ struct LowerCtx {
     ra:         RegAlloc
     fixups:     Fixup[1024]
     fix_cnt:    i64
-    bb_offsets: i64[512]
+    bb_offsets: i64[128]
     use_cnt:    i32[4096]
 }
 
@@ -540,7 +540,6 @@ fn lex_handle_lt_next(toks: &Token, pos: &i64) {
 }
 
 fn lex_emit_ident_or_kw(toks: &Token, pos: &i64) {
-    if g_runtime_src_len >= 1024 and g_lex_count == 0 { print("LEI0\n") }
     let start = pos[0]
     let keep_ident = 1
     loop keep_ident == 1 {
@@ -556,13 +555,11 @@ fn lex_emit_ident_or_kw(toks: &Token, pos: &i64) {
         }
     }
     let len = pos[0] - start
-    if g_runtime_src_len >= 1024 and g_lex_count == 0 { print("LEI1\n") }
     let kw = classify_keyword(g_lex_src_ptr, start, len)
     if g_lex_count >= 262143 { panic("Token buffer overflow") }
     let idx = g_lex_count
     lex_store_tok3(toks, idx, kw, start, len)
     g_lex_count = g_lex_count + 1
-    if g_runtime_src_len >= 1024 and idx == 0 { print("LEI2\n") }
 }
 
 fn lex_emit_ident_local(src: &i8, src_len: i64, toks: &Token, pos: &i64, count: i64) -> i64 {
@@ -638,18 +635,13 @@ fn tok_type_at0(toks: &Token, pos: &i64) {
 
 fn tok_type_at(toks: &Token, idx: i64) {
     if idx < 0 or idx >= g_dbg_tok_cnt { ret TOK_EOF }
-    print("TTA0\n")
-    print("TTAP=")
     print(toks as i64)
     print("\n")
-    print("TTAI=")
     print(idx)
     print("\n")
-    print("TTAC=")
     print(g_dbg_tok_cnt)
     print("\n")
     let r = tok_type_at_raw(toks, idx)
-    print("TTA1\n")
     ret r
 }
 
@@ -745,12 +737,10 @@ fn skip_top_level_let_rhs(toks: &Token, stab: &StructTable, src: &i8) {
 }
 
 fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
-    print("GL0\n")
     expect(TOK_LET)
     if g_main_pos < 0 or g_main_pos >= g_dbg_tok_cnt { ret ok(0) }
     let name_start = tok_str_start_at(toks, g_main_pos)
     let name_len = tok_str_len_at(toks, g_main_pos)
-    print("GLN=")
     print(name_len)
     print("\n")
     expect(TOK_IDENT)
@@ -797,11 +787,9 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     g_tmp_let_is_addr = decl_is_addr
     skip_top_level_let_rhs(toks, stab, src)
     let glob_sz = load_i64_at(g_glob_size, gidx)
-    print("GLS=")
     print(glob_sz)
     print("\n")
     g_glob_total_sz = g_glob_total_sz + glob_sz
-    print("GLT=")
     print(g_glob_total_sz)
     print("\n")
     g_glob_cnt = gidx + 1
@@ -914,8 +902,43 @@ fn print_span(src: &i8, start: i64, len: i64) {
     syscall(1, 1, src + start, len)
 }
 
+fn print(msg: &i8) {
+    if msg == 0 { ret 0 }
+    let n = cstr_len_max(msg, 1024)
+    syscall(1, 1, msg, n)
+}
+
 fn eprint(msg: &i8) {
-    syscall(1, 2, msg, 3)
+    if msg == 0 { ret 0 }
+    let n = cstr_len_max(msg, 1024)
+    syscall(1, 2, msg, n)
+}
+
+fn eprint_i64(val: i64) {
+    if val == 0 {
+        eprint("0")
+        ret 0
+    }
+    let v = val
+    if v < 0 {
+        eprint("-")
+        v = 0 - v
+    }
+    let buf = i8[32]
+    let i = 30
+    buf[31] = 0
+    let safety = 0
+    loop v > 0 {
+        let q = v / 10
+        let digit = v - q * 10
+        buf[i] = digit + 48
+        v = q
+        i = i - 1
+        safety = safety + 1
+        if safety > 32 { v = 0 }
+    }
+    let s = &buf[i+1]
+    eprint(s)
 }
 
 fn live_codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -1064,9 +1087,7 @@ fn classify_keyword(src: &i8, start: i64, len: i64) {
 fn emit_lex_tok(out_toks: &Token, count: &i64, tok: i32) {
     if count[0] >= 262143 { panic("Token buffer overflow") }
     let idx = load_i64_at0(count)
-    print("ELT0\n")
     out_toks[idx].type = tok
-    print("ELT1\n")
     inc_i64_at0(count)
 }
 
@@ -1147,17 +1168,14 @@ fn lex_handle_bang(toks: &Token, pos: &i64) {
 }
 
 fn lex_try_space_or_comment(src: &i8, src_len: i64, c: i8) -> i64 {
-    if src_len >= 1024 and g_lex_pos_i == 0 { print("LSC0\n") }
     if is_space_char(c) == 1 {
         g_lex_pos_i = g_lex_pos_i + 1
         ret 1
     }
     if c != 59 { ret 0 }
-    if src_len >= 1024 and g_lex_pos_i == 0 { print("LSC1\n") }
     g_lex_pos_i = g_lex_pos_i + 1
     let keep_comment = 1
     loop keep_comment == 1 {
-        if src_len >= 1024 and g_lex_pos_i == 1 { print("LSC2\n") }
         if g_lex_pos_i >= src_len {
             keep_comment = 0
         } else if load_i8_at(src, g_lex_pos_i) != 10 {
@@ -1242,54 +1260,37 @@ fn lex_try_op(toks: &Token, c: i8) -> i64 {
 fn lex_small_tail_dispatch(toks: &Token, src: &i8, src_len: i64) {
     let c = src[g_lex_pos_i]
     if g_lex_pos_i == 0 {
-        print("LXT0\n")
         g_lex_count = 0
     }
     if g_lex_pos_i == 0 and g_lex_count != 0 { panic("SM_CNT0_SET_BAD") }
-    if g_lex_pos_i == 0 { print("LXTI0\n") }
     if g_lex_pos_i == 0 {
         g_lex_src_ptr = src
         g_lex_src_len = src_len
-        print("LXTI1\n")
         let start = g_lex_pos_i
         let end = lex_ident_end(src, src_len, start)
-        print("LXTI2\n")
         let len = end - start
         let kw = classify_keyword(src, start, len)
-        print("LXTI3\n")
         g_lex_pos_i = end
         g_lex_tmp_emit = 1
         g_lex_tmp_type = kw
         g_lex_tmp_start = start
         g_lex_tmp_len = len
-        print("LXTI35\n")
-        print("LXTI4\n")
         if toks == g_dbg_toks {
-            print("TP_EQ\n")
         } else {
-            print("TP_NE\n")
         }
         if toks == g_dbg_toks_init {
-            print("TP_INIT_EQ\n")
         } else {
-            print("TP_INIT_NE\n")
         }
-        print("LXTI5\n")
         let tok_words = g_dbg_toks_init as &i64
         store_i64_at0(tok_words, kw)
-        print("LXTI6\n")
         let tok_start_ptr = (tok_words as &i8) + 16
         store_i64_at0(tok_start_ptr as &i64, start)
-        print("LXTI7\n")
         let tok_len_ptr = (tok_words as &i8) + 24
         store_i64_at0(tok_len_ptr as &i64, len)
-        print("LXTI8\n")
         g_lex_tmp_emit = 0
-        print("LXTI65\n")
         g_lex_tmp_emit = 0
         g_lex_count = 1
         g_lex_pos_i = end
-        if g_lex_pos_i == 2 { print("LXTI\n") }
         ret 0
     }
     if c >= 97 {
@@ -1297,7 +1298,6 @@ fn lex_small_tail_dispatch(toks: &Token, src: &i8, src_len: i64) {
             g_lex_src_ptr = src
             g_lex_src_len = src_len
             lex_emit_ident_or_kw(toks, &g_lex_pos_i)
-            if g_lex_pos_i == 2 { print("LXTI\n") }
             ret 0
         }
     }
@@ -1306,7 +1306,6 @@ fn lex_small_tail_dispatch(toks: &Token, src: &i8, src_len: i64) {
             g_lex_src_ptr = src
             g_lex_src_len = src_len
             lex_emit_ident_or_kw(toks, &g_lex_pos_i)
-            if g_lex_pos_i == 2 { print("LXTI\n") }
             ret 0
         }
     }
@@ -1314,7 +1313,6 @@ fn lex_small_tail_dispatch(toks: &Token, src: &i8, src_len: i64) {
         g_lex_src_ptr = src
         g_lex_src_len = src_len
         lex_emit_ident_or_kw(toks, &g_lex_pos_i)
-        if g_lex_pos_i == 2 { print("LXTI\n") }
         ret 0
     }
     if lex_try_int(toks, c) == 1 { ret 0 }
@@ -1326,22 +1324,16 @@ fn lex_small_tail_dispatch(toks: &Token, src: &i8, src_len: i64) {
 }
 
 fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
-    print("LS0\n")
     let p = 0
     let count = 0
-    print("LS1\n")
     loop p < src_len {
-        print("LS2\n")
         let c = src[p]
-        print("LS3\n")
         if c == 32 or c == 10 or c == 9 or c == 13 {
             p = p + 1
         } else if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95 {
-            print("LSI0\n")
             let start = p
             g_loop_ctrl = 1
             loop g_loop_ctrl == 1 {
-                print("LSI1\n")
                 if p >= src_len {
                     g_loop_ctrl = 0
                 } else {
@@ -1353,11 +1345,8 @@ fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
                     }
                 }
             }
-            print("LSI2\n")
             let len = p - start
-            print("LSI21\n")
             let kw = TOK_IDENT
-            print("LSI22\n")
             if len == 2 {
                 if src[start] == 102 {
                     if src[start + 1] == 110 {
@@ -1365,7 +1354,6 @@ fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
                     }
                 }
             }
-            print("LSI23\n")
             if len == 5 {
                 if src[start] == 112 {
                     if src[start + 1] == 114 {
@@ -1379,12 +1367,7 @@ fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
                     }
                 }
             }
-            print("LSI24\n")
-            print("LSI3\n")
             lex_store_tok3(toks, count, kw, start, len)
-            print("LSI31\n")
-            print("LSI32\n")
-            print("LSI4\n")
             count = count + 1
         } else if c == 34 {
             let start = p + 1
@@ -1488,12 +1471,9 @@ fn lex_global_fast() -> i32 {
     g_lex_pos_i = 0
     g_lex_count = 0
     loop g_lex_pos_i < g_runtime_src_len {
-        if g_lex_pos_i == 0 and g_lex_count == 0 { print("LGG0\n") }
         let c = g_src_buf_ptr[g_lex_pos_i]
-        if g_lex_pos_i == 0 and g_lex_count == 0 { print("LGG1\n") }
         if g_lex_pos_i == 0 and g_lex_count == 0 and c != 59 { panic("C0BAD") }
         if lex_try_space_or_comment(g_src_buf_ptr, g_runtime_src_len, c) == 1 {
-            if g_lex_count == 0 { print("LGG2\n") }
         } else if lex_try_string(g_dbg_toks_init, c) == 1 {
         } else if lex_try_ident(g_dbg_toks_init, g_src_buf_ptr, g_runtime_src_len, c) == 1 {
         } else if lex_try_int(g_dbg_toks_init, c) == 1 {
@@ -1520,9 +1500,7 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
     g_lex_pos_i = 0
     let lexing = 1
     loop lexing == 1 {
-        if src_len >= 1024 {
-            if g_lex_pos_i > p and g_lex_pos_i < 64 { print("PDIV\n") }
-            if count == 0 and g_lex_count > 0 and g_lex_count < 8 { print("LCDIV\n") }
+        if 1 == 1 {
             count = g_lex_count
             p = g_lex_pos_i
         }
@@ -1530,29 +1508,20 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             lexing = 0
         } else {
         let old_p = p
-        if src_len >= 1024 and count == 0 and p == 0 { print("LGX0\n") }
-        if src_len >= 1024 and count == 1 { print("L1C\n") }
+        if count == 1 { print("L1C\n") }
         let c = load_i8_at(src, p)
-        if src_len >= 1024 and count == 0 and p == 0 { print("LGX1\n") }
         let handled0 = 0
         if handled0 == 1 {
         } else if is_space_char(c) == 1 {
             p = p + 1
         } else {
-            if src_len >= 1024 and count == 0 and p == 0 { print("LGX2\n") }
             if c == 59 {
-            if src_len >= 1024 and count == 0 and p == 0 { print("LGC0\n") }
             p = p + 1
-            if src_len >= 1024 and count == 0 { print("LGC1\n") }
             loop p < src_len and load_i8_at(src, p) != 10 {
-                if src_len >= 1024 and p == 1 { print("LGC2\n") }
                 p = p + 1
             }
-            if src_len >= 1024 and count == 0 { print("LGC3\n") }
             if p < src_len { p = p + 1 }
-            if src_len >= 1024 and count == 0 { print("LGC4\n") }
             } else {
-                if src_len >= 1024 and count == 0 { print("LGN0\n") }
                 if c == 34 {
             let start = p + 1
             p = p + 1
@@ -1581,12 +1550,12 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             toks[count].str_start = start
             toks[count].str_len = p - start
             count = count + 1
-            if src_len >= 1024 { g_lex_count = count }
+            g_lex_count = count }
             if p < src_len and src[p] == 34 {
                 p = p + 1
             }
                 } else {
-                    if src_len < 1024 {
+                    if 0 {
                         g_lex_pos_i = p
                         g_lex_tmp_emit = 0
                         g_lex_count = count
@@ -1595,10 +1564,8 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
                         count = g_lex_count
                     } else {
                     let c2 = load_i8_at(src, p)
-                    if src_len >= 1024 and count == 0 { print("LGN1\n") }
                     if c2 >= 97 {
                         if c2 <= 122 {
-            if src_len >= 1024 and count == 0 { print("LGX3\n") }
             let start = p
             p = lex_ident_end(src, src_len, start)
             let len = p - start
@@ -1607,9 +1574,7 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             count = count + 1
             g_lex_count = count
             g_lex_pos_i = p
-            if src_len >= 1024 and count > 0 { print("LGX4\n") }
                         } else {
-            if src_len >= 1024 and count < 4 { print("LGO0\n") }
                             let c_is_digit = 0
                             if c2 >= 48 {
                                 if c2 <= 57 {
@@ -1617,7 +1582,6 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
                                 }
                             }
                             if c_is_digit == 1 {
-            if src_len >= 1024 and count < 4 { print("LINT0\n") }
             let val = 0
             let reading = 1
             let guard = 0
@@ -1643,7 +1607,6 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             count = count + 1
             g_lex_count = count
                             } else {
-            if src_len >= 1024 and count < 4 and c2 == 61 { print("LEQ0\n") }
             if c2 == 45 and p + 1 < src_len and load_i8_at(src, p + 1) == 62 {
             toks[count].type = TOK_ARROW
             count = count + 1
@@ -1694,7 +1657,6 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
                     }
                 } else if c >= 65 {
                         if c <= 90 {
-            if src_len >= 1024 and count < 4 { print("LGU3\n") }
             let start = p
             p = lex_ident_end(src, src_len, start)
             let len = p - start
@@ -1703,7 +1665,6 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             count = count + 1
             g_lex_count = count
             g_lex_pos_i = p
-            if src_len >= 1024 and count < 5 { print("LGU4\n") }
                         } else {
                             let c_is_digit = 0
                             if c >= 48 {
@@ -1779,7 +1740,6 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             g_lex_count = count
                     } else {
                         let c3 = load_i8_at(src, p)
-                        if src_len >= 1024 and count < 4 { print("LGO1\n") }
                         let c_is_digit = 0
                         if c3 >= 48 {
                             if c3 <= 57 {
@@ -1812,7 +1772,6 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             count = count + 1
             g_lex_count = count
                         } else {
-            if src_len >= 1024 and count < 4 and c3 == 61 { print("LEQ1\n") }
             if c3 == 61 {
             let nxt = -1
             if p + 1 < src_len {
@@ -1829,13 +1788,11 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             g_lex_count = count
             p = p + 2
             } else {
-            if src_len >= 1024 and count < 6 { print("LGO3\n") }
             lex_store_tok1(toks, count, char_to_tok(c3))
             count = count + 1
             g_lex_count = count
             p = p + 1
             g_lex_pos_i = p
-            if src_len >= 1024 and count < 6 { print("LGO4\n") }
             }
                         } else if c3 == 45 and p + 1 < src_len and load_i8_at(src, p + 1) == 62 {
             toks[count].type = TOK_ARROW
@@ -1868,12 +1825,10 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
             g_lex_count = count
             p = p + 2
                             } else {
-            if src_len >= 1024 and count < 6 { print("LGO3\n") }
             lex_store_tok1(toks, count, char_to_tok(c3))
             count = count + 1
             g_lex_count = count
             p = p + 1
-            if src_len >= 1024 and count < 6 { print("LGO4\n") }
                             }
                             }
                         }
@@ -1884,7 +1839,7 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
         if p <= old_p {
             p = p + 1
         }
-        if src_len >= 1024 { g_lex_pos_i = p }
+        g_lex_pos_i = p }
         }
     }
     toks[count].type = TOK_EOF
@@ -1892,7 +1847,6 @@ fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
 }
 
 fn lex_main_input() -> i32 {
-    if g_runtime_src_len >= 1024 { print("LGM0\n") }
     ret lex(g_src_buf_ptr, g_runtime_src_len, g_dbg_toks_init)
 }
 
@@ -1911,7 +1865,7 @@ fn lex_lid_preflight(src: &i8, src_len: i64, toks: &Token) -> i64 {
 }
 
 fn small_input_has_main(src: &i8, src_len: i64) -> i64 {
-    if src_len >= 1024 { ret 0 }
+    ret 0 }
     if src_len < 7 { ret 0 }
     if load_i8_at(src, 0) != 102 { ret 0 }
     if load_i8_at(src, 1) != 110 { ret 0 }
@@ -1925,7 +1879,7 @@ fn small_input_has_main(src: &i8, src_len: i64) -> i64 {
 
 fn is_top_fn_tok_runtime(toks: &Token, idx: i64, src: &i8, src_len: i64) -> i64 {
     if idx < 0 or idx >= g_scan_tok_cnt { ret 0 }
-    if g_runtime_src_len < 1024 {
+    if 0 {
         let t = tok_type_at_raw(toks, idx)
         if t == TOK_FN { ret 1 }
         let t_start = tok_str_start_at_raw(toks, idx)
@@ -1940,7 +1894,7 @@ fn is_top_fn_tok_runtime(toks: &Token, idx: i64, src: &i8, src_len: i64) -> i64 
 }
 
 fn tok_name_fields_runtime(toks: &Token, idx: i64, out_type: &i64, out_off: &i64, out_len: &i64) {
-    if g_runtime_src_len < 1024 {
+    if 0 {
         out_type[0] = tok_type_at_raw(toks, idx)
         out_off[0] = tok_str_start_at_raw(toks, idx)
         out_len[0] = tok_str_len_at_raw(toks, idx)
@@ -1991,7 +1945,6 @@ fn prime_small_scan_count() {
 }
 
 fn init_large_post_lex_state() {
-    print("IL0\n")
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
     g_glob_name_off = alloc_pages(8)
@@ -2000,7 +1953,6 @@ fn init_large_post_lex_state() {
     g_glob_size     = alloc_pages(8)
     g_glob_stype    = alloc_pages(8)
     g_glob_is_addr  = alloc_pages(8)
-    print("IL1\n")
 
     g_glob_cnt = 0
     g_glob_total_sz = 0
@@ -2008,17 +1960,15 @@ fn init_large_post_lex_state() {
     g_emit_glob_len = 0
 
     let stab = alloc_pages(50)
-    print("IL2\n")
     g_stab_ptr = stab
     g_stab_ptr.cnt = 0
     g_stab_ptr.field_cnt = 0
     g_main_pos = 0
-    print("IL3\n")
     ret ok(0)
 }
 
 fn run_top_const_prelude(toks: &Token, src: &i8, src_len: i64) {
-    if src_len < 1024 {
+    if 0 {
         ret ok(0)
     }
     let more_consts = g_scan_tok_cnt
@@ -2040,13 +1990,11 @@ fn run_top_const_prelude(toks: &Token, src: &i8, src_len: i64) {
             more_consts = 0
         }
     }
-    print("TCL1\n")
     ret ok(0)
 }
 
 fn run_top_struct_prelude(toks: &Token, stab: &StructTable, src: &i8, src_len: i64) {
-    if src_len < 1024 { ret ok(0) }
-    print("RSP0\n")
+    if 0 { ret ok(0) }
     ; Use globals for loop control and pos — avoids jda0 register-clobber across fn calls.
     ; g_more_top: loop flag (1=keep going, 0=done). Reset by prime_compile_budget_global later.
     ; g_panic_pos: pre-call snapshot of g_main_pos to detect stuck parse_struct_decl.
@@ -2058,7 +2006,6 @@ fn run_top_struct_prelude(toks: &Token, stab: &StructTable, src: &i8, src_len: i
         } else {
             let rsp_t = tok_type_at_raw(toks, g_main_pos)
             if rsp_t == TOK_STRUCT {
-                print("RSPX\n")
                 g_panic_pos = g_main_pos
                 parse_struct_decl(toks, stab, src)
                 if g_main_pos == g_panic_pos {
@@ -2069,13 +2016,12 @@ fn run_top_struct_prelude(toks: &Token, stab: &StructTable, src: &i8, src_len: i
             }
         }
     }
-    print("RSP1\n")
     ret ok(0)
 }
 
 fn run_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, fn_name_len: &i64) {
     g_top_fn_cnt = 0
-    if g_runtime_src_len < 1024 {
+    if 0 {
         store_i64_at(fn_name_off, 0, 3)
         store_i64_at(fn_name_len, 0, 4)
         g_top_fn_cnt = 1
@@ -2122,25 +2068,20 @@ fn run_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, fn_n
 
 fn report_top_fn_scan() {
     if g_top_fn_cnt > 0 or g_small_has_main == 1 {
-        print("HFN1\n")
     } else {
-        print("HFN0\n")
     }
     ret ok(0)
 }
 
 fn prepare_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, fn_name_len: &i64) {
-    if src_len < 1024 {
+    if 0 {
         store_i64_at(fn_name_off, 0, 3)
         store_i64_at(fn_name_len, 0, 4)
         g_top_fn_cnt = 1
         ret ok(0)
     }
-    print("PFT0\n")
     run_top_fn_scan(toks, src, src_len, fn_name_off, fn_name_len)
-    print("PFT1\n")
     report_top_fn_scan()
-    print("PFT2\n")
     ret ok(0)
 }
 
@@ -2152,7 +2093,7 @@ fn load_top_fields(loop_pos: i64, out_t: &i64, out_start: &i64, out_len: &i64) {
 }
 
 fn decide_take_top_fn(loop_pos: i64, src: &i8, src_len: i64) -> i64 {
-    if src_len < 1024 {
+    if 0 {
         ret 1
     }
     if is_top_fn_tok_runtime(g_dbg_toks_init, loop_pos, src, src_len) == 1 { ret 1 }
@@ -2180,7 +2121,7 @@ fn resolve_top_fn_index(src: &i8, cur_name_off: i64, cur_name_len: i64, fn_name_
 }
 
 fn scan_fn_bounds(fn_tok_pos: i64, src_len: i64, out_lbrace: &i64, out_rbrace: &i64) {
-    if src_len < 1024 {
+    if 0 {
         out_lbrace[0] = 4
         out_rbrace[0] = g_scan_tok_cnt - 1
         ret ok(0)
@@ -2208,43 +2149,31 @@ fn scan_fn_bounds(fn_tok_pos: i64, src_len: i64, out_lbrace: &i64, out_rbrace: &
 }
 
 fn init_top_jfn(jfn: &JirFunction, src: &i8, src_len: i64, stab: &StructTable) {
-    if src_len < 1024 {
+    if 0 {
         let jfnp = jfn as &i8
         store_i64_at0(jfnp as &i64, src)
     } else {
         let src_val = src as i64
-        print("ITJ_SRC=")
         print(src_val)
         print("\n")
-        print("ITJ0\n")
         jfn.src = src
         let check_src = jfn.src as i64
-        print("ITJ0_CHK=")
         print(check_src)
         print("\n")
-        print("ITJ1\n")
         jfn.src_len = src_len
-        print("ITJ2\n")
         jfn.stab = stab
-        print("ITJ3\n")
         jfn.block_cnt = 0
-        print("ITJ4\n")
         jfn.var_cnt = 0
-        print("ITJ5\n")
         jfn.param_cnt = 0
-        print("ITJ6\n")
         jfn.strtab_pos = 0
-        print("ITJ7\n")
         jfn.next_slot_off = 65536
-        print("ITJ8\n")
         jfn.next_id = 0
-        print("ITJ9\n")
     }
     ret ok(0)
 }
 
 fn set_cur_fn_name(cur_name_off: i64, cur_name_len: i64) {
-    if g_runtime_src_len < 1024 and g_small_err_branch == 8 {
+    if 0 == 1 and g_small_err_branch == 8 {
         eprint("U2\n")
         g_small_err_branch = 9
     }
@@ -2254,7 +2183,7 @@ fn set_cur_fn_name(cur_name_off: i64, cur_name_len: i64) {
 }
 
 fn should_force_small_top_fn(src_len: i64, loop_pos: i64) -> i64 {
-    if src_len < 1024 and loop_pos == 0 { ret 1 }
+    if 0 == 1 and loop_pos == 0 { ret 1 }
     ret 0
 }
 
@@ -2321,7 +2250,7 @@ fn peek_token(toks: &Token, pos: i64) -> i32 {
 }
 
 fn find_matching_rbrace(toks: &Token, lbrace_idx: i64) -> i64 {
-    if g_runtime_src_len < 1024 {
+    if 0 {
         ret g_scan_tok_cnt - 1
     }
     if lbrace_idx < 0 { ret -1 }
@@ -3688,7 +3617,6 @@ fn emit_strlit_raw(jfn: &JirFunction, bb: i64, str_start: i64, str_len: i64) -> 
     if g_cur_fn_name_len == 4 and g_main_str_dbg == 0 {
         if streq(jfn.src, g_cur_fn_name_start, 4, "main") == 1 {
             g_main_str_dbg = 1
-            print("ES0\n")
             print_span(jfn.src, str_start, str_len)
             print("\n")
         }
@@ -3746,50 +3674,45 @@ fn emit_gaddr(jfn: &JirFunction, bb: i64, gidx: i64) -> i64 {
 }
 
 fn compile_ret_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    print("CR1\n")
     let t0 = tok_type_at0(toks, pos)
     if t0 != TOK_RET {
         if t0 != TOK_EOF { pos[0] = pos[0] + 1 }
         ret bb
     }
     pos[0] = pos[0] + 1
-    print("CR2\n")
     let val_id = emit_const(jfn, bb, TYPE_I64, 0)
     let t = tok_type_at0(toks, pos)
     if t == TOK_INT or t == TOK_IDENT or t == TOK_LPAREN or t == TOK_MINUS or t == TOK_TILDE or t == TOK_AMP or t == TOK_SYSCALL {
-        print("CR3\n")
         val_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-        print("CR4\n")
     }
     let ins = Instr{}
     ins.op = OP_RET
     ins.operand0 = val_id
-    print("CR5\n")
     emit(jfn, bb, &ins)
     ret OP_RET
 }
 
 fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    if g_runtime_src_len < 1024 { eprint("P0\n") }
+    if 0 { eprint("P0\n") }
     pos[0] = pos[0] + 1
     let open_t = tok_type_at0(toks, pos)
     if open_t == TOK_LPAREN { pos[0] = pos[0] + 1 }
-    if g_runtime_src_len < 1024 { eprint("P1\n") }
+    if 0 { eprint("P1\n") }
     let val_id = emit_const(jfn, bb, TYPE_I64, 0)
     let len_id = -1
     let pt = tok_type_at0(toks, pos)
     if pt == TOK_STR {
-        if g_runtime_src_len < 1024 { eprint("P2\n") }
+        if 0 { eprint("P2\n") }
         let s_start = tok_str_start_at(toks, pos[0])
         let s_len = tok_str_len_at(toks, pos[0])
         pos[0] = pos[0] + 1
         val_id = emit_strlit_raw(jfn, bb, s_start, s_len)
-        if g_runtime_src_len < 1024 { eprint("P3\n") }
+        if 0 { eprint("P3\n") }
         len_id = emit_const(jfn, bb, TYPE_I64, s_len)
     } else if pt != TOK_RPAREN and pt != TOK_EOF {
         val_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
     }
-    if g_runtime_src_len < 1024 { eprint("P4\n") }
+    if 0 { eprint("P4\n") }
     let close_t = tok_type_at0(toks, pos)
     if close_t == TOK_RPAREN { pos[0] = pos[0] + 1 }
     let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)
@@ -3799,9 +3722,9 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
         len_ins0.operand0 = val_id
         len_id = emit(jfn, bb, &len_ins0)
     }
-    if g_runtime_src_len < 1024 { eprint("P5\n") }
+    if 0 { eprint("P5\n") }
     emit_syscall3(jfn, bb, 1, fd_id, val_id, len_id)
-    if g_runtime_src_len < 1024 { eprint("P6\n") }
+    if 0 { eprint("P6\n") }
     ret bb
 }
 
@@ -4722,28 +4645,21 @@ fn lookup_stype(jfn: &JirFunction, tok: &Token) -> i64 {
 }
 
 fn lookup_idx_name(jfn: &JirFunction, name_start: i64, name_len: i64) -> i64 {
-    print("LIN0\n")
     let jfn_addr = jfn as i64
-    print("JFN_ADDR=")
     print(jfn_addr)
     print("\n")
     let lin_src_len = jfn.src_len
-    print("LIN_SL=")
     print(lin_src_len)
     print("\n")
     let i = jfn.var_cnt - 1
     loop i >= 0 {
         let cur_nl = jfn.vars[i].name_len
-        print("CUR_NL=")
         print(cur_nl)
         print("\n")
-        print("PARAM_NL=")
         print(name_len)
         print("\n")
         if cur_nl == name_len {
-            print("NL_MATCH\n")
             let src_p = jfn.src as i64
-            print("SRCP=")
             print(src_p)
             print("\n")
             if str_match(jfn.src, name_start, jfn.vars[i].name_start, name_len) == 1 {
@@ -7003,37 +6919,37 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                 }
             }
         }
-        if g_runtime_src_len < 1024 { eprint("B0\n") }
+        if 0 { eprint("B0\n") }
         if t == TOK_RBRACE or t == TOK_EOF {
             keep_going = 0
         } else {
-        if g_runtime_src_len < 1024 { eprint("B1\n") }
+        if 0 { eprint("B1\n") }
         let asm_argv_taken = 0
-        if g_runtime_src_len >= 1024 {
+        if 1 == 1 {
             asm_argv_taken = compile_asm_argv_inline(toks0, &g_main_pos, src, jfn, cur)
         }
         if asm_argv_taken == 1 {
             cur = cur
-            if g_runtime_src_len < 1024 { eprint("B2\n") }
+            if 0 { eprint("B2\n") }
         } else {
             let skip_asm_taken = 0
-            if g_runtime_src_len >= 1024 {
+            if 1 == 1 {
                 skip_asm_taken = skip_asm_stmt_inline(toks0, &g_main_pos, src)
             }
             if skip_asm_taken == 1 {
             cur = cur
-            if g_runtime_src_len < 1024 { eprint("B3\n") }
+            if 0 { eprint("B3\n") }
             } else if t == TOK_IF {
-            if g_runtime_src_len < 1024 { eprint("B4\n") }
+            if 0 { eprint("B4\n") }
             cur = live_compile_if(toks0, stab, src, jfn, cur)
             } else if t == TOK_LOOP {
-            if g_runtime_src_len < 1024 { eprint("B5\n") }
+            if 0 { eprint("B5\n") }
             cur = live_compile_loop(toks0, stab, src, jfn, cur)
             } else if t == TOK_LET {
-            if g_runtime_src_len < 1024 { eprint("B6\n") }
+            if 0 { eprint("B6\n") }
             live_compile_let_stmt(toks0, stab, src, jfn, cur)
             } else if t == TOK_RET {
-            if g_runtime_src_len < 1024 { eprint("B7\n") }
+            if 0 { eprint("B7\n") }
             g_main_pos = g_main_pos + 1
             let val_id = emit_const(jfn, cur, TYPE_I64, 0)
             let rt = tok_type_at_raw(toks0, g_main_pos)
@@ -7045,7 +6961,7 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
             rins.operand0 = val_id
             emit(jfn, cur, &rins)
             } else if t == TOK_PRINT {
-            if g_runtime_src_len < 1024 { eprint("B8\n") }
+            if 0 { eprint("B8\n") }
             if g_cur_fn_name_len == 4 {
                 if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
                     g_dbg_main_prints = g_dbg_main_prints + 1
@@ -7053,7 +6969,7 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
             }
             cur = compile_print_inline(toks0, &g_main_pos, stab, src, jfn, cur)
             } else {
-            if g_runtime_src_len < 1024 { eprint("B9\n") }
+            if 0 { eprint("B9\n") }
             if g_cur_fn_name_len == 4 {
                 if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
                     g_dbg_main_exprs = g_dbg_main_exprs + 1
@@ -7093,7 +7009,7 @@ fn ping1() {
 }
 
 fn finish_small_top_fn_pass() {
-    if g_runtime_src_len < 1024 {
+    if 0 {
         g_main_pos = g_scan_tok_cnt
         g_loop_ctrl = 0
     }
@@ -7102,7 +7018,6 @@ fn finish_small_top_fn_pass() {
 
 fn match_fn_main_print_multiline(src: &i8, src_len: i64) -> i64 {
     if src_len < 28 { ret 0 }
-    if src_len < 1024 { print("PM0\n") }
     if load_i8_at(src, 0) != 102 { ret 0 }
     if load_i8_at(src, 1) != 110 { ret 0 }
     if load_i8_at(src, 2) != 32 { ret 0 }
@@ -7126,22 +7041,16 @@ fn match_fn_main_print_multiline(src: &i8, src_len: i64) -> i64 {
     if load_i8_at(src, 20) != 116 { ret 0 }
     if load_i8_at(src, 21) != 40 { ret 0 }
     if load_i8_at(src, 22) != 34 { ret 0 }
-    if src_len < 1024 { print("PM1\n") }
     if load_i8_at(src, src_len - 5) != 34 { ret 0 }
     if load_i8_at(src, src_len - 4) != 41 { ret 0 }
     if load_i8_at(src, src_len - 3) != 10 { ret 0 }
     if load_i8_at(src, src_len - 2) != 125 { ret 0 }
     if load_i8_at(src, src_len - 1) != 10 { ret 0 }
-    if src_len < 1024 { print("PM2\n") }
     ret 1
 }
 
 fn match_fn_main_print_inline(src: &i8, src_len: i64) -> i64 {
     if src_len < 24 { ret 0 }
-    if src_len < 1024 { print("PI0\n") }
-    if load_i8_at(src, 0) == 102 { print("PA0\n") }
-    if load_i8_at(src, 10) == 123 { print("PA10\n") }
-    if load_i8_at(src, 11) == 32 { print("PA11\n") }
     if load_i8_at(src, 0) != 102 { ret 0 }
     if load_i8_at(src, 1) != 110 { ret 0 }
     if load_i8_at(src, 2) != 32 { ret 0 }
@@ -7153,7 +7062,6 @@ fn match_fn_main_print_inline(src: &i8, src_len: i64) -> i64 {
     if load_i8_at(src, 8) != 41 { ret 0 }
     if load_i8_at(src, 9) != 32 { ret 0 }
     if load_i8_at(src, 10) != 123 { ret 0 }
-    if src_len < 1024 { print("PIA\n") }
     if load_i8_at(src, 11) != 32 { ret 0 }
     if load_i8_at(src, 12) != 112 { ret 0 }
     if load_i8_at(src, 13) != 114 { ret 0 }
@@ -7162,18 +7070,11 @@ fn match_fn_main_print_inline(src: &i8, src_len: i64) -> i64 {
     if load_i8_at(src, 16) != 116 { ret 0 }
     if load_i8_at(src, 17) != 40 { ret 0 }
     if load_i8_at(src, 18) != 34 { ret 0 }
-    if src_len < 1024 { print("PI1\n") }
     if load_i8_at(src, src_len - 5) != 34 { ret 0 }
-    if src_len < 1024 { print("PT5\n") }
     if load_i8_at(src, src_len - 4) != 41 { ret 0 }
-    if src_len < 1024 { print("PT4\n") }
     if load_i8_at(src, src_len - 3) != 32 { ret 0 }
-    if src_len < 1024 { print("PT3\n") }
     if load_i8_at(src, src_len - 2) != 125 { ret 0 }
-    if src_len < 1024 { print("PT2\n") }
     if load_i8_at(src, src_len - 1) != 10 { ret 0 }
-    if src_len < 1024 { print("PT1\n") }
-    if src_len < 1024 { print("PI2\n") }
     ret 1
 }
 
@@ -7207,10 +7108,6 @@ fn match_fn_main_ret_multiline(src: &i8, src_len: i64) -> i64 {
 
 fn match_fn_main_ret_inline(src: &i8, src_len: i64) -> i64 {
     if src_len < 17 { ret 0 }
-    if src_len < 1024 { print("RI0\n") }
-    if load_i8_at(src, 0) == 102 { print("RA0\n") }
-    if load_i8_at(src, 10) == 123 { print("RA10\n") }
-    if load_i8_at(src, 11) == 32 { print("RA11\n") }
     if load_i8_at(src, 0) != 102 { ret 0 }
     if load_i8_at(src, 1) != 110 { ret 0 }
     if load_i8_at(src, 2) != 32 { ret 0 }
@@ -7222,16 +7119,11 @@ fn match_fn_main_ret_inline(src: &i8, src_len: i64) -> i64 {
     if load_i8_at(src, 8) != 41 { ret 0 }
     if load_i8_at(src, 9) != 32 { ret 0 }
     if load_i8_at(src, 10) != 123 { ret 0 }
-    if src_len < 1024 { print("RIA\n") }
     if load_i8_at(src, 11) != 32 { ret 0 }
     if load_i8_at(src, 12) != 114 { ret 0 }
     if load_i8_at(src, 13) != 101 { ret 0 }
     if load_i8_at(src, 14) != 116 { ret 0 }
     if load_i8_at(src, 15) != 32 { ret 0 }
-    if src_len < 1024 { print("RI1\n") }
-    if load_i8_at(src, src_len - 3) == 32 and src_len < 1024 { print("RT3\n") }
-    if load_i8_at(src, src_len - 2) == 125 and src_len < 1024 { print("RT2\n") }
-    if load_i8_at(src, src_len - 1) == 10 and src_len < 1024 { print("RT1\n") }
     if load_i8_at(src, src_len - 3) != 32 { ret 0 }
     if load_i8_at(src, src_len - 2) != 125 { ret 0 }
     if load_i8_at(src, src_len - 1) != 10 { ret 0 }
@@ -7239,7 +7131,7 @@ fn match_fn_main_ret_inline(src: &i8, src_len: i64) -> i64 {
 }
 
 fn try_small_print_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
-    if src_len >= 1024 { ret 0 }
+    ret 0 }
     let msg_start = -1
     let msg_len = 0
     if src_len >= 28 {
@@ -7350,11 +7242,9 @@ fn try_small_print_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
     let n = syscall(0, tpl_fd, buf, 8192)
     syscall(3, tpl_fd, 0, 0)
     if n <= 0 {
-        if src_len < 1024 { print("PX0\n") }
         ret 0
     }
     if n < 4208 {
-        if src_len < 1024 { print("PX1\n") }
         ret 0
     }
     let prefix_len = 4144
@@ -7366,34 +7256,28 @@ fn try_small_print_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
     let suffix_ptr = buf + suffix_off
     let out_fd = syscall(2, out_path, 577, 493)
     if out_fd < 0 {
-        if src_len < 1024 { print("PX2\n") }
         ret 0
     }
     let wn0 = syscall(1, out_fd, buf, prefix_len)
     if wn0 != prefix_len {
-        if src_len < 1024 { print("PX3\n") }
         syscall(3, out_fd, 0, 0)
         ret 0
     }
     let wn1 = syscall(1, out_fd, msg_ptr, msg_len)
     if wn1 != msg_len {
-        if src_len < 1024 { print("PX4\n") }
         syscall(3, out_fd, 0, 0)
         ret 0
     }
     let wn2 = syscall(1, out_fd, pad_ptr, pad_len)
     if wn2 != pad_len {
-        if src_len < 1024 { print("PX5\n") }
         syscall(3, out_fd, 0, 0)
         ret 0
     }
     let wn3 = syscall(1, out_fd, suffix_ptr, suffix_len)
     syscall(3, out_fd, 0, 0)
     if wn3 != suffix_len {
-        if src_len < 1024 { print("PX6\n") }
         ret 0
     }
-    if src_len < 1024 { print("PX7\n") }
     ret 1
 }
 
@@ -7432,7 +7316,7 @@ fn try_small_exit_program_fast(out_path: &i8) -> i64 {
 }
 
 fn try_small_ret_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
-    if src_len >= 1024 { ret 0 }
+    ret 0 }
     let val_start = -1
     let val_len = 0
     if match_fn_main_ret_multiline(src, src_len) == 1 {
@@ -7505,7 +7389,6 @@ fn try_small_ret_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
         }
     }
     if val_start == -1 { ret 0 }
-    if src_len < 1024 { print("RXM\n") }
     if val_len <= 0 { ret 0 }
     if val_len > 3 { ret 0 }
     let val = 0
@@ -7519,18 +7402,15 @@ fn try_small_ret_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
     if val < 0 { ret 0 }
     let tpl_fd = syscall(2, "/workspace/bootstrap/stage1/ret_fast_scan.bin", 0, 0)
     if tpl_fd < 0 {
-        if src_len < 1024 { print("RX0\n") }
         ret 0
     }
     let buf = alloc_pages(2)
     let n = syscall(0, tpl_fd, buf, 8192)
     syscall(3, tpl_fd, 0, 0)
     if n <= 0 {
-        if src_len < 1024 { print("RX1\n") }
         ret 0
     }
     if n < 4140 {
-        if src_len < 1024 { print("RX2\n") }
         ret 0
     }
     let prefix_len = 4136
@@ -7542,34 +7422,28 @@ fn try_small_ret_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
     let suffix_ptr = buf + suffix_off
     let out_fd = syscall(2, out_path, 577, 493)
     if out_fd < 0 {
-        if src_len < 1024 { print("RX3\n") }
         ret 0
     }
     let wn0 = syscall(1, out_fd, buf, prefix_len)
     if wn0 != prefix_len {
-        if src_len < 1024 { print("RX4\n") }
         syscall(3, out_fd, 0, 0)
         ret 0
     }
     let wn1 = syscall(1, out_fd, digits_ptr, val_len)
     if wn1 != val_len {
-        if src_len < 1024 { print("RX5\n") }
         syscall(3, out_fd, 0, 0)
         ret 0
     }
     let wn2 = syscall(1, out_fd, pad_ptr, pad_len)
     if wn2 != pad_len {
-        if src_len < 1024 { print("RX6\n") }
         syscall(3, out_fd, 0, 0)
         ret 0
     }
     let wn3 = syscall(1, out_fd, suffix_ptr, suffix_len)
     syscall(3, out_fd, 0, 0)
     if wn3 != suffix_len {
-        if src_len < 1024 { print("RX7\n") }
         ret 0
     }
-    if src_len < 1024 { print("RX8\n") }
     ret 1
 }
 
@@ -7803,13 +7677,10 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
 }
 
 fn lower_fn_store_params(jfn: &JirFunction, out: &i8, pos: &i64) {
-    print("SP0\n")
     let jfnw0 = jfn as &i64
     let pcnt = load_i64_at(jfnw0, 1575432)
-    print("SP1\n")
     let pi = 0
     loop pi < pcnt {
-        print("SPI\n")
         let pr = PHYS_RDI
         if pi == 1 { pr = PHYS_RSI }
         if pi == 2 { pr = PHYS_RDX }
@@ -7818,12 +7689,9 @@ fn lower_fn_store_params(jfn: &JirFunction, out: &i8, pos: &i64) {
         if pi == 5 { pr = PHYS_R9 }
         let jfnw2 = jfn as &i64
         let pslot = load_i64_at(jfnw2, 1575433 + pi)
-        print("SP2\n")
         emit_store_spill(out, pos, pslot, pr)
-        print("SP3\n")
         pi = pi + 1
     }
-    print("SP4\n")
 }
 
 fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
@@ -7893,15 +7761,10 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
 
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
     g_lower_is_main = is_main
-    print("LFA\n")
     lower_fn_emit_prologue(jfn, out, pos, is_main)
-    print("LFB\n")
     lower_fn_store_params(jfn, out, pos)
-    print("LFC\n")
     lower_fn_collect_uses(jfn, ctx)
-    print("LFD\n")
     lower_fn_emit_blocks(jfn, ctx, out, pos)
-    print("LFE\n")
     lower_fn_emit_epilogue(out, pos, is_main)
     g_lower_is_main = 0
     lower_fn_patch_fixups(jfn, ctx, out, pos)
@@ -7911,16 +7774,11 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
              strtab: &i8, strtab_len: i64) {
     if out_fd < 0 { panic("open out failed") }
     if strtab_len > 4096 {
-        print("WS4\n")
     } else if strtab_len > 512 {
-        print("WS5\n")
     } else {
-        print("WS0\n")
     }
-    print("WE0\n")
     let buf = alloc_pages(1) ; 4KB is plenty for the header
     let pos = 0
-    print("WE1\n")
 
     let load_va   = 0x400000
     let hdr_size  = 120
@@ -7960,26 +7818,20 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
     emit_i64_le(buf, &pos, total)
     emit_i64_le(buf, &pos, 0x200000)
 
-    print("WE2\n")
     let w1 = syscall(1, out_fd, buf, pos)
-    print("WE3\n")
     if w1 != pos { panic("short write hdr") }
     let w2 = syscall(1, out_fd, code, code_len)
-    print("WE4\n")
     if w2 != code_len { panic("short write code") }
     if strtab_len > 0 {
         let w3 = syscall(1, out_fd, strtab, strtab_len)
-        print("WE5\n")
         if w3 != strtab_len { panic("short write str") }
     }
-    if g_runtime_src_len >= 1024 {
+    if 1 == 1 {
         if g_emit_glob_len > 0 {
             let w4 = syscall(1, out_fd, g_emit_glob_buf, g_emit_glob_len)
-            print("WE6\n")
             if w4 != g_emit_glob_len { panic("short write glob") }
         }
     }
-    print("WE7\n")
 }
 
 fn get_argv(base: &i64, n: i64) -> &i8 {
@@ -8003,17 +7855,13 @@ let g_jfn_heap: &i8 = 0
 let g_jfn: &JirFunction = 0
 let g_ctx_heap: &i8 = 0
 let g_ctx: &LowerCtx = 0
-fn main() {
-    let argc: i64 = 0
-    let argv_ptr: &i64 = 0
-    asm { out argc = rdi }
-    asm { out argv_ptr = rsi }
+fn main(argc: i64, argv_ptr: &i64) {
     let src_path: &i8 = 0
     let out_path: &i8 = 0
     g_argv_base = argv_ptr
-    eprint("ARGC=")
-    eprint(argc)
-    eprint("\n")
+    print("ARGC=")
+    eprint_i64(argc)
+    print("\n")
     if argc > 1 {
         src_path = get_argv(argv_ptr, 1)
         eprint("SRC=")
@@ -8050,57 +7898,34 @@ fn main() {
     let src_len = read_len
     g_runtime_src_len = src_len
     g_large_mode = 1
-    if src_len > 0 { print("SL1\n") } else { print("SL0\n") }
-    if g_runtime_src_len > 0 { print("RL1\n") } else { print("RL0\n") }
-    if src_buf != 0 { print("SB1\n") } else { print("SB0\n") }
-    if g_src_buf_ptr != 0 { print("GB1\n") } else { print("GB0\n") }
     let tok_cnt = 0
     tok_cnt = lex(src_buf, src_len, toks)
     g_dbg_tok_cnt = tok_cnt
     g_scan_tok_cnt = tok_cnt
-    if toks != 0 { print("TP1\n") } else { print("TP0\n") }
-    if tok_cnt > 0 { print("TC1\n") } else { print("TC0\n") }
-    print("TOK0=")
     print(tok_type_at_raw(g_dbg_toks_init, 0))
     print("\n")
-    print("TOK1=")
     print(tok_type_at_raw(g_dbg_toks_init, 1))
     print("\n")
-    print("TOK2=")
     print(tok_type_at_raw(g_dbg_toks_init, 2))
     print("\n")
-    print("LGA\n")
     init_large_post_lex_state()
-    print("LGB\n")
     run_top_const_prelude(g_dbg_toks_init, src_buf, src_len)
-    print("LGC\n")
     run_top_struct_prelude(g_dbg_toks_init, g_stab_ptr, src_buf, src_len)
-    print("LGD\n")
 
     ; Pass 1: Scan for global functions and record names/offsets
     let fn_name_off = alloc_pages(1) ; 512 entries
     let fn_name_len = alloc_pages(1)
-    print("PFS0\n")
     prepare_top_fn_scan(g_dbg_toks_init, src_buf, src_len, fn_name_off, fn_name_len)
-    print("PFS1\n")
     if g_top_fn_cnt > 0 {
-        print("TFP1\n")
     } else {
-        print("TFP0\n")
     }
-    print("ZPROBE_TFA\n")
     if g_top_fn_cnt > 100 and g_top_fn_cnt <= 200 {
-        print("TF1\n")
     } else if g_top_fn_cnt <= 100 {
-        print("TF0\n")
     }
-    print("ZPROBE_TFB\n")
     ; ---- Prepare output buffers ----
     let code_buf = alloc_pages(256) ; 1MB
-    print("ZPROBE_TFC\n")
     let code_len = 0
     let merged_str = alloc_pages(64)  ; 256KB
-    print("ZPROBE_TFD\n")
     let merged_pos = 0
     let glob_buf = alloc_pages(128)  ; 512KB
     let glob_pos        = 0
@@ -8142,7 +7967,7 @@ fn main() {
             small_main_now = 1
         }
         let enter_top = 1
-        if src_len < 1024 {
+        if 0 {
             enter_top = 0
             if g_main_pos < g_scan_tok_cnt {
                 enter_top = 1
@@ -8155,31 +7980,25 @@ fn main() {
             let top_start = tok_str_start_at(g_dbg_toks_init, g_main_pos)
             let top_len = tok_str_len_at(g_dbg_toks_init, g_main_pos)
             let take_top_fn = 0
-            if src_len < 1024 {
+            if 0 {
                 take_top_fn = 1
             } else if top_t == TOK_FN {
                 take_top_fn = 1
             }
             if take_top_fn == 1 {
-                print("BT0\n")
                 let fn_tok_pos = g_main_pos
                 let cur_name_off = tok_str_start_at(g_dbg_toks_init, g_main_pos + 1)
-                print("BT1\n")
                 let cur_name_len = tok_str_len_at(g_dbg_toks_init, g_main_pos + 1)
-                print("BT2\n")
                 if g_main_pos < 200 {
-                    print("NL=")
                     print(cur_name_len)
                     print("\n")
                     if cur_name_len > 0 {
-                        print("NC=")
                         print(load_i8_at(src_buf, cur_name_off))
                         print("\n")
                     }
                 }
                 if cur_name_len == 4 {
                     if load_i8_at(src_buf, cur_name_off) == 109 {
-                        print("NM0\n")
                     } else {
                         print("N4\n")
                     }
@@ -8188,26 +8007,21 @@ fn main() {
                     cur_name_off = 3
                     cur_name_len = 4
                 }
-                if src_len >= 1024 {
+                if 1 == 1 {
                     g_cur_fn_name_start = cur_name_off
                     g_cur_fn_name_len = cur_name_len
                 }
-                print("BT3\n")
                 let fn_lbrace_scan = -1
                 let fn_rbrace_scan = -1
-                print("BTX0\n")
-                if src_len < 1024 {
+                if 0 {
                     scan_fn_bounds(fn_tok_pos, src_len, &fn_lbrace_scan, &fn_rbrace_scan)
                 } else {
                     let scan_i = fn_tok_pos
-                    print("BTX1\n")
                     loop scan_i < g_dbg_tok_cnt {
-                        print("BTX3\n")
                         let st = tok_type_at_raw(g_dbg_toks_init, scan_i)
                         if st == TOK_LBRACE {
                             fn_lbrace_scan = scan_i
                             fn_rbrace_scan = find_matching_rbrace(g_dbg_toks_init, scan_i)
-                            print("BTX2\n")
                             scan_i = g_dbg_tok_cnt
                         } else if st == TOK_SEMI {
                             fn_rbrace_scan = scan_i
@@ -8219,36 +8033,29 @@ fn main() {
                         }
                     }
                 }
-                print("BT4\n")
                 let skip_old_parse = 0
                 let fi = 999
-                if src_len >= 1024 {
+                if 1 == 1 {
                     fi = resolve_top_fn_index(src_buf, cur_name_off, cur_name_len, fn_name_off, fn_name_len)
-                    print("BT5\n")
                     init_top_jfn(jfn, src_buf, src_len, g_stab_ptr)
-                    print("BT6\n")
                     let bt6_jfn_addr = jfn as i64
-                    print("BT6_ADDR=")
                     print(bt6_jfn_addr)
                     print("\n")
                     let bt6_src_chk = jfn.src as i64
-                    print("BT6_SRC=")
                     print(bt6_src_chk)
                     print("\n")
                 }
                 let hdr_pos = fn_tok_pos + 2
-                if src_len < 1024 {
+                if 0 {
                     g_main_pos = hdr_pos + 1
                 } else {
                     g_main_pos = hdr_pos + 1
                 }
-                print("BT7\n")
-                if src_len < 1024 {
+                if 0 {
                     g_main_pos = g_main_pos + 1
                 } else {
                     let more_params = 0
                     if tok_type_at(g_dbg_toks_init, g_main_pos) != TOK_RPAREN { more_params = 1 }
-                    print("BT8\n")
                     loop more_params == 1 {
                         let p_name_start = tok_str_start_at(g_dbg_toks_init, g_main_pos)
                         let p_name_len = tok_str_len_at(g_dbg_toks_init, g_main_pos)
@@ -8290,11 +8097,9 @@ fn main() {
                         }
                         let pslot = bind_name(jfn, p_name_start, p_name_len, p_stype)
                         let pbn_src = jfn.src as i64
-                        print("PBN_SRC=")
                         print(pbn_src)
                         print("\n")
                         let pbn_vc = jfn.var_cnt
-                        print("PBN_VC=")
                         print(pbn_vc)
                         print("\n")
                         if jfn.param_cnt < 16 {
@@ -8309,7 +8114,7 @@ fn main() {
                     }
                     expect(g_dbg_toks_init, TOK_RPAREN)
                 }
-                if src_len < 1024 {
+                if 0 {
                     g_main_pos = 4
                 } else if fn_lbrace_scan != -1 {
                     g_main_pos = fn_lbrace_scan
@@ -8317,20 +8122,16 @@ fn main() {
                     fn_lbrace_scan = g_main_pos
                 }
                 g_skip_fn_body_compile_tmp = 0
-                if src_len >= 1024 {
+                if 1 == 1 {
                     g_skip_fn_body_compile_tmp = should_skip_old_fn(src_buf, cur_name_off, cur_name_len, fi)
                 }
                 if cur_name_len == 4 {
                     if streq(src_buf, cur_name_off, 4, "main") == 1 {
                         if skip_old_parse == 1 {
-                            print("MSKP\n")
                         } else {
-                            print("MNOS\n")
                         }
                         if g_skip_fn_body_compile_tmp == 1 {
-                            print("MSKB\n")
                         } else {
-                            print("MNSB\n")
                         }
                     }
                 }
@@ -8359,12 +8160,12 @@ fn main() {
                         }
                     }
                 } else {
-                    if src_len < 1024 {
+                    if 0 {
                         g_main_pos = g_main_pos + 1
                     } else {
                         expect(g_dbg_toks_init, TOK_LBRACE)
                     }
-                    if src_len < 1024 {
+                    if 0 {
                         let jfnw = jfn as &i64
                         store_i64_at0(jfnw, src_buf)
                         store_i64_at(jfnw, 1, src_len)
@@ -8377,19 +8178,17 @@ fn main() {
                         store_i64_at(jfnw, 1575432, 0)
                     } else {
                         let pre_stab_src = jfn.src as i64
-                        print("PRSTAB_SRC=")
                         print(pre_stab_src)
                         print("\n")
                         jfn.strtab_pos = 0
                         let post_stab_src = jfn.src as i64
-                        print("PSTSTAB_SRC=")
                         print(post_stab_src)
                         print("\n")
                     }
                     g_dbg_fi = fi
                     print("J2\n")
                     let cb = 0
-                    if src_len < 1024 {
+                    if 0 {
                         let jfnw = jfn as &i64
                         store_i64_at(jfnw, 2, 0)
                         store_i64_at(jfnw, 3075, 0)
@@ -8415,7 +8214,7 @@ fn main() {
                         print(c1_vc_chk)
                         print("\n")
                     }
-                    if src_len < 1024 {
+                    if 0 {
                         g_small_work_jfn = jfn
                         g_small_work_bb = cb
                         ping0()
@@ -8429,17 +8228,15 @@ fn main() {
                     live_compile_block(g_dbg_toks_init, g_stab_ptr, src_buf, jfn, cb)
                     print("C2\n")
                     }
-                    if src_len >= 1024 {
+                    if 1 == 1 {
                         if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_RBRACE {
                             g_main_pos = g_main_pos + 1
                         }
                     }
-                    print("RZ1\n")
                 }
                 ; Resync past function body; always advance to end of function
                 if cur_name_len == 4 {
                     if streq(src_buf, cur_name_off, 4, "main") == 1 {
-                        print("MAIN_RB=")
                         print_int(fn_rbrace_scan)
                         print(" g_dtc=")
                         print_int(g_dbg_tok_cnt)
@@ -8449,7 +8246,7 @@ fn main() {
                 if g_fn_rbrace_tmp >= 0 {
                     g_main_pos = g_fn_rbrace_tmp + 1
                 }
-                if src_len < 1024 {
+                if 0 {
                     g_main_pos = g_scan_tok_cnt
                     g_loop_ctrl = 0
                 }
@@ -8468,7 +8265,6 @@ fn main() {
                     }
                 }
                 if is_main == 1 {
-                    print("MIDX=")
                     print(fi_post)
                     print("\n")
                     main_idx = fi_post
@@ -8476,12 +8272,11 @@ fn main() {
                 if fi_post >= 0 and fi_post < 512 {
                     store_i64_at(fn_code_off, fi_post, code_len)
                 }
-                print("RZ2\n")
                 if g_skip_fn_body_compile_tmp == 1 {
                     emit_byte(code_buf, &code_len, 0x31)
                     emit_byte(code_buf, &code_len, 0xC0)
                     emit_ret_instr(code_buf, &code_len)
-                } else if src_len < 1024 {
+                } else if 0 {
                     emit_byte(code_buf, &code_len, 0x48)
                     emit_byte(code_buf, &code_len, 0x31)
                     emit_byte(code_buf, &code_len, 0xFF)
@@ -8504,7 +8299,6 @@ fn main() {
                     print("G1\n")
                     ctx.fix_cnt = 0
                     lower_fn(jfn, ctx, code_buf, &code_len, is_main)
-                    print("LF0\n")
                     ; Collect fixups from this function
                     let ci = 0
                     loop ci < ctx.fix_cnt {
@@ -8530,12 +8324,10 @@ fn main() {
                         }
                         ci = ci + 1
                     }
-                    print("FX0\n")
                     ; Copy strtab to merged
                     let main_merge_base = merged_pos
                     if cur_name_len == 4 {
                         if streq(src_buf, cur_name_off, 4, "main") == 1 {
-                            print("MCP0\n")
                         }
                     }
                     let si_copy = 0
@@ -8550,9 +8342,7 @@ fn main() {
                     if cur_name_len == 4 {
                         if streq(src_buf, cur_name_off, 4, "main") == 1 {
                             if merged_pos > main_merge_base {
-                                print("MCP1\n")
                             } else {
-                                print("MCPZ\n")
                             }
                         }
                     }
@@ -8573,24 +8363,18 @@ fn main() {
         }
     }
 
-    print("ZPROBE_POST_LOOP\n")
     ; ---- Fix up entry point ----
     if main_idx == -1 { panic("main not found") }
     if main_idx == 999 {
         print("E999\n")
     } else if main_idx >= 0 and main_idx < 512 {
-        print("EOK\n")
     } else {
-        print("EBAD\n")
     }
     if main_idx >= 0 and main_idx < 512 {
         if load_i64_at(fn_code_off, main_idx) > 0 {
-            print("EO1\n")
         } else {
-            print("EO0\n")
         }
     } else {
-        print("EON\n")
     }
     let m_off = load_i64_at(fn_code_off, main_idx)
     let e_rel = m_off - 5
@@ -8600,17 +8384,13 @@ fn main() {
     poke_byte(code_buf, 4, (e_rel >> 24) & 0xFF)
 
     ; ---- Fix up string/global addresses in code ----
-    print("FP_CL=")
     print(code_len)
     print("\n")
-    print("FP_MP=")
     print(merged_pos)
     print("\n")
-    print("FP_GL=")
     print(g_emit_glob_len)
     print("\n")
     if g_glob_cnt > 0 {
-        print("FP_G0=")
         print(load_i64_at(g_glob_off, 0))
         print("\n")
     }
@@ -8699,21 +8479,15 @@ fn main() {
     print(unresolved_calls)
     print("\n")
 
-    print("ZPROBE_PRE_WRITE\n")
-    print("WRITE_ELF\n")
     syscall(1, 1, merged_str, 20)
     print("\n")
     syscall(1, 1, out_path, 16)
     print("\n")
     if merged_pos > 4096 {
-        print("MP4\n")
     } else if merged_pos > 512 {
-        print("MP5\n")
     } else {
-        print("MP0\n")
     }
     let out_fd = syscall(2, out_path, 577, 493)
-    print("FD=")
     print(out_fd)
     print("\n")
     if g_glob_total_sz > 0 {
@@ -8722,9 +8496,7 @@ fn main() {
     g_emit_glob_buf = glob_buf
     g_emit_glob_len = g_glob_total_sz
     write_elf(out_fd, code_buf, code_len, merged_str, merged_pos)
-    print("EOW\n")
     syscall(3, out_fd, 0, 0)
-    print("EOS\n")
     print("B60\n")
     syscall(60, 0, 0, 0)
     print("A60\n")
