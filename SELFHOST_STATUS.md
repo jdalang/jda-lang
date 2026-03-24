@@ -195,6 +195,56 @@ with no slot → `OP_LOAD(-1)` → reads nonsense → all constant comparisons b
 
 ---
 
+## March 24, 2026 — lex() Infinite Loop + Entry-Point Segfault Fixes
+
+### Fix: fn lex Infinite Loop ✅
+
+**Root cause**: `fn lex` had a premature `}` at line ~1506 that closed the
+`loop lexing == 1 {` body after only 2 assignments. All actual lex logic
+(character scanning, token classification, etc.) was OUTSIDE the loop and ran
+exactly once — never advancing the position for a second token.
+
+**Fix**: Replaced the entire broken `fn lex` body with a clean 5-line delegation
+to `lex_global_fast()`, which is the correct large-mode lexer:
+```jda
+fn lex(src: &i8, src_len: i64, toks: &Token) -> i32 {
+    g_src_buf_ptr = src
+    g_runtime_src_len = src_len
+    g_dbg_toks_init = toks
+    if src_len > 524288 { panic("SRC_LEN_BIG") }
+    ret lex_global_fast()
+}
+```
+Also removed a `C0BAD` guard in `lex_global_fast` that panicked if the first
+source character wasn't `;` (hello.jda starts with `fn`).
+
+### Fix: Entry-Point Segfault (JMP → CALL + exit) ✅
+
+**Root cause**: Generated binaries emitted `JMP rel32` (0xE9) as the `_start`
+stub that jumps to `main`. On Linux, `_start` has `[argc, argv...]` on the
+stack. When `main` returns via `ret`, it pops `argc` (= 1) as the return
+address and jumps to address 1 → segfault.
+
+**Fix**: Changed the entry stub to emit `CALL rel32` (0xE8) followed by
+`exit(0)` bytes (`B8 3C 00 00 00 31 FF 0F 05`) so that when `main` returns,
+execution falls through to exit(0).
+
+### Current Pipeline Status (March 24, 2026)
+
+```
+jda0 → jda1_a            ✅  (compiles jda1.jda correctly)
+jda1_a → hello_s1        ✅  prints "Hello Bare Metal", exits 0
+jda1_a → jda1_sh2        ❌  PANIC "if: expected }" at token ~1669
+```
+
+**Next blocker**: `live_compile_if` in jda1_a panics while compiling
+`fn lex_scan_int`. After the then-block `{ ret val }`, the current token is
+not `}` where expected. Likely caused by `find_matching_rbrace` mis-scanning
+(stepping by 4 instead of 1) which leads to a wrong `fn_rbrace_scan` and
+corrupts g_main_pos for subsequent function compilations.
+
+---
+
 ## March 15, 2026 — Stack Overflow + argv Clobber Fixes
 
 ### Fix: Stack Overflow in Main Compilation Loop ✅
