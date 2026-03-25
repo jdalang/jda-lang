@@ -1719,15 +1719,7 @@ fn report_top_fn_scan() {
 }
 
 fn prepare_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, fn_name_len: &i64) {
-    if 1 {
-        store_i64_at(fn_name_off, 0, 3)
-        store_i64_at(fn_name_len, 0, 4)
-        g_top_fn_cnt = 1
-        ret ok(0)
-    }
     run_top_fn_scan(toks, src, src_len, fn_name_off, fn_name_len)
-    report_top_fn_scan()
-    ret ok(0)
 }
 
 fn load_top_fields(loop_pos: i64, out_t: &i64, out_start: &i64, out_len: &i64) {
@@ -4190,17 +4182,24 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
 }
 
 fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    expect(TOK_SYSCALL)
-    expect(TOK_LPAREN)
-    let nr_id = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
-    expect(TOK_COMMA)
-    let a0_id = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
-    expect(TOK_COMMA)
-    let a1_id = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
-    expect(TOK_COMMA)
-    let a2_id = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
-    expect(TOK_RPAREN)
-    ret emit_syscall_raw(jfn, bb, nr_id, a0_id, a1_id, a2_id)
+    expect(toks, TOK_SYSCALL)
+    expect(toks, TOK_LPAREN)
+    let nr = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
+    let a0 = -1 let a1 = -1 let a2 = -1 let a3 = -1 let a4 = -1 let a5 = -1
+    let count = 0
+    loop tok_type_at(toks, pos[0]) == TOK_COMMA {
+        pos[0] = pos[0] + 1
+        let arg = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
+        if count == 0 { a0 = arg }
+        if count == 1 { a1 = arg }
+        if count == 2 { a2 = arg }
+        if count == 3 { a3 = arg }
+        if count == 4 { a4 = arg }
+        if count == 5 { a5 = arg }
+        count = count + 1
+    }
+    expect(toks, TOK_RPAREN)
+    ret emit_syscall_raw(jfn, bb, nr, a0, a1, a2, a3, a4, a5, count)
 }
 
 fn emit_print_int(jfn: &JirFunction, bb: i64, imm_val: i64) {
@@ -5521,6 +5520,11 @@ fn poke_byte(buf: &i8, off: i64, val: i8) {
     buf[off] = val
 }
 
+
+fn emit_i16_le(out: &i8, pos: &i64, val: i64) {
+    emit_byte(out, pos, val & 0xFF)
+    emit_byte(out, pos, (val >> 8) & 0xFF)
+}
 fn emit_i32_le(out: &i8, pos: &i64, val: i64) {
     emit_byte(out, pos, val & 0xFF)
     emit_byte(out, pos, (val >> 8)  & 0xFF)
@@ -5906,6 +5910,8 @@ fn emit_save_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
 
 
 
+
+
 fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     if val_id < 0 { ret PHYS_RAX }
     if val_id >= 4096 { ret PHYS_RAX }
@@ -5931,33 +5937,45 @@ fn lower_print_int(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
 fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
+    
+    ; Push in order (always at least the nr)
     let nr_r = get_or_load(ctx.ra, out, pos, ins.operand0)
     emit_push_r(out, pos, nr_r)
-    let a0_r = get_or_load(ctx.ra, out, pos, ins.operand1)
-    emit_push_r(out, pos, a0_r)
-    let a1_r = get_or_load(ctx.ra, out, pos, ins.operand2)
-    emit_push_r(out, pos, a1_r)
-    let a2_r = get_or_load(ctx.ra, out, pos, ins.operand3)
-    emit_push_r(out, pos, a2_r)
-    emit_pop_r(out, pos, PHYS_RDX)
-    emit_pop_r(out, pos, PHYS_RSI)
-    emit_pop_r(out, pos, PHYS_RDI)
+    if ins.operand3 >= 1 { let r = get_or_load(ctx.ra, out, pos, ins.operand1) emit_push_r(out, pos, r) }
+    if ins.operand3 >= 2 { let r = get_or_load(ctx.ra, out, pos, ins.operand2) emit_push_r(out, pos, r) }
+    if ins.operand3 >= 3 { let r = get_or_load(ctx.ra, out, pos, ins.bb_target0) emit_push_r(out, pos, r) }
+    if ins.operand3 >= 4 { let r = get_or_load(ctx.ra, out, pos, ins.bb_target1) emit_push_r(out, pos, r) }
+    if ins.operand3 >= 5 { let r = get_or_load(ctx.ra, out, pos, ins.imm) emit_push_r(out, pos, r) }
+    if ins.operand3 >= 6 { let r = get_or_load(ctx.ra, out, pos, ins.itype as i64) emit_push_r(out, pos, r) }
+
+    ; Pop in reverse
+    if ins.operand3 >= 6 { emit_pop_r(out, pos, PHYS_R9) }
+    if ins.operand3 >= 5 { emit_pop_r(out, pos, PHYS_R8) }
+    if ins.operand3 >= 4 { emit_pop_r(out, pos, PHYS_R10) }
+    if ins.operand3 >= 3 { emit_pop_r(out, pos, PHYS_RDX) }
+    if ins.operand3 >= 2 { emit_pop_r(out, pos, PHYS_RSI) }
+    if ins.operand3 >= 1 { emit_pop_r(out, pos, PHYS_RDI) }
     emit_pop_r(out, pos, PHYS_RAX)
+    
     emit_syscall_instr(out, pos)
+    
     if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
         emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
         emit_restore_pool(ctx.ra, out, pos)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_rr(out, pos, dst, PHYS_R12)
+        if dst != PHYS_R12 { emit_mov_rr(out, pos, dst, PHYS_R12) }
     } else {
         emit_restore_pool(ctx.ra, out, pos)
     }
     emit_pop_r(out, pos, PHYS_R12)
+    
     consume_use(ctx, ins.operand0)
-    consume_use(ctx, ins.operand1)
-    consume_use(ctx, ins.operand2)
-    consume_use(ctx, ins.operand3)
-    ret ok(0)
+    if ins.operand3 >= 1 { consume_use(ctx, ins.operand1) }
+    if ins.operand3 >= 2 { consume_use(ctx, ins.operand2) }
+    if ins.operand3 >= 3 { consume_use(ctx, ins.bb_target0) }
+    if ins.operand3 >= 4 { consume_use(ctx, ins.bb_target1) }
+    if ins.operand3 >= 5 { consume_use(ctx, ins.imm) }
+    if ins.operand3 >= 6 { consume_use(ctx, ins.itype as i64) }
 }
 
 fn lower_instr_constlike(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos: &i64) -> i64 {
@@ -7373,62 +7391,44 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
 
 fn write_elf(out_fd: i64, code: &i8, code_len: i64,
              strtab: &i8, strtab_len: i64) {
-    if out_fd < 0 { panic("open out failed") }
-    if strtab_len > 4096 {
-    } else if strtab_len > 512 {
-    } else {
-    }
-    let buf = alloc_pages(1) ; 4KB is plenty for the header
+    let buf = alloc_pages(1)
     let pos = 0
-
     let load_va   = 0x400000
     let hdr_size  = 120
     let code_va   = load_va + hdr_size
     let total     = hdr_size + code_len + strtab_len + 1048576
 
-    emit_byte(buf, &pos, 0x7F)
-    emit_byte(buf, &pos, 0x45)
-    emit_byte(buf, &pos, 0x4C)
-    emit_byte(buf, &pos, 0x46)
-    emit_byte(buf, &pos, 2)
-    emit_byte(buf, &pos, 1)
-    emit_byte(buf, &pos, 1)
-    emit_byte(buf, &pos, 0)
-    let pi = 0
-    loop pi < 8 { emit_byte(buf, &pos, 0) pi = pi + 1 }
-    emit_byte(buf, &pos, 2)    emit_byte(buf, &pos, 0)
-    emit_byte(buf, &pos, 0x3E) emit_byte(buf, &pos, 0)
-    emit_i32_le(buf, &pos, 1)
-    emit_i64_le(buf, &pos, code_va)
-    emit_i64_le(buf, &pos, 64)
-    emit_i64_le(buf, &pos, 0)
-    emit_i32_le(buf, &pos, 0)
-    emit_byte(buf, &pos, 64) emit_byte(buf, &pos, 0)
-    emit_byte(buf, &pos, 56) emit_byte(buf, &pos, 0)
-    emit_byte(buf, &pos, 1)  emit_byte(buf, &pos, 0)
-    emit_byte(buf, &pos, 64) emit_byte(buf, &pos, 0)
-    emit_byte(buf, &pos, 0)  emit_byte(buf, &pos, 0)
-    emit_byte(buf, &pos, 0)  emit_byte(buf, &pos, 0)
+    ; --- ELF Header (64 bytes) ---
+    emit_byte(buf, &pos, 0x7F) emit_byte(buf, &pos, 0x45) emit_byte(buf, &pos, 0x4C) emit_byte(buf, &pos, 0x46)
+    emit_byte(buf, &pos, 2) emit_byte(buf, &pos, 1) emit_byte(buf, &pos, 1) emit_byte(buf, &pos, 0)
+    let pi = 0 loop pi < 8 { emit_byte(buf, &pos, 0) pi = pi + 1 }
+    emit_i16_le(buf, &pos, 2)    ; e_type = EXEC
+    emit_i16_le(buf, &pos, 0x3E) ; e_machine = X86_64
+    emit_i32_le(buf, &pos, 1)    ; e_version
+    emit_i64_le(buf, &pos, code_va) ; e_entry
+    emit_i64_le(buf, &pos, 64)      ; e_phoff
+    emit_i64_le(buf, &pos, 0)       ; e_shoff
+    emit_i32_le(buf, &pos, 0)       ; e_flags
+    emit_i16_le(buf, &pos, 64)      ; e_ehsize
+    emit_i16_le(buf, &pos, 56)      ; e_phentsize
+    emit_i16_le(buf, &pos, 1)       ; e_phnum
+    emit_i16_le(buf, &pos, 0)       ; e_shentsize
+    emit_i16_le(buf, &pos, 0)       ; e_shnum
+    emit_i16_le(buf, &pos, 0)       ; e_shstrndx
 
-    emit_i32_le(buf, &pos, 1)
-    emit_i32_le(buf, &pos, 7)  ; PF_R|PF_W|PF_X — globals must be writable
-    emit_i64_le(buf, &pos, 0)
-    emit_i64_le(buf, &pos, load_va)
-    emit_i64_le(buf, &pos, load_va)
-    emit_i64_le(buf, &pos, total)
-    emit_i64_le(buf, &pos, total)
-    emit_i64_le(buf, &pos, 0x200000)
+    ; --- Program Header (56 bytes) ---
+    emit_i32_le(buf, &pos, 1) ; p_type = LOAD
+    emit_i32_le(buf, &pos, 7) ; p_flags = RWX
+    emit_i64_le(buf, &pos, 0) ; p_offset
+    emit_i64_le(buf, &pos, load_va) ; p_vaddr
+    emit_i64_le(buf, &pos, load_va) ; p_paddr
+    emit_i64_le(buf, &pos, total)   ; p_filesz
+    emit_i64_le(buf, &pos, total)   ; p_memsz
+    emit_i64_le(buf, &pos, 0x200000) ; p_align
 
-    let w1 = syscall(1, out_fd, buf, pos)
-    if w1 != pos { panic("short write hdr") }
-    
-    let w2 = syscall(1, out_fd, code, code_len)
-    if w2 != code_len { panic("short write code") }
-    if strtab_len > 0 {
-        let w3 = syscall(1, out_fd, strtab, strtab_len)
-        if w3 != strtab_len { panic("short write str") }
-    }
-    
+    syscall(1, out_fd, buf, pos)
+    syscall(1, out_fd, code, code_len)
+    if strtab_len > 0 { syscall(1, out_fd, strtab, strtab_len) }
     let zero_buf = alloc_pages(256)
     fill_bytes(zero_buf, 1048576, 0)
     syscall(1, out_fd, zero_buf, 1048576)
