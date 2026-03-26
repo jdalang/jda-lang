@@ -1,45 +1,37 @@
 # Jda Compilation Strategy
 
-Latest checkpoint (2026-03-24):
+Latest checkpoint: 2026-03-26
 
-## Pipeline Status
+## Current Pipeline Status
 
-- ✅ **jda0 (NASM)**: Stable bootstrap compiler.
-- ✅ **jda1_a (Gen 1)**: First-generation Jda compiler, built by jda0.
-- ✅ **jda1_b (Gen 2)**: Second-generation Jda compiler, built by jda1_a.
-- ✅ **Self-Hosting Roundtrip**: `jda1_b` successfully compiles `hello.jda` into a working `hello_sh` binary.
-- ✅ **Output**: `Hello Bare Metal` verified.
+1. `nasm` + `ld` -> `jda0`: passing
+2. `jda0` compiles `bootstrap/stage1/jda1.jda` -> `jda1_a`: passing
+3. `jda1_a` compiles `bootstrap/stage1/jda1.jda` -> `jda1_b`: passing
+4. `jda1_b` compiles `examples/hello.jda` -> `hello_sh`: blocked
+5. `./hello_sh` -> `Hello Bare Metal`: blocked by step 4
 
-## Breakthroughs & Fixes
+## What Changed On This Branch
 
-### 1. Main ABI Harmonization
-- Resolved register clobbering by using standard parameter passing (`main(argc, argv_ptr)`).
-- Forced the compiler to preserve `rdi` and `rsi` into stack slots immediately upon entry.
+- `jda1_a` is stable again. The stage-3 self-host step now completes successfully.
+- The active lexer path now goes through `lex_small_fast()` instead of the heavier global lexer path during bootstrap.
+- Dead or obsolete global-lexer helpers are skipped during bootstrap code generation so they do not break self-host progress.
+- Parser-sensitive token accessor helpers were normalized into simpler wrapper forms that the live compiler can lower reliably.
+- `skip_top_level_let_rhs`, `skip_top_level_let`, `parse_const_decl`, and `panic` were simplified to remove stage1 parser/codegen failures.
+- Lowering fixup capacity was increased from `1024` to `8192`.
+- `.cline/` is now ignored in `.gitignore`.
 
-### 2. Structural Synchronization
-- Synchronized `JirFunction` and `LowerCtx` structures between `jda1.jda` and `tools/jda0_spec.py`.
-- Finalized reduced sizes (128 blocks, 64 vars) to ensure both stability and bootstrap speed.
+## Current Blocker
 
-### 3. String Math Correction
-- Fixed a 3-byte offset error in `jda0.asm` string pointer math.
-- Corrected relative displacement calculation to account for the full 7-byte `lea` instruction.
+- `jda1_b` now starts and runs, but hangs while compiling `examples/hello.jda`.
+- The immediate next task is stage-4 debugging on `jda1_b`, not more stage-3 stabilization.
 
-### 4. Robust Diagnostics
-- Implemented `eprint_i64` without relying on unsupported operators.
-- Added safety breaks to loops to prevent hangs during bootstrap.
+## Strategy Going Forward
 
-## Verified Roundtrip Workflow
+1. Keep `work/fix-selfhost-from-5e959be` as the clean debugging branch.
+2. Treat stage 3 as re-established and avoid reopening that work unless a stage-4 fix regresses it.
+3. Instrument `jda1_b` on the `hello.jda` path and isolate the first loop or token/parse state that stops making progress.
+4. Once `jda1_b -> hello_sh` passes, rerun the full 5-step chain and then remove temporary debug prints and dead-code skips that are no longer needed.
 
-The following pipeline is now 100% stable and automated:
+## Documentation Note
 
-1. **Bootstrap**: `nasm` + `ld` → `jda0`
-2. **Generation 1**: `jda0` compiles `jda1.jda` → `jda1_a`
-3. **Generation 2**: `jda1_a` compiles `jda1.jda` → `jda1_b`
-4. **Validation**: `jda1_b` compiles `hello.jda` → `hello_sh`
-5. **Execution**: `./hello_sh` → `Hello Bare Metal`
-
-## Next Phase: Minimal Release (Stage 2)
-
-1. **CLI Stabilization**: Unified `jda build` and `jda run`.
-2. **Error Diagnostics**: Line/column reporting.
-3. **Standard Library**: Expanded `jda::fs`, `jda::time`, and `jda::fmt`.
+Several older status/todo docs were removed from the tree. This file and the current self-host status note are now the canonical references for bootstrap progress on this branch.
