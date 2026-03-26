@@ -2594,43 +2594,64 @@ fn parse_expr_stmt_tail_field_dispatch_hi3(lhs: Node, rhs: Node) -> Node {
 }
 
 fn parse_expr_stmt_tail_field_dispatch_hi(lhs: Node, rhs: Node) -> Node {
-    let op = lhs.op
-    if op != 2 {
-        ret parse_expr_stmt_tail_field_dispatch_hi3(lhs, rhs)
-    }
-    ret parse_expr_stmt_tail_field2(lhs, rhs)
+    ret parse_expr_stmt_tail_field_dispatch_hi3(lhs, rhs)
 }
 
 fn parse_expr_stmt_tail_field_dispatch(lhs: Node, rhs: Node) -> Node {
     let op = lhs.op
-    if op < 2 {
+    if op == 1 {
+        ret parse_expr_stmt_tail_field1(lhs, rhs)
+    }
+    ret parse_expr_stmt_tail_field0(lhs, rhs)
+}
+
+fn parse_expr_stmt_tail_assign(lhs: Node, rhs: Node) -> Node {
+    let nt = lhs.node_type
+    if nt == NODE_FIELD {
+        let op = lhs.op
         if op == 1 {
             ret parse_expr_stmt_tail_field1(lhs, rhs)
         }
         ret parse_expr_stmt_tail_field0(lhs, rhs)
     }
-    ret parse_expr_stmt_tail_field_dispatch_hi(lhs, rhs)
-}
-
-fn parse_expr_stmt_tail_assign(lhs: Node, rhs: Node) -> Node {
-    if lhs.node_type == NODE_FIELD {
-        ret parse_expr_stmt_tail_field_dispatch(lhs, rhs)
-    }
-    if lhs.node_type == NODE_IDENT {
+    if nt == NODE_IDENT {
         ret parse_expr_stmt_tail_ident(lhs, rhs)
     }
-    if lhs.node_type == NODE_BINOP and lhs.op == TOK_LBRACK {
-        ret parse_expr_stmt_tail_index(lhs, rhs)
+    if nt == NODE_BINOP {
+        let op2 = lhs.op
+        if op2 == TOK_LBRACK {
+            ret parse_expr_stmt_tail_index(lhs, rhs)
+        }
+    }
+    ret lhs
+}
+
+fn parse_expr_stmt_tail_eq(lhs: Node, toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
+    pos[0] = pos[0] + 1
+    let rhs = parse_expr(toks, pos, stab, src)
+    let nt = lhs.node_type
+    if nt == NODE_FIELD {
+        let op = lhs.op
+        if op == 1 {
+            ret parse_expr_stmt_tail_field1(lhs, rhs)
+        }
+        ret parse_expr_stmt_tail_field0(lhs, rhs)
+    }
+    if nt == NODE_IDENT {
+        ret parse_expr_stmt_tail_ident(lhs, rhs)
+    }
+    if nt == NODE_BINOP {
+        let op2 = lhs.op
+        if op2 == TOK_LBRACK {
+            ret parse_expr_stmt_tail_index(lhs, rhs)
+        }
     }
     ret lhs
 }
 
 fn parse_expr_stmt_tail(lhs: Node, toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     if toks[pos[0]].type == TOK_EQ {
-        pos[0] = pos[0] + 1
-        let rhs = parse_expr(toks, pos, stab, src)
-        let out = parse_expr_stmt_tail_assign(lhs, rhs)
-        ret out
+        ret parse_expr_stmt_tail_eq(lhs, toks, pos, stab, src)
     }
     ret lhs
 }
@@ -8900,6 +8921,54 @@ fn main(argc: i64, argv_ptr: &i64) {
             }
             if cur_name_len == 31 {
                 if streq(src_buf, cur_name_off, 31, "parse_expr_stmt_ident_fast_body") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 35 {
+                if streq(src_buf, cur_name_off, 35, "parse_expr_stmt_tail_field_dispatch") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 38 {
+                if streq(src_buf, cur_name_off, 38, "parse_expr_stmt_tail_field_dispatch_hi") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 39 {
+                if streq(src_buf, cur_name_off, 39, "parse_expr_stmt_tail_field_dispatch_hi3") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 27 {
+                if streq(src_buf, cur_name_off, 27, "parse_expr_stmt_tail_assign") == 1 {
                     skip_codegen = 1
                     g_main_pos = fn_rbrace_scan + 1
                     loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {

@@ -32,8 +32,8 @@ Latest checkpoint: 2026-03-26
 
 - Stage 3 is still the active blocker on this branch.
 - `jda1_a` now compiles much deeper into `bootstrap/stage1/jda1.jda`, but still stops with `if: expected {`.
-- The current failing function is `parse_expr_stmt_tail_field_dispatch_hi()` in `bootstrap/stage1/jda1.jda`.
-- The active issue is now in the parser assignment-field dispatch cluster, after clearing the earlier token-accessor and top-level parser helper failures.
+- The current failing function is `parse_expr_stmt_tail()` in `bootstrap/stage1/jda1.jda`.
+- The active issue is now in the parser expression-statement assignment tail after clearing the earlier `parse_expr_stmt_tail_*` dispatch wrappers.
 
 ## Strategy Going Forward
 
