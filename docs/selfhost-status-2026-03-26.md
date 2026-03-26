@@ -13,7 +13,7 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
 ## Current Failure
 
 - The active blocker is still stage 3: `jda1_a -> jda1_b`.
-- The current failure frontier is `find_matching_rbrace()` in `bootstrap/stage1/jda1.jda`.
+- The current failure frontier is `parse_expr_stmt_tail_field_dispatch_hi()` in `bootstrap/stage1/jda1.jda`.
 - The exact current failure is `if: expected {` while compiling deeper parser/helper code.
 
 ## Key Branch Fixes
@@ -31,9 +31,16 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
 - Added `g_cur_fn_end` to enforce a hard per-function boundary during live block compilation.
 - Increased `LowerCtx.fixups` from `1024` to `8192`.
 
+## Bring-Up Guardrails
+
+- Dead helpers may be skipped if they are not on the current bootstrap execution path.
+- Useful live behavior must be preserved; stage-3 bring-up should not reduce actual compiler capability.
+- Tiny wrappers may be inlined temporarily when that preserves semantics and avoids a known source-shape failure.
+- Broadly used live helpers should be fixed, not removed.
+
 ## Remaining Work
 
 1. Continue stage-3 stabilization until `jda1_a -> jda1_b` succeeds again.
-2. Normalize more parser-helper code around the current frontier, starting from `find_matching_rbrace()`.
+2. Fix the live source-shape issue in the `parse_expr_stmt_tail_*` assignment-field dispatch path.
 3. Re-establish the full self-host loop through `jda1_b`.
 4. Then retest `jda1_b -> hello_sh` and rerun the full bootstrap pipeline end to end.
