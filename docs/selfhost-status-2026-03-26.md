@@ -13,7 +13,7 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
 ## Current Failure
 
 - The active blocker is still stage 3: `jda1_a -> jda1_b`.
-- The current failure frontier is `get_or_load()` in `bootstrap/stage1/jda1.jda`.
+- The current failure frontier is `lower_instr_callalloc2()` in `bootstrap/stage1/jda1.jda`.
 - The exact current failure is `if: expected {` while compiling deeper parser/helper code.
 
 ## Key Branch Fixes
@@ -49,6 +49,23 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
   - `mark_use`
   - `consume_use`
   - x86 emit helpers through `emit_save_pool`
+  - `get_or_load`
+  - `lower_syscall_push_arg`
+  - `lower_syscall_pop_arg`
+  - `lower_syscall_consume_arg`
+  - `lower_syscall`
+  - `lower_instr_rip_fixup`
+  - `lower_instr_constlike`
+  - `lower_instr_mem`
+  - `lower_instr_arith`
+  - `lower_instr_cmpbit`
+  - `lower_branch_fixup`
+  - `lower_instr_ctrl`
+  - `lower_instr_alloc`
+  - `lower_instr_call`
+  - `lower_instr_call_args`
+  - `lower_instr_call_emit`
+- Added `lower_instr_callalloc2()` and routed the live lowering path through it, while the older `lower_instr_callalloc()` wrapper is skipped during stage-3 codegen.
 - Skipped the dead `legacy_compile_*` fallback cluster from bootstrap codegen.
 
 ## Bring-Up Guardrails
@@ -61,6 +78,6 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
 ## Remaining Work
 
 1. Continue stage-3 stabilization until `jda1_a -> jda1_b` succeeds again.
-2. Fix the live source-shape issue in `get_or_load()` after clearing the parser, live-expression, allocator, and most emitter helper frontiers.
+2. Fix the live source-shape issue in `lower_instr_callalloc2()` after clearing the parser, live-expression, allocator, emitter, and most lowering helper frontiers.
 3. Re-establish the full self-host loop through `jda1_b`.
 4. Then retest `jda1_b -> hello_sh` and rerun the full bootstrap pipeline end to end.

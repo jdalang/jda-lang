@@ -6605,17 +6605,21 @@ fn emit_save_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
 
 
 fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
-    if val_id < 0 { ret PHYS_RAX }
-    if val_id >= 4096 { ret PHYS_RAX }
+    let valid = 1
+    if val_id < 0 { valid = 0 }
+    if val_id >= 4096 { valid = 0 }
+    if valid != 1 { ret PHYS_RAX }
     let r = regalloc_get(ra, val_id)
-    if r != -1 { ret r }
-    ; Value was spilled: allocate a new register and reload
+    let cached = 0
+    if r != -1 { cached = 1 }
+    if cached == 1 { ret r }
     let new_r = regalloc_alloc(ra, out, pos, val_id)
     let off = ra.spill_off[val_id]
-    if off > 0 {
+    let spilled = 0
+    if off > 0 { spilled = 1 }
+    if spilled == 1 {
         emit_load_spill(out, pos, new_r, off)
     } else {
-        ; Defensive fallback: unresolved SSA value, materialize zero.
         emit_mov_imm64(out, pos, new_r, 0)
     }
     ret new_r
@@ -6626,6 +6630,46 @@ fn lower_print_int(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     ret ok(0)
 }
 
+fn lower_syscall_push_arg(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64, idx: i64) {
+    let vals = i64[7]
+    vals[0] = ins.operand0
+    vals[1] = ins.operand1
+    vals[2] = ins.operand2
+    vals[3] = ins.bb_target0
+    vals[4] = ins.bb_target1
+    vals[5] = ins.imm
+    vals[6] = ins.itype as i64
+    let v = vals[idx]
+    let r = get_or_load(ctx.ra, out, pos, v)
+    emit_push_r(out, pos, r)
+}
+
+fn lower_syscall_pop_arg(out: &i8, pos: &i64, idx: i64) {
+    let regs = i32[7]
+    regs[0] = PHYS_RAX
+    regs[1] = PHYS_RDI
+    regs[2] = PHYS_RSI
+    regs[3] = PHYS_RDX
+    regs[4] = PHYS_R10
+    regs[5] = PHYS_R8
+    regs[6] = PHYS_R9
+    let r = regs[idx]
+    emit_pop_r(out, pos, r)
+}
+
+fn lower_syscall_consume_arg(ins: &Instr, ctx: &LowerCtx, idx: i64) {
+    let vals = i64[7]
+    vals[0] = ins.operand0
+    vals[1] = ins.operand1
+    vals[2] = ins.operand2
+    vals[3] = ins.bb_target0
+    vals[4] = ins.bb_target1
+    vals[5] = ins.imm
+    vals[6] = ins.itype as i64
+    let v = vals[idx]
+    consume_use(ctx, v)
+}
+
 fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
@@ -6633,21 +6677,20 @@ fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     ; Push in order (always at least the nr)
     let nr_r = get_or_load(ctx.ra, out, pos, ins.operand0)
     emit_push_r(out, pos, nr_r)
-    if ins.operand3 >= 1 { let r = get_or_load(ctx.ra, out, pos, ins.operand1) emit_push_r(out, pos, r) }
-    if ins.operand3 >= 2 { let r = get_or_load(ctx.ra, out, pos, ins.operand2) emit_push_r(out, pos, r) }
-    if ins.operand3 >= 3 { let r = get_or_load(ctx.ra, out, pos, ins.bb_target0) emit_push_r(out, pos, r) }
-    if ins.operand3 >= 4 { let r = get_or_load(ctx.ra, out, pos, ins.bb_target1) emit_push_r(out, pos, r) }
-    if ins.operand3 >= 5 { let r = get_or_load(ctx.ra, out, pos, ins.imm) emit_push_r(out, pos, r) }
-    if ins.operand3 >= 6 { let r = get_or_load(ctx.ra, out, pos, ins.itype as i64) emit_push_r(out, pos, r) }
+    let push_idx = 1
+    loop push_idx <= ins.operand3 and push_idx <= 6 {
+        lower_syscall_push_arg(ins, ctx, out, pos, push_idx)
+        push_idx = push_idx + 1
+    }
 
     ; Pop in reverse
-    if ins.operand3 >= 6 { emit_pop_r(out, pos, PHYS_R9) }
-    if ins.operand3 >= 5 { emit_pop_r(out, pos, PHYS_R8) }
-    if ins.operand3 >= 4 { emit_pop_r(out, pos, PHYS_R10) }
-    if ins.operand3 >= 3 { emit_pop_r(out, pos, PHYS_RDX) }
-    if ins.operand3 >= 2 { emit_pop_r(out, pos, PHYS_RSI) }
-    if ins.operand3 >= 1 { emit_pop_r(out, pos, PHYS_RDI) }
-    emit_pop_r(out, pos, PHYS_RAX)
+    let pop_idx = ins.operand3
+    if pop_idx > 6 { pop_idx = 6 }
+    loop pop_idx >= 1 {
+        lower_syscall_pop_arg(out, pos, pop_idx)
+        pop_idx = pop_idx - 1
+    }
+    lower_syscall_pop_arg(out, pos, 0)
     
     emit_syscall_instr(out, pos)
     
@@ -6661,55 +6704,58 @@ fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     }
     emit_pop_r(out, pos, PHYS_R12)
     
-    consume_use(ctx, ins.operand0)
-    if ins.operand3 >= 1 { consume_use(ctx, ins.operand1) }
-    if ins.operand3 >= 2 { consume_use(ctx, ins.operand2) }
-    if ins.operand3 >= 3 { consume_use(ctx, ins.bb_target0) }
-    if ins.operand3 >= 4 { consume_use(ctx, ins.bb_target1) }
-    if ins.operand3 >= 5 { consume_use(ctx, ins.imm) }
-    if ins.operand3 >= 6 { consume_use(ctx, ins.itype as i64) }
+    let use_idx = 0
+    let use_lim = ins.operand3
+    if use_lim > 6 { use_lim = 6 }
+    loop use_idx <= use_lim {
+        lower_syscall_consume_arg(ins, ctx, use_idx)
+        use_idx = use_idx + 1
+    }
+}
+
+fn lower_instr_rip_fixup(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64, target_bb: i64, kind: i64) -> i64 {
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    let room = 1
+    if ctx.fix_cnt >= 8192 { room = 0 }
+    if room != 1 { panic("Lower fixup overflow") }
+    let fix_idx = ctx.fix_cnt
+    ctx.fixups[fix_idx].code_off = pos[0] + 3
+    ctx.fixups[fix_idx].target_bb = target_bb
+    ctx.fixups[fix_idx].kind = kind
+    ctx.fixups[fix_idx].str_len = 0
+    ctx.fix_cnt = ctx.fix_cnt + 1
+    emit_lea_rip(out, pos, dst, 0)
+    ret 1
 }
 
 fn lower_instr_constlike(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos: &i64) -> i64 {
-    if ins.op == OP_CONST {
+    let is_const = 0
+    if ins.op == OP_CONST { is_const = 1 }
+    if is_const == 1 {
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_imm64(out, pos, dst, ins.imm)
         ret 1
     }
-    if ins.op == OP_STRLIT {
-        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        if ctx.fix_cnt >= 8192 { panic("Lower fixup overflow") }
-        let fix_idx = ctx.fix_cnt
-        ctx.fixups[fix_idx].code_off  = pos[0] + 3
-        ctx.fixups[fix_idx].target_bb = ins.str_start
-        ctx.fixups[fix_idx].kind      = 1
-        ctx.fixups[fix_idx].str_len   = 0
-        ctx.fix_cnt = ctx.fix_cnt + 1
-        emit_lea_rip(out, pos, dst, 0)
-        ret 1
-    }
-    if ins.op == OP_GADDR {
-        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        if ctx.fix_cnt >= 8192 { panic("Lower fixup overflow") }
-        let fix_idx = ctx.fix_cnt
-        ctx.fixups[fix_idx].code_off  = pos[0] + 3
-        ctx.fixups[fix_idx].target_bb = ins.imm
-        ctx.fixups[fix_idx].kind      = 3
-        ctx.fixups[fix_idx].str_len   = 0
-        ctx.fix_cnt = ctx.fix_cnt + 1
-        emit_lea_rip(out, pos, dst, 0)
-        ret 1
-    }
+    let is_strlit = 0
+    if ins.op == OP_STRLIT { is_strlit = 1 }
+    if is_strlit == 1 { ret lower_instr_rip_fixup(ins, ctx, out, pos, ins.str_start, 1) }
+    let is_gaddr = 0
+    if ins.op == OP_GADDR { is_gaddr = 1 }
+    if is_gaddr == 1 { ret lower_instr_rip_fixup(ins, ctx, out, pos, ins.imm, 3) }
     ret 0
 }
 
 fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    if ins.op == OP_LOAD {
+    let is_load = 0
+    if ins.op == OP_LOAD { is_load = 1 }
+    if is_load == 1 {
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_load_spill(out, pos, dst, ins.operand0)
         ret 1
     }
-    if ins.op == OP_ADDR {
+    let is_addr = 0
+    if ins.op == OP_ADDR { is_addr = 1 }
+    if is_addr == 1 {
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         let b = 0
         if dst >= 8 { b = 1 }
@@ -6719,13 +6765,17 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_i32_le(out, pos, 0 - ins.operand0)
         ret 1
     }
-    if ins.op == OP_STORE {
+    let is_store = 0
+    if ins.op == OP_STORE { is_store = 1 }
+    if is_store == 1 {
         let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         emit_store_spill(out, pos, ins.operand1, src_r)
         consume_use(ctx, ins.operand0)
         ret 1
     }
-    if ins.op == OP_LOAD_MEM {
+    let is_load_mem = 0
+    if ins.op == OP_LOAD_MEM { is_load_mem = 1 }
+    if is_load_mem == 1 {
         let base_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         let load_base = base_r
         if base_r == reg_pool_at(0) {
@@ -6749,7 +6799,9 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, ins.operand0)
         ret 1
     }
-    if ins.op == OP_STORE_MEM {
+    let is_store_mem = 0
+    if ins.op == OP_STORE_MEM { is_store_mem = 1 }
+    if is_store_mem == 1 {
         let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         let store_src = src_r
         if ins.operand0 != ins.operand1 {
@@ -6769,7 +6821,9 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 }
 
 fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    if ins.op == OP_ADD {
+    let is_add = 0
+    if ins.op == OP_ADD { is_add = 1 }
+    if is_add == 1 {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let src_a = PHYS_R12
         emit_mov_rr(out, pos, PHYS_R12, a)
@@ -6781,7 +6835,9 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, ins.operand1)
         ret 1
     }
-    if ins.op == OP_SUB {
+    let is_sub = 0
+    if ins.op == OP_SUB { is_sub = 1 }
+    if is_sub == 1 {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let src_a = PHYS_R12
         emit_mov_rr(out, pos, PHYS_R12, a)
@@ -6793,7 +6849,9 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, ins.operand1)
         ret 1
     }
-    if ins.op == OP_MUL {
+    let is_mul = 0
+    if ins.op == OP_MUL { is_mul = 1 }
+    if is_mul == 1 {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let src_a = PHYS_R12
         emit_mov_rr(out, pos, PHYS_R12, a)
@@ -6805,7 +6863,9 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, ins.operand1)
         ret 1
     }
-    if ins.op == OP_DIV {
+    let is_div = 0
+    if ins.op == OP_DIV { is_div = 1 }
+    if is_div == 1 {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let src_a = PHYS_R12
         emit_mov_rr(out, pos, PHYS_R12, a)
@@ -6825,8 +6885,14 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 }
 
 fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos: &i64) -> i64 {
-    if ins.op == OP_CMP_EQ or ins.op == OP_CMP_NE or
-       ins.op == OP_CMP_LT or ins.op == OP_CMP_GT or ins.op == OP_CMP_LTE or ins.op == OP_CMP_GTE {
+    let is_cmp = 0
+    if ins.op == OP_CMP_EQ { is_cmp = 1 }
+    if ins.op == OP_CMP_NE { is_cmp = 1 }
+    if ins.op == OP_CMP_LT { is_cmp = 1 }
+    if ins.op == OP_CMP_GT { is_cmp = 1 }
+    if ins.op == OP_CMP_LTE { is_cmp = 1 }
+    if ins.op == OP_CMP_GTE { is_cmp = 1 }
+    if is_cmp == 1 {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let cmp_a = a
         if ins.operand0 != ins.operand1 {
@@ -6853,7 +6919,9 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         consume_use(ctx, ins.operand1)
         ret 1
     }
-    if ins.op == OP_AND {
+    let is_and = 0
+    if ins.op == OP_AND { is_and = 1 }
+    if is_and == 1 {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let src_a = a
         if a == reg_pool_at(0) {
@@ -6868,7 +6936,9 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         consume_use(ctx, ins.operand1)
         ret 1
     }
-    if ins.op == OP_OR {
+    let is_or = 0
+    if ins.op == OP_OR { is_or = 1 }
+    if is_or == 1 {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let src_a = a
         if a == reg_pool_at(0) {
@@ -6883,7 +6953,10 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         consume_use(ctx, ins.operand1)
         ret 1
     }
-    if ins.op == OP_SHR or ins.op == OP_SHL {
+    let is_shift = 0
+    if ins.op == OP_SHR { is_shift = 1 }
+    if ins.op == OP_SHL { is_shift = 1 }
+    if is_shift == 1 {
         let cv = find_const(jfn, ins.operand1)
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
@@ -6904,8 +6977,22 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
     ret 0
 }
 
+fn lower_branch_fixup(ctx: &LowerCtx, pos: &i64, target_bb: i64, code_off: i64, emit_kind: i64) {
+    let room = 1
+    if ctx.fix_cnt >= 8192 { room = 0 }
+    if room != 1 { panic("Lower fixup overflow") }
+    let fix_idx = ctx.fix_cnt
+    ctx.fixups[fix_idx].code_off = code_off
+    ctx.fixups[fix_idx].target_bb = target_bb
+    ctx.fixups[fix_idx].kind = emit_kind
+    ctx.fixups[fix_idx].str_len = 0
+    ctx.fix_cnt = ctx.fix_cnt + 1
+}
+
 fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    if ins.op == OP_RET {
+    let is_ret = 0
+    if ins.op == OP_RET { is_ret = 1 }
+    if is_ret == 1 {
         let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         if g_lower_is_main == 1 {
             if src_r != PHYS_RDI {
@@ -6927,40 +7014,28 @@ fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, ins.operand0)
         ret 1
     }
-    if ins.op == OP_JMP {
-        if ctx.fix_cnt >= 8192 { panic("Lower fixup overflow") }
-        let fix_idx = ctx.fix_cnt
-        ctx.fixups[fix_idx].code_off  = pos[0] + 1
-        ctx.fixups[fix_idx].target_bb = ins.bb_target0
-        ctx.fixups[fix_idx].kind      = 0
-        ctx.fixups[fix_idx].str_len   = 0
-        ctx.fix_cnt = ctx.fix_cnt + 1
+    let is_jmp = 0
+    if ins.op == OP_JMP { is_jmp = 1 }
+    if is_jmp == 1 {
+        lower_branch_fixup(ctx, pos, ins.bb_target0, pos[0] + 1, 0)
         emit_jmp_rel32(out, pos, 0)
         ret 1
     }
-    if ins.op == OP_BR {
+    let is_br = 0
+    if ins.op == OP_BR { is_br = 1 }
+    if is_br == 1 {
         let cond_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         emit_cmp_zero(out, pos, cond_r)
-        if ctx.fix_cnt >= 8192 { panic("Lower fixup overflow") }
-        let fix_else = ctx.fix_cnt
-        ctx.fixups[fix_else].code_off  = pos[0] + 2
-        ctx.fixups[fix_else].target_bb = ins.bb_target1
-        ctx.fixups[fix_else].kind      = 0
-        ctx.fixups[fix_else].str_len   = 0
-        ctx.fix_cnt = ctx.fix_cnt + 1
+        lower_branch_fixup(ctx, pos, ins.bb_target1, pos[0] + 2, 0)
         emit_je_rel32(out, pos, 0)
-        if ctx.fix_cnt >= 8192 { panic("Lower fixup overflow") }
-        let fix_then = ctx.fix_cnt
-        ctx.fixups[fix_then].code_off  = pos[0] + 1
-        ctx.fixups[fix_then].target_bb = ins.bb_target0
-        ctx.fixups[fix_then].kind      = 0
-        ctx.fixups[fix_then].str_len   = 0
-        ctx.fix_cnt = ctx.fix_cnt + 1
+        lower_branch_fixup(ctx, pos, ins.bb_target0, pos[0] + 1, 0)
         emit_jmp_rel32(out, pos, 0)
         consume_use(ctx, ins.operand0)
         ret 1
     }
-    if ins.op == OP_SYSCALL {
+    let is_sys = 0
+    if ins.op == OP_SYSCALL { is_sys = 1 }
+    if is_sys == 1 {
         lower_syscall(ins, ctx, out, pos)
         ret 1
     }
@@ -6968,7 +7043,9 @@ fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 }
 
 fn lower_instr_alloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    if ins.op != OP_ALLOC { ret 0 }
+    let is_alloc = 0
+    if ins.op == OP_ALLOC { is_alloc = 1 }
+    if is_alloc != 1 { ret 0 }
     emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
     let sz_r = get_or_load(ctx.ra, out, pos, ins.operand0)
@@ -6980,7 +7057,11 @@ fn lower_instr_alloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     emit_mov_imm64(out, pos, PHYS_R8, -1)
     emit_mov_imm64(out, pos, PHYS_R9, 0)
     emit_syscall_instr(out, pos)
-    if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
+    let keep_res = 1
+    if ins.id < 0 { keep_res = 0 }
+    if ins.id >= 4096 { keep_res = 0 }
+    if ctx.use_cnt[ins.id] <= 0 { keep_res = 0 }
+    if keep_res == 1 {
         emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
         emit_restore_pool(ctx.ra, out, pos)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
@@ -6996,57 +7077,66 @@ fn lower_instr_alloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 }
 
 fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    if ins.op != OP_CALL { ret 0 }
+    let is_call = 0
+    if ins.op == OP_CALL { is_call = 1 }
+    if is_call != 1 { ret 0 }
     emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
     lower_instr_call_args(ins, ctx, out, pos)
     lower_instr_call_emit(ins, ctx, out, pos)
     emit_pop_r(out, pos, PHYS_R12)
-    if ins.operand3 >= 1 { consume_use(ctx, ins.operand0) }
-    if ins.operand3 >= 2 { consume_use(ctx, ins.operand1) }
-    if ins.operand3 >= 3 { consume_use(ctx, ins.operand2) }
-    if ins.operand3 >= 4 { consume_use(ctx, ins.bb_target0) }
-    if ins.operand3 >= 5 { consume_use(ctx, ins.bb_target1) }
-    if ins.operand3 >= 6 { consume_use(ctx, ins.imm) }
+    let argc_vals = i64[6]
+    argc_vals[0] = ins.operand0
+    argc_vals[1] = ins.operand1
+    argc_vals[2] = ins.operand2
+    argc_vals[3] = ins.bb_target0
+    argc_vals[4] = ins.bb_target1
+    argc_vals[5] = ins.imm
+    let ci = 0
+    let clim = ins.operand3
+    if clim > 6 { clim = 6 }
+    loop ci < clim {
+        consume_use(ctx, argc_vals[ci])
+        ci = ci + 1
+    }
     ret 1
 }
 
 fn lower_instr_call_args(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
-    if ins.operand3 >= 1 {
-        let r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    let vals = i64[6]
+    vals[0] = ins.operand0
+    vals[1] = ins.operand1
+    vals[2] = ins.operand2
+    vals[3] = ins.bb_target0
+    vals[4] = ins.bb_target1
+    vals[5] = ins.imm
+    let push_idx = 0
+    let push_lim = ins.operand3
+    if push_lim > 6 { push_lim = 6 }
+    loop push_idx < push_lim {
+        let r = get_or_load(ctx.ra, out, pos, vals[push_idx])
         emit_push_r(out, pos, r)
-    }
-    if ins.operand3 >= 2 {
-        let r = get_or_load(ctx.ra, out, pos, ins.operand1)
-        emit_push_r(out, pos, r)
-    }
-    if ins.operand3 >= 3 {
-        let r = get_or_load(ctx.ra, out, pos, ins.operand2)
-        emit_push_r(out, pos, r)
-    }
-    if ins.operand3 >= 4 {
-        let r = get_or_load(ctx.ra, out, pos, ins.bb_target0)
-        emit_push_r(out, pos, r)
-    }
-    if ins.operand3 >= 5 {
-        let r = get_or_load(ctx.ra, out, pos, ins.bb_target1)
-        emit_push_r(out, pos, r)
-    }
-    if ins.operand3 >= 6 {
-        let r = get_or_load(ctx.ra, out, pos, ins.imm)
-        emit_push_r(out, pos, r)
+        push_idx = push_idx + 1
     }
     ; Pop in reverse order to target registers
-    if ins.operand3 >= 6 { emit_pop_r(out, pos, PHYS_R9) }
-    if ins.operand3 >= 5 { emit_pop_r(out, pos, PHYS_R8) }
-    if ins.operand3 >= 4 { emit_pop_r(out, pos, PHYS_RCX) }
-    if ins.operand3 >= 3 { emit_pop_r(out, pos, PHYS_RDX) }
-    if ins.operand3 >= 2 { emit_pop_r(out, pos, PHYS_RSI) }
-    if ins.operand3 >= 1 { emit_pop_r(out, pos, PHYS_RDI) }
+    let regs = i32[6]
+    regs[0] = PHYS_RDI
+    regs[1] = PHYS_RSI
+    regs[2] = PHYS_RDX
+    regs[3] = PHYS_RCX
+    regs[4] = PHYS_R8
+    regs[5] = PHYS_R9
+    let pop_idx = push_lim - 1
+    loop pop_idx >= 0 {
+        emit_pop_r(out, pos, regs[pop_idx])
+        pop_idx = pop_idx - 1
+    }
 }
 
 fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
-    if ctx.fix_cnt >= 8192 { panic("Lower fixup overflow") }
+    let room = 1
+    if ctx.fix_cnt >= 8192 { room = 0 }
+    if room != 1 { panic("Lower fixup overflow") }
     let fix_idx = ctx.fix_cnt
     ctx.fixups[fix_idx].code_off  = pos[0] + 1
     ctx.fixups[fix_idx].target_bb = ins.str_start
@@ -7054,7 +7144,11 @@ fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     ctx.fixups[fix_idx].str_len   = ins.str_len
     ctx.fix_cnt = ctx.fix_cnt + 1
     emit_call_rel32(out, pos, 0)
-    if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
+    let keep_res = 1
+    if ins.id < 0 { keep_res = 0 }
+    if ins.id >= 4096 { keep_res = 0 }
+    if ctx.use_cnt[ins.id] <= 0 { keep_res = 0 }
+    if keep_res == 1 {
         emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
         emit_restore_pool(ctx.ra, out, pos)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
@@ -7066,10 +7160,18 @@ fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     }
 }
 
+fn lower_instr_callalloc2(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let handled = lower_instr_alloc(ins, ctx, out, pos)
+    if handled == 1 { ret 1 }
+    ret lower_instr_call(ins, ctx, out, pos)
+}
+
 fn lower_instr_callalloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    if lower_instr_alloc(ins, ctx, out, pos) == 1 { ret 1 }
-    if lower_instr_call(ins, ctx, out, pos) == 1 { ret 1 }
-    ret 0
+    let did_alloc = lower_instr_alloc(ins, ctx, out, pos)
+    let handled = did_alloc
+    let did_call = lower_instr_call(ins, ctx, out, pos)
+    if did_call == 1 { handled = 1 }
+    ret handled
 }
 
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
@@ -7172,7 +7274,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if lower_instr_ctrl(ins, ctx, out, pos) == 1 { ret ok(0) }
-    if lower_instr_callalloc(ins, ctx, out, pos) == 1 { ret ok(0) }
+    if lower_instr_callalloc2(ins, ctx, out, pos) == 1 { ret ok(0) }
 
 }
 
@@ -9883,6 +9985,16 @@ fn main(argc: i64, argv_ptr: &i64) {
             }
             if cur_name_len == 21 {
                 if streq(src_buf, cur_name_off, 21, "fold_add_chain_inline") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 21, "lower_instr_callalloc") == 1 {
                     skip_codegen = 1
                     g_main_pos = fn_rbrace_scan + 1
                     loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {

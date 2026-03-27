@@ -23,6 +23,21 @@ Latest checkpoint: 2026-03-27
 - A misplaced skip-codegen guard for `lookup_slot_name` was fixed so stage 3 can bypass that dead source-definition compile path correctly.
 - The live self-host expression path was pushed through `live_codegen_binop_*`, `live_codegen_postfix_*`, `live_codegen_primary*`, and `live_codegen_call_inline`.
 - The allocator and emitter path was pushed through `reg_pool_at`, `regalloc_alloc`, `regalloc_get`, `regalloc_free`, `mark_use`, `consume_use`, and a long run of x86 emission helpers through `emit_save_pool`.
+- The lowering path was pushed through:
+  - `get_or_load`
+  - `lower_syscall*`
+  - `lower_instr_rip_fixup`
+  - `lower_instr_constlike`
+  - `lower_instr_mem`
+  - `lower_instr_arith`
+  - `lower_instr_cmpbit`
+  - `lower_branch_fixup`
+  - `lower_instr_ctrl`
+  - `lower_instr_alloc`
+  - `lower_instr_call`
+  - `lower_instr_call_args`
+  - `lower_instr_call_emit`
+- The live lowering route now goes through `lower_instr_callalloc2()`, while the older `lower_instr_callalloc()` wrapper is skipped during stage-3 codegen.
 
 ## Bootstrap Policy
 
@@ -35,14 +50,14 @@ Latest checkpoint: 2026-03-27
 
 - Stage 3 is still the active blocker on this branch.
 - `jda1_a` now compiles much deeper into `bootstrap/stage1/jda1.jda`, but still stops with `if: expected {`.
-- The current failing function is `get_or_load()` in `bootstrap/stage1/jda1.jda`.
-- The active issue is now in the lowering/emission path after clearing the earlier parser, live-expression, allocator, and most emitter helper frontiers.
+- The current failing function is `lower_instr_callalloc2()` in `bootstrap/stage1/jda1.jda`.
+- The active issue is now in the late lowering dispatcher path after clearing the earlier parser, live-expression, allocator, emitter, and most lowering helper frontiers.
 
 ## Strategy Going Forward
 
 1. Keep `work/fix-selfhost-from-5e959be` as the clean debugging branch.
 2. Continue stabilizing stage 3 on this clean branch until `jda1_a -> jda1_b` succeeds again.
-3. Prioritize fixing the live lowering/emission source-shape issue in the current `get_or_load()` frontier before touching stage-4 work.
+3. Prioritize fixing the live lowering source-shape issue in the current `lower_instr_callalloc2()` frontier before touching stage-4 work.
 4. Once stage 3 passes again, rerun the full 5-step chain and then remove temporary debug prints and bootstrap-only skips that are no longer needed.
 
 ## Documentation Note
