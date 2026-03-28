@@ -13,7 +13,7 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
 ## Current Failure
 
 - The active blocker is still stage 3: `jda1_a -> jda1_b`.
-- The current failure frontier is `parse_expr_stmt_tail_field_dispatch_hi()` in `bootstrap/stage1/jda1.jda`.
+- The current failure frontier is `parse_expr_stmt_tail()` in `bootstrap/stage1/jda1.jda`.
 - The exact current failure is `if: expected {` while compiling deeper parser/helper code.
 
 ## Key Branch Fixes
@@ -41,6 +41,6 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
 ## Remaining Work
 
 1. Continue stage-3 stabilization until `jda1_a -> jda1_b` succeeds again.
-2. Fix the live source-shape issue in the `parse_expr_stmt_tail_*` assignment-field dispatch path.
+2. Fix the live source-shape issue in `parse_expr_stmt_tail()` after clearing the dead field-dispatch wrappers and getting `parse_expr_stmt_tail_eq()` through stage 3.
 3. Re-establish the full self-host loop through `jda1_b`.
 4. Then retest `jda1_b -> hello_sh` and rerun the full bootstrap pipeline end to end.
