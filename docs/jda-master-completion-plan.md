@@ -150,3 +150,9 @@ Jda is considered mature when:
 -   Public benchmarks available
 -   Used in multiple real projects
 -   Stable release process
+
+## Update: March 25, 2026
+- **Milestone Reached:** Double-bootstrap jump successful.
+- **Details:** `stage1_a` (compiled by Stage 0) successfully compiled the 7,800-line compiler source to produce `stage1_b`.
+- **Logic Validation:** Confirmed Parser, IR, and Coden are functional for complex Jda source code.
+- **Next Focus:** Stabilize `stage1_b` runtime by resolving immediate segfaults in bootstrapped binaries.
