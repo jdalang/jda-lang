@@ -8,12 +8,13 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
 
 - `jda0` builds successfully.
 - `jda0` compiles `bootstrap/stage1/jda1.jda` into `jda1_a`.
-- `jda1_a` compiles `bootstrap/stage1/jda1.jda` into `jda1_b`.
+- `jda1_a` does not yet compile the full `bootstrap/stage1/jda1.jda` into a stable `jda1_b`.
 
 ## Current Failure
 
-- `jda1_b` hangs while compiling `examples/hello.jda`.
-- This means the current frontier has moved from stage 3 to stage 4.
+- The active blocker is still stage 3: `jda1_a -> jda1_b`.
+- The current failure frontier is `find_matching_rbrace()` in `bootstrap/stage1/jda1.jda`.
+- The exact current failure is `if: expected {` while compiling deeper parser/helper code.
 
 ## Key Branch Fixes
 
@@ -25,12 +26,14 @@ Base commit: `5e959be55c01b51d2fc0a390aff6b26423792d27`
   - `skip_top_level_let_rhs`
   - `skip_top_level_let`
   - `panic`
+- Flattened or skipped a long run of bootstrap-only stub helpers so stage 3 can keep moving through the real parser path.
+- Replaced stubbed `init_top_jfn()` logic with real `JirFunction` field initialization.
 - Added `g_cur_fn_end` to enforce a hard per-function boundary during live block compilation.
 - Increased `LowerCtx.fixups` from `1024` to `8192`.
 
 ## Remaining Work
 
-1. Debug `jda1_b` on the `hello.jda` compile path.
-2. Re-establish `jda1_b -> hello_sh`.
-3. Re-run the full bootstrap pipeline end to end.
-4. Remove temporary debug prints and bootstrap-only skips once the full chain is stable.
+1. Continue stage-3 stabilization until `jda1_a -> jda1_b` succeeds again.
+2. Normalize more parser-helper code around the current frontier, starting from `find_matching_rbrace()`.
+3. Re-establish the full self-host loop through `jda1_b`.
+4. Then retest `jda1_b -> hello_sh` and rerun the full bootstrap pipeline end to end.
