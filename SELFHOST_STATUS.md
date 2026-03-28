@@ -3,9 +3,9 @@
 ## Current Situation
 - ✅ **jda0 → jda1**: Works perfectly
 - ✅ **jda0 code generation**: Major breakthrough - automated generator eliminates hardcoding (Phases 1-3 complete)
-- ✅ **jda1 → simple programs**: NOW WORKING - jda1 successfully compiles hello.jda!
-- ✅ **jda1 → jda1.jda (lex & parse)**: NOW WORKING - const declarations and struct definitions parse correctly
-- ❌ **jda1 → jda1_selfhost**: Final blocker - jda1 crashes during function parsing/codegen on jda1.jda
+- ✅ **jda1 → hello.jda**: NOW WORKING - Correctly compiles simple programs with full string/arg support.
+- ✅ **jda1 → jda1.jda (Full Roundtrip)**: ACHIEVED - jda1_a successfully compiled jda1.jda into jda1_b.
+- ✅ **Self-Hosting Milestone**: The toolchain is now capable of compiling itself end-to-end.
 
 ## Recent Fix: Pointer Arithmetic Segfault (March 8, 2026)
 **Commit**: `6b8542e` - resolve jda1 pointer arithmetic segfault by using stack-allocated token buffer
