@@ -781,7 +781,7 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     expect(TOK_EQ)
     if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
-    if gidx >= 1024 { panic("Too many globals") }
+    if gidx >= 4096 { panic("Too many globals") }
     g_glob_name_off[gidx] = name_start
     g_glob_name_len[gidx] = name_len
     g_glob_off[gidx] = g_glob_total_sz
@@ -1357,6 +1357,46 @@ fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
     ret count
 }
 
+fn lex_int_store(src: &i8, src_len: i64, p: i64, toks: &Token, count: i64) -> i64 {
+    let val = 0
+    let p2 = p
+    let c0 = load_i8_at(src, p)
+    if c0 == 48 and p + 1 < src_len {
+        let nc = load_i8_at(src, p + 1)
+        if nc == 120 or nc == 88 {
+            p2 = p + 2
+            loop p2 < src_len {
+                let hc = load_i8_at(src, p2)
+                let hv = 0
+                if hc >= 48 and hc <= 57 {
+                    val = val * 16 + (hc - 48)
+                    hv = 1
+                }
+                if hc >= 97 and hc <= 102 {
+                    val = val * 16 + (hc - 87)
+                    hv = 1
+                }
+                if hc >= 65 and hc <= 70 {
+                    val = val * 16 + (hc - 55)
+                    hv = 1
+                }
+                if hv == 0 { break }
+                p2 = p2 + 1
+            }
+            toks[count].imm = val
+            ret p2
+        }
+    }
+    loop p2 < src_len {
+        let dc = load_i8_at(src, p2)
+        if dc < 48 or dc > 57 { break }
+        val = val * 10 + (dc - 48)
+        p2 = p2 + 1
+    }
+    toks[count].imm = val
+    ret p2
+}
+
 fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
     let p = 0
     let count = 0
@@ -1486,6 +1526,13 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
                 g_scan_tok_cnt = count
                 p = p + 1
             }
+        } else if c >= 48 and c <= 57 {
+            let new_p = lex_int_store(src, src_len, p, toks, count)
+            toks[count].type = TOK_INT
+            count = count + 1
+            g_lex_count = count
+            g_scan_tok_cnt = count
+            p = new_p
         } else {
             toks[count].type = char_to_tok(c)
             count = count + 1
@@ -2231,10 +2278,7 @@ fn lookup_global2_from(idx: i64, name_start: i64, name_len: i64, src: &i8) -> i6
 }
 
 fn lookup_global2(name_start: i64, name_len: i64, src: &i8) -> i64 {
-    let ready = g_glob_name_off != 0
-    let safe_cnt = ready * g_glob_cnt
-    let found = lookup_top_fn(g_glob_name_off, g_glob_name_len, safe_cnt, src, src + name_start, name_len)
-    ret ready * found + (ready == 0) * -1
+    ret lookup_global(name_start, name_len, src)
 }
 
 fn stab_set_struct_head(stab: &StructTable, sid: i64, st_name_start: i64, st_name_len: i64, base: i64) {
@@ -7537,6 +7581,16 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                 if dbg_stmt == 5 { print("V5\n") }
                 if dbg_stmt > 20 { panic("parse_primary_nonunary stmt blowup") }
             }
+            if streq(src, g_cur_fn_name_start, 22, "lower_instr_callalloc2") == 1 {
+                if dbg_stmt == 0 { print("CA0\n") }
+                if dbg_stmt == 1 { print("CA1\n") }
+                if dbg_stmt == 2 { print("CA2\n") }
+                if dbg_stmt == 3 { print("CA3\n") }
+                if dbg_stmt == 4 { print("CA4\n") }
+                if dbg_stmt == 5 { print("CA5\n") }
+                if dbg_stmt == 6 { print("CA6\n") }
+                if dbg_stmt > 12 { panic("callalloc2 stmt blowup") }
+            }
         }
         if g_cur_fn_name_len == 6 {
             if streq(src, g_cur_fn_name_start, 6, "expect") == 1 {
@@ -8504,6 +8558,26 @@ fn live_compile_if(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction
                 print("\n")
             }
         }
+        if g_cur_fn_name_len == 22 {
+            if streq(src, g_cur_fn_name_start, 22, "lower_instr_callalloc2") == 1 {
+                print("ca2_if_bad_tok=")
+                print_span(src, tok_str_start_at(g_dbg_toks_init, g_main_pos), tok_str_len_at(g_dbg_toks_init, g_main_pos))
+                print("\n")
+                print("ca2_if_bad_type=")
+                eprint_i64(tok_type_at_raw(g_dbg_toks_init, g_main_pos))
+                print("\n")
+            }
+        }
+        if g_cur_fn_name_len == 20 {
+            if streq(src, g_cur_fn_name_start, 20, "lex_emit_ident_or_kw") == 1 {
+                print("leid_if_bad_tok=")
+                print_span(src, tok_str_start_at(g_dbg_toks_init, g_main_pos), tok_str_len_at(g_dbg_toks_init, g_main_pos))
+                print("\n")
+                print("leid_if_bad_type=")
+                print_i64(tok_type_at_raw(g_dbg_toks_init, g_main_pos))
+                print("\n")
+            }
+        }
         if g_cur_fn_name_len == 11 {
             if streq(src, g_cur_fn_name_start, 11, "parse_binop") == 1 {
                 print("if_bad_tok=")
@@ -8890,12 +8964,16 @@ fn main(argc: i64, argv_ptr: &i64) {
 
     ; Prepare output buffers
     let code_buf = alloc_pages(4096) ; 16MB
+    print("M7A\n")
     let code_len = 0
     let merged_str = alloc_pages(64)  ; 256KB
+    print("M7B\n")
     let merged_pos = 0
     let glob_buf = alloc_pages(128)  ; 512KB
+    print("M7C\n")
 
     ; _start: preserve initial stack frame, mmap heap, then call main(argc, argv)
+    print("M7D\n")
     emit_byte(code_buf, &code_len, 0x48)             ; mov rbp, rsp
     emit_byte(code_buf, &code_len, 0x89)
     emit_byte(code_buf, &code_len, 0xE5)
@@ -8937,6 +9015,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     emit_byte(code_buf, &code_len, 0xFF)
     emit_byte(code_buf, &code_len, 0x0F)
     emit_byte(code_buf, &code_len, 0x05)
+    print("M7E\n")
 
     ; Fixup arrays
     let gf_strtab_co   = alloc_pages(16)
@@ -8948,11 +9027,14 @@ fn main(argc: i64, argv_ptr: &i64) {
     let gf_call_nlen   = alloc_pages(16)
     let gf_call_cnt    = 0
 
+    print("M7F\n")
     g_jfn_heap = alloc_pages(8192)
     g_jfn = g_jfn_heap as &JirFunction
     g_ctx_heap = alloc_pages(32)
     g_ctx = g_ctx_heap as &LowerCtx
+    print("M7G\n")
     ; Hardcoded globals bootstrap
+    print("M7H\n")
     let name_off = alloc_pages(8)
     let goff = alloc_pages(8)
     let gsize = alloc_pages(8)
@@ -8970,33 +9052,26 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_glob_cnt      = 1
     g_glob_total_sz = 1024
 
+    print("M7I\n")
     let jfn = g_jfn
     let ctx = g_ctx
     g_entry_main_idx = -1
 
     ; Main Compilation Loop
     g_main_pos = 0
+    print("M7J\n")
+    if g_scan_tok_cnt == 0 { print("SCNT_ZERO\n") }
+    if g_scan_tok_cnt > 0  { print("SCNT_POS\n")  }
     loop g_main_pos < g_scan_tok_cnt {
+        print("ML\n")
         let top_t = tok_type_at_raw(toks, g_main_pos)
         let top_start = tok_str_start_at(toks, g_main_pos)
         let top_len = tok_str_len_at(toks, g_main_pos)
-        let top_is_fn_kw = 0
-        let top_is_const_kw = 0
-        let top_is_struct_kw = 0
-        if top_len == 2 {
-            if streq(src_buf, top_start, 2, "fn") == 1 { top_is_fn_kw = 1 }
-        }
-        if top_len == 5 {
-            if streq(src_buf, top_start, 5, "const") == 1 { top_is_const_kw = 1 }
-        }
-        if top_len == 6 {
-            if streq(src_buf, top_start, 6, "struct") == 1 { top_is_struct_kw = 1 }
-        }
-        if top_t == TOK_CONST or top_is_const_kw == 1 {
+        if top_t == TOK_CONST {
             parse_const_decl(toks)
-        } else if top_t == TOK_STRUCT or top_is_struct_kw == 1 {
+        } else if top_t == TOK_STRUCT {
             parse_struct_decl(toks, g_stab_ptr, src_buf)
-        } else if top_t == TOK_FN or top_is_fn_kw == 1 {
+        } else if top_t == TOK_FN or (top_len == 2 and streq(src_buf, top_start, 2, "fn") == 1) {
             let fn_tok_pos = g_main_pos
             let cur_name_off = tok_str_start_at(toks, g_main_pos + 1)
             let cur_name_len = tok_str_len_at(toks, g_main_pos + 1)
