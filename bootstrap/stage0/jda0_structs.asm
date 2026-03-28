@@ -3,12 +3,12 @@
 ; DO NOT EDIT - Run: python3 tools/generate_jda0_structs.py
 ; ============================================================
 
-; BasicBlock struct (size: 24600 bytes)
+; BasicBlock struct (size: 28696 bytes)
 BB_ID                     equ 0
 BB_INSTRS                 equ 8
-BB_INSTR_CNT              equ 24584
-BB_LABEL_OFF              equ 24592
-BB_SZ                     equ 24600
+BB_INSTR_CNT              equ 28680
+BB_LABEL_OFF              equ 28688
+BB_SZ                     equ 28696
 
 ; ConstVal struct (size: 16 bytes)
 CST_FOUND                 equ 0
@@ -39,28 +39,29 @@ INSTR_BB_TARGET0          equ 96
 INSTR_BB_TARGET1          equ 104
 INSTR_SZ                  equ 112
 
-; JirFunction struct (size: 6305864 bytes)
+; JirFunction struct (size: 3675224 bytes)
 FN_SRC                    equ 0
 FN_SRC_LEN                equ 8
 FN_BLOCKS                 equ 16
-FN_BLOCK_CNT              equ 6297616
-FN_VARS                   equ 6297624
-FN_VAR_CNT                equ 6301720
-FN_NEXT_SLOT_OFF          equ 6301728
-FN_NEXT_ID                equ 6301736
-FN_STRTAB                 equ 6301744
-FN_STRTAB_POS             equ 6305840
-FN_STAB                   equ 6305848
-FN_PARAM_CNT              equ 6305856
-FN_SZ                     equ 6305864
+FN_BLOCK_CNT              equ 3673104
+FN_VARS                   equ 3673112
+FN_VAR_CNT                equ 3675160
+FN_NEXT_SLOT_OFF          equ 3675168
+FN_NEXT_ID                equ 3675176
+FN_STRTAB                 equ 3675184
+FN_STRTAB_POS             equ 3675192
+FN_STAB                   equ 3675200
+FN_PARAM_CNT              equ 3675208
+FN_PARAM_SLOTS            equ 3675216
+FN_SZ                     equ 3675224
 
-; LowerCtx struct (size: 100464 bytes)
+; LowerCtx struct (size: 32828 bytes)
 LOWER_RA                  equ 0
-LOWER_FIXUPS              equ 49256
-LOWER_FIX_CNT             equ 82024
-LOWER_BB_OFFSETS          equ 82032
-LOWER_USE_CNT             equ 84080
-LOWER_SZ                  equ 100464
+LOWER_FIXUPS              equ 40
+LOWER_FIX_CNT             equ 32808
+LOWER_BB_OFFSETS          equ 32816
+LOWER_USE_CNT             equ 32824
+LOWER_SZ                  equ 32828
 
 ; Node struct (size: 112 bytes)
 NODE_NODE_TYPE            equ 0
@@ -79,29 +80,29 @@ NODE_CHILD3               equ 96
 NODE_CHILDREN             equ 104
 NODE_SZ                   equ 112
 
-; RegAlloc struct (size: 49256 bytes)
+; RegAlloc struct (size: 40 bytes)
 REGALLOC_POOL             equ 0
-REGALLOC_VAL2REG          equ 32
-REGALLOC_REG2VAL          equ 16416
-REGALLOC_SPILL_OFF        equ 16480
-REGALLOC_SP_TOP           equ 49248
-REGALLOC_SZ               equ 49256
+REGALLOC_VAL2REG          equ 8
+REGALLOC_REG2VAL          equ 16
+REGALLOC_SPILL_OFF        equ 24
+REGALLOC_SP_TOP           equ 32
+REGALLOC_SZ               equ 40
 
-; StructTable struct (size: 199184 bytes)
+; StructTable struct (size: 104 bytes)
 STRUCTTABLE_CNT           equ 0
 STRUCTTABLE_NAMES         equ 8
-STRUCTTABLE_NLENS         equ 520
-STRUCTTABLE_FCNTS         equ 1032
-STRUCTTABLE_SIZES         equ 1544
-STRUCTTABLE_FBASES        equ 2056
-STRUCTTABLE_FIELD_CNT     equ 2568
-STRUCTTABLE_FNAMES        equ 2576
-STRUCTTABLE_FLENS         equ 35344
-STRUCTTABLE_FOFFS         equ 68112
-STRUCTTABLE_FTYPES        equ 100880
-STRUCTTABLE_FIS_ARRAY     equ 133648
-STRUCTTABLE_FOWNERS       equ 166416
-STRUCTTABLE_SZ            equ 199184
+STRUCTTABLE_NLENS         equ 16
+STRUCTTABLE_FCNTS         equ 24
+STRUCTTABLE_SIZES         equ 32
+STRUCTTABLE_FBASES        equ 40
+STRUCTTABLE_FIELD_CNT     equ 48
+STRUCTTABLE_FNAMES        equ 56
+STRUCTTABLE_FLENS         equ 64
+STRUCTTABLE_FOFFS         equ 72
+STRUCTTABLE_FTYPES        equ 80
+STRUCTTABLE_FIS_ARRAY     equ 88
+STRUCTTABLE_FOWNERS       equ 96
+STRUCTTABLE_SZ            equ 104
 
 ; Token struct (size: 40 bytes)
 TOK_TYPE                  equ 0
