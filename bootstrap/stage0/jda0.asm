@@ -3639,8 +3639,9 @@ gen_addr:
     call    emit1
     mov     rdi, 0x87
     call    emit1
-    mov     rdi, r14
+    mov     rdi, r14        ; actual offset from lookup_global
     call    emit4
+
 
 .ga_post:
     mov     qword [ga_from_dot], 0
@@ -3916,43 +3917,42 @@ gen_syscall:
     ; We emit (r14-1) pops for arg regs, then always pop rax for the nr.
     ; So each threshold is one higher than for regular calls.
     cmp     r14, 7
-    jl      .gs_pop_r8
+    jl      .gs_skip_r9
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x59
     call    emit1           ; pop r9 (arg5)
-.gs_pop_r8:
+.gs_skip_r9:
     cmp     r14, 6
-    jl      .gs_pop_r10
+    jl      .gs_skip_r8
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x58
     call    emit1           ; pop r8 (arg4)
-.gs_pop_r10:
+.gs_skip_r8:
     cmp     r14, 5
-    jl      .gs_pop_rdx
+    jl      .gs_skip_r10
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x5A
     call    emit1           ; pop r10 (arg3)
-.gs_pop_rdx:
+.gs_skip_r10:
     cmp     r14, 4
-    jl      .gs_pop_rsi
+    jl      .gs_skip_rdx
     mov     rdi, 0x5A
     call    emit1           ; pop rdx (arg2)
-.gs_pop_rsi:
+.gs_skip_rdx:
     cmp     r14, 3
-    jl      .gs_pop_rdi
+    jl      .gs_skip_rsi
     mov     rdi, 0x5E
     call    emit1           ; pop rsi (arg1)
-.gs_pop_rdi:
+.gs_skip_rsi:
     cmp     r14, 2
-    jl      .gs_pop_rax
+    jl      .gs_skip_rdi
     mov     rdi, 0x5F
     call    emit1           ; pop rdi (arg0)
-.gs_pop_rax:
-    ; The syscall number was the VERY FIRST thing pushed in gen_syscall.
-    ; So it's at the BOTTOM of the stack. We must pop it LAST into rax.
+.gs_skip_rdi:
+    ; Always pop rax (syscall nr)
     mov     rdi, 0x58
     call    emit1           ; pop rax
 .gs_emit_sys:
@@ -5319,11 +5319,11 @@ p2_gen:
     call    emit1
     mov     rdi, 0xFF
     call    emit1
-    ; mov esi, glb_size (imm32)
+    ; mov esi, glb_size + 4096 (imm32)
     mov     rdi, 0xBE
     call    emit1
-    pop     rax
-    push    rax
+    mov     rax, [rbp + 16]
+    add     rax, 4096       ; padding
     mov     rdi, rax
     call    emit4
     ; mov edx, 3
@@ -5384,8 +5384,8 @@ p2_gen:
     call    emit1
     mov     rdi, 0x08
     call    emit1
-    ; jmp main (fixup needed)
-    mov     rdi, 0xE9
+    ; call main (fixup needed)
+    mov     rdi, 0xE8
     call    emit1
     mov     rax, [fix_cnt]
     imul    rax, rax, 32
@@ -5658,11 +5658,14 @@ main_compile:
     ; pass 1
     call    p1_scan
     ; pass 2: generate code
+    mov     rax, [glb_r15]
+    push    rax             ; push total glb_size for p2_gen _start stub
     mov     qword [cod_len], 0
     mov     qword [sdt_len], 0
     mov     qword [fix_cnt], 0
     mov     qword [glb_r15], 0
     call    p2_gen
+    pop     rax             ; cleanup stack
     ; write ELF
     mov     rdi, [out_fd]
     mov     rsi, [cod_buf_ptr]
