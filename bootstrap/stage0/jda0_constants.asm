@@ -78,6 +78,7 @@ TOK_I64              equ 45
 TOK_I32              equ 46
 TOK_I8               equ 47
 TOK_F64              equ 48
+TOK_CAP              equ 209714
 
 
 ; Type constants
@@ -130,12 +131,12 @@ OP_ARGC_GET          equ 32
 
 
 ; Structure sizes
-BB_SZ                equ 24600
+BB_SZ                equ 57368
 CST_SZ               equ 16
 FIXUP_SZ             equ 32
 FLD_SZ               equ 112
-FN_SZ                equ 12603464
-LOWER_SZ             equ 102512
+FN_SZ                equ 7380168
+LOWER_SZ             equ 99440
 NODE_SZ              equ 112
 REGALLOC_SZ          equ 49256
 STRUCTTABLE_SZ       equ 199184
@@ -214,7 +215,7 @@ TK_PTR               equ 2
 
 ; Additional size constants
 LOC_SZ               equ 48
-GLB_SZ               equ 48
+GLB_SZ               equ 32
 
 ; Pointer type flag
 PTR_FLAG             equ 0x8000000000000000
