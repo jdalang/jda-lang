@@ -1,6 +1,6 @@
 # Jda Compilation Strategy
 
-Latest checkpoint: 2026-03-26
+Latest checkpoint: 2026-03-27
 
 ## Current Pipeline Status
 
@@ -20,6 +20,9 @@ Latest checkpoint: 2026-03-26
 - Several bootstrap-only helpers and stub wrappers were flattened or skipped so stage 3 can progress deeper into the real parser/helper path.
 - `init_top_jfn()` now performs real `JirFunction` initialization instead of only storing the source pointer.
 - `.cline/` is now ignored in `.gitignore`.
+- A misplaced skip-codegen guard for `lookup_slot_name` was fixed so stage 3 can bypass that dead source-definition compile path correctly.
+- The live self-host expression path was pushed through `live_codegen_binop_*`, `live_codegen_postfix_*`, `live_codegen_primary*`, and `live_codegen_call_inline`.
+- The allocator and emitter path was pushed through `reg_pool_at`, `regalloc_alloc`, `regalloc_get`, `regalloc_free`, `mark_use`, `consume_use`, and a long run of x86 emission helpers through `emit_save_pool`.
 
 ## Bootstrap Policy
 
@@ -32,14 +35,14 @@ Latest checkpoint: 2026-03-26
 
 - Stage 3 is still the active blocker on this branch.
 - `jda1_a` now compiles much deeper into `bootstrap/stage1/jda1.jda`, but still stops with `if: expected {`.
-- The current failing function is `parse_expr_stmt_tail()` in `bootstrap/stage1/jda1.jda`.
-- The active issue is now in the parser expression-statement assignment tail after clearing the earlier `parse_expr_stmt_tail_*` dispatch wrappers.
+- The current failing function is `get_or_load()` in `bootstrap/stage1/jda1.jda`.
+- The active issue is now in the lowering/emission path after clearing the earlier parser, live-expression, allocator, and most emitter helper frontiers.
 
 ## Strategy Going Forward
 
 1. Keep `work/fix-selfhost-from-5e959be` as the clean debugging branch.
 2. Continue stabilizing stage 3 on this clean branch until `jda1_a -> jda1_b` succeeds again.
-3. Prioritize fixing the live parser/codegen source-shape issue in the current `parse_expr_stmt_tail_*` frontier before touching stage-4 work.
+3. Prioritize fixing the live lowering/emission source-shape issue in the current `get_or_load()` frontier before touching stage-4 work.
 4. Once stage 3 passes again, rerun the full 5-step chain and then remove temporary debug prints and bootstrap-only skips that are no longer needed.
 
 ## Documentation Note
