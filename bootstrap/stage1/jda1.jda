@@ -186,6 +186,13 @@ const OP_FCMP_EQ     = 63
 const OP_I2F         = 64
 const OP_F2I         = 65
 const OP_PRINT_FLOAT = 66
+const OP_FABS        = 67
+const OP_FEXP        = 68
+const OP_FLOG        = 69
+const OP_FPOW        = 70
+const OP_FSIN        = 71
+const OP_FCOS        = 72
+const OP_FTANH       = 73
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -6881,6 +6888,49 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.operand0 = arg0
         ret emit(jfn, bb, &ins)
     }
+    if name_len == 7 and streq(src, name_start, 7, "f64_abs") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FABS
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 7 and streq(src, name_start, 7, "f64_exp") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FEXP
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 7 and streq(src, name_start, 7, "f64_log") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FLOG
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 7 and streq(src, name_start, 7, "f64_pow") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FPOW
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 7 and streq(src, name_start, 7, "f64_sin") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FSIN
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 7 and streq(src, name_start, 7, "f64_cos") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FCOS
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 8 and streq(src, name_start, 8, "f64_tanh") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FTANH
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8413,6 +8463,49 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.operand0 = arg0
         ret emit(g_jfn, bb, &ins)
     }
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_abs") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FABS
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_exp") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FEXP
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_log") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FLOG
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_pow") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FPOW
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_sin") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FSIN
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_cos") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FCOS
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 8 and streq(g_src_buf_ptr, name.str_start, 8, "f64_tanh") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FTANH
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8663,11 +8756,14 @@ fn dce_mark_float(op: i64, o0: i64, o1: i64, used: &i32) {
     if op == OP_I2F or op == OP_F2I or op == OP_FNEG or op == OP_FSQRT or op == OP_PRINT_FLOAT {
         if o0 >= 0 { used[o0] = 1 }
     }
+    if op == OP_FABS or op == OP_FEXP or op == OP_FLOG or op == OP_FSIN or op == OP_FCOS or op == OP_FTANH {
+        if o0 >= 0 { used[o0] = 1 }
+    }
     if op == OP_FADD or op == OP_FSUB or op == OP_FMUL or op == OP_FDIV {
         if o0 >= 0 { used[o0] = 1 }
         if o1 >= 0 { used[o1] = 1 }
     }
-    if op == OP_FCMP_LT or op == OP_FCMP_GT or op == OP_FCMP_EQ {
+    if op == OP_FCMP_LT or op == OP_FCMP_GT or op == OP_FCMP_EQ or op == OP_FPOW {
         if o0 >= 0 { used[o0] = 1 }
         if o1 >= 0 { used[o1] = 1 }
     }
@@ -12026,7 +12122,8 @@ fn emit_movq_xmm_to_gpr(out: &i8, pos: &i64, gpr: i64, xmm: i64) {
     ; MOVQ GPR, XMMn  (66 REX.W 0F 7E modrm)
     emit_byte(out, pos, 0x66)
     let rex = 0x48
-    if gpr >= 8 { rex = rex + 4 }
+    if gpr >= 8 { rex = rex + 1 }
+    if xmm >= 8 { rex = rex + 4 }
     emit_byte(out, pos, rex)
     emit_byte(out, pos, 0x0F)
     emit_byte(out, pos, 0x7E)
@@ -12183,6 +12280,424 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 0xC0)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, PHYS_RAX)
+        ret 1
+    }
+
+    ; OP_FABS: clear sign bit
+    if op == OP_FABS {
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        consume_use(ctx, ins.operand0)
+        ; Load 0x7FFFFFFFFFFFFFFF into RAX then XMM1
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xB8)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0x7F)
+        emit_movq_gpr_to_xmm(out, pos, 1, PHYS_RAX)
+        ; ANDPD XMM0, XMM1  (66 0F 54 C1)
+        emit_byte(out, pos, 0x66)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x54)
+        emit_byte(out, pos, 0xC1)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
+        ret 1
+    }
+
+    ; OP_FSIN: sin(x) via x87 FPU
+    if op == OP_FSIN {
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        consume_use(ctx, ins.operand0)
+        ; SUB RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xEC)
+        emit_byte(out, pos, 8)
+        ; MOVSD [RSP], XMM0  (F2 0F 11 04 24)
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x11)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLD QWORD [RSP]  (DD 04 24)
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FSIN  (D9 FE)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xFE)
+        ; FSTP QWORD [RSP]  (DD 1C 24)
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x1C)
+        emit_byte(out, pos, 0x24)
+        ; MOVSD XMM0, [RSP]  (F2 0F 10 04 24)
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x10)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; ADD RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC4)
+        emit_byte(out, pos, 8)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
+        ret 1
+    }
+
+    ; OP_FCOS: cos(x) via x87 FPU
+    if op == OP_FCOS {
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        consume_use(ctx, ins.operand0)
+        ; SUB RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xEC)
+        emit_byte(out, pos, 8)
+        ; MOVSD [RSP], XMM0
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x11)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLD QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FCOS  (D9 FF)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xFF)
+        ; FSTP QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x1C)
+        emit_byte(out, pos, 0x24)
+        ; MOVSD XMM0, [RSP]
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x10)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; ADD RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC4)
+        emit_byte(out, pos, 8)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
+        ret 1
+    }
+
+    ; OP_FEXP: exp(x) via x87 FPU (2^(x * log2(e)))
+    if op == OP_FEXP {
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        consume_use(ctx, ins.operand0)
+        ; SUB RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xEC)
+        emit_byte(out, pos, 8)
+        ; MOVSD [RSP], XMM0
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x11)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLD QWORD [RSP]  ST0 = x
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLDL2E  ST0 = log2(e), ST1 = x
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xEA)
+        ; FMULP ST1, ST0  ST0 = x * log2(e)
+        emit_byte(out, pos, 0xDE)
+        emit_byte(out, pos, 0xC9)
+        ; FLD ST0  duplicate
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xC0)
+        ; FRNDINT  ST0 = round(t), ST1 = t
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xFC)
+        ; FSUB ST1, ST0  ST1 = frac, ST0 = int
+        emit_byte(out, pos, 0xDC)
+        emit_byte(out, pos, 0xE9)
+        ; FXCH  ST0 = frac, ST1 = int
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xC9)
+        ; F2XM1  ST0 = 2^frac - 1
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xF0)
+        ; FLD1  ST0 = 1
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xE8)
+        ; FADDP ST1, ST0  ST0 = 2^frac, ST1 = int
+        emit_byte(out, pos, 0xDE)
+        emit_byte(out, pos, 0xC1)
+        ; FSCALE  ST0 = 2^frac * 2^int = exp(x)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xFD)
+        ; FSTP ST1  pop the integer part
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0xD9)
+        ; FSTP QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x1C)
+        emit_byte(out, pos, 0x24)
+        ; MOVSD XMM0, [RSP]
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x10)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; ADD RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC4)
+        emit_byte(out, pos, 8)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
+        ret 1
+    }
+
+    ; OP_FLOG: log(x) = ln(2) * log2(x) via x87 FYL2X
+    if op == OP_FLOG {
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        consume_use(ctx, ins.operand0)
+        ; SUB RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xEC)
+        emit_byte(out, pos, 8)
+        ; MOVSD [RSP], XMM0
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x11)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLDLN2  ST0 = ln(2)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xED)
+        ; FLD QWORD [RSP]  ST0 = x, ST1 = ln(2)
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FYL2X  ST0 = ln(2) * log2(x) = ln(x)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xF1)
+        ; FSTP QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x1C)
+        emit_byte(out, pos, 0x24)
+        ; MOVSD XMM0, [RSP]
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x10)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; ADD RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC4)
+        emit_byte(out, pos, 8)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
+        ret 1
+    }
+
+    ; OP_FPOW: pow(x, y) = 2^(y * log2(x)) via x87
+    if op == OP_FPOW {
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        let b_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_movq_gpr_to_xmm(out, pos, 1, b_r)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        ; SUB RSP, 16
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xEC)
+        emit_byte(out, pos, 16)
+        ; MOVSD [RSP], XMM0  (x)
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x11)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; MOVSD [RSP+8], XMM1  (y)
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x11)
+        emit_byte(out, pos, 0x4C)
+        emit_byte(out, pos, 0x24)
+        emit_byte(out, pos, 8)
+        ; FLD QWORD [RSP+8]  ST0 = y
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x44)
+        emit_byte(out, pos, 0x24)
+        emit_byte(out, pos, 8)
+        ; FLD QWORD [RSP]  ST0 = x, ST1 = y
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FYL2X  ST0 = y * log2(x)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xF1)
+        ; 2^ST0 sequence (same as exp)
+        ; FLD ST0
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xC0)
+        ; FRNDINT
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xFC)
+        ; FSUB ST1, ST0
+        emit_byte(out, pos, 0xDC)
+        emit_byte(out, pos, 0xE9)
+        ; FXCH
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xC9)
+        ; F2XM1
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xF0)
+        ; FLD1
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xE8)
+        ; FADDP ST1, ST0
+        emit_byte(out, pos, 0xDE)
+        emit_byte(out, pos, 0xC1)
+        ; FSCALE
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xFD)
+        ; FSTP ST1
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0xD9)
+        ; FSTP QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x1C)
+        emit_byte(out, pos, 0x24)
+        ; MOVSD XMM0, [RSP]
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x10)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; ADD RSP, 16
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC4)
+        emit_byte(out, pos, 16)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
+        ret 1
+    }
+
+    ; OP_FTANH: tanh(x) = (exp(2x) - 1) / (exp(2x) + 1) via x87
+    if op == OP_FTANH {
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        consume_use(ctx, ins.operand0)
+        ; SUB RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xEC)
+        emit_byte(out, pos, 8)
+        ; ADDSD XMM0, XMM0  (2x)
+        emit_sse_rr(out, pos, 0xF2, 0x58, 0, 0)
+        ; MOVSD [RSP], XMM0
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x11)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLD QWORD [RSP]  ST0 = 2x
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLDL2E  ST0 = log2(e), ST1 = 2x
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xEA)
+        ; FMULP  ST0 = 2x * log2(e)
+        emit_byte(out, pos, 0xDE)
+        emit_byte(out, pos, 0xC9)
+        ; 2^ST0 sequence
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xC0)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xFC)
+        emit_byte(out, pos, 0xDC)
+        emit_byte(out, pos, 0xE9)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xC9)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xF0)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xE8)
+        emit_byte(out, pos, 0xDE)
+        emit_byte(out, pos, 0xC1)
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xFD)
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0xD9)
+        ; ST0 = exp(2x). Store to [RSP] and reload for numerator/denominator
+        ; FSTP QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x1C)
+        emit_byte(out, pos, 0x24)
+        ; Load exp(2x) back for numerator: exp(2x) - 1
+        ; FLD QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLD1
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xE8)
+        ; FSUBP ST1, ST0  ST0 = exp(2x) - 1
+        emit_byte(out, pos, 0xDE)
+        emit_byte(out, pos, 0xE9)
+        ; Load exp(2x) for denominator: exp(2x) + 1
+        ; FLD QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; FLD1
+        emit_byte(out, pos, 0xD9)
+        emit_byte(out, pos, 0xE8)
+        ; FADDP ST1, ST0  ST0 = exp(2x) + 1, ST1 = exp(2x) - 1
+        emit_byte(out, pos, 0xDE)
+        emit_byte(out, pos, 0xC1)
+        ; FDIVP ST1, ST0  ST0 = (exp(2x) - 1) / (exp(2x) + 1) but reversed!
+        ; FDIVP divides ST1 / ST0 and stores in ST1, pops ST0
+        ; We want (exp(2x)-1) / (exp(2x)+1), ST1=exp(2x)-1, ST0=exp(2x)+1
+        ; FDIVP ST1, ST0 = ST1/ST0 → correct!
+        emit_byte(out, pos, 0xDE)
+        emit_byte(out, pos, 0xF9)
+        ; FSTP QWORD [RSP]
+        emit_byte(out, pos, 0xDD)
+        emit_byte(out, pos, 0x1C)
+        emit_byte(out, pos, 0x24)
+        ; MOVSD XMM0, [RSP]
+        emit_byte(out, pos, 0xF2)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x10)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x24)
+        ; ADD RSP, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC4)
+        emit_byte(out, pos, 8)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
         ret 1
     }
 
@@ -13929,11 +14444,14 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
     if op == OP_I2F or op == OP_F2I or op == OP_FNEG or op == OP_FSQRT or op == OP_PRINT_FLOAT {
         mark_use(ctx, o0)
     }
+    if op == OP_FABS or op == OP_FEXP or op == OP_FLOG or op == OP_FSIN or op == OP_FCOS or op == OP_FTANH {
+        mark_use(ctx, o0)
+    }
     if op == OP_FADD or op == OP_FSUB or op == OP_FMUL or op == OP_FDIV {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
-    if op == OP_FCMP_LT or op == OP_FCMP_GT or op == OP_FCMP_EQ {
+    if op == OP_FCMP_LT or op == OP_FCMP_GT or op == OP_FCMP_EQ or op == OP_FPOW {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
