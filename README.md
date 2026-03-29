@@ -95,6 +95,25 @@ Legacy syntax is also supported for backward compatibility:
 jda hello.jda output_binary
 ```
 
+### Standard Library
+
+Use `--include` to link the standard library prelude (fs, fmt, time):
+
+```bash
+jda build --include stdlib/prelude.jda myapp.jda
+jda run --include stdlib/prelude.jda myapp.jda
+```
+
+Available functions:
+
+| Module | Functions |
+|--------|-----------|
+| **fmt** | `fmt_i64(buf, val)`, `fmt_hex(buf, val)`, `str_len(s)`, `str_eq(a,b)`, `str_copy`, `mem_set`, `print_str`, `print_int` |
+| **fs** | `fs_read_file(path, buf, max)`, `fs_write_file(path, data, len)`, `fs_append_file`, `fs_exists`, `fs_unlink`, `fs_mkdir`, `fs_file_size` |
+| **time** | `time_now_ns()`, `time_now_ms()`, `time_sleep_ms(ms)`, `time_elapsed_ns(start)`, `time_unix_secs()` |
+
+See `stdlib/prelude.jda` for full API. Individual modules also available: `stdlib/fs.jda`, `stdlib/fmt.jda`, `stdlib/time.jda`.
+
 ## Repository Layout
 
 ```
