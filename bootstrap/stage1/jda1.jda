@@ -9786,8 +9786,8 @@ fn print_version() {
 }
 
 fn print_usage() {
-    eprint("usage: jda build <file.jda> [-o output]\n")
-    eprint("       jda run <file.jda>\n")
+    eprint("usage: jda build [--include <lib.jda>] <file.jda> [-o output]\n")
+    eprint("       jda run [--include <lib.jda>] <file.jda>\n")
     eprint("       jda <input.jda> <output>   (legacy)\n")
     eprint("       jda --version\n")
     eprint("       jda --help\n")
@@ -9800,6 +9800,7 @@ fn print_usage() {
 fn main(argc: i64, argv_ptr: &i64) {
     let src_path: &i8 = 0
     let out_path: &i8 = 0
+    let include_path: &i8 = 0
     let do_run = 0
     g_argv_base = argv_ptr
 
@@ -9824,19 +9825,33 @@ fn main(argc: i64, argv_ptr: &i64) {
         syscall(60, 0, 0, 0)
     }
 
-    ; jda build <file> [-o output]
+    ; jda build [--include <lib>] <file> [-o output]
     if cstr_eq(arg1, "build") == 1 {
-        if argc < 3 {
+        let ai = 2
+        if argc > ai {
+            let maybe_inc = get_argv(argv_ptr, ai)
+            if cstr_eq(maybe_inc, "--include") == 1 {
+                ai = ai + 1
+                if argc <= ai {
+                    eprint("error: --include requires a file path\n")
+                    syscall(60, 2, 0, 0)
+                }
+                include_path = get_argv(argv_ptr, ai)
+                ai = ai + 1
+            }
+        }
+        if argc <= ai {
             eprint("error: missing input file\n")
             print_usage()
             syscall(60, 2, 0, 0)
         }
-        src_path = get_argv(argv_ptr, 2)
+        src_path = get_argv(argv_ptr, ai)
+        ai = ai + 1
         ; Check for -o flag
-        if argc >= 5 {
-            let arg3 = get_argv(argv_ptr, 3)
-            if cstr_eq(arg3, "-o") == 1 {
-                out_path = get_argv(argv_ptr, 4)
+        if argc > ai + 1 {
+            let maybe_o = get_argv(argv_ptr, ai)
+            if cstr_eq(maybe_o, "-o") == 1 {
+                out_path = get_argv(argv_ptr, ai + 1)
             }
         }
         if out_path == 0 {
@@ -9844,13 +9859,26 @@ fn main(argc: i64, argv_ptr: &i64) {
             out_path = out_buf
         }
     } else if cstr_eq(arg1, "run") == 1 {
-        ; jda run <file>
-        if argc < 3 {
+        ; jda run [--include <lib>] <file>
+        let ai = 2
+        if argc > ai {
+            let maybe_inc = get_argv(argv_ptr, ai)
+            if cstr_eq(maybe_inc, "--include") == 1 {
+                ai = ai + 1
+                if argc <= ai {
+                    eprint("error: --include requires a file path\n")
+                    syscall(60, 2, 0, 0)
+                }
+                include_path = get_argv(argv_ptr, ai)
+                ai = ai + 1
+            }
+        }
+        if argc <= ai {
             eprint("error: missing input file\n")
             print_usage()
             syscall(60, 2, 0, 0)
         }
-        src_path = get_argv(argv_ptr, 2)
+        src_path = get_argv(argv_ptr, ai)
         out_path = "/tmp/jda_run_out"
         do_run = 1
     } else if argc >= 3 {
@@ -9866,14 +9894,29 @@ fn main(argc: i64, argv_ptr: &i64) {
 
     g_out_path_ptr = out_path
 
-    let src_buf = alloc_pages(128)  ; 512KB
+    let src_buf = alloc_pages(256)  ; 1MB (supports --include prepend)
     g_src_buf_ptr = src_buf
+    let buf_off = 0
+
+    ; Read include file first (prepend to source)
+    if include_path != 0 {
+        let inc_fd = syscall(2, include_path, 0, 0)
+        if inc_fd < 0 { panic("open include failed") }
+        let inc_len = syscall(0, inc_fd, src_buf, 524288)
+        if inc_len < 0 { panic("read include failed") }
+        syscall(3, inc_fd, 0, 0)
+        buf_off = inc_len
+        poke_byte(src_buf, buf_off, 10)
+        buf_off = buf_off + 1
+    }
+
+    ; Read user source (appended after include)
     let src_fd = syscall(2, src_path, 0, 0)
     if src_fd < 0 { panic("open src failed") }
-    let read_len = syscall(0, src_fd, g_src_buf_ptr, 524288)
+    let read_len = syscall(0, src_fd, src_buf + buf_off, 1048576 - buf_off)
     if read_len < 0 { panic("read src failed") }
     syscall(3, src_fd, 0, 0)
-    let src_len = read_len
+    let src_len = buf_off + read_len
     g_runtime_src_len = src_len
     let toks = alloc_pages(2048) ; 8MiB
     g_dbg_toks = toks
