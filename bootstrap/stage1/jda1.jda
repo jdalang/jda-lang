@@ -73,6 +73,7 @@ const TOK_I64     = 45
 const TOK_I32     = 46
 const TOK_I8      = 47
 const TOK_F64     = 48
+const TOK_ENUM    = 49
 
 ; AST node types
 const NODE_FN     = 0
@@ -376,6 +377,9 @@ let g_fn_ret_type_tbl: &i64 = 0
 let g_fn_param_cnt_tbl: &i64 = 0
 let g_last_fn_code_off: i64 = 0
 let g_cur_fn_ret_type: i64 = 0
+; Enum table — packed flat buffer: [name_off, name_len, var_cnt, v0_off, v0_len, v0_tag, ...]
+let g_enum_buf: &i64 = 0
+let g_enum_buf_len: i64 = 0
 let g_entry_main_idx: i64 = -1
 let g_main_str_dbg: i64 = 0
 let g_stab_ptr: &StructTable = 0
@@ -740,6 +744,60 @@ fn parse_const_decl(toks: &Token) {
     g_const_name_len_tbl[idx] = c_name_len
     g_const_val_tbl[idx] = c_val
     g_const_cnt = idx + 1
+}
+
+; Parse enum declaration. Format in g_enum_buf:
+; [name_off, name_len, var_cnt, v0_off, v0_len, v0_tag, v1_off, v1_len, v1_tag, ...]
+fn parse_enum_decl(toks: &Token, src: &i8) {
+    g_main_pos = g_main_pos + 1
+    let ename_start = tok_str_start_at(toks, g_main_pos)
+    let ename_len = tok_str_len_at(toks, g_main_pos)
+    g_main_pos = g_main_pos + 1
+    expect(TOK_LBRACE)
+    let p = g_enum_buf_len
+    g_enum_buf[p] = ename_start
+    g_enum_buf[p + 1] = ename_len
+    let cnt_slot = p + 2
+    p = p + 3
+    let tag = 0
+    loop tok_type_at(toks, g_main_pos) != TOK_RBRACE and tok_type_at(toks, g_main_pos) != TOK_EOF {
+        let vstart = tok_str_start_at(toks, g_main_pos)
+        let vlen = tok_str_len_at(toks, g_main_pos)
+        g_main_pos = g_main_pos + 1
+        g_enum_buf[p] = vstart
+        g_enum_buf[p + 1] = vlen
+        g_enum_buf[p + 2] = tag
+        p = p + 3
+        tag = tag + 1
+    }
+    g_enum_buf[cnt_slot] = tag
+    g_enum_buf_len = p
+    expect(TOK_RBRACE)
+}
+
+; Look up EnumName.Variant → tag value, or -1 if not found
+fn lookup_enum_dot(src: &i8, ename_start: i64, ename_len: i64, vname_start: i64, vname_len: i64) -> i64 {
+    let p = 0
+    loop p < g_enum_buf_len {
+        let en_off = g_enum_buf[p]
+        let en_len = g_enum_buf[p + 1]
+        let vcnt = g_enum_buf[p + 2]
+        if en_len == ename_len and str_match(src, en_off, ename_start, ename_len) == 1 {
+            let j = 0
+            loop j < vcnt {
+                let vi = p + 3 + j * 3
+                let voff = g_enum_buf[vi]
+                let vln = g_enum_buf[vi + 1]
+                if vln == vname_len and str_match(src, voff, vname_start, vname_len) == 1 {
+                    ret g_enum_buf[vi + 2]
+                }
+                j = j + 1
+            }
+            ret -1
+        }
+        p = p + 3 + vcnt * 3
+    }
+    ret -1
 }
 
 fn is_skip_rhs_int_tok(t: i64) -> i64 {
@@ -1314,7 +1372,10 @@ fn classify_keyword_len4(src: &i8, start: i64, len: i64) {
     let loop_ok = 0
     if c0 == 108 { if c1 == 111 { if c2 == 111 { if c3 == 112 { loop_ok = 1 } } } }
     let m_loop = loop_ok * TOK_LOOP
-    let tok = m_else + m_loop
+    let enum_ok = 0
+    if c0 == 101 { if c1 == 110 { if c2 == 117 { if c3 == 109 { enum_ok = 1 } } } }
+    let m_enum = enum_ok * TOK_ENUM
+    let tok = m_else + m_loop + m_enum
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -5405,6 +5466,16 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
             pos[0] = pos[0] + 1
             ret emit_const(jfn, bb, TYPE_I64, cval)
         }
+        ; Enum variant: EnumName.Variant → integer tag
+        if tok_type_at(toks, pos[0] + 1) == TOK_DOT and g_enum_buf != 0 {
+            let ev_start = tok_str_start_at(toks, pos[0] + 2)
+            let ev_len = tok_str_len_at(toks, pos[0] + 2)
+            let ev_tag = lookup_enum_dot(src, t_start, t_len, ev_start, ev_len)
+            if ev_tag >= 0 {
+                pos[0] = pos[0] + 3
+                ret emit_const(jfn, bb, TYPE_I64, ev_tag)
+            }
+        }
         let nxt_tok_t = tok_type_at(toks, pos[0] + 1)
         if nxt_tok_t == TOK_LBRACE {
             let struct_alloc_sz = 0
@@ -6551,6 +6622,16 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LPAREN { is_call = 1 }
     if is_call == 1 {
         ret live_codegen_call_inline(t, bb)
+    }
+    ; Enum variant: EnumName.Variant → integer tag
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_DOT and g_enum_buf != 0 {
+        let ev_start = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos + 1)
+        let ev_len = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos + 1)
+        let ev_tag = lookup_enum_dot(g_src_buf_ptr, t.str_start, t.str_len, ev_start, ev_len)
+        if ev_tag >= 0 {
+            g_main_pos = g_main_pos + 2
+            ret emit_const(g_jfn, bb, TYPE_I64, ev_tag)
+        }
     }
     g_main_pos = g_main_pos - 1
     let slot = lookup(g_jfn, t)
@@ -9990,6 +10071,9 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_fn_name_off_tbl = fn_name_off
     g_fn_name_len_tbl = fn_name_len
     g_fn_param_cnt_tbl = fn_param_cnts
+    ; Enum table (packed flat buffer)
+    g_enum_buf = alloc_pages(1)
+    g_enum_buf_len = 0
     print("PREP_FN\n")
     prepare_top_fn_scan(toks, src_buf, src_len, fn_name_off, fn_name_len)
     print("PREP_FN_DONE\n")
@@ -10123,6 +10207,8 @@ fn main(argc: i64, argv_ptr: &i64) {
         let top_len = tok_str_len_at(toks, g_main_pos)
         if top_t == TOK_CONST {
             parse_const_decl(toks)
+        } else if top_t == TOK_ENUM {
+            parse_enum_decl(toks, src_buf)
         } else if top_t == TOK_STRUCT {
             parse_struct_decl(toks, g_stab_ptr, src_buf)
         } else if top_t == TOK_FN or (top_len == 2 and streq(src_buf, top_start, 2, "fn") == 1) {
