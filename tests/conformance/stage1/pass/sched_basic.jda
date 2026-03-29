@@ -1,0 +1,58 @@
+let g_queue: &i64 = 0
+let g_head = 0
+let g_tail = 0
+let g_current: &i64 = 0
+let g_main_ctx: &i64 = 0
+
+fn __thread_done() {
+    if g_head == g_tail {
+        ctx_switch(g_current, g_main_ctx)
+    } else {
+        let next: &i64 = g_queue[g_head]
+        g_head = g_head + 1
+        let old = g_current
+        g_current = next
+        ctx_switch(old, next)
+    }
+}
+
+fn sched_yield() {
+    g_queue[g_tail] = g_current
+    g_tail = g_tail + 1
+    let next: &i64 = g_queue[g_head]
+    g_head = g_head + 1
+    let old = g_current
+    g_current = next
+    ctx_switch(old, next)
+}
+
+fn worker_a() {
+    print("a1")
+    sched_yield()
+    print("a2")
+}
+
+fn worker_b() {
+    print("b1")
+    sched_yield()
+    print("b2")
+}
+
+fn main() {
+    g_queue = alloc_pages(1)
+    g_main_ctx = alloc_pages(1)
+
+    let ta = spawn worker_a()
+    g_queue[g_tail] = ta
+    g_tail = g_tail + 1
+
+    let tb = spawn worker_b()
+    g_queue[g_tail] = tb
+    g_tail = g_tail + 1
+
+    let first: &i64 = g_queue[g_head]
+    g_head = g_head + 1
+    g_current = first
+    ctx_switch(g_main_ctx, first)
+    print("done")
+}
