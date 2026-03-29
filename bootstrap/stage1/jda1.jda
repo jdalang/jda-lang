@@ -8931,35 +8931,10 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
 
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
     g_lower_is_main = is_main
-    if g_cur_fn_name_len == 15 {
-        if streq(jfn.src, g_cur_fn_name_start, 15, "lex_handle_bang") == 1 {
-            print("L0\n")
-        }
-    }
     lower_fn_emit_prologue(jfn, out, pos, is_main)
-    if g_cur_fn_name_len == 15 {
-        if streq(jfn.src, g_cur_fn_name_start, 15, "lex_handle_bang") == 1 {
-            print("L1\n")
-        }
-    }
     lower_fn_store_params(jfn, out, pos)
-    if g_cur_fn_name_len == 15 {
-        if streq(jfn.src, g_cur_fn_name_start, 15, "lex_handle_bang") == 1 {
-            print("L2\n")
-        }
-    }
     lower_fn_collect_uses(jfn, ctx)
-    if g_cur_fn_name_len == 15 {
-        if streq(jfn.src, g_cur_fn_name_start, 15, "lex_handle_bang") == 1 {
-            print("L3\n")
-        }
-    }
     lower_fn_emit_blocks(jfn, ctx, out, pos)
-    if g_cur_fn_name_len == 15 {
-        if streq(jfn.src, g_cur_fn_name_start, 15, "lex_handle_bang") == 1 {
-            print("L4\n")
-        }
-    }
     lower_fn_emit_epilogue(out, pos, is_main)
     g_lower_is_main = 0
     lower_fn_patch_fixups(jfn, ctx, out, pos)
@@ -9050,7 +9025,9 @@ fn main(argc: i64, argv_ptr: &i64) {
     print("M2POST\n")
     if toks == 0 { print("TOKS_NULL\n") }
     if toks != 0 { print("M2a\n") }
+    print("PRE_STORE\n")
     toks[0].type = TOK_EOF
+    print("POST_STORE\n")
     print("M2b\n")
     g_dbg_toks = toks
     g_dbg_toks_init = toks
@@ -9144,7 +9121,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     print("M7F\n")
     g_jfn_heap = alloc_pages(8192)
     g_jfn = g_jfn_heap as &JirFunction
-    g_ctx_heap = alloc_pages(32)
+    g_ctx_heap = alloc_pages(96)
     g_ctx = g_ctx_heap as &LowerCtx
     print("M7G\n")
     ; Hardcoded globals bootstrap
