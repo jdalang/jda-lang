@@ -232,7 +232,7 @@ struct JirFunction {
     src_len:    i64
     blocks:     BasicBlock[512]
     block_cnt:  i64
-    vars:       VarEntry[64]
+    vars:       VarEntry[256]
     var_cnt:    i64
     next_slot_off: i64
     next_id:    i64
@@ -2273,6 +2273,12 @@ fn lookup_field_idx_flat(sid: i64, src: &i8, fs: i64, fl: i64) -> i64 {
     ret -1
 }
 
+fn lookup_field_off_flat(sid: i64, src: &i8, fs: i64, fl: i64) -> i64 {
+    let fi = lookup_field_idx_flat(sid, src, fs, fl)
+    if fi == -1 { ret -1 }
+    ret g_field_byte_off[fi]
+}
+
 fn span_eq_kw(src: &i8, src_start: i64, kw: &i8, kw_len: i64) -> i64 {
     let j = 0
     loop j < kw_len {
@@ -3577,7 +3583,6 @@ fn emit_strlit_raw(jfn: &JirFunction, bb: i64, str_start: i64, str_len: i64) -> 
         jfn.strtab[end_pos] = 0
         jfn.strtab_pos = end_pos + 1
     }
-
     let ins = Instr{}
     ins.op        = OP_STRLIT
     ins.str_start = off
@@ -3704,7 +3709,7 @@ fn try_compile_field_store_inline(toks: &Token, pos: &i64, stab: &StructTable, s
     let has_base = base_id != -1
     if has_base {
         let sid0 = base_type(base_stype)
-        let foff0 = lookup_field_off_any(stab, src, sid0, field_start, field_len)
+        let foff0 = lookup_field_off_flat(sid0, src, field_start, field_len)
         if foff0 >= 0 {
             print("F5\n")
             let off_id0 = emit_const(jfn, bb, TYPE_I64, foff0)
@@ -3829,7 +3834,7 @@ fn try_compile_index_field_store_inline(toks: &Token, pos: &i64, stab: &StructTa
     let elem_sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
     let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_id)
     let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
-    let field_off = lookup_field_off_any(stab, src, sid, field_start, field_len)
+    let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
     let target = obj_addr
     if field_off >= 0 {
         let field_off_id = emit_const(jfn, bb, TYPE_I64, field_off)
@@ -3897,7 +3902,7 @@ fn compile_ident_stmt_field_case(toks: &Token, pos: &i64, stab: &StructTable, sr
     let base_stype = has_slot0 * slot_base_stype + (has_slot0 == 0) * glob_base_stype
     if base_id != -1 {
         let sid0 = base_type(base_stype)
-        let foff0 = lookup_field_off_any(stab, src, sid0, field_start, field_len)
+        let foff0 = lookup_field_off_flat(sid0, src, field_start, field_len)
         if foff0 >= 0 {
             let off_id0 = emit_const(jfn, bb, TYPE_I64, foff0)
             let addr0 = emit_binop(jfn, bb, OP_ADD, base_id, off_id0)
@@ -3978,7 +3983,7 @@ fn compile_ident_stmt_index_field_case(toks: &Token, pos: &i64, stab: &StructTab
     let elem_sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
     let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_id)
     let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
-    let field_off = lookup_field_off_any(stab, src, sid, field_start, field_len)
+    let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
     let target = obj_addr
     if field_off >= 0 {
         let field_off_id = emit_const(jfn, bb, TYPE_I64, field_off)
@@ -4054,7 +4059,7 @@ fn compile_ident_stmt_bracket_case(toks: &Token, pos: &i64, stab: &StructTable, 
         let elem_sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
         let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_id)
         let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
-        let field_off = lookup_field_off_any(stab, src, sid, field_start, field_len)
+        let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
         let target = obj_addr
         if field_off >= 0 {
             let field_off_id = emit_const(jfn, bb, TYPE_I64, field_off)
@@ -4189,7 +4194,7 @@ fn compile_expr_stmt_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, s
         let base_stype = has_slot0 * slot_base_stype + (has_slot0 == 0) * glob_base_stype
         if base_id != -1 {
             let sid0 = base_type(base_stype)
-            let foff0 = lookup_field_off_any(stab, src, sid0, field_start, field_len)
+            let foff0 = lookup_field_off_flat(sid0, src, field_start, field_len)
             if foff0 >= 0 {
                 let off_id0 = emit_const(jfn, bb, TYPE_I64, foff0)
                 let addr0 = emit_binop(jfn, bb, OP_ADD, base_id, off_id0)
@@ -4935,24 +4940,24 @@ fn alloc_slot(jfn: &JirFunction) -> i64 {
 
 fn bind(jfn: &JirFunction, tok: &Token, stype: i64) -> i64 {
     let idx = jfn.var_cnt
-    
-    jfn.vars[idx].name_start = tok.str_start
-    jfn.vars[idx].name_len   = tok.str_len
-    jfn.vars[idx].slot_off   = alloc_slot(jfn)
-    jfn.vars[idx].stype      = stype
-    jfn.var_cnt = jfn.var_cnt + 1
-    ret jfn.vars[idx].slot_off
+    let safe_idx = idx * (idx < 256) + 255 * (idx >= 256)
+    jfn.vars[safe_idx].name_start = tok.str_start
+    jfn.vars[safe_idx].name_len   = tok.str_len
+    jfn.vars[safe_idx].slot_off   = alloc_slot(jfn)
+    jfn.vars[safe_idx].stype      = stype
+    jfn.var_cnt = idx + (idx < 256)
+    ret jfn.vars[safe_idx].slot_off
 }
 
 fn bind_name(jfn: &JirFunction, name_start: i64, name_len: i64, stype: i64) -> i64 {
     let idx = jfn.var_cnt
-    
-    jfn.vars[idx].name_start = name_start
-    jfn.vars[idx].name_len   = name_len
-    jfn.vars[idx].slot_off   = alloc_slot(jfn)
-    jfn.vars[idx].stype      = stype
-    jfn.var_cnt = jfn.var_cnt + 1
-    ret jfn.vars[idx].slot_off
+    let safe_idx = idx * (idx < 256) + 255 * (idx >= 256)
+    jfn.vars[safe_idx].name_start = name_start
+    jfn.vars[safe_idx].name_len   = name_len
+    jfn.vars[safe_idx].slot_off   = alloc_slot(jfn)
+    jfn.vars[safe_idx].stype      = stype
+    jfn.var_cnt = idx + (idx < 256)
+    ret jfn.vars[safe_idx].slot_off
 }
 
 fn lookup_idx(jfn: &JirFunction, tok: &Token) -> i64 {
@@ -5115,7 +5120,7 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         if elem_sid < 0 or elem_sid >= jfn.stab.cnt { ret obj }
         if node.token2 < 0 or node.imm <= 0 { ret obj }
         if node.token2 + node.imm > jfn.src_len { ret obj }
-        let foff = lookup_field_off_any(jfn.stab, jfn.src, elem_sid, node.token2, node.imm)
+        let foff = lookup_field_off_flat(elem_sid, jfn.src, node.token2, node.imm)
         if foff < 0 { ret obj }
         ret field_addr_from_base(obj, foff, jfn, bb)
     }
@@ -5234,7 +5239,7 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             bld.operand0 = bslot
             let base_ptr = emit(jfn, bb, &bld)
             let sid_b = lookup_stype_name(jfn, node.token, node.child_cnt)
-            let foff = lookup_field_off_any(jfn.stab, jfn.src, sid_b, node.token2, node.imm)
+            let foff = lookup_field_off_flat(sid_b, jfn.src, node.token2, node.imm)
             let field_base = base_ptr
             if foff >= 0 { field_base = field_addr_from_base(base_ptr, foff, jfn, bb) }
             let idx_v = 0
@@ -5287,7 +5292,7 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             let obj = emit_binop(jfn, bb, OP_ADD, base, byte_off)
             faddr = obj
             if sid >= 0 and sid < jfn.stab.cnt and node.token2 >= 0 and node.imm > 0 and node.token2 + node.imm <= jfn.src_len {
-                let foff = lookup_field_off_any(jfn.stab, jfn.src, sid, node.token2, node.imm)
+                let foff = lookup_field_off_flat(sid, jfn.src, node.token2, node.imm)
                 if foff >= 0 { faddr = field_addr_from_base(obj, foff, jfn, bb) }
             }
         } else {
@@ -5335,7 +5340,7 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             let robj = emit_binop(jfn, bb, OP_ADD, rbase, rbyte)
             let raddr = robj
             if rsid >= 0 and rsid < jfn.stab.cnt and node.child1 >= 0 and node.ret_type > 0 and node.child1 + node.ret_type <= jfn.src_len {
-                let rfoff = lookup_field_off_any(jfn.stab, jfn.src, rsid, node.child1, node.ret_type)
+                let rfoff = lookup_field_off_flat(rsid, jfn.src, node.child1, node.ret_type)
                 if rfoff >= 0 { raddr = field_addr_from_base(robj, rfoff, jfn, bb) }
             }
             let rld = Instr{}
@@ -5405,7 +5410,7 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             }
             let addr = obj
             if sid >= 0 and sid < jfn.stab.cnt and node.token2 >= 0 and node.imm > 0 and node.token2 + node.imm <= jfn.src_len {
-                let foff = lookup_field_off_any(jfn.stab, jfn.src, sid, node.token2, node.imm)
+                let foff = lookup_field_off_flat(sid, jfn.src, node.token2, node.imm)
                 if foff >= 0 { addr = field_addr_from_base(obj, foff, jfn, bb) }
             }
             let fld = Instr{}
@@ -6723,7 +6728,15 @@ fn emit_save_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
     emit_push_r(out, pos, 11)
 }
 
-
+fn emit_restore_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
+    emit_pop_r(out, pos, 11)
+    emit_pop_r(out, pos, 10)
+    emit_pop_r(out, pos, 7)
+    emit_pop_r(out, pos, 6)
+    emit_pop_r(out, pos, 2)
+    emit_pop_r(out, pos, 1)
+    emit_pop_r(out, pos, 0)
+}
 
 
 
@@ -7969,7 +7982,7 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                             let base_stype = has_slot0 * slot_base_stype + (has_slot0 == 0) * glob_base_stype
                             if base_id != -1 {
                                 let sid0 = base_type(base_stype)
-                                let foff0 = lookup_field_off_any(stab, src, sid0, field_start, field_len)
+                                let foff0 = lookup_field_off_flat(sid0, src, field_start, field_len)
                                 if foff0 >= 0 {
                                     let off_id0 = emit_const(jfn, cur, TYPE_I64, foff0)
                                     let addr0 = emit_binop(jfn, cur, OP_ADD, base_id, off_id0)
@@ -10771,7 +10784,6 @@ fn main(argc: i64, argv_ptr: &i64) {
                 print("\n")
                 print("M8\n")
                 live_compile_block(toks, g_stab_ptr, src_buf, jfn, cb)
-                print("M9\n")
                 if cur_name_len == 15 {
                     if streq(src_buf, cur_name_off, 15, "lex_handle_bang") == 1 {
                         if jfn.block_cnt > 64 { panic("lex_handle_bang block blowup") }
