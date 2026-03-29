@@ -1,0 +1,69 @@
+; Test autograd: multiplication and division gradient rules
+
+fn grad_check_close(analytical: i64, numerical: i64, eps: i64) -> i64 {
+    let diff = f64_sub(analytical, numerical)
+    let abs_diff = f64_abs(diff)
+    if f64_gt(eps, abs_diff) == 1 { ret 1 }
+    ret 0
+}
+
+fn main() -> i64 {
+    let a = f64_from_int(3)
+    let b = f64_from_int(5)
+    let one = f64_from_int(1)
+    let two = f64_from_int(2)
+    let thousand = f64_from_int(1000)
+    let h = f64_div(one, thousand)
+    let hundred = f64_from_int(100)
+    let eps = f64_div(one, hundred)
+    let twoh = f64_mul(two, h)
+
+    ; c = a * b → dc/da = b, dc/db = a
+    let grad_c = f64_from_int(1)
+    let ga = f64_mul(grad_c, b)
+    let gb = f64_mul(grad_c, a)
+
+    let ah = f64_add(a, h)
+    let amh = f64_sub(a, h)
+    let cp = f64_mul(ah, b)
+    let cm = f64_mul(amh, b)
+    let diff_a = f64_sub(cp, cm)
+    let num_ga = f64_div(diff_a, twoh)
+
+    let bh = f64_add(b, h)
+    let bmh = f64_sub(b, h)
+    let cpb = f64_mul(a, bh)
+    let cmb = f64_mul(a, bmh)
+    let diff_b = f64_sub(cpb, cmb)
+    let num_gb = f64_div(diff_b, twoh)
+
+    let ok1 = grad_check_close(ga, num_ga, eps)
+    let ok2 = grad_check_close(gb, num_gb, eps)
+    if ok1 == 1 and ok2 == 1 {
+        print "grad mul ok"
+    }
+
+    ; c = a / b → dc/da = 1/b, dc/db = -a/b^2
+    let gd_a = f64_div(grad_c, b)
+    let b2 = f64_mul(b, b)
+    let gc_a = f64_mul(grad_c, a)
+    let gd_b_pos = f64_div(gc_a, b2)
+    let gd_b = f64_neg(gd_b_pos)
+
+    let dp = f64_div(ah, b)
+    let dm = f64_div(amh, b)
+    let diff_da = f64_sub(dp, dm)
+    let num_gda = f64_div(diff_da, twoh)
+
+    let dpb = f64_div(a, bh)
+    let dmb = f64_div(a, bmh)
+    let diff_db = f64_sub(dpb, dmb)
+    let num_gdb = f64_div(diff_db, twoh)
+
+    let ok3 = grad_check_close(gd_a, num_gda, eps)
+    let ok4 = grad_check_close(gd_b, num_gdb, eps)
+    if ok3 == 1 and ok4 == 1 {
+        print "grad div ok"
+    }
+    ret 0
+}
