@@ -1,0 +1,46 @@
+; DoD 3: Epoll handling multiple concurrent FDs (100 pipe pattern)
+; Demonstrates epoll multiplexing over many file descriptors
+fn main() {
+    let epfd = epoll_create1(0)
+    ; Store read_fds and write_fds
+    let rfds: &i64 = alloc_pages(1)
+    let wfds: &i64 = alloc_pages(1)
+    let pipefd: &i64 = alloc_pages(1)
+    let ev: &i64 = alloc_pages(1)
+    let count = 100
+    let i = 0
+    ; Create 100 pipes and add read-ends to epoll
+    loop i < count {
+        pipefd[0] = 0
+        syscall(293, pipefd, 0, 0)
+        let pair = pipefd[0]
+        let rfd = pair and 4294967295
+        let wfd = pair / 4294967296
+        rfds[i] = rfd
+        wfds[i] = wfd
+        ; epoll_event: events=EPOLLIN(1), data=i
+        ev[0] = 1
+        ev[1] = i
+        epoll_ctl(epfd, 1, rfd, ev)
+        i = i + 1
+    }
+    ; Write 1 byte to each pipe's write end
+    let msg: &i8 = alloc_pages(1)
+    poke_byte(msg, 0, 65)
+    i = 0
+    loop i < count {
+        let wfd = wfds[i]
+        syscall(1, wfd, msg, 1)
+        i = i + 1
+    }
+    ; Epoll wait and count ready FDs
+    let out_ev: &i64 = alloc_pages(4)
+    let total = 0
+    loop total < count {
+        let n = epoll_wait(epfd, out_ev, count, 1000)
+        total = total + n
+    }
+    if total == 100 {
+        print("ok")
+    }
+}
