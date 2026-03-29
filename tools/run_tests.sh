@@ -102,6 +102,29 @@ if [ -n "$FAILURES" ]; then
     echo -e "$FAILURES"
 fi
 
+# Fail tests: these should fail compilation (exit != 0)
+FAIL_DIR="$PROJECT_ROOT/tests/conformance/stage1/fail"
+if [ -d "$FAIL_DIR" ]; then
+    echo ""
+    echo "=== Fail Tests (expected compile errors) ==="
+    for test_file in "$FAIL_DIR"/*.jda; do
+        test_name=$(basename "$test_file" .jda)
+        bin_out="$TMP_DIR/$test_name"
+
+        # Compile — should fail
+        compile_out=$("$JDA" "$test_file" "$bin_out" 2>&1) || true
+        if [ ! -f "$bin_out" ]; then
+            PASS=$((PASS + 1))
+            echo "  PASS  $test_name (compile failed as expected)"
+        else
+            FAIL=$((FAIL + 1))
+            FAILURES="$FAILURES\n  FAIL  $test_name (should have failed but compiled)"
+            echo "  FAIL  $test_name (should have failed but compiled)"
+            rm -f "$bin_out"
+        fi
+    done
+fi
+
 # Self-host convergence (optional)
 if [ "${1:-}" = "--selfhost" ]; then
     echo ""
