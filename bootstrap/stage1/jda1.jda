@@ -4694,6 +4694,73 @@ fn emit_drop(jfn: &JirFunction, bb: i64, var_idx: i64) -> i64 {
     ret emit(jfn, bb, &di)
 }
 
+fn emit_arena_new_jir(jfn: &JirFunction, bb: i64, pages_id: i64) -> i64 {
+    let pg_sz = emit_const(jfn, bb, TYPE_I64, 4096)
+    let total_sz = emit_binop(jfn, bb, OP_MUL, pages_id, pg_sz)
+    let ai = Instr{}
+    ai.op = OP_ALLOC
+    ai.operand0 = total_sz
+    let ptr = emit(jfn, bb, &ai)
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st0 = Instr{}
+    st0.op = OP_STORE_MEM
+    st0.operand0 = zero
+    st0.operand1 = ptr
+    st0.itype = TYPE_I64
+    emit(jfn, bb, &st0)
+    let sixteen = emit_const(jfn, bb, TYPE_I64, 16)
+    let cap = emit_binop(jfn, bb, OP_SUB, total_sz, sixteen)
+    let eight = emit_const(jfn, bb, TYPE_I64, 8)
+    let p8 = emit_binop(jfn, bb, OP_ADD, ptr, eight)
+    let st1 = Instr{}
+    st1.op = OP_STORE_MEM
+    st1.operand0 = cap
+    st1.operand1 = p8
+    st1.itype = TYPE_I64
+    emit(jfn, bb, &st1)
+    ret ptr
+}
+
+fn emit_arena_alloc_jir(jfn: &JirFunction, bb: i64, arena_id: i64, size_id: i64) -> i64 {
+    let ld = Instr{}
+    ld.op = OP_LOAD_MEM
+    ld.operand0 = arena_id
+    ld.itype = TYPE_I64
+    let pos = emit(jfn, bb, &ld)
+    let sixteen = emit_const(jfn, bb, TYPE_I64, 16)
+    let base = emit_binop(jfn, bb, OP_ADD, arena_id, sixteen)
+    let result = emit_binop(jfn, bb, OP_ADD, base, pos)
+    let new_pos = emit_binop(jfn, bb, OP_ADD, pos, size_id)
+    let st = Instr{}
+    st.op = OP_STORE_MEM
+    st.operand0 = new_pos
+    st.operand1 = arena_id
+    st.itype = TYPE_I64
+    emit(jfn, bb, &st)
+    ret result
+}
+
+fn emit_arena_reset_jir(jfn: &JirFunction, bb: i64, arena_id: i64) -> i64 {
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st = Instr{}
+    st.op = OP_STORE_MEM
+    st.operand0 = zero
+    st.operand1 = arena_id
+    st.itype = TYPE_I64
+    emit(jfn, bb, &st)
+    ret zero
+}
+
+fn emit_arena_destroy_jir(jfn: &JirFunction, bb: i64, arena_id: i64, pages_id: i64) -> i64 {
+    let pg_sz = emit_const(jfn, bb, TYPE_I64, 4096)
+    let total_sz = emit_binop(jfn, bb, OP_MUL, pages_id, pg_sz)
+    let di = Instr{}
+    di.op = OP_DROP
+    di.operand0 = arena_id
+    di.operand1 = total_sz
+    ret emit(jfn, bb, &di)
+}
+
 fn emit_binop(jfn: &JirFunction, bb: i64, op: i32, a: i64, b: i64) -> i64 {
     let ins = Instr{}
     ins.op       = op
@@ -6323,6 +6390,19 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ret emit(jfn, bb, &ins)
     }
 
+    if name_len == 9 and streq(src, name_start, 9, "arena_new") == 1 {
+        ret emit_arena_new_jir(jfn, bb, arg0)
+    }
+    if name_len == 11 and streq(src, name_start, 11, "arena_alloc") == 1 {
+        ret emit_arena_alloc_jir(jfn, bb, arg0, arg1)
+    }
+    if name_len == 11 and streq(src, name_start, 11, "arena_reset") == 1 {
+        ret emit_arena_reset_jir(jfn, bb, arg0)
+    }
+    if name_len == 13 and streq(src, name_start, 13, "arena_destroy") == 1 {
+        ret emit_arena_destroy_jir(jfn, bb, arg0, arg1)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -7560,6 +7640,19 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_ALLOC
         ins.operand0 = alloc_sz
         ret emit(g_jfn, bb, &ins)
+    }
+
+    if name.str_len == 9 and streq(g_src_buf_ptr, name.str_start, 9, "arena_new") == 1 {
+        ret emit_arena_new_jir(g_jfn, bb, arg0)
+    }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "arena_alloc") == 1 {
+        ret emit_arena_alloc_jir(g_jfn, bb, arg0, arg1)
+    }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "arena_reset") == 1 {
+        ret emit_arena_reset_jir(g_jfn, bb, arg0)
+    }
+    if name.str_len == 13 and streq(g_src_buf_ptr, name.str_start, 13, "arena_destroy") == 1 {
+        ret emit_arena_destroy_jir(g_jfn, bb, arg0, arg1)
     }
 
     let ins = Instr{}
@@ -9517,6 +9610,10 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
             }
         } else if rhs_len0 == 8 and streq(src, rhs_start0, 8, "get_argv") == 1 {
             bind_stype = TYPE_PTR_I8
+        } else if rhs_len0 == 9 and streq(src, rhs_start0, 9, "arena_new") == 1 {
+            bind_stype = TYPE_PTR
+        } else if rhs_len0 == 11 and streq(src, rhs_start0, 11, "arena_alloc") == 1 {
+            bind_stype = TYPE_PTR
         }
         ; Struct init: Foo{} — detect by next token being TOK_LBRACE
         let next_rhs_t = tok_type_at_raw(toks0, g_main_pos + 1)
