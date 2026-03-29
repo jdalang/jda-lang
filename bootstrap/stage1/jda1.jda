@@ -365,6 +365,7 @@ let g_lex_pos_i = 0
 let g_lex_cur_char: i64 = 0
 let g_lex_handled: i64 = 0
 let g_lower_is_main = 0
+let g_save_mask: i64 = 0
 ; Token write cursor (avoids 5-arg calls and local-ptr bugs)
 let g_ltw_base: &i64 = 0
 let g_ltw_off: i64 = 0
@@ -8306,7 +8307,7 @@ fn regalloc_init(ra: &RegAlloc) {
     ; Fill spill_off[8192] with -1
     fill_i64_words((ra_bytes + 32960) as &i64, 8192, -1)
     ; Spill slots start at 8 (growing up). Local variable slots now start at
-    ; jfn.next_slot_off = 4096 (set in function reset), so no collision.
+    ; sp_top is set to jfn.next_slot_off before lowering, so spills start after locals.
     ra.sp_top = 8
     ra.evict_idx = 0
 }
@@ -9010,29 +9011,39 @@ fn emit_setcc_r12(out: &i8, pos: &i64, cc: i32) {
 ; ============================================================
 
 fn emit_save_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
-    emit_push_r(out, pos, PHYS_RAX)
-    emit_push_r(out, pos, PHYS_RCX)
-    emit_push_r(out, pos, PHYS_RDX)
-    emit_push_r(out, pos, PHYS_RSI)
-    emit_push_r(out, pos, PHYS_RDI)
-    emit_push_r(out, pos, PHYS_R8)
-    emit_push_r(out, pos, PHYS_R9)
-    emit_push_r(out, pos, PHYS_RBX)
-    emit_push_r(out, pos, PHYS_R10)
-    emit_push_r(out, pos, PHYS_R11)
+    ; P3: Only save registers that hold live values
+    let mask = 0
+    if ra.reg2val[0] != -1 { emit_push_r(out, pos, PHYS_RAX)  mask = mask + 1 }
+    if ra.reg2val[1] != -1 { emit_push_r(out, pos, PHYS_RCX)  mask = mask + 2 }
+    if ra.reg2val[2] != -1 { emit_push_r(out, pos, PHYS_RDX)  mask = mask + 4 }
+    if ra.reg2val[3] != -1 { emit_push_r(out, pos, PHYS_RSI)  mask = mask + 8 }
+    if ra.reg2val[4] != -1 { emit_push_r(out, pos, PHYS_RDI)  mask = mask + 16 }
+    if ra.reg2val[5] != -1 { emit_push_r(out, pos, PHYS_R8)   mask = mask + 32 }
+    if ra.reg2val[6] != -1 { emit_push_r(out, pos, PHYS_R9)   mask = mask + 64 }
+    if ra.reg2val[7] != -1 { emit_push_r(out, pos, PHYS_RBX)  mask = mask + 128 }
+    if ra.reg2val[8] != -1 { emit_push_r(out, pos, PHYS_R10)  mask = mask + 256 }
+    if ra.reg2val[9] != -1 { emit_push_r(out, pos, PHYS_R11)  mask = mask + 512 }
+    g_save_mask = mask
+}
+
+fn mask_bit(mask: i64, pow: i64) -> i64 {
+    let shifted = mask / pow
+    ret shifted - (shifted / 2) * 2
 }
 
 fn emit_restore_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
-    emit_pop_r(out, pos, PHYS_R11)
-    emit_pop_r(out, pos, PHYS_R10)
-    emit_pop_r(out, pos, PHYS_RBX)
-    emit_pop_r(out, pos, PHYS_R9)
-    emit_pop_r(out, pos, PHYS_R8)
-    emit_pop_r(out, pos, PHYS_RDI)
-    emit_pop_r(out, pos, PHYS_RSI)
-    emit_pop_r(out, pos, PHYS_RDX)
-    emit_pop_r(out, pos, PHYS_RCX)
-    emit_pop_r(out, pos, PHYS_RAX)
+    ; P3: Only restore registers that were saved (reverse order)
+    let mask = g_save_mask
+    if mask_bit(mask, 512) != 0 { emit_pop_r(out, pos, PHYS_R11) }
+    if mask_bit(mask, 256) != 0 { emit_pop_r(out, pos, PHYS_R10) }
+    if mask_bit(mask, 128) != 0 { emit_pop_r(out, pos, PHYS_RBX) }
+    if mask_bit(mask, 64) != 0  { emit_pop_r(out, pos, PHYS_R9) }
+    if mask_bit(mask, 32) != 0  { emit_pop_r(out, pos, PHYS_R8) }
+    if mask_bit(mask, 16) != 0  { emit_pop_r(out, pos, PHYS_RDI) }
+    if mask_bit(mask, 8) != 0   { emit_pop_r(out, pos, PHYS_RSI) }
+    if mask_bit(mask, 4) != 0   { emit_pop_r(out, pos, PHYS_RDX) }
+    if mask_bit(mask, 2) != 0   { emit_pop_r(out, pos, PHYS_RCX) }
+    if mask_bit(mask, 1) != 0   { emit_pop_r(out, pos, PHYS_RAX) }
 }
 
 
@@ -9882,11 +9893,9 @@ fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if is_call != 1 { ret 0 }
     let inlined = try_inline_call(ins, ctx, out, pos)
     if inlined == 1 { ret 1 }
-    emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
     lower_instr_call_args(ins, ctx, out, pos)
     lower_instr_call_emit(ins, ctx, out, pos)
-    emit_pop_r(out, pos, PHYS_R12)
     let argc_vals = i64[6]
     argc_vals[0] = ins.operand0
     argc_vals[1] = ins.operand1
@@ -11551,6 +11560,14 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
         poke_byte(out, patch_off + 1, i32_b1(real_frame))
         poke_byte(out, patch_off + 2, i32_b2(real_frame))
         poke_byte(out, patch_off + 3, i32_b3(real_frame))
+        ; P4: Skip stack probe for small frames (<=65536 bytes)
+        ; Linux kernel handles stack growth within the guard gap (default 256 pages).
+        ; Probe is 35 bytes starting at fn_start+12. Patch JMP rel8 over it.
+        ; JMP rel8 is 2 bytes at byte 12-13, IP after = 14, target = 47, disp = 33.
+        if real_frame <= 65536 {
+            poke_byte(out, fn_start + 12, 0xEB)
+            poke_byte(out, fn_start + 13, 0x21)
+        }
     }
     lower_fn_emit_epilogue(out, pos, is_main)
     g_lower_is_main = 0
