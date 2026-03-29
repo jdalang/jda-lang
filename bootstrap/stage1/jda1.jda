@@ -153,6 +153,11 @@ const OP_ARGV_BASE= 31
 const OP_ARGC_GET = 32
 const OP_DROP     = 33
 const OP_TAIL_CALL = 34
+const OP_ATOMIC_LOAD  = 35
+const OP_ATOMIC_STORE = 36
+const OP_ATOMIC_CAS   = 37
+const OP_ATOMIC_ADD   = 38
+const OP_RDTSC        = 39
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -6525,6 +6530,41 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ret arg0
     }
 
+    ; Atomic builtins
+    if name_len == 11 and streq(src, name_start, 11, "atomic_load") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_LOAD
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 12 and streq(src, name_start, 12, "atomic_store") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_STORE
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 14 and streq(src, name_start, 14, "atomic_cmpxchg") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_CAS
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 16 and streq(src, name_start, 16, "atomic_fetch_add") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_ADD
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 5 and streq(src, name_start, 5, "rdtsc") == 1 {
+        let ins = Instr{}
+        ins.op = OP_RDTSC
+        ret emit(jfn, bb, &ins)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -7819,6 +7859,41 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ret arg0
     }
 
+    ; Atomic builtins
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "atomic_load") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_LOAD
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 12 and streq(g_src_buf_ptr, name.str_start, 12, "atomic_store") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_STORE
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 14 and streq(g_src_buf_ptr, name.str_start, 14, "atomic_cmpxchg") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_CAS
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 16 and streq(g_src_buf_ptr, name.str_start, 16, "atomic_fetch_add") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_ADD
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 5 and streq(g_src_buf_ptr, name.str_start, 5, "rdtsc") == 1 {
+        let ins = Instr{}
+        ins.op = OP_RDTSC
+        ret emit(g_jfn, bb, &ins)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -8114,6 +8189,22 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
+            if op == OP_ATOMIC_LOAD {
+                if o0 >= 0 { used[o0] = 1 }
+            }
+            if op == OP_ATOMIC_STORE {
+                if o0 >= 0 { used[o0] = 1 }
+                if o1 >= 0 { used[o1] = 1 }
+            }
+            if op == OP_ATOMIC_CAS {
+                if o0 >= 0 { used[o0] = 1 }
+                if o1 >= 0 { used[o1] = 1 }
+                if o2 >= 0 { used[o2] = 1 }
+            }
+            if op == OP_ATOMIC_ADD {
+                if o0 >= 0 { used[o0] = 1 }
+                if o1 >= 0 { used[o1] = 1 }
+            }
             if op == OP_CALL {
                 if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
                 if o3 >= 2 { if o1 >= 0 { used[o1] = 1 } }
@@ -8143,6 +8234,11 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ARGV_BASE { used[id] = 1 }
             if op == OP_ARGC_GET  { used[id] = 1 }
             if op == OP_STORE_MEM { used[id] = 1 }
+            if op == OP_ATOMIC_LOAD  { used[id] = 1 }
+            if op == OP_ATOMIC_STORE { used[id] = 1 }
+            if op == OP_ATOMIC_CAS   { used[id] = 1 }
+            if op == OP_ATOMIC_ADD   { used[id] = 1 }
+            if op == OP_RDTSC        { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -10045,6 +10141,152 @@ fn emit_trunc32(out: &i8, pos: &i64, reg: i32) {
     emit_byte(out, pos, 0xC0 + (r3 * 8) + r3)
 }
 
+fn lower_instr_atomic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let op = ins.op
+
+    ; OP_ATOMIC_LOAD: atomic_load(ptr) -> val
+    ; x86-64 MOV is naturally acquire-ordered on aligned addresses
+    ; Emit: MOV dst, [ptr]
+    if op == OP_ATOMIC_LOAD {
+        let ptr_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_load_mem_reg(out, pos, dst, ptr_r)
+        consume_use(ctx, ins.operand0)
+        ret 1
+    }
+
+    ; OP_ATOMIC_STORE: atomic_store(ptr, val)
+    ; Use XCHG [ptr], val — XCHG has implicit LOCK prefix (full barrier)
+    ; Encoding: REX.W 87 /r with ModRM=[base]
+    if op == OP_ATOMIC_STORE {
+        let ptr_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        let val_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+        ; XCHG [ptr_r], val_r: REX.W 0x87 ModRM
+        let val_hi = val_r / 8
+        let ptr_hi = ptr_r / 8
+        let rex = 72 + val_hi * 4 + ptr_hi
+        emit_byte(out, pos, rex)
+        emit_byte(out, pos, 0x87)
+        let val3 = mod8(val_r)
+        let ptr3 = mod8(ptr_r)
+        if ptr3 == 4 {
+            emit_byte(out, pos, (val3 * 8) + 0x04)
+            emit_byte(out, pos, 0x24)
+        } else if ptr3 == 5 {
+            emit_byte(out, pos, 0x40 + (val3 * 8) + ptr3)
+            emit_byte(out, pos, 0)
+        } else {
+            emit_byte(out, pos, (val3 * 8) + ptr3)
+        }
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        ret 1
+    }
+
+    ; OP_ATOMIC_CAS: atomic_cmpxchg(ptr, expected, desired) -> old_val
+    ; LOCK CMPXCHG [ptr], desired
+    ; RAX must hold expected value; after: RAX = old value, ZF set if swapped
+    ; Encoding: F0 REX.W 0F B1 /r
+    ; Use push/pop pattern to avoid register clobbering between operands
+    if op == OP_ATOMIC_CAS {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+        ; Load and push all three operands onto the stack
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+        emit_push_r(out, pos, r2)
+        ; Pop into fixed registers: desired→RCX, expected→RAX, ptr→RDI
+        emit_pop_r(out, pos, PHYS_RCX)
+        emit_pop_r(out, pos, PHYS_RAX)
+        emit_pop_r(out, pos, PHYS_RDI)
+        ; LOCK CMPXCHG [RDI], RCX
+        ; F0 48 0F B1 0F
+        emit_byte(out, pos, 0xF0)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0xB1)
+        emit_byte(out, pos, 0x0F)
+        ; Result (old value) is in RAX — move to R12 then restore pool
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 {
+            emit_mov_rr(out, pos, dst, PHYS_R12)
+        }
+        emit_pop_r(out, pos, PHYS_R12)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        consume_use(ctx, ins.operand2)
+        ret 1
+    }
+
+    ; OP_ATOMIC_ADD: atomic_fetch_add(ptr, val) -> old_val
+    ; LOCK XADD [ptr], val — atomically adds, returns old value in val register
+    ; Encoding: F0 REX.W 0F C1 /r
+    ; Use push/pop pattern to avoid register clobbering
+    if op == OP_ATOMIC_ADD {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        ; Pop val→RCX, ptr→RDI
+        emit_pop_r(out, pos, PHYS_RCX)
+        emit_pop_r(out, pos, PHYS_RDI)
+        ; LOCK XADD [RDI], RCX
+        ; F0 48 0F C1 0F
+        emit_byte(out, pos, 0xF0)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0xC1)
+        emit_byte(out, pos, 0x0F)
+        ; Old value now in RCX — move to R12 then restore pool
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RCX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 {
+            emit_mov_rr(out, pos, dst, PHYS_R12)
+        }
+        emit_pop_r(out, pos, PHYS_R12)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        ret 1
+    }
+
+    ; OP_RDTSC: rdtsc() -> u64
+    ; RDTSC puts low 32 bits in EAX, high 32 bits in EDX
+    ; Combine: SHL RDX,32; OR RAX,RDX
+    if op == OP_RDTSC {
+        emit_save_pool(ctx.ra, out, pos)
+        ; RDTSC: 0F 31
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x31)
+        ; SHL RDX, 32: REX.W C1 /4 20
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC1)
+        emit_byte(out, pos, 0xE2)
+        emit_byte(out, pos, 32)
+        ; OR RAX, RDX: REX.W 09 D0
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x09)
+        emit_byte(out, pos, 0xD0)
+        ; Result in RAX — move to R12 then restore pool
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 {
+            emit_mov_rr(out, pos, dst, PHYS_R12)
+        }
+        ret 1
+    }
+
+    ret 0
+}
+
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     if lower_instr_constlike(ins, ctx, jfn, out, pos) == 1 {
@@ -10129,6 +10371,11 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if lower_instr_cmpbit(ins, ctx, jfn, out, pos) == 1 {
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
+        ret ok(0)
+    }
+
+    if lower_instr_atomic(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
@@ -11403,6 +11650,22 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         if o3 >= 4 { mark_use(ctx, ins.bb_target0) }
         if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
         if o3 >= 6 { mark_use(ctx, ins.imm) }
+    }
+    if op == OP_ATOMIC_LOAD {
+        mark_use(ctx, o0)
+    }
+    if op == OP_ATOMIC_STORE {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
+    }
+    if op == OP_ATOMIC_CAS {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
+        mark_use(ctx, o2)
+    }
+    if op == OP_ATOMIC_ADD {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
     }
 }
 
