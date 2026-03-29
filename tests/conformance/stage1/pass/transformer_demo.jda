@@ -1,0 +1,411 @@
+; Transformer Demo: 1-layer transformer forward pass
+; seq=2, d_model=2, heads=1, d_ff=4, vocab=4
+; tokens=[1, 2] -> embed -> attention -> add&norm -> FFN -> logits
+
+fn row_max(x: i64, base: i64, cols: i64) -> i64 {
+    let mx = tensor_get(x, base)
+    let c = 1
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(x, idx)
+        if f64_gt(v, mx) == 1 {
+            mx = v
+        }
+        c = c + 1
+    }
+    ret mx
+}
+
+fn softmax_row(x: i64, out: i64, base: i64, cols: i64) -> i64 {
+    let mx = row_max(x, base, cols)
+    let exp_sum = f64_from_int(0)
+    let c = 0
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(x, idx)
+        let shifted = f64_sub(v, mx)
+        let e = f64_exp(shifted)
+        tensor_set(out, idx, e)
+        exp_sum = f64_add(exp_sum, e)
+        c = c + 1
+    }
+    c = 0
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(out, idx)
+        let normed = f64_div(v, exp_sum)
+        tensor_set(out, idx, normed)
+        c = c + 1
+    }
+    ret 0
+}
+
+fn attn_scores(q: i64, k: i64, scores: i64, seq: i64, dk: i64) -> i64 {
+    let dk_f = f64_from_int(dk)
+    let sqrt_dk = f64_sqrt(dk_f)
+    let i = 0
+    loop i < seq {
+        let j = 0
+        loop j < seq {
+            let acc = f64_from_int(0)
+            let p = 0
+            loop p < dk {
+                let q_idx = i * dk + p
+                let k_idx = j * dk + p
+                let qv = tensor_get(q, q_idx)
+                let kv = tensor_get(k, k_idx)
+                let prod = f64_mul(qv, kv)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let scaled = f64_div(acc, sqrt_dk)
+            let s_idx = i * seq + j
+            tensor_set(scores, s_idx, scaled)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn attn_apply(attn: i64, v: i64, out: i64, seq: i64, dk: i64) -> i64 {
+    let i = 0
+    loop i < seq {
+        let j = 0
+        loop j < dk {
+            let acc = f64_from_int(0)
+            let p = 0
+            loop p < seq {
+                let a_idx = i * seq + p
+                let v_idx = p * dk + j
+                let av = tensor_get(attn, a_idx)
+                let vv = tensor_get(v, v_idx)
+                let prod = f64_mul(av, vv)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let o_idx = i * dk + j
+            tensor_set(out, o_idx, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn attention_fwd(q: i64, k: i64, v: i64, out: i64, seq: i64, dk: i64) -> i64 {
+    let scores = tensor_new2(seq, seq)
+    attn_scores(q, k, scores, seq, dk)
+    let attn = tensor_new2(seq, seq)
+    let r = 0
+    loop r < seq {
+        let base = r * seq
+        softmax_row(scores, attn, base, seq)
+        r = r + 1
+    }
+    attn_apply(attn, v, out, seq, dk)
+    tensor_free(scores)
+    tensor_free(attn)
+    ret 0
+}
+
+fn linear_fwd(x: i64, w: i64, bias: i64, out: i64) -> i64 {
+    let M = tensor_shape(x, 0)
+    let K = tensor_shape(x, 1)
+    let N = tensor_shape(w, 0)
+    let i = 0
+    loop i < M {
+        let j = 0
+        loop j < N {
+            let acc = tensor_get(bias, j)
+            let p = 0
+            loop p < K {
+                let x_idx = i * K + p
+                let w_idx = j * K + p
+                let xv = tensor_get(x, x_idx)
+                let wv = tensor_get(w, w_idx)
+                let prod = f64_mul(xv, wv)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let o_idx = i * N + j
+            tensor_set(out, o_idx, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn compute_mean(x: i64) -> i64 {
+    let n = tensor_len(x)
+    let sum_val = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        sum_val = f64_add(sum_val, v)
+        i = i + 1
+    }
+    let fn_val = f64_from_int(n)
+    ret f64_div(sum_val, fn_val)
+}
+
+fn compute_var(x: i64, mean: i64) -> i64 {
+    let n = tensor_len(x)
+    let var_sum = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        let d = f64_sub(v, mean)
+        let d2 = f64_mul(d, d)
+        var_sum = f64_add(var_sum, d2)
+        i = i + 1
+    }
+    let fn_val = f64_from_int(n)
+    ret f64_div(var_sum, fn_val)
+}
+
+fn norm_apply(x: i64, out: i64, mean: i64, std: i64, gamma: i64, beta: i64) -> i64 {
+    let n = tensor_len(x)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        let d = f64_sub(v, mean)
+        let normed = f64_div(d, std)
+        let g = tensor_get(gamma, i)
+        let b = tensor_get(beta, i)
+        let scaled = f64_mul(normed, g)
+        let result = f64_add(scaled, b)
+        tensor_set(out, i, result)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn layer_norm_fwd(x: i64, out: i64, gamma: i64, beta: i64) -> i64 {
+    let mean = compute_mean(x)
+    let variance = compute_var(x, mean)
+    let hundred_k = f64_from_int(100000)
+    let one = f64_from_int(1)
+    let eps = f64_div(one, hundred_k)
+    let var_eps = f64_add(variance, eps)
+    let std = f64_sqrt(var_eps)
+    norm_apply(x, out, mean, std, gamma, beta)
+    ret 0
+}
+
+fn relu_fwd(x: i64, out: i64) -> i64 {
+    let n = tensor_len(x)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        if f64_gt(v, zero) == 1 {
+            tensor_set(out, i, v)
+        } else {
+            tensor_set(out, i, zero)
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    let zero = f64_from_int(0)
+    let one = f64_from_int(1)
+    let two = f64_from_int(2)
+    let three = f64_from_int(3)
+    let eight = f64_from_int(8)
+    let nine = f64_from_int(9)
+    let ten = f64_from_int(10)
+    let v05 = f64_div(one, two)
+    let v03 = f64_div(three, ten)
+    let v08 = f64_div(eight, ten)
+    let v09 = f64_div(nine, ten)
+    let v15 = f64_div(three, two)
+    let neg05 = f64_neg(v05)
+    let neg1 = f64_neg(one)
+    let v01 = f64_div(one, ten)
+    let v02 = f64_div(two, ten)
+
+    ; ── Embedding table [4, 2] ──
+    let embed = tensor_new2(4, 2)
+    tensor_set(embed, 0, v01)
+    tensor_set(embed, 1, v02)
+    tensor_set(embed, 2, one)
+    tensor_set(embed, 3, v05)
+    tensor_set(embed, 4, v03)
+    tensor_set(embed, 5, v15)
+    tensor_set(embed, 6, v08)
+    tensor_set(embed, 7, v09)
+
+    ; ── Lookup tokens [1, 2] → x[2,2] ──
+    ; tok 1 → [1.0, 0.5], tok 2 → [0.3, 1.5]
+    let x = tensor_new2(2, 2)
+    tensor_set(x, 0, one)
+    tensor_set(x, 1, v05)
+    tensor_set(x, 2, v03)
+    tensor_set(x, 3, v15)
+
+    ; ── Self-attention: Q=K=V=x ──
+    let attn_out = tensor_new2(2, 2)
+    attention_fwd(x, x, x, attn_out, 2, 2)
+
+    ; ── Residual add: res = x + attn_out ──
+    let res1 = tensor_new2(2, 2)
+    let ri = 0
+    loop ri < 4 {
+        let va = tensor_get(x, ri)
+        let vb = tensor_get(attn_out, ri)
+        let r = f64_add(va, vb)
+        tensor_set(res1, ri, r)
+        ri = ri + 1
+    }
+
+    ; ── Layer norm per row ──
+    let norm1 = tensor_new2(2, 2)
+    let ln_gamma = tensor_new1(2)
+    let ln_beta = tensor_new1(2)
+    tensor_fill(ln_gamma, one)
+    tensor_fill(ln_beta, zero)
+    let row_buf = tensor_new1(2)
+    let nrow_buf = tensor_new1(2)
+    ; Norm row 0
+    let t0 = tensor_get(res1, 0)
+    let t1 = tensor_get(res1, 1)
+    tensor_set(row_buf, 0, t0)
+    tensor_set(row_buf, 1, t1)
+    layer_norm_fwd(row_buf, nrow_buf, ln_gamma, ln_beta)
+    let n0 = tensor_get(nrow_buf, 0)
+    let n1 = tensor_get(nrow_buf, 1)
+    tensor_set(norm1, 0, n0)
+    tensor_set(norm1, 1, n1)
+    ; Norm row 1
+    let t2 = tensor_get(res1, 2)
+    let t3 = tensor_get(res1, 3)
+    tensor_set(row_buf, 0, t2)
+    tensor_set(row_buf, 1, t3)
+    layer_norm_fwd(row_buf, nrow_buf, ln_gamma, ln_beta)
+    let n2 = tensor_get(nrow_buf, 0)
+    let n3 = tensor_get(nrow_buf, 1)
+    tensor_set(norm1, 2, n2)
+    tensor_set(norm1, 3, n3)
+
+    ; ── FFN: linear(2→4) → relu → linear(4→2) ──
+    let w1 = tensor_new2(4, 2)
+    let b1 = tensor_new1(4)
+    tensor_set(w1, 0, v05)
+    tensor_set(w1, 1, one)
+    tensor_set(w1, 2, one)
+    tensor_set(w1, 3, v05)
+    tensor_set(w1, 4, neg05)
+    tensor_set(w1, 5, one)
+    tensor_set(w1, 6, one)
+    tensor_set(w1, 7, neg1)
+    tensor_fill(b1, zero)
+
+    let h = tensor_new2(2, 4)
+    linear_fwd(norm1, w1, b1, h)
+
+    let h_relu = tensor_new2(2, 4)
+    relu_fwd(h, h_relu)
+
+    let w2 = tensor_new2(2, 4)
+    let b2 = tensor_new1(2)
+    tensor_set(w2, 0, one)
+    tensor_set(w2, 1, v05)
+    tensor_set(w2, 2, neg05)
+    tensor_set(w2, 3, v03)
+    tensor_set(w2, 4, v05)
+    tensor_set(w2, 5, one)
+    tensor_set(w2, 6, v03)
+    tensor_set(w2, 7, neg05)
+    tensor_fill(b2, zero)
+
+    let ffn_out = tensor_new2(2, 2)
+    linear_fwd(h_relu, w2, b2, ffn_out)
+
+    ; ── Output logits: linear(2→4) ──
+    let w_out = tensor_new2(4, 2)
+    let b_out = tensor_new1(4)
+    tensor_set(w_out, 0, one)
+    tensor_set(w_out, 1, zero)
+    tensor_set(w_out, 2, zero)
+    tensor_set(w_out, 3, one)
+    tensor_set(w_out, 4, v05)
+    tensor_set(w_out, 5, v05)
+    tensor_set(w_out, 6, neg05)
+    tensor_set(w_out, 7, v05)
+    tensor_fill(b_out, zero)
+
+    let logits = tensor_new2(2, 4)
+    linear_fwd(ffn_out, w_out, b_out, logits)
+
+    ; Verify: different tokens produce different logits
+    let l0 = tensor_get(logits, 0)
+    let l4 = tensor_get(logits, 4)
+    let diff0 = f64_sub(l0, l4)
+    let diff0_abs = f64_abs(diff0)
+    let thresh = f64_div(one, ten)
+    if f64_gt(diff0_abs, thresh) == 1 {
+        print "pos diff ok"
+    }
+
+    ; Check logits are finite and non-zero
+    let sum_abs = f64_from_int(0)
+    let si = 0
+    loop si < 8 {
+        let lv = tensor_get(logits, si)
+        let lv_abs = f64_abs(lv)
+        sum_abs = f64_add(sum_abs, lv_abs)
+        si = si + 1
+    }
+    if f64_gt(sum_abs, one) == 1 {
+        print "logits ok"
+    }
+
+    ; Softmax logits row 0 → probabilities sum to 1
+    let probs = tensor_new1(4)
+    let logit_row = tensor_new1(4)
+    let li = 0
+    loop li < 4 {
+        let lv = tensor_get(logits, li)
+        tensor_set(logit_row, li, lv)
+        li = li + 1
+    }
+    softmax_row(logit_row, probs, 0, 4)
+    let psum = f64_from_int(0)
+    let pi = 0
+    loop pi < 4 {
+        let pv = tensor_get(probs, pi)
+        psum = f64_add(psum, pv)
+        pi = pi + 1
+    }
+    let psum_int = f64_to_int(f64_mul(psum, ten))
+    if psum_int == 10 {
+        print "probs ok"
+    }
+
+    tensor_free(embed)
+    tensor_free(x)
+    tensor_free(attn_out)
+    tensor_free(res1)
+    tensor_free(norm1)
+    tensor_free(ln_gamma)
+    tensor_free(ln_beta)
+    tensor_free(row_buf)
+    tensor_free(nrow_buf)
+    tensor_free(w1)
+    tensor_free(b1)
+    tensor_free(h)
+    tensor_free(h_relu)
+    tensor_free(w2)
+    tensor_free(b2)
+    tensor_free(ffn_out)
+    tensor_free(w_out)
+    tensor_free(b_out)
+    tensor_free(logits)
+    tensor_free(probs)
+    tensor_free(logit_row)
+    ret 0
+}
