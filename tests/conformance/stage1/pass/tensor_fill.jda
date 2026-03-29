@@ -1,0 +1,38 @@
+fn main() -> i64 {
+    ; Create a 1D tensor of size 5 and fill with 7.0
+    let t = tensor_new1(5)
+    let seven = f64_from_int(7)
+    tensor_fill(t, seven)
+    ; Verify all elements are 7
+    let ok_cnt = 0
+    let i = 0
+    loop i < 5 {
+        let v = f64_to_int(tensor_get(t, i))
+        if v == 7 {
+            ok_cnt = ok_cnt + 1
+        }
+        i = i + 1
+    }
+    if ok_cnt == 5 {
+        print "fill ok"
+    }
+    ; Test fill on 2D tensor
+    let t2 = tensor_new2(3, 4)
+    let val = f64_from_int(42)
+    tensor_fill(t2, val)
+    let ok2 = 0
+    let j = 0
+    loop j < 12 {
+        let v2 = f64_to_int(tensor_get(t2, j))
+        if v2 == 42 {
+            ok2 = ok2 + 1
+        }
+        j = j + 1
+    }
+    if ok2 == 12 {
+        print "fill2d ok"
+    }
+    tensor_free(t)
+    tensor_free(t2)
+    ret 0
+}
