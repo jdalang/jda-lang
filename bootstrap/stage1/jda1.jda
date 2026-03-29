@@ -4925,11 +4925,12 @@ fn emit_syscall3(jfn: &JirFunction, bb: i64, nr: i64, a0: i64, a1: i64, a2: i64)
 
 fn emit_syscall_raw(jfn: &JirFunction, bb: i64, nr: i64, a0: i64, a1: i64, a2: i64) -> i64 {
     let ins = Instr{}
-    ins.op       = OP_SYSCALL
-    ins.operand0 = nr
-    ins.operand1 = a0
-    ins.operand2 = a1
-    ins.operand3 = a2
+    ins.op         = OP_SYSCALL
+    ins.operand0   = nr
+    ins.operand1   = a0
+    ins.operand2   = a1
+    ins.bb_target0 = a2
+    ins.operand3   = 3
     ret emit(jfn, bb, &ins)
 }
 
@@ -6117,6 +6118,7 @@ fn dce(jfn: &JirFunction) {
             let o1 = jfn.blocks[bi].instrs[ii].operand1
             let o2 = jfn.blocks[bi].instrs[ii].operand2
             let o3 = jfn.blocks[bi].instrs[ii].operand3
+            let bt0 = jfn.blocks[bi].instrs[ii].bb_target0
             let op = jfn.blocks[bi].instrs[ii].op
             let id = jfn.blocks[bi].instrs[ii].id
             if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
@@ -6143,7 +6145,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
                 if o2 >= 0 { used[o2] = 1 }
-                if o3 >= 0 { used[o3] = 1 }
+                if bt0 >= 0 { used[bt0] = 1 }
             }
             if op == OP_ALLOC {
                 if o0 >= 0 { used[o0] = 1 }
@@ -8816,7 +8818,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
         mark_use(ctx, o2)
-        mark_use(ctx, o3)
+        mark_use(ctx, ins.bb_target0)
     }
     if op == OP_ALLOC {
         mark_use(ctx, o0)
@@ -9043,13 +9045,19 @@ fn main(argc: i64, argv_ptr: &i64) {
     let src_len = read_len
     g_runtime_src_len = src_len
     print("M2\n")
-
+    print("M2PRE\n")
     let toks = alloc_pages(2048) ; 8MiB
+    print("M2POST\n")
+    if toks == 0 { print("TOKS_NULL\n") }
+    if toks != 0 { print("M2a\n") }
     toks[0].type = TOK_EOF
+    print("M2b\n")
     g_dbg_toks = toks
     g_dbg_toks_init = toks
+    print("M2c\n")
 
     let tok_cnt = lex(src_buf, src_len, toks)
+    print("M2d\n")
     g_dbg_tok_cnt = tok_cnt
     g_scan_tok_cnt = tok_cnt
     print("M3\n")
