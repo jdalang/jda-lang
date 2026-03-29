@@ -1,0 +1,40 @@
+fn main() -> i64 {
+    ; Create a 1D tensor of size 4
+    let t = tensor_new1(4)
+    let len = tensor_len(t)
+    if len == 4 {
+        print "len ok"
+    }
+    let s0 = tensor_shape(t, 0)
+    if s0 == 4 {
+        print "shape ok"
+    }
+    ; Set and get elements
+    let v1 = f64_from_int(10)
+    let v2 = f64_from_int(20)
+    let v3 = f64_from_int(30)
+    let v4 = f64_from_int(40)
+    tensor_set(t, 0, v1)
+    tensor_set(t, 1, v2)
+    tensor_set(t, 2, v3)
+    tensor_set(t, 3, v4)
+    let g1 = tensor_get(t, 0)
+    let g2 = tensor_get(t, 1)
+    let g3 = tensor_get(t, 2)
+    let g4 = tensor_get(t, 3)
+    let i1 = f64_to_int(g1)
+    let i2 = f64_to_int(g2)
+    let i3 = f64_to_int(g3)
+    let i4 = f64_to_int(g4)
+    if i1 == 10 and i2 == 20 and i3 == 30 and i4 == 40 {
+        print "getset ok"
+    }
+    ; tensor_data returns pointer to data area
+    let dp = tensor_data(t)
+    if dp > 0 {
+        print "data ok"
+    }
+    tensor_free(t)
+    print "free ok"
+    ret 0
+}
