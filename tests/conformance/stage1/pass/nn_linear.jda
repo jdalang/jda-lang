@@ -1,0 +1,92 @@
+; Test linear layer forward pass
+; Derives batch/in_f/out_f from tensor shapes (max 6 args per call)
+
+fn linear_forward(x: i64, w: i64, bias: i64, out: i64) -> i64 {
+    let batch = tensor_shape(x, 0)
+    let in_f = tensor_shape(x, 1)
+    let out_f = tensor_shape(w, 0)
+    let i = 0
+    loop i < batch {
+        let j = 0
+        loop j < out_f {
+            let acc = tensor_get(bias, j)
+            let k = 0
+            loop k < in_f {
+                let x_idx = i * in_f + k
+                let w_idx = j * in_f + k
+                let xv = tensor_get(x, x_idx)
+                let wv = tensor_get(w, w_idx)
+                let prod = f64_mul(xv, wv)
+                acc = f64_add(acc, prod)
+                k = k + 1
+            }
+            let o_idx = i * out_f + j
+            tensor_set(out, o_idx, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    ; W[3,2] = [[1,2],[3,4],[5,6]], bias=[0,0,0]
+    let w = tensor_new2(3, 2)
+    let v1 = f64_from_int(1)
+    tensor_set(w, 0, v1)
+    let v2 = f64_from_int(2)
+    tensor_set(w, 1, v2)
+    let v3 = f64_from_int(3)
+    tensor_set(w, 2, v3)
+    let v4 = f64_from_int(4)
+    tensor_set(w, 3, v4)
+    let v5 = f64_from_int(5)
+    tensor_set(w, 4, v5)
+    let v6 = f64_from_int(6)
+    tensor_set(w, 5, v6)
+
+    let bias = tensor_new1(3)
+    let zero = f64_from_int(0)
+    tensor_fill(bias, zero)
+
+    ; x[2,2] = [[1,0],[0,1]]
+    let x = tensor_new2(2, 2)
+    tensor_set(x, 0, v1)
+    tensor_set(x, 1, zero)
+    tensor_set(x, 2, zero)
+    tensor_set(x, 3, v1)
+
+    let out = tensor_new2(2, 3)
+    linear_forward(x, w, bias, out)
+
+    let r0 = f64_to_int(tensor_get(out, 0))
+    let r1 = f64_to_int(tensor_get(out, 1))
+    let r2 = f64_to_int(tensor_get(out, 2))
+    let r3 = f64_to_int(tensor_get(out, 3))
+    let r4 = f64_to_int(tensor_get(out, 4))
+    let r5 = f64_to_int(tensor_get(out, 5))
+    if r0 == 1 and r1 == 3 and r2 == 5 and r3 == 2 and r4 == 4 and r5 == 6 {
+        print "linear forward ok"
+    }
+
+    ; Test with bias = [10, 20, 30]
+    let b10 = f64_from_int(10)
+    tensor_set(bias, 0, b10)
+    let b20 = f64_from_int(20)
+    tensor_set(bias, 1, b20)
+    let b30 = f64_from_int(30)
+    tensor_set(bias, 2, b30)
+    linear_forward(x, w, bias, out)
+    let rb0 = f64_to_int(tensor_get(out, 0))
+    let rb1 = f64_to_int(tensor_get(out, 1))
+    let rb2 = f64_to_int(tensor_get(out, 2))
+    if rb0 == 11 and rb1 == 23 and rb2 == 35 {
+        print "linear bias ok"
+    }
+
+    tensor_free(w)
+    tensor_free(bias)
+    tensor_free(x)
+    tensor_free(out)
+    ret 0
+}
