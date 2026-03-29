@@ -168,8 +168,8 @@ const PHYS_R10 = 10
 const PHYS_R11 = 11
 const PHYS_R12 = 12
 
-; Allocatable pool size: rax rcx rdx rsi rdi r10 r11  (rbx excluded: not saved by emit_save_pool)
-const N_ALLOC_REGS = 7
+; Allocatable pool: rax rcx rdx rsi rdi r8 r9 rbx r10 r11
+const N_ALLOC_REGS = 10
 
 ; ============================================================
 ; 1. STRUCT DEFINITIONS
@@ -263,11 +263,12 @@ struct Fixup {
 }
 
 struct RegAlloc {
-    pool:      i32[8]
+    pool:      i32[16]
     val2reg:   i32[8192]
-    reg2val:   i64[8]
+    reg2val:   i64[16]
     spill_off: i64[8192]
     sp_top:    i64
+    evict_idx: i64
 }
 
 struct LowerCtx {
@@ -8158,12 +8159,15 @@ fn regalloc_init(ra: &RegAlloc) {
         ra.reg2val[i] = -1
         i = i + 1
     }
+    ; Fill val2reg[8192] with -1 (0xFF bytes for i32)
     let ra_bytes = ra as &i8
-    fill_bytes(ra_bytes + 32, 32768, 255)
-    fill_i64_words((ra_bytes + 32864) as &i64, 8192, -1)
+    fill_bytes(ra_bytes + 64, 32768, 255)
+    ; Fill spill_off[8192] with -1
+    fill_i64_words((ra_bytes + 32960) as &i64, 8192, -1)
     ; Spill slots start at 8 (growing up). Local variable slots now start at
     ; jfn.next_slot_off = 65536 (set in function reset), so no collision.
     ra.sp_top = 8
+    ra.evict_idx = 0
 }
 
 fn fill_bytes(buf: &i8, len: i64, val: i8) {
@@ -8187,17 +8191,20 @@ fn load_param_slot_at(jfn: &JirFunction, idx: i64) -> i64 {
 }
 
 fn reg_pool_at(idx: i64) -> i32 {
-    let tbl = i32[7]
+    let tbl = i32[10]
     tbl[0] = PHYS_RAX
     tbl[1] = PHYS_RCX
     tbl[2] = PHYS_RDX
     tbl[3] = PHYS_RSI
     tbl[4] = PHYS_RDI
-    tbl[5] = PHYS_R10
-    tbl[6] = PHYS_R11
+    tbl[5] = PHYS_R8
+    tbl[6] = PHYS_R9
+    tbl[7] = PHYS_RBX
+    tbl[8] = PHYS_R10
+    tbl[9] = PHYS_R11
     let in_range = 1
     if idx < 0 { in_range = 0 }
-    if idx >= 7 { in_range = 0 }
+    if idx >= 10 { in_range = 0 }
     if in_range != 1 { ret PHYS_RAX }
     ret tbl[idx]
 }
@@ -8216,9 +8223,12 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
         }
         i = i + 1
     }
-    ; Spill pool[0] (oldest)
-    let victim = ra.reg2val[0]
-    let spill_reg = reg_pool_at(0)
+    ; Round-robin eviction
+    let ei = ra.evict_idx
+    if ei >= N_ALLOC_REGS { ei = 0 }
+    let victim = ra.reg2val[ei]
+    let spill_reg = reg_pool_at(ei)
+    ra.evict_idx = ei + 1
     if victim < 0 { ret spill_reg }
     if victim >= 8192 { ret spill_reg }
     let next_sp = ra.sp_top + 8
@@ -8226,8 +8236,8 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     ra.spill_off[victim]  = next_sp
     emit_store_spill(out, pos, next_sp, spill_reg)
     ra.val2reg[victim]    = -1
-    ra.reg2val[0]         = val_id
-    ra.val2reg[val_id]    = 0
+    ra.reg2val[ei]        = val_id
+    ra.val2reg[val_id]    = ei
     ret spill_reg
 }
 
@@ -8860,23 +8870,29 @@ fn emit_setcc_r12(out: &i8, pos: &i64, cc: i32) {
 ; ============================================================
 
 fn emit_save_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
-    emit_push_r(out, pos, 0)
-    emit_push_r(out, pos, 1)
-    emit_push_r(out, pos, 2)
-    emit_push_r(out, pos, 6)
-    emit_push_r(out, pos, 7)
-    emit_push_r(out, pos, 10)
-    emit_push_r(out, pos, 11)
+    emit_push_r(out, pos, PHYS_RAX)
+    emit_push_r(out, pos, PHYS_RCX)
+    emit_push_r(out, pos, PHYS_RDX)
+    emit_push_r(out, pos, PHYS_RSI)
+    emit_push_r(out, pos, PHYS_RDI)
+    emit_push_r(out, pos, PHYS_R8)
+    emit_push_r(out, pos, PHYS_R9)
+    emit_push_r(out, pos, PHYS_RBX)
+    emit_push_r(out, pos, PHYS_R10)
+    emit_push_r(out, pos, PHYS_R11)
 }
 
 fn emit_restore_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
-    emit_pop_r(out, pos, 11)
-    emit_pop_r(out, pos, 10)
-    emit_pop_r(out, pos, 7)
-    emit_pop_r(out, pos, 6)
-    emit_pop_r(out, pos, 2)
-    emit_pop_r(out, pos, 1)
-    emit_pop_r(out, pos, 0)
+    emit_pop_r(out, pos, PHYS_R11)
+    emit_pop_r(out, pos, PHYS_R10)
+    emit_pop_r(out, pos, PHYS_RBX)
+    emit_pop_r(out, pos, PHYS_R9)
+    emit_pop_r(out, pos, PHYS_R8)
+    emit_pop_r(out, pos, PHYS_RDI)
+    emit_pop_r(out, pos, PHYS_RSI)
+    emit_pop_r(out, pos, PHYS_RDX)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RAX)
 }
 
 
@@ -9485,9 +9501,12 @@ fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         if src_r != PHYS_RAX {
             emit_mov_rr(out, pos, PHYS_RAX, src_r)
         }
+        ; Restore callee-saved: LEA RSP, [RBP - 8]; POP RBX; POP RBP; RET
         emit_byte(out, pos, 0x48)
-        emit_byte(out, pos, 0x89)
-        emit_byte(out, pos, 0xEC)
+        emit_byte(out, pos, 0x8D)
+        emit_byte(out, pos, 0x65)
+        emit_byte(out, pos, 0xF8)
+        emit_pop_r(out, pos, PHYS_RBX)
         emit_pop_r(out, pos, PHYS_RBP)
         emit_ret_instr(out, pos)
         consume_use(ctx, ins.operand0)
@@ -11045,6 +11064,8 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x89)
     emit_byte(out, pos, 0xE5)
+    ; Save callee-saved registers used by the expanded register pool
+    emit_push_r(out, pos, PHYS_RBX)
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x81)
     emit_byte(out, pos, 0xEC)
@@ -11167,9 +11188,13 @@ fn lower_fn_emit_epilogue(out: &i8, pos: &i64, is_main: i64) {
         emit_byte(out, pos, 0x05)
         ret ok(0)
     }
+    ; Restore callee-saved registers
+    ; LEA RSP, [RBP - 8] to point at saved RBX
     emit_byte(out, pos, 0x48)
-    emit_byte(out, pos, 0x89)
-    emit_byte(out, pos, 0xEC)
+    emit_byte(out, pos, 0x8D)
+    emit_byte(out, pos, 0x65)
+    emit_byte(out, pos, 0xF8)
+    emit_pop_r(out, pos, PHYS_RBX)
     emit_pop_r(out, pos, PHYS_RBP)
     emit_ret_instr(out, pos)
 }
