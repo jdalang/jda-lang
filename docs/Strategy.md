@@ -9,6 +9,37 @@ Latest checkpoint: 2026-03-27
 3. `jda1_a` compiles `bootstrap/stage1/jda1.jda` -> `jda1_b`: blocked
 4. `jda1_b` compiles `examples/hello.jda` -> `hello_sh`: blocked by step 3
 5. `./hello_sh` -> `Hello Bare Metal`: blocked by step 4
+Ideall Approach
+1. Fix jda1_a -> jda1_b so jda1_b is stable.
+2. Make jda1_a and jda1_b byte-identical.
+so if jda1_a compile byte different and jda1_b compile byte totally different or compile pattern different. then something is wrong in pur compilation between jda1_a and jda1_a compile result jda1_b
+- jda1_a emits one machine-code shape
+- jda1_b emits a different machine-code shape
+- jda1_a and jda1_b have different SHA-256 hashes
+why jda1_a have different machine code and jda1_b have different, is we are not using JVM?
+so when jda1_a compile jda1_b, it need to use same SHA-256 hashes, which uses to compile jda1_a
+No JVM is involved here. This is native self-hosting.
+
+  What should happen is:
+
+  1. jda0 compiles jda1.jda -> jda1_a
+  2. jda1_a compiles the same jda1.jda -> jda1_b
+  3. if the compiler is correct and deterministic, jda1_b should be byte-identical to jda1_a
+
+  So yes: jda1_a should compile jda1.jda into the same bits as the ones that produced jda1_a’s behavior. Not because it “uses the same SHA”, but because both compilers should implement the same semantics and codegen.
+  Why they differ right now:
+  - jda0 and jda1_a are not behaving equivalently yet for some stage1 constructs
+  - or jda1_a miscompiles parts of jda1.jda
+  - or codegen is nondeterministic / order-dependent
+  - in practice here, it looks like miscompilation, not harmless nondeterminism
+  SHA-256 is only the check. It is not an input to compilation.
+  The important invariant is:
+  - same source in
+  - same compiler semantics
+  - same output binary out
+If that invariant holds, then sha256(jda1_a) == sha256(jda1_b).
+If it does not hold, then self-hosting is still broken. That is exactly the state now.
+3. Then rerun jda1_b -> hello_sh.
 
 ## What Changed On This Branch
 
