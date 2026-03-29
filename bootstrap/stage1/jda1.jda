@@ -168,8 +168,11 @@ const PHYS_R9  = 9
 const PHYS_R10 = 10
 const PHYS_R11 = 11
 const PHYS_R12 = 12
+const PHYS_R13 = 13
+const PHYS_R14 = 14
+const PHYS_R15 = 15
 
-; Allocatable pool: rax rcx rdx rsi rdi r8 r9 rbx r10 r11
+; Allocatable pool: rax rcx rdx rsi rdi r8 r9 rbx r10 r11 r13 r14 r15
 const N_ALLOC_REGS = 10
 
 ; ============================================================
@@ -8306,9 +8309,9 @@ fn regalloc_init(ra: &RegAlloc) {
     fill_bytes(ra_bytes + 64, 32768, 255)
     ; Fill spill_off[8192] with -1
     fill_i64_words((ra_bytes + 32960) as &i64, 8192, -1)
-    ; Spill slots start at 8 (growing up). Local variable slots now start at
+    ; Spill slots start past callee-saved registers (RBX, R13, R14, R15 = 32 bytes).
     ; sp_top is set to jfn.next_slot_off before lowering, so spills start after locals.
-    ra.sp_top = 8
+    ra.sp_top = 32
     ra.evict_idx = 0
 }
 
@@ -8333,7 +8336,7 @@ fn load_param_slot_at(jfn: &JirFunction, idx: i64) -> i64 {
 }
 
 fn reg_pool_at(idx: i64) -> i32 {
-    let tbl = i32[10]
+    let tbl = i32[13]
     tbl[0] = PHYS_RAX
     tbl[1] = PHYS_RCX
     tbl[2] = PHYS_RDX
@@ -8344,9 +8347,12 @@ fn reg_pool_at(idx: i64) -> i32 {
     tbl[7] = PHYS_RBX
     tbl[8] = PHYS_R10
     tbl[9] = PHYS_R11
+    tbl[10] = PHYS_R13
+    tbl[11] = PHYS_R14
+    tbl[12] = PHYS_R15
     let in_range = 1
     if idx < 0 { in_range = 0 }
-    if idx >= 10 { in_range = 0 }
+    if idx >= 13 { in_range = 0 }
     if in_range != 1 { ret PHYS_RAX }
     ret tbl[idx]
 }
@@ -9679,11 +9685,14 @@ fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         if src_r != PHYS_RAX {
             emit_mov_rr(out, pos, PHYS_RAX, src_r)
         }
-        ; Restore callee-saved: LEA RSP, [RBP - 8]; POP RBX; POP RBP; RET
+        ; Restore callee-saved: LEA RSP, [RBP - 32]; POP R15 R14 R13 RBX RBP; RET
         emit_byte(out, pos, 0x48)
         emit_byte(out, pos, 0x8D)
         emit_byte(out, pos, 0x65)
-        emit_byte(out, pos, 0xF8)
+        emit_byte(out, pos, 0xE0)
+        emit_pop_r(out, pos, PHYS_R15)
+        emit_pop_r(out, pos, PHYS_R14)
+        emit_pop_r(out, pos, PHYS_R13)
         emit_pop_r(out, pos, PHYS_RBX)
         emit_pop_r(out, pos, PHYS_RBP)
         emit_ret_instr(out, pos)
@@ -11402,8 +11411,11 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x89)
     emit_byte(out, pos, 0xE5)
-    ; Save callee-saved registers used by the expanded register pool
+    ; Save callee-saved registers: RBX, R13, R14, R15
     emit_push_r(out, pos, PHYS_RBX)
+    emit_push_r(out, pos, PHYS_R13)
+    emit_push_r(out, pos, PHYS_R14)
+    emit_push_r(out, pos, PHYS_R15)
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x81)
     emit_byte(out, pos, 0xEC)
@@ -11527,11 +11539,14 @@ fn lower_fn_emit_epilogue(out: &i8, pos: &i64, is_main: i64) {
         ret ok(0)
     }
     ; Restore callee-saved registers
-    ; LEA RSP, [RBP - 8] to point at saved RBX
+    ; LEA RSP, [RBP - 32] to point at saved R15
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x8D)
     emit_byte(out, pos, 0x65)
-    emit_byte(out, pos, 0xF8)
+    emit_byte(out, pos, 0xE0)
+    emit_pop_r(out, pos, PHYS_R15)
+    emit_pop_r(out, pos, PHYS_R14)
+    emit_pop_r(out, pos, PHYS_R13)
     emit_pop_r(out, pos, PHYS_RBX)
     emit_pop_r(out, pos, PHYS_RBP)
     emit_ret_instr(out, pos)
@@ -11575,18 +11590,17 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
         if rem > 0 {
             real_frame = real_frame + 16 - rem
         }
-        let patch_off = fn_start + 8
+        let patch_off = fn_start + 14
         poke_byte(out, patch_off,     i32_b0(real_frame))
         poke_byte(out, patch_off + 1, i32_b1(real_frame))
         poke_byte(out, patch_off + 2, i32_b2(real_frame))
         poke_byte(out, patch_off + 3, i32_b3(real_frame))
         ; P4: Skip stack probe for small frames (<=65536 bytes)
-        ; Linux kernel handles stack growth within the guard gap (default 256 pages).
-        ; Probe is 35 bytes starting at fn_start+12. Patch JMP rel8 over it.
-        ; JMP rel8 is 2 bytes at byte 12-13, IP after = 14, target = 47, disp = 33.
+        ; Probe is 35 bytes starting at fn_start+18. JMP rel8 at byte 18-19.
+        ; IP after = 20, target = 53, disp = 33.
         if real_frame <= 65536 {
-            poke_byte(out, fn_start + 12, 0xEB)
-            poke_byte(out, fn_start + 13, 0x21)
+            poke_byte(out, fn_start + 18, 0xEB)
+            poke_byte(out, fn_start + 19, 0x21)
         }
     }
     lower_fn_emit_epilogue(out, pos, is_main)
