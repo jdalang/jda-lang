@@ -75,6 +75,7 @@ const TOK_I8      = 47
 const TOK_F64     = 48
 const TOK_ENUM    = 49
 const TOK_QUESTION= 50
+const TOK_IMPL    = 51
 
 ; AST node types
 const NODE_FN     = 0
@@ -1038,6 +1039,303 @@ fn expand_all_generics(tok_cnt: i64) -> i64 {
     ret new_cnt
 }
 
+; ---- impl block support ----
+; Impl method table stored in g_genfn_buf starting at offset 200.
+; g_genfn_buf[200] = method count
+; Each entry (6 i64, starting at 201): struct_name_off, struct_name_len,
+;   method_name_off, method_name_len, mangled_name_off, mangled_name_len
+
+fn impl_method_cnt() -> i64 {
+    ret g_genfn_buf[200]
+}
+
+fn impl_set_cnt(v: i64) {
+    g_genfn_buf[200] = v
+}
+
+fn impl_entry_off(idx: i64) -> i64 {
+    ret 201 + idx * 6
+}
+
+; Look up method by name across all impls. Returns index or -1.
+fn lookup_impl_method(src: &i8, mname_off: i64, mname_len: i64) -> i64 {
+    let i = 0
+    loop i < g_genfn_buf[200] {
+        let p = 201 + i * 6
+        if g_genfn_buf[p + 3] == mname_len {
+            if str_match(src, g_genfn_buf[p + 2], mname_off, mname_len) == 1 {
+                ret i
+            }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
+; Look up method by struct name + method name. Returns index or -1.
+fn lookup_impl_method2(src: &i8, sn_off: i64, sn_len: i64, mn_off: i64, mn_len: i64) -> i64 {
+    let i = 0
+    loop i < g_genfn_buf[200] {
+        let p = 201 + i * 6
+        if g_genfn_buf[p + 1] == sn_len and g_genfn_buf[p + 3] == mn_len {
+            if str_match(src, g_genfn_buf[p], sn_off, sn_len) == 1 {
+                if str_match(src, g_genfn_buf[p + 2], mn_off, mn_len) == 1 {
+                    ret i
+                }
+            }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
+; Build mangled method name "StructName_method" in source buffer.
+; Returns mangled name length. Writes at g_runtime_src_len.
+fn build_method_mangle(sn_off: i64, sn_len: i64, mn_off: i64, mn_len: i64) -> i64 {
+    let src = g_src_buf_ptr
+    let moff = g_runtime_src_len
+    let mi = 0
+    loop mi < sn_len {
+        poke_byte(src, moff + mi, load_i8_at(src, sn_off + mi))
+        mi = mi + 1
+    }
+    poke_byte(src, moff + sn_len, 95)
+    mi = 0
+    loop mi < mn_len {
+        poke_byte(src, moff + sn_len + 1 + mi, load_i8_at(src, mn_off + mi))
+        mi = mi + 1
+    }
+    let mlen = sn_len + 1 + mn_len
+    ; Write "\nfn StructName_method " for FN_SCAN
+    let woff = moff + mlen
+    poke_byte(src, woff, 10)
+    poke_byte(src, woff + 1, 102)
+    poke_byte(src, woff + 2, 110)
+    poke_byte(src, woff + 3, 32)
+    mi = 0
+    loop mi < mlen {
+        poke_byte(src, woff + 4 + mi, load_i8_at(src, moff + mi))
+        mi = mi + 1
+    }
+    poke_byte(src, woff + 4 + mlen, 32)
+    g_runtime_src_len = woff + 4 + mlen + 1
+    ret mlen
+}
+
+; Copy method tokens to output position, replacing fn name with mangled name,
+; and replacing &self with self: &StructName.
+; mi = impl table index, tok_start = FN token index, tok_end = closing RBRACE index,
+; out = output token position. Returns new output index.
+fn copy_method_toks(mi: i64, tok_start: i64, tok_end: i64, out: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let mp = 201 + mi * 6
+    let sn_off = g_genfn_buf[mp]
+    let sn_len = g_genfn_buf[mp + 1]
+    let moff = g_genfn_buf[mp + 4]
+    let mlen = g_genfn_buf[mp + 5]
+    ; Emit fn token (IDENT with "fn" text for fallback detection)
+    let fn_txt = moff + mlen + 1
+    tok_set_type(toks, out, TOK_IDENT)
+    tok_set_start(toks, out, fn_txt)
+    tok_set_len(toks, out, 2)
+    tok_set_imm(toks, out, 0)
+    tok_set_line(toks, out, 0)
+    out = out + 1
+    ; Emit mangled name
+    tok_set_type(toks, out, TOK_IDENT)
+    tok_set_start(toks, out, moff)
+    tok_set_len(toks, out, mlen)
+    tok_set_imm(toks, out, 0)
+    tok_set_line(toks, out, 0)
+    out = out + 1
+    ; Skip original fn + method_name tokens (tok_start, tok_start+1)
+    let si = tok_start + 2
+    ; Now at LPAREN. Copy it.
+    tok_set_type(toks, out, tok_type_at_raw(toks, si))
+    tok_set_start(toks, out, tok_str_start_at_raw(toks, si))
+    tok_set_len(toks, out, tok_str_len_at_raw(toks, si))
+    tok_set_imm(toks, out, 0)
+    tok_set_line(toks, out, 0)
+    out = out + 1
+    si = si + 1
+    ; Check for &self pattern: AMP IDENT("self")
+    let has_self = 0
+    if tok_type_at_raw(toks, si) == TOK_AMP {
+        let ns = tok_str_start_at_raw(toks, si + 1)
+        let nl = tok_str_len_at_raw(toks, si + 1)
+        if nl == 4 and streq(src, ns, 4, "self") == 1 {
+            has_self = 1
+        }
+    }
+    if has_self == 1 {
+        ; Replace &self with: self : & StructName
+        ; Emit "self" as IDENT
+        tok_set_type(toks, out, TOK_IDENT)
+        tok_set_start(toks, out, tok_str_start_at_raw(toks, si + 1))
+        tok_set_len(toks, out, 4)
+        tok_set_imm(toks, out, 0)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        ; Emit ":"
+        tok_set_type(toks, out, TOK_COLON)
+        tok_set_start(toks, out, 0)
+        tok_set_len(toks, out, 0)
+        tok_set_imm(toks, out, 0)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        ; Emit "&"
+        tok_set_type(toks, out, TOK_AMP)
+        tok_set_start(toks, out, 0)
+        tok_set_len(toks, out, 0)
+        tok_set_imm(toks, out, 0)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        ; Emit struct name as IDENT
+        tok_set_type(toks, out, TOK_IDENT)
+        tok_set_start(toks, out, sn_off)
+        tok_set_len(toks, out, sn_len)
+        tok_set_imm(toks, out, 0)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        si = si + 2
+    }
+    ; Copy remaining tokens up to and including tok_end
+    loop si <= tok_end {
+        tok_set_type(toks, out, tok_type_at_raw(toks, si))
+        tok_set_start(toks, out, tok_str_start_at_raw(toks, si))
+        tok_set_len(toks, out, tok_str_len_at_raw(toks, si))
+        tok_set_imm(toks, out, toks[si].imm)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        si = si + 1
+    }
+    ret out
+}
+
+; Scan tokens for impl blocks and expand methods.
+; Returns new token count.
+fn expand_impl_blocks(tok_cnt: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let new_cnt = tok_cnt
+    let i = 0
+    loop i + 3 < tok_cnt {
+        let t0 = tok_type_at_raw(toks, i)
+        let is_impl = t0 == TOK_IMPL
+        if t0 == TOK_IDENT and tok_str_len_at_raw(toks, i) == 4 {
+            if streq(src, tok_str_start_at_raw(toks, i), 4, "impl") == 1 { is_impl = 1 }
+        }
+        if is_impl == 1 {
+            ; impl StructName { fn ... fn ... }
+            let sn_off = tok_str_start_at_raw(toks, i + 1)
+            let sn_len = tok_str_len_at_raw(toks, i + 1)
+            ; Find the impl block's opening and closing braces
+            let impl_lbrace = -1
+            let impl_rbrace = -1
+            let si = i + 2
+            loop si < tok_cnt {
+                if tok_type_at_raw(toks, si) == TOK_LBRACE {
+                    impl_lbrace = si
+                    si = tok_cnt
+                } else {
+                    si = si + 1
+                }
+            }
+            if impl_lbrace >= 0 {
+                let depth = 1
+                si = impl_lbrace + 1
+                loop si < tok_cnt {
+                    let st = tok_type_at_raw(toks, si)
+                    if st == TOK_LBRACE { depth = depth + 1 }
+                    if st == TOK_RBRACE { depth = depth - 1 }
+                    if depth == 0 {
+                        impl_rbrace = si
+                        si = tok_cnt
+                    } else {
+                        si = si + 1
+                    }
+                }
+            }
+            if impl_rbrace >= 0 {
+                ; Scan for fn declarations inside the impl block
+                let fi = impl_lbrace + 1
+                loop fi < impl_rbrace {
+                    let ft = tok_type_at_raw(toks, fi)
+                    let is_fn = ft == TOK_FN
+                    if ft == TOK_IDENT and tok_str_len_at_raw(toks, fi) == 2 {
+                        if streq(src, tok_str_start_at_raw(toks, fi), 2, "fn") == 1 { is_fn = 1 }
+                    }
+                    if is_fn == 1 {
+                        let mn_off = tok_str_start_at_raw(toks, fi + 1)
+                        let mn_len = tok_str_len_at_raw(toks, fi + 1)
+                        ; Find this method's closing brace
+                        let fn_end = -1
+                        let fsi = fi + 2
+                        loop fsi < impl_rbrace {
+                            if tok_type_at_raw(toks, fsi) == TOK_LBRACE {
+                                let fd = 1
+                                let fsj = fsi + 1
+                                loop fsj < impl_rbrace + 1 {
+                                    let fst = tok_type_at_raw(toks, fsj)
+                                    if fst == TOK_LBRACE { fd = fd + 1 }
+                                    if fst == TOK_RBRACE { fd = fd - 1 }
+                                    if fd == 0 {
+                                        fn_end = fsj
+                                        fsj = impl_rbrace + 1
+                                    } else {
+                                        fsj = fsj + 1
+                                    }
+                                }
+                                fsi = impl_rbrace
+                            } else {
+                                fsi = fsi + 1
+                            }
+                        }
+                        if fn_end >= 0 and g_genfn_buf[200] < 64 {
+                            ; Build mangled name
+                            let moff = g_runtime_src_len
+                            let mlen = build_method_mangle(sn_off, sn_len, mn_off, mn_len)
+                            ; Record in impl table
+                            let mc = g_genfn_buf[200]
+                            let mp = 201 + mc * 6
+                            g_genfn_buf[mp] = sn_off
+                            g_genfn_buf[mp + 1] = sn_len
+                            g_genfn_buf[mp + 2] = mn_off
+                            g_genfn_buf[mp + 3] = mn_len
+                            g_genfn_buf[mp + 4] = moff
+                            g_genfn_buf[mp + 5] = mlen
+                            g_genfn_buf[200] = mc + 1
+                            ; Copy method tokens to end of token array
+                            new_cnt = copy_method_toks(mc, fi, fn_end, new_cnt)
+                        }
+                        if fn_end >= 0 {
+                            fi = fn_end + 1
+                        } else {
+                            fi = fi + 1
+                        }
+                    } else {
+                        fi = fi + 1
+                    }
+                }
+                ; Hide original impl block tokens
+                let hi = i
+                loop hi <= impl_rbrace {
+                    tok_set_type(toks, hi, TOK_EOF)
+                    tok_set_len(toks, hi, 0)
+                    hi = hi + 1
+                }
+                i = impl_rbrace + 1
+            } else {
+                i = i + 1
+            }
+        } else {
+            i = i + 1
+        }
+    }
+    ret new_cnt
+}
+
 fn is_skip_rhs_int_tok(t: i64) -> i64 {
     ret t == 11
 }
@@ -1614,7 +1912,10 @@ fn classify_keyword_len4(src: &i8, start: i64, len: i64) {
     let enum_ok = 0
     if c0 == 101 { if c1 == 110 { if c2 == 117 { if c3 == 109 { enum_ok = 1 } } } }
     let m_enum = enum_ok * TOK_ENUM
-    let tok = m_else + m_loop + m_enum
+    let impl_ok = 0
+    if c0 == 105 { if c1 == 109 { if c2 == 112 { if c3 == 108 { impl_ok = 1 } } } }
+    let m_impl = impl_ok * TOK_IMPL
+    let tok = m_else + m_loop + m_enum + m_impl
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -5592,6 +5893,24 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
             if sid >= 1000 and is_pointer_type(cur_stype) == 0 { sid = sid - 1000 }
             let fi = lookup_field_idx_any(stab, src, sid, field_start, field_len)
             if fi == -1 {
+                ; Method call dispatch: .method(args) → StructName_method(&self, args)
+                if tok_type_at(toks, pos[0]) == TOK_LPAREN and g_genfn_buf[200] > 0 {
+                    let mi = lookup_impl_method(src, field_start, field_len)
+                    if mi >= 0 {
+                        let mp = 201 + mi * 6
+                        let mm_off = g_genfn_buf[mp + 4]
+                        let mm_len = g_genfn_buf[mp + 5]
+                        let mt = Token{}
+                        mt.str_start = mm_off
+                        mt.str_len = mm_len
+                        let save_pos = g_main_pos
+                        g_main_pos = pos[0]
+                        let mc_result = live_codegen_method_call(&mt, bb, expr_id)
+                        pos[0] = g_main_pos
+                        g_main_pos = save_pos
+                        ret mc_result
+                    }
+                }
                 ret expr_id
             }
             let off_id = emit_const(jfn, bb, TYPE_I64, g_field_byte_off[fi])
@@ -5779,6 +6098,22 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
                     st_val.operand1 = val_addr
                     emit(jfn, bb, &st_val)
                     ret rptr
+                }
+            }
+        }
+        ; Associated function: StructName.method(args) in non-live path
+        if tok_type_at(toks, pos[0] + 1) == TOK_DOT and g_genfn_buf[200] > 0 {
+            let afn_off = tok_str_start_at(toks, pos[0] + 2)
+            let afn_len = tok_str_len_at(toks, pos[0] + 2)
+            if tok_type_at(toks, pos[0] + 3) == TOK_LPAREN {
+                let afn_mi = lookup_impl_method2(src, t_start, t_len, afn_off, afn_len)
+                if afn_mi >= 0 {
+                    pos[0] = pos[0] + 3
+                    let afn_mp = 201 + afn_mi * 6
+                    tok_set_type(toks, pos[0] - 1, TOK_IDENT)
+                    tok_set_start(toks, pos[0] - 1, g_genfn_buf[afn_mp + 4])
+                    tok_set_len(toks, pos[0] - 1, g_genfn_buf[afn_mp + 5])
+                    ret codegen_call_inline(toks, pos, stab, src, jfn, bb)
                 }
             }
         }
@@ -6681,6 +7016,7 @@ fn live_codegen_primary_paren_inline(tt: i64, bb: i64) -> i64;
 fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64;
 fn live_codegen_primary_inline(bb: i64) -> i64;
 fn live_codegen_call_inline(name: &Token, bb: i64) -> i64;
+fn live_codegen_method_call(name: &Token, bb: i64, self_id: i64) -> i64;
 
 fn live_codegen_expr_inline_old(bb: i64) -> i64 {
     ret live_codegen_binop_inline(0, bb)
@@ -6745,6 +7081,22 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
         let fi_ok = 1
         if fi == -1 { fi_ok = 0 }
         if fi_ok != 1 {
+            ; Not a field — check if it's a method call: .method(args)
+            if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LPAREN and g_genfn_buf[200] > 0 {
+                let mi = lookup_impl_method(g_src_buf_ptr, field_ss, field_sl)
+                if mi >= 0 {
+                    let mp = 201 + mi * 6
+                    let mm_off = g_genfn_buf[mp + 4]
+                    let mm_len = g_genfn_buf[mp + 5]
+                    ; Build Token with mangled name for call
+                    let mt = Token{}
+                    mt.str_start = mm_off
+                    mt.str_len = mm_len
+                    ; Emit &self (address of the struct variable) as first arg
+                    ; expr_id is already the pointer/address of the struct
+                    ret live_codegen_method_call(&mt, bb, expr_id)
+                }
+            }
             ret expr_id
         }
         let off_id = emit_const(g_jfn, bb, TYPE_I64, g_field_byte_off[fi])
@@ -7014,6 +7366,22 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
             }
         }
     }
+    ; Associated function call: StructName.method(args) → StructName_method(args)
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_DOT and g_genfn_buf[200] > 0 {
+        let af_mn_off = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos + 1)
+        let af_mn_len = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos + 1)
+        if tok_type_at_raw(g_dbg_toks_init, g_main_pos + 2) == TOK_LPAREN {
+            let af_mi = lookup_impl_method2(g_src_buf_ptr, t.str_start, t.str_len, af_mn_off, af_mn_len)
+            if af_mi >= 0 {
+                g_main_pos = g_main_pos + 2
+                let af_mp = 201 + af_mi * 6
+                let af_t = Token{}
+                af_t.str_start = g_genfn_buf[af_mp + 4]
+                af_t.str_len = g_genfn_buf[af_mp + 5]
+                ret live_codegen_call_inline(&af_t, bb)
+            }
+        }
+    }
     g_main_pos = g_main_pos - 1
     let slot = lookup(g_jfn, t)
     let slot_missing = 0
@@ -7050,6 +7418,56 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
     ld.op = OP_LOAD
     ld.operand0 = slot
     ret emit(g_jfn, bb, &ld)
+}
+
+; Method call: self_id is the implicit &self, name is the mangled method name.
+; Parses (args) and emits call with self_id prepended.
+fn live_codegen_method_call(name: &Token, bb: i64, self_id: i64) -> i64 {
+    expect(TOK_LPAREN)
+    let arg_cnt = 1
+    let arg0 = self_id
+    let arg1 = -1
+    let arg2 = -1
+    let arg3 = -1
+    let arg4 = -1
+    let arg5 = -1
+    loop tok_type_at(g_dbg_toks_init, g_main_pos) != TOK_RPAREN and tok_type_at(g_dbg_toks_init, g_main_pos) != TOK_EOF {
+        let pos_before = g_main_pos
+        let a_id = live_codegen_expr_inline(bb)
+        if g_main_pos == pos_before {
+            g_main_pos = pos_before + 1
+            a_id = emit_const(g_jfn, bb, TYPE_I64, 0)
+        }
+        if arg_cnt == 1 {
+            arg1 = a_id
+        } else if arg_cnt == 2 {
+            arg2 = a_id
+        } else if arg_cnt == 3 {
+            arg3 = a_id
+        } else if arg_cnt == 4 {
+            arg4 = a_id
+        } else if arg_cnt == 5 {
+            arg5 = a_id
+        }
+        arg_cnt = arg_cnt + 1
+        if arg_cnt > 6 { report_error("method call takes at most 5 explicit arguments") }
+        if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
+            g_main_pos = g_main_pos + 1
+        }
+    }
+    expect(TOK_RPAREN)
+    let ins = Instr{}
+    ins.op        = OP_CALL
+    ins.operand0  = arg0
+    ins.operand1  = arg1
+    ins.operand2  = arg2
+    ins.operand3  = arg_cnt
+    ins.bb_target0 = arg3
+    ins.bb_target1 = arg4
+    ins.imm        = arg5
+    ins.str_start = name.str_start
+    ins.str_len   = name.str_len
+    ret emit(g_jfn, bb, &ins)
 }
 
 fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
@@ -10489,6 +10907,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     ; Generic function table
     g_genfn_buf = alloc_pages(1)
     g_genfn_buf[0] = 0
+    g_genfn_buf[200] = 0
     print("PREP_FN\n")
     prepare_top_fn_scan(toks, src_buf, src_len, fn_name_off, fn_name_len)
     print("PREP_FN_DONE\n")
@@ -10498,7 +10917,13 @@ fn main(argc: i64, argv_ptr: &i64) {
         let new_tok_cnt = expand_all_generics(g_scan_tok_cnt)
         g_dbg_tok_cnt = new_tok_cnt
         g_scan_tok_cnt = new_tok_cnt
-        ; Re-run FN_SCAN to pick up expanded functions
+        prepare_top_fn_scan(toks, src_buf, g_runtime_src_len, fn_name_off, fn_name_len)
+    }
+    ; Impl block expansion: scan, expand methods, re-scan
+    let impl_new_cnt = expand_impl_blocks(g_scan_tok_cnt)
+    if g_genfn_buf[200] > 0 {
+        g_dbg_tok_cnt = impl_new_cnt
+        g_scan_tok_cnt = impl_new_cnt
         prepare_top_fn_scan(toks, src_buf, g_runtime_src_len, fn_name_off, fn_name_len)
     }
     ; Prepare output buffers
@@ -10632,7 +11057,7 @@ fn main(argc: i64, argv_ptr: &i64) {
             parse_const_decl(toks)
         } else if top_t == TOK_ENUM {
             parse_enum_decl(toks, src_buf)
-        } else if top_t == TOK_STRUCT {
+        } else if top_t == TOK_STRUCT or (top_len == 6 and streq(src_buf, top_start, 6, "struct") == 1) {
             parse_struct_decl(toks, g_stab_ptr, src_buf)
         } else if top_t == TOK_FN or (top_len == 2 and streq(src_buf, top_start, 2, "fn") == 1) {
             let fn_tok_pos = g_main_pos
