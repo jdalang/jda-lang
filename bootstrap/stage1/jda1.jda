@@ -164,8 +164,8 @@ const PHYS_R10 = 10
 const PHYS_R11 = 11
 const PHYS_R12 = 12
 
-; Allocatable pool size: rax rcx rdx rbx rsi rdi r10 r11
-const N_ALLOC_REGS = 8
+; Allocatable pool size: rax rcx rdx rsi rdi r10 r11  (rbx excluded: not saved by emit_save_pool)
+const N_ALLOC_REGS = 7
 
 ; ============================================================
 ; 1. STRUCT DEFINITIONS
@@ -215,7 +215,7 @@ struct Instr {
 
 struct BasicBlock {
     id:        i64
-    instrs:    Instr[256]
+    instrs:    Instr[512]
     instr_cnt: i64
     label_off: i64
 }
@@ -386,6 +386,7 @@ let g_jfn_heap: &i8 = 0
 let g_jfn: &JirFunction = 0
 let g_ctx_heap: &i8 = 0
 let g_ctx: &LowerCtx = 0
+let g_pi64_char: i64 = 0
 
 ; ============================================================
 ; 2. LEXER
@@ -947,6 +948,16 @@ fn print(msg: &i8) {
     syscall(1, 1, msg, n)
 }
 
+fn print_i64_dig(v: i64) {
+    if v == 0 { ret 0 }
+    let q = v / 10
+    let digit = v - q * 10
+    print_i64_dig(q)
+    g_pi64_char = digit + 48
+    syscall(1, 1, &g_pi64_char, 1)
+    ret 0
+}
+
 fn print_i64(val: i64) {
     if val == 0 {
         print("0")
@@ -957,21 +968,7 @@ fn print_i64(val: i64) {
         print("-")
         v = 0 - v
     }
-    let buf = i8[32]
-    let pi = 30
-    buf[31] = 0
-    let psafety = 0
-    loop v > 0 {
-        let q = v / 10
-        let digit = v - q * 10
-        buf[pi] = digit + 48
-        v = q
-        pi = pi - 1
-        psafety = psafety + 1
-        if psafety > 30 { v = 0 }
-    }
-    let s = &buf[pi+1]
-    print(s)
+    print_i64_dig(v)
     ret 0
 }
 
@@ -984,29 +981,16 @@ fn eprint(msg: &i8) {
 
 fn eprint_i64(val: i64) {
     if val == 0 {
-        
+        eprint("0")
         ret 0
     }
     let v = val
     if v < 0 {
-        
+        eprint("-")
         v = 0 - v
     }
-    let buf = i8[32]
-    let i = 30
-    buf[31] = 0
-    let safety = 0
-    loop v > 0 {
-        let q = v / 10
-        let digit = v - q * 10
-        buf[i] = digit + 48
-        v = q
-        i = i - 1
-        safety = safety + 1
-        if safety > 32 { v = 0 }
-    }
-    let s = &buf[i+1]
-    
+    print_i64_dig(v)
+    ret 0
 }
 
 fn live_codegen_expr_inline(bb: i64) -> i64 {
@@ -1697,10 +1681,20 @@ fn ltw_adv() {
 }
 
 fn tok_set_type(toks: &Token, idx: i64, v: i64) {
-    print("TST0\n")
-    let zero_idx = 0
-    toks[zero_idx].type = v
-    print("TST1\n")
+    if idx == 0 { print("TST_ENTRY\n") }
+    if idx == 0 {
+        print("TST_TOKS=")
+        print_i64(toks as i64)
+        print("\n")
+        let stack_probe = 0
+        print("STACK_ADDR=")
+        print_i64(&stack_probe as i64)
+        print("\n")
+    }
+    let local_idx = idx
+    if idx == 0 { print("TST_BEFORE_STRUCT_WRITE\n") }
+    toks[local_idx].type = v
+    if idx == 0 { print("TST_AFTER_STRUCT_WRITE\n") }
 }
 fn tok_set_start(toks: &Token, idx: i64, v: i64) {
     toks[idx].str_start = v
@@ -1713,20 +1707,27 @@ fn tok_set_imm(toks: &Token, idx: i64, v: i64) {
 }
 
 fn lex_global_fast() -> i32 {
-    print("LGF0\n")
+    print("LGF_ENTRY\n")
     g_lex_src_ptr = g_src_buf_ptr
     g_lex_src_len = g_runtime_src_len
     g_lex_pos_i = 0
     g_lex_count = 0
-    print("LGF1\n")
+    print("LGF_LOOP\n")
     loop g_lex_pos_i < g_runtime_src_len {
+        if g_lex_pos_i == 0 { print("LGF_FIRST_ITER\n") }
         g_lex_cur_char = load_i8_at(g_src_buf_ptr, g_lex_pos_i)
+        if g_lex_pos_i == 0 { print("LGF_AFTER_LOAD\n") }
         g_lex_handled = 0
-        if is_space_char(g_lex_cur_char) == 1 {
+        if g_lex_pos_i == 0 { print("LGF_HANDLED0\n") }
+        let pre_is_space = is_space_char(g_lex_cur_char)
+        if g_lex_count == 0 and pre_is_space == 1 { print("LGF_IS_SPACE\n") }
+        if pre_is_space == 1 {
             g_lex_pos_i = g_lex_pos_i + 1
             g_lex_handled = 1
         }
+        if g_lex_pos_i == 0 { print("LGF_AFTER_SPACE\n") }
         if g_lex_handled == 0 and g_lex_cur_char == 59 {
+            print("LGF_SEMICOLON\n")
             g_lex_pos_i = g_lex_pos_i + 1
             loop g_lex_pos_i < g_runtime_src_len {
                 let nl = load_i8_at(g_src_buf_ptr, g_lex_pos_i)
@@ -1735,6 +1736,7 @@ fn lex_global_fast() -> i32 {
                     break
                 }
             }
+            print("LGF_SEMI_DONE\n")
             g_lex_handled = 1
         }
         if g_lex_handled == 0 and g_lex_cur_char == 34 {
@@ -1754,29 +1756,38 @@ fn lex_global_fast() -> i32 {
             g_lex_handled = 1
         }
         if g_lex_handled == 0 and is_ident_start(g_lex_cur_char) == 1 {
-            print("LGF_ID\n")
+            if g_lex_count < 1 { print("LGF_IDENT_START\n") }
             g_cmp_name_start = g_lex_pos_i
             loop g_lex_pos_i < g_lex_src_len {
                 let ic = load_i8_at(g_lex_src_ptr, g_lex_pos_i)
+                if g_lex_count < 1 and g_lex_pos_i == g_cmp_name_start { print("LGF_IDENT_LOOP1\n") }
                 if is_ident_continue(ic) == 1 {
                     g_lex_pos_i = g_lex_pos_i + 1
                 } else {
                     break
                 }
             }
-            print("LGF_ID2\n")
+            if g_lex_count < 1 { print("LGF_IDENT_DONE\n") }
             g_ltw_len = g_lex_pos_i - g_cmp_name_start
+            if g_lex_count < 1 { print("LGF_CLASSIFY\n") }
             g_ltw_val = classify_keyword(g_lex_src_ptr, g_cmp_name_start, g_ltw_len)
-            print("LGF_ID3\n")
+            if g_lex_count < 1 { print("LGF_CLASSIFIED\n") }
+            if g_lex_count < 1 {
+                print("TOKS=")
+                print_i64(g_dbg_toks_init as i64)
+                print("\n")
+                print("CNT=")
+                print_i64(g_lex_count)
+                print("\n")
+            }
             if g_lex_count >= 262143 {
                 panic("Token buffer overflow")
             }
+            if g_lex_count < 1 { print("LGF_PRE_TOK_SET\n") }
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            print("LGF_ID4\n")
+            if g_lex_count < 1 { print("LGF_POST_TOK_SET\n") }
             tok_set_start(g_dbg_toks_init, g_lex_count, g_cmp_name_start)
-            print("LGF_ID5\n")
             tok_set_len(g_dbg_toks_init, g_lex_count, g_ltw_len)
-            print("LGF_ID6\n")
             g_lex_count = g_lex_count + 1
             g_lex_handled = 1
         }
@@ -1900,6 +1911,7 @@ fn lex_global_fast() -> i32 {
             g_lex_pos_i = g_lex_pos_i + 1
         }
     }
+    print("LGF_AFTER_LOOP\n")
     tok_set_type(g_dbg_toks_init, g_lex_count, TOK_EOF)
     g_scan_tok_cnt = g_lex_count
     ret g_lex_count
@@ -3695,8 +3707,8 @@ fn emit(jfn: &JirFunction, bb: i64, ins: &Instr) -> i64 {
     let slot = jfn.blocks[safe_bb].instr_cnt
     let slot_nonneg = slot >= 0
     let slot_clamped_lo = slot_nonneg * slot
-    let slot_ok = bb_ok and slot_nonneg and slot_clamped_lo < 256
-    let safe_slot = slot_ok * slot_clamped_lo + (slot_ok == 0) * 255
+    let slot_ok = bb_ok and slot_nonneg and slot_clamped_lo < 512
+    let safe_slot = slot_ok * slot_clamped_lo + (slot_ok == 0) * 511
     copy_instr(&jfn.blocks[safe_bb].instrs[safe_slot], ins)
     jfn.blocks[safe_bb].instrs[safe_slot].dead = 0
     jfn.blocks[safe_bb].instrs[safe_slot].id = jfn.next_id
@@ -4029,7 +4041,7 @@ fn try_compile_index_field_store_inline(toks: &Token, pos: &i64, stab: &StructTa
     let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
     let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
     let target = obj_addr
-    if field_off >= 0 {
+    if field_off > 0 {
         let field_off_id = emit_const(jfn, bb, TYPE_I64, field_off)
         target = emit_binop(jfn, bb, OP_ADD, obj_addr, field_off_id)
     }
@@ -4178,7 +4190,7 @@ fn compile_ident_stmt_index_field_case(toks: &Token, pos: &i64, stab: &StructTab
     let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
     let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
     let target = obj_addr
-    if field_off >= 0 {
+    if field_off > 0 {
         let field_off_id = emit_const(jfn, bb, TYPE_I64, field_off)
         target = emit_binop(jfn, bb, OP_ADD, obj_addr, field_off_id)
     }
@@ -4190,7 +4202,8 @@ fn compile_ident_stmt_index_field_case(toks: &Token, pos: &i64, stab: &StructTab
     ret bb
 }
 
-fn compile_ident_stmt_bracket_case(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, pos_before: i64) -> i64 {
+fn compile_ident_stmt_bracket_case(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let pos_before = pos[0]
     let name_start = tok_str_start_at(toks, pos_before)
     let name_len = tok_str_len_at(toks, pos_before)
     pos[0] = pos[0] + 2
@@ -4254,7 +4267,7 @@ fn compile_ident_stmt_bracket_case(toks: &Token, pos: &i64, stab: &StructTable, 
         let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
         let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
         let target = obj_addr
-        if field_off >= 0 {
+        if field_off > 0 {
             let field_off_id = emit_const(jfn, bb, TYPE_I64, field_off)
             target = emit_binop(jfn, bb, OP_ADD, obj_addr, field_off_id)
         }
@@ -4402,7 +4415,7 @@ fn compile_expr_stmt_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, s
     }
     let t1 = tok_type_at(toks, pos[0] + 1)
     if t1 == TOK_LBRACK {
-        ret compile_ident_stmt_bracket_case(toks, pos, stab, src, jfn, bb, pos_before)
+        ret compile_ident_stmt_bracket_case(toks, pos, stab, src, jfn, bb)
     }
     if t1 == TOK_EQ {
         pos[0] = pos[0] + 2
@@ -4576,6 +4589,8 @@ fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
             emit(jfn, cur, &rins)
         } else if t == TOK_PRINT {
             cur = compile_print_inline(toks, pos, stab, src, jfn, cur)
+        } else if t == TOK_IDENT {
+            cur = compile_expr_stmt_ident_inline(toks, pos, stab, src, jfn, cur)
         } else {
             cur = compile_expr_stmt2_inline(toks, pos, stab, src, jfn, cur)
         }
@@ -6435,18 +6450,17 @@ fn load_param_slot_at(jfn: &JirFunction, idx: i64) -> i64 {
 }
 
 fn reg_pool_at(idx: i64) -> i32 {
-    let tbl = i32[8]
+    let tbl = i32[7]
     tbl[0] = PHYS_RAX
     tbl[1] = PHYS_RCX
     tbl[2] = PHYS_RDX
-    tbl[3] = PHYS_RBX
-    tbl[4] = PHYS_RSI
-    tbl[5] = PHYS_RDI
-    tbl[6] = PHYS_R10
-    tbl[7] = PHYS_R11
+    tbl[3] = PHYS_RSI
+    tbl[4] = PHYS_RDI
+    tbl[5] = PHYS_R10
+    tbl[6] = PHYS_R11
     let in_range = 1
     if idx < 0 { in_range = 0 }
-    if idx >= 8 { in_range = 0 }
+    if idx >= 7 { in_range = 0 }
     if in_range != 1 { ret PHYS_RAX }
     ret tbl[idx]
 }
@@ -7217,12 +7231,15 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if ins.op == OP_DIV { is_div = 1 }
     if is_div == 1 {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
-        let src_a = PHYS_R12
-        emit_mov_rr(out, pos, PHYS_R12, a)
         let b = get_or_load(ctx.ra, out, pos, ins.operand1)
-        emit_mov_rr(out, pos, PHYS_RAX, src_a)
+        let safe_b = b
+        if b == PHYS_RAX or b == PHYS_RDX {
+            emit_mov_rr(out, pos, PHYS_R12, b)
+            safe_b = PHYS_R12
+        }
+        emit_mov_rr(out, pos, PHYS_RAX, a)
         emit_cqo(out, pos)
-        emit_idiv_r(out, pos, b)
+        emit_idiv_r(out, pos, safe_b)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         if dst != PHYS_RAX {
             emit_mov_rr(out, pos, dst, PHYS_RAX)
@@ -8224,7 +8241,7 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         } else {
                             let t1 = tok_type_at(toks0, g_main_pos + 1)
                             if t1 == TOK_LBRACK {
-                                cur = compile_ident_stmt_bracket_case(toks0, &g_main_pos, stab, src, jfn, cur, pos_before)
+                                cur = compile_ident_stmt_bracket_case(toks0, &g_main_pos, stab, src, jfn, cur)
                             } else if t1 == TOK_EQ {
                                 g_main_pos = g_main_pos + 2
                                 let rhs_id = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
@@ -9266,20 +9283,64 @@ fn main(argc: i64, argv_ptr: &i64) {
     let toks = alloc_pages(2048) ; 8MiB
     g_dbg_toks = toks
     g_dbg_toks_init = toks
+    ; Test: print addr then write immediately (no function calls between)
+    let toks_p = toks as &i64
+    let toks_i8 = toks as &i8
+    let pre_val = load_i8_at(toks_i8, 0)
+    print("TOKS_READ_OK=")
+    print_i64(pre_val as i64)
+    print("\n")
+    print("PRE_WRITE_ADDR=")
+    print_i64(toks_p as i64)
+    print("\n")
+    toks_p[0] = 99
+    print("TOKS_ADDR=")
+    print_i64(toks as i64)
+    print("\n")
+    print("EARLY_WRITE_OK\n")
+    print("GLOBAL_WRITE_TEST\n")
+    g_lex_count = 999
+    print("GLOBAL_WRITE_OK\n")
+    print("TOKS_P_ADDR=")
+    print_i64(toks_p as i64)
+    print("\n")
+    print("TOKS_WRITE_TEST\n")
+    toks_p[0] = 99
+    print("TOKS_WRITE_OK\n")
     print("PRE_LEX\n")
+    print("SRC_LEN=")
+    print_i64(g_runtime_src_len)
+    print("\n")
+    print("SRC_BUF=")
+    print_i64(g_src_buf_ptr as i64)
+    print("\n")
     let tok_cnt = lex_main_input()
     print("POST_LEX\n")
     g_dbg_tok_cnt = g_lex_count
     g_scan_tok_cnt = g_lex_count
 
+    print("PINIT\n")
     init_large_post_lex_state()
+    print("PCONST\n")
     run_top_const_prelude(g_dbg_toks_init, g_src_buf_ptr, g_runtime_src_len)
+    print("PSTRUCT\n")
     run_top_struct_prelude(g_dbg_toks_init, g_stab_ptr, g_src_buf_ptr, g_runtime_src_len)
+    print("PFNSCAN\n")
 
     ; Pass 1: Scan for global functions
+    print("PA\n")
     let fn_name_off = alloc_pages(1)
+    print("PB=")
+    print_i64(fn_name_off as i64)
+    print("\n")
     let fn_name_len = alloc_pages(1)
+    print("PC=")
+    print_i64(fn_name_len as i64)
+    print("\n")
     let fn_code_off = alloc_pages(2) ; 1024 entries
+    print("PD=")
+    print_i64(fn_code_off as i64)
+    print("\n")
     prepare_top_fn_scan(toks, src_buf, src_len, fn_name_off, fn_name_len)
     print("M7\n")
 
@@ -9385,7 +9446,20 @@ fn main(argc: i64, argv_ptr: &i64) {
     if g_scan_tok_cnt > 0  { print("SCNT_POS\n")  }
     loop g_main_pos < g_scan_tok_cnt {
         print("ML\n")
+        print("ML_TOKS=")
+        print_i64(toks as i64)
+        print(" POS=")
+        print_i64(g_main_pos)
+        print("\n")
+        let toks_raw = toks as &i64
+        let raw0 = toks_raw[0]
+        print("RAW0=")
+        print_i64(raw0)
+        print("\n")
         let top_t = tok_type_at_raw(toks, g_main_pos)
+        print("ML_T=")
+        print_i64(top_t)
+        print("\n")
         let top_start = tok_str_start_at(toks, g_main_pos)
         let top_len = tok_str_len_at(toks, g_main_pos)
         if top_t == TOK_CONST {
@@ -9437,1502 +9511,6 @@ fn main(argc: i64, argv_ptr: &i64) {
 
             let fi = resolve_top_fn_index(src_buf, cur_name_off, cur_name_len, fn_name_off, fn_name_len)
             init_top_jfn(jfn, src_buf, src_len, g_stab_ptr)
-            let skip_codegen = 0
-            if cur_name_len == 15 {
-                if streq(src_buf, cur_name_off, 15, "lex_set_pos_ptr") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 15, "lex_handle_bang") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 16 {
-                if streq(src_buf, cur_name_off, 16, "lex_sync_pos_ptr") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 13 {
-                if streq(src_buf, cur_name_off, 13, "store_i64_at0") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 13, "lex_set_pos_i") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 13, "lex_inc_pos_i") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 12 {
-                if streq(src_buf, cur_name_off, 12, "store_i64_at") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 11 {
-                if streq(src_buf, cur_name_off, 11, "inc_i64_at0") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 17 {
-                if streq(src_buf, cur_name_off, 17, "inc_i64_at0_twice") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 16 {
-                if streq(src_buf, cur_name_off, 16, "lex_handle_minus") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 24 {
-                if streq(src_buf, cur_name_off, 24, "lex_try_space_or_comment") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 14 {
-                if streq(src_buf, cur_name_off, 14, "lex_store_tok3") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 14, "lex_store_tok1") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 14, "lex_try_string") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 11 {
-                if streq(src_buf, cur_name_off, 11, "lex_try_int") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 13 {
-                if streq(src_buf, cur_name_off, 13, "lex_try_ident") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 10 {
-                if streq(src_buf, cur_name_off, 10, "lex_try_op") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 10, "try_escape") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 10 {
-                if streq(src_buf, cur_name_off, 10, "eprint_i64") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 17 {
-                if streq(src_buf, cur_name_off, 17, "codegen_addr_expr") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 17, "regalloc_free_old") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 23 {
-                if streq(src_buf, cur_name_off, 23, "lex_small_tail_dispatch") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 9 {
-                if streq(src_buf, cur_name_off, 9, "lex_small") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 9, "parse_ret") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 11 {
-                if streq(src_buf, cur_name_off, 11, "parse_print") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 14 {
-                if streq(src_buf, cur_name_off, 14, "lex_small_fast") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 20 {
-                if streq(src_buf, cur_name_off, 20, "lex_skip_string_body") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 20, "lex_emit_ident_local") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 21 {
-                if streq(src_buf, cur_name_off, 21, "lex_mark_string_start") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 22 {
-                if streq(src_buf, cur_name_off, 22, "lex_emit_marked_string") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 24 {
-                if streq(src_buf, cur_name_off, 24, "lex_ident_advance_global") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 15 {
-                if streq(src_buf, cur_name_off, 15, "lex_global_fast") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 14 {
-                if streq(src_buf, cur_name_off, 14, "lex_main_input") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 12 {
-                if streq(src_buf, cur_name_off, 12, "emit_lex_tok") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 21 {
-                if streq(src_buf, cur_name_off, 21, "lex_skip_escaped_char") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 21, "is_top_fn_tok_runtime") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 17 {
-                if streq(src_buf, cur_name_off, 17, "lex_lid_preflight") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 23 {
-                if streq(src_buf, cur_name_off, 23, "tok_name_fields_runtime") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 23 {
-                if streq(src_buf, cur_name_off, 23, "prime_small_compile_pos") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 27 {
-                if streq(src_buf, cur_name_off, 27, "prime_compile_budget_global") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 30 {
-                if streq(src_buf, cur_name_off, 30, "try_compile_field_store_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 30, "try_compile_index_store_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 36 {
-                if streq(src_buf, cur_name_off, 36, "try_compile_index_field_store_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 16 {
-                if streq(src_buf, cur_name_off, 16, "compile_loop_pos") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 17 {
-                if streq(src_buf, cur_name_off, 17, "sync_token_counts") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 22 {
-                if streq(src_buf, cur_name_off, 22, "prime_small_scan_count") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 18 {
-                if streq(src_buf, cur_name_off, 18, "lex_handle_gt_next") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 18, "lex_handle_lt_next") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 18, "report_top_fn_scan") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 18, "compile_ret_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 18 {
-                if streq(src_buf, cur_name_off, 18, "decide_take_top_fn") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 20 {
-                if streq(src_buf, cur_name_off, 20, "find_matching_rbrace") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 22 {
-                if streq(src_buf, cur_name_off, 22, "find_fn_lbrace_from_fn") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 16 {
-                if streq(src_buf, cur_name_off, 16, "lookup_slot_name") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 13 {
-                if streq(src_buf, cur_name_off, 13, "lookup_struct") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 13, "lookup_field") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 16 {
-                if streq(src_buf, cur_name_off, 16, "lookup_struct_kw") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 16, "lookup_field_off") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 15 {
-                if streq(src_buf, cur_name_off, 15, "codegen_syscall") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 10 {
-                if streq(src_buf, cur_name_off, 10, "span_eq_kw") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 10, "codegen_fn") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 10, "codegen_if") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 4 {
-                if streq(src_buf, cur_name_off, 4, "bind") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 6 {
-                if streq(src_buf, cur_name_off, 6, "lookup") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 9 {
-                if streq(src_buf, cur_name_off, 9, "bind_name") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 10 {
-                if streq(src_buf, cur_name_off, 10, "alloc_slot") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 10, "lookup_idx") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 12 {
-                if streq(src_buf, cur_name_off, 12, "lookup_stype") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 12, "lookup_const") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 12, "dump_globals") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 12, "codegen_stmt") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 12, "codegen_expr") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 12, "codegen_loop") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 13 {
-                if streq(src_buf, cur_name_off, 13, "lookup_struct") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 13, "lookup_top_fn") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 13, "codegen_block") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 14 {
-                if streq(src_buf, cur_name_off, 14, "lookup_global2") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 15 {
-                if streq(src_buf, cur_name_off, 15, "lookup_idx_name") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 17 {
-                if streq(src_buf, cur_name_off, 17, "lookup_stype_name") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 18 {
-                if streq(src_buf, cur_name_off, 18, "lookup_ident_stype") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 19 {
-                if streq(src_buf, cur_name_off, 19, "lookup_field_idx_kw") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 20 {
-                if streq(src_buf, cur_name_off, 20, "lookup_field_off_any") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 20, "lookup_field_idx_any") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 21 {
-                if streq(src_buf, cur_name_off, 21, "fold_add_chain_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 21, "lower_instr_callalloc") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 18 {
-                if streq(src_buf, cur_name_off, 18, "codegen_mul_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 18, "codegen_arg_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 19 {
-                if streq(src_buf, cur_name_off, 19, "codegen_call_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 20 {
-                if streq(src_buf, cur_name_off, 20, "codegen_unary_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 22 {
-                if streq(src_buf, cur_name_off, 22, "codegen_postfix_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 22, "codegen_primary_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 22, "codegen_syscall_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 28 {
-                if streq(src_buf, cur_name_off, 28, "codegen_primary_ident_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 25 {
-                if streq(src_buf, cur_name_off, 25, "compile_ident_stmt_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 29 {
-                if streq(src_buf, cur_name_off, 29, "compile_ident_stmt_field_case") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 35 {
-                if streq(src_buf, cur_name_off, 35, "compile_ident_stmt_index_field_case") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 30 {
-                if streq(src_buf, cur_name_off, 30, "compile_ident_stmt_assign_case") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 30 {
-                if streq(src_buf, cur_name_off, 30, "compile_expr_stmt_ident_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 25 {
-                if streq(src_buf, cur_name_off, 25, "compile_expr_stmt2_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 20 {
-                if streq(src_buf, cur_name_off, 20, "skip_asm_stmt_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 23 {
-                if streq(src_buf, cur_name_off, 23, "compile_asm_argv_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 10 {
-                if streq(src_buf, cur_name_off, 10, "is_cmp_tok") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 11 {
-                if streq(src_buf, cur_name_off, 11, "is_term_tok") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 17 {
-                if streq(src_buf, cur_name_off, 17, "compile_if_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 20 {
-                if streq(src_buf, cur_name_off, 20, "compile_stmts_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 19 {
-                if streq(src_buf, cur_name_off, 19, "find_fn_end_from_fn") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 14 {
-                if streq(src_buf, cur_name_off, 14, "is_main_fn_src") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 13 {
-                if streq(src_buf, cur_name_off, 13, "lookup_global") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 13, "parse_postfix") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 19 {
-                if streq(src_buf, cur_name_off, 19, "lookup_global2_from") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 24 {
-                if streq(src_buf, cur_name_off, 24, "should_skip_old_fn_short") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 24, "legacy_compile_if_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 26 {
-                if streq(src_buf, cur_name_off, 26, "parse_expr_stmt_ident_fast") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 25, "should_skip_old_fn_long_a") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 25, "should_skip_old_fn_long_b") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 26, "legacy_compile_loop_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 31 {
-                if streq(src_buf, cur_name_off, 31, "parse_expr_stmt_ident_fast_body") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 35 {
-                if streq(src_buf, cur_name_off, 35, "parse_expr_stmt_tail_field_dispatch") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 38 {
-                if streq(src_buf, cur_name_off, 38, "parse_expr_stmt_tail_field_dispatch_hi") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 39 {
-                if streq(src_buf, cur_name_off, 39, "parse_expr_stmt_tail_field_dispatch_hi3") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 27 {
-                if streq(src_buf, cur_name_off, 27, "parse_expr_stmt_tail_assign") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 27, "live_codegen_primary_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 27, "legacy_compile_stmts_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 23 {
-                if streq(src_buf, cur_name_off, 23, "should_skip_old_fn_long") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 18 {
-                if streq(src_buf, cur_name_off, 18, "should_skip_old_fn") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 25 {
-                if streq(src_buf, cur_name_off, 25, "should_force_small_top_fn") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 14 {
-                if streq(src_buf, cur_name_off, 14, "lex_small_stub") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 22 {
-                if streq(src_buf, cur_name_off, 22, "emit_small_stub_tokens") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 23 {
-                if streq(src_buf, cur_name_off, 23, "codegen_add_inline_tail") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-                if streq(src_buf, cur_name_off, 23, "codegen_add_inline_step") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if cur_name_len == 18 {
-                if streq(src_buf, cur_name_off, 18, "codegen_add_inline") == 1 {
-                    skip_codegen = 0
-                    g_main_pos = fn_rbrace_scan + 1
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
-                        g_main_pos = g_main_pos + 1
-                    }
-                }
-            }
-            if skip_codegen == 0 {
                 ; Skip 'fn name'
                 g_main_pos = fn_tok_pos + 2
                 expect(toks, TOK_LPAREN)
@@ -10999,6 +9577,9 @@ fn main(argc: i64, argv_ptr: &i64) {
                 print("\n")
                 print("M8\n")
                 live_compile_block(toks, g_stab_ptr, src_buf, jfn, cb)
+                print("BLOCKS=")
+                print_i64(jfn.block_cnt)
+                print("\n")
                 if cur_name_len == 15 {
                     if streq(src_buf, cur_name_off, 15, "lex_handle_bang") == 1 {
                         if jfn.block_cnt > 64 { panic("lex_handle_bang block blowup") }
@@ -11050,7 +9631,6 @@ fn main(argc: i64, argv_ptr: &i64) {
 
                 ; GURANTEED ADVANCE
                 g_main_pos = fn_rbrace_scan + 1
-            }
         } else if top_t == TOK_LET or (top_len == 3 and streq(src_buf, top_start, 3, "let") == 1) {
             skip_top_level_let(toks, g_stab_ptr, src_buf)
         } else {
@@ -11122,8 +9702,13 @@ fn main(argc: i64, argv_ptr: &i64) {
         ci_f = ci_f + 1
     }
     print("MD\n")
-
+    print("out_path=")
+    print(out_path)
+    print("\n")
     let out_fd = syscall(2, out_path, 577, 493)
+    print("out_fd=")
+    print_i64(out_fd)
+    print("\n")
     if out_fd < 0 { panic("open output failed") }
     g_emit_glob_buf = glob_buf
     g_emit_glob_len = g_glob_total_sz
