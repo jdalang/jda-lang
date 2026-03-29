@@ -173,6 +173,7 @@ const OP_GET_TID      = 50
 const OP_EPOLL_CREATE = 51
 const OP_EPOLL_CTL    = 52
 const OP_EPOLL_WAIT   = 53
+const OP_DEADLOCK_CHK = 54
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -6779,6 +6780,15 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.bb_target0 = arg3
         ret emit(jfn, bb, &ins)
     }
+    ; Deadlock detection (M8)
+    if name_len == 14 and streq(src, name_start, 14, "deadlock_check") == 1 {
+        let ins = Instr{}
+        ins.op = OP_DEADLOCK_CHK
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ret emit(jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8222,6 +8232,15 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.bb_target0 = arg3
         ret emit(g_jfn, bb, &ins)
     }
+    ; Deadlock detection (M8)
+    if name.str_len == 14 and streq(g_src_buf_ptr, name.str_start, 14, "deadlock_check") == 1 {
+        let ins = Instr{}
+        ins.op = OP_DEADLOCK_CHK
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ret emit(g_jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8525,7 +8544,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
-            if op == OP_ATOMIC_CAS {
+            if op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
                 if o2 >= 0 { used[o2] = 1 }
@@ -8567,7 +8586,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ATOMIC_STORE { used[id] = 1 }
             if op == OP_ATOMIC_CAS   { used[id] = 1 }
             if op == OP_ATOMIC_ADD   { used[id] = 1 }
-            if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE or op == OP_GET_TID or op == OP_EPOLL_CREATE or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT { used[id] = 1 }
+            if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE or op == OP_GET_TID or op == OP_EPOLL_CREATE or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT or op == OP_DEADLOCK_CHK { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -11473,6 +11492,156 @@ fn lower_instr_mt(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 0
 }
 
+; ── M8: deadlock detection ──────────────────────────────────────────
+fn lower_instr_deadlock(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    if ins.op != OP_DEADLOCK_CHK { ret 0 }
+
+    ; deadlock_check(ready_cnt, blocked_cnt, io_pending)
+    ; If ready==0 AND blocked>0 AND io_pending==0 → print "DEADLOCK\n", exit(1)
+    ; Otherwise return 0
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    consume_use(ctx, ins.operand0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    consume_use(ctx, ins.operand1)
+    let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+    emit_push_r(out, pos, r2)
+    consume_use(ctx, ins.operand2)
+
+    ; Pop: io_pending→RDX, blocked→RSI, ready→RDI
+    emit_pop_r(out, pos, PHYS_RDX)
+    emit_pop_r(out, pos, PHYS_RSI)
+    emit_pop_r(out, pos, PHYS_RDI)
+
+    ; Check ready == 0
+    ; TEST RDI, RDI
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x85)
+    emit_byte(out, pos, 0xFF)
+    ; JNZ .no_deadlock
+    emit_byte(out, pos, 0x75)
+    let no_dl_patch1 = pos[0]
+    emit_byte(out, pos, 0x00)
+
+    ; Check blocked > 0
+    ; TEST RSI, RSI
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x85)
+    emit_byte(out, pos, 0xF6)
+    ; JZ .no_deadlock
+    emit_byte(out, pos, 0x74)
+    let no_dl_patch2 = pos[0]
+    emit_byte(out, pos, 0x00)
+
+    ; Check io_pending == 0
+    ; TEST RDX, RDX
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x85)
+    emit_byte(out, pos, 0xD2)
+    ; JNZ .no_deadlock
+    emit_byte(out, pos, 0x75)
+    let no_dl_patch3 = pos[0]
+    emit_byte(out, pos, 0x00)
+
+    ; === DEADLOCK DETECTED ===
+    ; Write "DEADLOCK\n" to stdout (fd=1)
+    ; Store string on stack: "DEADLOCK\n" = 44 45 41 44 4C 4F 43 4B 0A
+    ; SUB RSP, 16 (align)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xEC)
+    emit_byte(out, pos, 16)
+    ; MOV DWORD [RSP], 0x44414544  "DEAD"
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x04)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x45)
+    emit_byte(out, pos, 0x41)
+    emit_byte(out, pos, 0x44)
+    ; MOV DWORD [RSP+4], 0x0A4B434F  "LOCK\n" (little-endian: 4F=O, 43=C, 4B=K, 0A=\n)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 4)
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x4F)
+    emit_byte(out, pos, 0x43)
+    emit_byte(out, pos, 0x4B)
+    ; MOV BYTE [RSP+8], 0x0A  '\n'
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 8)
+    emit_byte(out, pos, 0x0A)
+
+    ; write(1, rsp, 9) — syscall 1
+    ; RDI = 1 (stdout)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0xC7)
+    emit_i32_le(out, pos, 1)
+    ; RSI = RSP (buffer)
+    emit_mov_rr(out, pos, PHYS_RSI, PHYS_RSP)
+    ; RDX = 9 (length)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0xC2)
+    emit_i32_le(out, pos, 9)
+    ; RAX = 1 (SYS_write)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0xC0)
+    emit_i32_le(out, pos, 1)
+    ; syscall
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x05)
+
+    ; exit(1) — syscall 60
+    ; RDI = 1
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0xC7)
+    emit_i32_le(out, pos, 1)
+    ; RAX = 60 (SYS_exit_group = 231 actually, but 60 = SYS_exit)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0xC0)
+    emit_i32_le(out, pos, 231)
+    ; syscall
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x05)
+
+    ; .no_deadlock:
+    let no_dl_target = pos[0]
+    let nd1 = no_dl_target - no_dl_patch1
+    poke_byte(out, no_dl_patch1, nd1 - 1)
+    let nd2 = no_dl_target - no_dl_patch2
+    poke_byte(out, no_dl_patch2, nd2 - 1)
+    let nd3 = no_dl_target - no_dl_patch3
+    poke_byte(out, no_dl_patch3, nd3 - 1)
+
+    ; Return 0 (no deadlock)
+    ; XOR R12D, R12D
+    emit_byte(out, pos, 0x45)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xE4)
+
+    emit_restore_pool(ctx.ra, out, pos)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    let sp = ctx.ra.sp_top + 8
+    ra_set_sp_top(&ctx.ra, sp)
+    ra_set_spill(&ctx.ra, ins.id, sp)
+    emit_store_spill(out, pos, sp, dst)
+    emit_pop_r(out, pos, PHYS_R12)
+    ret 1
+}
+
 ; ── M7: epoll builtins ──────────────────────────────────────────────
 fn lower_instr_epoll(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let op = ins.op
@@ -11722,6 +11891,11 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if lower_instr_epoll(ins, ctx, out, pos) == 1 {
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
+        ret ok(0)
+    }
+
+    if lower_instr_deadlock(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
@@ -13004,7 +13178,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
-    if op == OP_ATOMIC_CAS {
+    if op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
         mark_use(ctx, o2)
