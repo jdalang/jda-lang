@@ -380,7 +380,9 @@ let g_last_fn_code_off: i64 = 0
 let g_cur_fn_ret_type: i64 = 0
 ; Enum table — packed flat buffer: [name_off, name_len, var_cnt, v0_off, v0_len, v0_tag, ...]
 let g_enum_buf: &i64 = 0
-let g_enum_buf_len: i64 = 0
+; Generic function table: packed buffer, 6 i64 per entry
+; [0]=fn_name_off [1]=fn_name_len [2]=tparam_off [3]=tparam_len [4]=tok_start [5]=tok_end
+let g_genfn_buf: &i64 = 0
 let g_entry_main_idx: i64 = -1
 let g_main_str_dbg: i64 = 0
 let g_stab_ptr: &StructTable = 0
@@ -755,7 +757,7 @@ fn parse_enum_decl(toks: &Token, src: &i8) {
     let ename_len = tok_str_len_at(toks, g_main_pos)
     g_main_pos = g_main_pos + 1
     expect(TOK_LBRACE)
-    let p = g_enum_buf_len
+    let p = g_enum_buf[0]
     g_enum_buf[p] = ename_start
     g_enum_buf[p + 1] = ename_len
     let cnt_slot = p + 2
@@ -772,14 +774,14 @@ fn parse_enum_decl(toks: &Token, src: &i8) {
         tag = tag + 1
     }
     g_enum_buf[cnt_slot] = tag
-    g_enum_buf_len = p
+    g_enum_buf[0] = p
     expect(TOK_RBRACE)
 }
 
 ; Look up EnumName.Variant → tag value, or -1 if not found
 fn lookup_enum_dot(src: &i8, ename_start: i64, ename_len: i64, vname_start: i64, vname_len: i64) -> i64 {
-    let p = 0
-    loop p < g_enum_buf_len {
+    let p = 1
+    loop p < g_enum_buf[0] {
         let en_off = g_enum_buf[p]
         let en_len = g_enum_buf[p + 1]
         let vcnt = g_enum_buf[p + 2]
@@ -799,6 +801,241 @@ fn lookup_enum_dot(src: &i8, ename_start: i64, ename_len: i64, vname_start: i64,
         p = p + 3 + vcnt * 3
     }
     ret -1
+}
+
+; Scan tokens for generic function declarations: fn name<T>(
+; Records them in g_genfn_buf and returns count of generics found.
+fn scan_generic_fns(toks: &Token, src: &i8, tok_cnt: i64) {
+    let i = 0
+    loop i + 5 < tok_cnt {
+        let t0 = tok_type_at_raw(toks, i)
+        let is_fn = t0 == TOK_FN
+        if t0 == TOK_IDENT and tok_str_len_at_raw(toks, i) == 2 {
+            if streq(src, tok_str_start_at_raw(toks, i), 2, "fn") == 1 { is_fn = 1 }
+        }
+        if is_fn == 1 {
+            let t1 = tok_type_at_raw(toks, i + 1)
+            let t2 = tok_type_at_raw(toks, i + 2)
+            let t3 = tok_type_at_raw(toks, i + 3)
+            let t4 = tok_type_at_raw(toks, i + 4)
+            if t1 == TOK_IDENT and t2 == TOK_LT and t3 == TOK_IDENT and t4 == TOK_GT {
+                ; Found generic fn: fn name<T>(
+                let fn_name_off = tok_str_start_at_raw(toks, i + 1)
+                let fn_name_len = tok_str_len_at_raw(toks, i + 1)
+                let tp_off = tok_str_start_at_raw(toks, i + 3)
+                let tp_len = tok_str_len_at_raw(toks, i + 3)
+                ; Find matching closing brace
+                let tok_end = -1
+                let si = i + 5
+                loop si < tok_cnt {
+                    if tok_type_at_raw(toks, si) == TOK_LBRACE {
+                        let depth = 0
+                        let sj = si
+                        loop sj < tok_cnt {
+                            let st = tok_type_at_raw(toks, sj)
+                            depth = depth + (st == TOK_LBRACE) - (st == TOK_RBRACE)
+                            if st == TOK_RBRACE and depth == 0 {
+                                tok_end = sj
+                                sj = tok_cnt
+                            } else {
+                                sj = sj + 1
+                            }
+                        }
+                        si = tok_cnt
+                    } else {
+                        si = si + 1
+                    }
+                }
+                if tok_end > 0 and g_genfn_buf[0] < 32 {
+                    let p = g_genfn_buf[0] * 6 + 1
+                    g_genfn_buf[p] = fn_name_off
+                    g_genfn_buf[p + 1] = fn_name_len
+                    g_genfn_buf[p + 2] = tp_off
+                    g_genfn_buf[p + 3] = tp_len
+                    g_genfn_buf[p + 4] = i
+                    g_genfn_buf[p + 5] = tok_end
+                    g_genfn_buf[0] = g_genfn_buf[0] + 1
+                }
+                i = tok_end + 1
+            } else {
+                i = i + 1
+            }
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+; Look up generic fn by name, returns index or -1
+fn lookup_genfn(src: &i8, name_off: i64, name_len: i64) -> i64 {
+    let gi = 0
+    loop gi < g_genfn_buf[0] {
+        let p = gi * 6 + 1
+        if g_genfn_buf[p + 1] == name_len {
+            if str_match(src, g_genfn_buf[p], name_off, name_len) == 1 {
+                ret gi
+            }
+        }
+        gi = gi + 1
+    }
+    ret -1
+}
+
+; Write type suffix bytes into src buffer at pos. Returns suffix length.
+fn write_type_suffix(src: &i8, pos: i64, type_tok: i64) -> i64 {
+    if type_tok == TOK_I64 {
+        poke_byte(src, pos, 105)
+        poke_byte(src, pos + 1, 54)
+        poke_byte(src, pos + 2, 52)
+        ret 3
+    }
+    if type_tok == TOK_I32 {
+        poke_byte(src, pos, 105)
+        poke_byte(src, pos + 1, 51)
+        poke_byte(src, pos + 2, 50)
+        ret 3
+    }
+    if type_tok == TOK_I8 {
+        poke_byte(src, pos, 105)
+        poke_byte(src, pos + 1, 56)
+        ret 2
+    }
+    ret 0
+}
+
+; Build mangled name "name_type" in source buffer. Returns mangled name length.
+; Writes at g_runtime_src_len, updates g_runtime_src_len after.
+fn build_mangle_name(gi: i64, type_tok: i64) -> i64 {
+    let src = g_src_buf_ptr
+    let p = gi * 6 + 1
+    let fn_off = g_genfn_buf[p]
+    let fn_len = g_genfn_buf[p + 1]
+    let moff = g_runtime_src_len
+    let mi = 0
+    loop mi < fn_len {
+        poke_byte(src, moff + mi, load_i8_at(src, fn_off + mi))
+        mi = mi + 1
+    }
+    poke_byte(src, moff + fn_len, 95)
+    let slen = write_type_suffix(src, moff + fn_len + 1, type_tok)
+    let mlen = fn_len + 1 + slen
+    ; Write "\nfn name " for FN_SCAN
+    let woff = moff + mlen
+    poke_byte(src, woff, 10)
+    poke_byte(src, woff + 1, 102)
+    poke_byte(src, woff + 2, 110)
+    poke_byte(src, woff + 3, 32)
+    mi = 0
+    loop mi < mlen {
+        poke_byte(src, woff + 4 + mi, load_i8_at(src, moff + mi))
+        mi = mi + 1
+    }
+    poke_byte(src, woff + 4 + mlen, 32)
+    g_runtime_src_len = woff + 4 + mlen + 1
+    ret mlen
+}
+
+; Copy tokens from generic fn body to output, substituting T with concrete type.
+; gi=generic index, type_tok=concrete type, out=output start index
+; moff=mangled name offset in src, mlen=mangled name length
+; Returns new output index.
+fn copy_generic_toks(gi: i64, type_tok: i64, out: i64, moff: i64, mlen: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let p = gi * 6 + 1
+    let tp_off = g_genfn_buf[p + 2]
+    let tp_len = g_genfn_buf[p + 3]
+    let tok_start = g_genfn_buf[p + 4]
+    let tok_end = g_genfn_buf[p + 5]
+    ; Emit fn token as IDENT with "fn" text so main loop fallback picks it up
+    ; (TOK_FN==0 causes comparison issues, so use IDENT + streq fallback)
+    ; The "fn" text is at moff+mlen+1 in the source buffer (from build_mangle_name)
+    let fn_txt_off = moff + mlen + 1
+    tok_set_type(toks, out, TOK_IDENT)
+    tok_set_start(toks, out, fn_txt_off)
+    tok_set_len(toks, out, 2)
+    tok_set_imm(toks, out, 0)
+    tok_set_line(toks, out, 0)
+    out = out + 1
+    ; Emit mangled name token
+    tok_set_type(toks, out, TOK_IDENT)
+    tok_set_start(toks, out, moff)
+    tok_set_len(toks, out, mlen)
+    tok_set_imm(toks, out, 0)
+    tok_set_line(toks, out, 0)
+    out = out + 1
+    ; Skip <T> (tok_start+2,+3,+4), copy rest
+    let si = tok_start + 5
+    loop si <= tok_end {
+        let tt = tok_type_at_raw(toks, si)
+        let ss = tok_str_start_at_raw(toks, si)
+        let sl = tok_str_len_at_raw(toks, si)
+        let is_tp = 0
+        if tt == TOK_IDENT and sl == tp_len {
+            if str_match(src, ss, tp_off, tp_len) == 1 { is_tp = 1 }
+        }
+        if is_tp == 1 {
+            tok_set_type(toks, out, type_tok)
+        } else {
+            tok_set_type(toks, out, tt)
+        }
+        tok_set_start(toks, out, ss)
+        tok_set_len(toks, out, sl)
+        tok_set_imm(toks, out, toks[si].imm)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        si = si + 1
+    }
+    ret out
+}
+
+; Expand a generic function instantiation. Returns new tok_cnt.
+fn expand_generic(gi: i64, type_tok: i64, tok_cnt: i64) -> i64 {
+    let moff = g_runtime_src_len
+    let mlen = build_mangle_name(gi, type_tok)
+    ret copy_generic_toks(gi, type_tok, tok_cnt, moff, mlen)
+}
+
+; Scan for generic call sites and expand all needed instantiations.
+; Also hides original generic fn declarations by changing TOK_FN to TOK_EOF.
+fn expand_all_generics(tok_cnt: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let new_cnt = tok_cnt
+    ; First pass: find all instantiation sites
+    let i = 0
+    loop i + 4 < tok_cnt {
+        let t0 = tok_type_at_raw(toks, i)
+        if t0 == TOK_IDENT {
+            let t1 = tok_type_at_raw(toks, i + 1)
+            let t2 = tok_type_at_raw(toks, i + 2)
+            let t3 = tok_type_at_raw(toks, i + 3)
+            if t1 == TOK_LT and (t2 == TOK_I64 or t2 == TOK_I32 or t2 == TOK_I8) and t3 == TOK_GT {
+                let call_name_off = tok_str_start_at_raw(toks, i)
+                let call_name_len = tok_str_len_at_raw(toks, i)
+                let gfi = lookup_genfn(src, call_name_off, call_name_len)
+                if gfi >= 0 {
+                    new_cnt = expand_generic(gfi, t2, new_cnt)
+                }
+            }
+        }
+        i = i + 1
+    }
+    ; Hide original generic fn declarations (set all tokens to TOK_EOF)
+    let gi = 0
+    loop gi < g_genfn_buf[0] {
+        let gp = gi * 6 + 1
+        let gts = g_genfn_buf[gp + 4]
+        let gte = g_genfn_buf[gp + 5]
+        let gti = gts
+        loop gti <= gte {
+            tok_set_type(toks, gti, TOK_EOF)
+            tok_set_len(toks, gti, 0)
+            gti = gti + 1
+        }
+        gi = gi + 1
+    }
+    ret new_cnt
 }
 
 fn is_skip_rhs_int_tok(t: i64) -> i64 {
@@ -906,7 +1143,7 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     expect(TOK_EQ)
     if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
-    if gidx >= 110 { panic("Too many globals") }
+    if gidx >= 120 { panic("Too many globals") }
     g_glob_name_off[gidx] = name_start
     g_glob_name_len[gidx] = name_len
     g_glob_off[gidx] = g_glob_total_sz
@@ -5450,6 +5687,37 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
     if tok_type_at(toks, pos[0]) == TOK_LPAREN {
         ret codegen_call_inline(toks, pos, stab, src, jfn, bb)
     }
+    ; Generic call: name<type>(args) → skip <type>, call mangled name
+    if tok_type_at(toks, pos[0]) == TOK_LT and g_genfn_buf[0] > 0 {
+        let gc2 = tok_type_at(toks, pos[0] + 1)
+        let gc3 = tok_type_at(toks, pos[0] + 2)
+        if (gc2 == TOK_I64 or gc2 == TOK_I32 or gc2 == TOK_I8) and gc3 == TOK_GT {
+            let gc_gi = lookup_genfn(src, t_start, t_len)
+            if gc_gi >= 0 {
+                pos[0] = pos[0] + 3
+                ; Patch the > token (pos[0]-1) to have the mangled name for codegen_call_inline
+                let gp = gc_gi * 6 + 1
+                let gfn_off = g_genfn_buf[gp]
+                let gfn_len = g_genfn_buf[gp + 1]
+                ; Find mangled fn in fn name table
+                let gmfi = 0
+                loop gmfi < g_top_fn_cnt {
+                    let gm_off = load_i64_at(g_fn_name_off_tbl, gmfi)
+                    let gm_len = load_i64_at(g_fn_name_len_tbl, gmfi)
+                    if gm_len > gfn_len + 1 and str_match(src, gm_off, gfn_off, gfn_len) == 1 {
+                        if load_i8_at(src, gm_off + gfn_len) == 95 {
+                            tok_set_type(toks, pos[0] - 1, TOK_IDENT)
+                            tok_set_start(toks, pos[0] - 1, gm_off)
+                            tok_set_len(toks, pos[0] - 1, gm_len)
+                            gmfi = g_top_fn_cnt
+                        }
+                    }
+                    gmfi = gmfi + 1
+                }
+                ret codegen_call_inline(toks, pos, stab, src, jfn, bb)
+            }
+        }
+    }
     pos[0] = pos[0] - 1
     let slot = lookup_slot_name(jfn, t_start, t_len)
     if slot == -1 {
@@ -6660,6 +6928,45 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LPAREN { is_call = 1 }
     if is_call == 1 {
         ret live_codegen_call_inline(t, bb)
+    }
+    ; Generic call: name<type>(args) → resolve to mangled name
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LT and g_genfn_buf[0] > 0 {
+        let gc_t2 = tok_type_at_raw(g_dbg_toks_init, g_main_pos + 1)
+        let gc_t3 = tok_type_at_raw(g_dbg_toks_init, g_main_pos + 2)
+        if (gc_t2 == TOK_I64 or gc_t2 == TOK_I32 or gc_t2 == TOK_I8) and gc_t3 == TOK_GT {
+            let gc_gi = lookup_genfn(g_src_buf_ptr, t.str_start, t.str_len)
+            if gc_gi >= 0 {
+                ; Skip < type >
+                g_main_pos = g_main_pos + 3
+                ; Build mangled name to look up the expanded function
+                let gp = gc_gi * 6 + 1
+                let gfn_off = g_genfn_buf[gp]
+                let gfn_len = g_genfn_buf[gp + 1]
+                ; The mangled name was written at end of source buffer by expand_generic
+                ; Find it by scanning function name table
+                let mangled_t = Token{}
+                mangled_t.str_start = t.str_start
+                mangled_t.str_len = t.str_len
+                ; Search fn name table for the mangled version (name_type)
+                let mfi = 0
+                loop mfi < g_top_fn_cnt {
+                    let mf_off = load_i64_at(g_fn_name_off_tbl, mfi)
+                    let mf_len = load_i64_at(g_fn_name_len_tbl, mfi)
+                    ; Mangled name starts with original name + "_"
+                    if mf_len > gfn_len + 1 {
+                        if str_match(g_src_buf_ptr, mf_off, gfn_off, gfn_len) == 1 {
+                            if load_i8_at(g_src_buf_ptr, mf_off + gfn_len) == 95 {
+                                mangled_t.str_start = mf_off
+                                mangled_t.str_len = mf_len
+                                mfi = g_top_fn_cnt
+                            }
+                        }
+                    }
+                    mfi = mfi + 1
+                }
+                ret live_codegen_call_inline(&mangled_t, bb)
+            }
+        }
     }
     ; Enum variant: EnumName.Variant → integer tag
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_DOT and g_enum_buf != 0 {
@@ -10178,10 +10485,22 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_fn_param_cnt_tbl = fn_param_cnts
     ; Enum table (packed flat buffer)
     g_enum_buf = alloc_pages(1)
-    g_enum_buf_len = 0
+    g_enum_buf[0] = 1
+    ; Generic function table
+    g_genfn_buf = alloc_pages(1)
+    g_genfn_buf[0] = 0
     print("PREP_FN\n")
     prepare_top_fn_scan(toks, src_buf, src_len, fn_name_off, fn_name_len)
     print("PREP_FN_DONE\n")
+    ; Generic function expansion: scan, expand, re-scan
+    scan_generic_fns(toks, src_buf, g_scan_tok_cnt)
+    if g_genfn_buf[0] > 0 {
+        let new_tok_cnt = expand_all_generics(g_scan_tok_cnt)
+        g_dbg_tok_cnt = new_tok_cnt
+        g_scan_tok_cnt = new_tok_cnt
+        ; Re-run FN_SCAN to pick up expanded functions
+        prepare_top_fn_scan(toks, src_buf, g_runtime_src_len, fn_name_off, fn_name_len)
+    }
     ; Prepare output buffers
     let code_buf = alloc_pages(4096) ; 16MB
     let code_len = 0
@@ -10306,7 +10625,6 @@ fn main(argc: i64, argv_ptr: &i64) {
     }
     print("Z5\n")
     loop g_main_pos < g_scan_tok_cnt {
-        print("T")
         let top_t = tok_type_at_raw(toks, g_main_pos)
         let top_start = tok_str_start_at(toks, g_main_pos)
         let top_len = tok_str_len_at(toks, g_main_pos)
