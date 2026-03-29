@@ -74,6 +74,7 @@ const TOK_I32     = 46
 const TOK_I8      = 47
 const TOK_F64     = 48
 const TOK_ENUM    = 49
+const TOK_QUESTION= 50
 
 ; AST node types
 const NODE_FN     = 0
@@ -1295,6 +1296,7 @@ fn char_to_tok_mid(c: i8) {
     if c == 60 { ret TOK_LT }
     if c == 61 { ret TOK_EQ }
     if c == 62 { ret TOK_GT }
+    if c == 63 { ret TOK_QUESTION }
     if c == 91 { ret TOK_LBRACK }
     if c == 93 { ret TOK_RBRACK }
     ret 0
@@ -5476,6 +5478,42 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
                 ret emit_const(jfn, bb, TYPE_I64, ev_tag)
             }
         }
+        ; Result.Ok(val) / Result.Err(val) → allocate 16-byte struct {tag, val}
+        if t_len == 6 and streq(src, t_start, 6, "Result") == 1 {
+            if tok_type_at(toks, pos[0] + 1) == TOK_DOT {
+                let rv_start = tok_str_start_at(toks, pos[0] + 2)
+                let rv_len = tok_str_len_at(toks, pos[0] + 2)
+                let res_tag = -1
+                if rv_len == 2 and streq(src, rv_start, 2, "Ok") == 1 { res_tag = 0 }
+                if rv_len == 3 and streq(src, rv_start, 3, "Err") == 1 { res_tag = 1 }
+                if res_tag >= 0 and tok_type_at(toks, pos[0] + 3) == TOK_LPAREN {
+                    pos[0] = pos[0] + 4
+                    let res_val = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+                    if tok_type_at(toks, pos[0]) == TOK_RPAREN { pos[0] = pos[0] + 1 }
+                    let sz16 = emit_const(jfn, bb, TYPE_I64, 16)
+                    let alloc_i = Instr{}
+                    alloc_i.op = OP_ALLOC
+                    alloc_i.operand0 = sz16
+                    let rptr = emit(jfn, bb, &alloc_i)
+                    let tag_id = emit_const(jfn, bb, TYPE_I64, res_tag)
+                    let st_tag = Instr{}
+                    st_tag.op = OP_STORE_MEM
+                    st_tag.itype = TYPE_I64
+                    st_tag.operand0 = tag_id
+                    st_tag.operand1 = rptr
+                    emit(jfn, bb, &st_tag)
+                    let off8 = emit_const(jfn, bb, TYPE_I64, 8)
+                    let val_addr = emit_binop(jfn, bb, OP_ADD, rptr, off8)
+                    let st_val = Instr{}
+                    st_val.op = OP_STORE_MEM
+                    st_val.itype = TYPE_I64
+                    st_val.operand0 = res_val
+                    st_val.operand1 = val_addr
+                    emit(jfn, bb, &st_val)
+                    ret rptr
+                }
+            }
+        }
         let nxt_tok_t = tok_type_at(toks, pos[0] + 1)
         if nxt_tok_t == TOK_LBRACE {
             let struct_alloc_sz = 0
@@ -6631,6 +6669,42 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
         if ev_tag >= 0 {
             g_main_pos = g_main_pos + 2
             ret emit_const(g_jfn, bb, TYPE_I64, ev_tag)
+        }
+    }
+    ; Result.Ok(val) / Result.Err(val) → allocate 16-byte {tag, val}
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_DOT and t.str_len == 6 {
+        if streq(g_src_buf_ptr, t.str_start, 6, "Result") == 1 {
+            let rv_s = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos + 1)
+            let rv_l = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos + 1)
+            let rt = -1
+            if rv_l == 2 and streq(g_src_buf_ptr, rv_s, 2, "Ok") == 1 { rt = 0 }
+            if rv_l == 3 and streq(g_src_buf_ptr, rv_s, 3, "Err") == 1 { rt = 1 }
+            if rt >= 0 and tok_type_at_raw(g_dbg_toks_init, g_main_pos + 2) == TOK_LPAREN {
+                g_main_pos = g_main_pos + 3
+                let rval = live_codegen_expr_inline(bb)
+                if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_RPAREN { g_main_pos = g_main_pos + 1 }
+                let sz16 = emit_const(g_jfn, bb, TYPE_I64, 16)
+                let alloc_i = Instr{}
+                alloc_i.op = OP_ALLOC
+                alloc_i.operand0 = sz16
+                let rptr = emit(g_jfn, bb, &alloc_i)
+                let tag_id = emit_const(g_jfn, bb, TYPE_I64, rt)
+                let st_tag = Instr{}
+                st_tag.op = OP_STORE_MEM
+                st_tag.itype = TYPE_I64
+                st_tag.operand0 = tag_id
+                st_tag.operand1 = rptr
+                emit(g_jfn, bb, &st_tag)
+                let off8 = emit_const(g_jfn, bb, TYPE_I64, 8)
+                let val_addr = emit_binop(g_jfn, bb, OP_ADD, rptr, off8)
+                let st_val = Instr{}
+                st_val.op = OP_STORE_MEM
+                st_val.itype = TYPE_I64
+                st_val.operand0 = rval
+                st_val.operand1 = val_addr
+                emit(g_jfn, bb, &st_val)
+                ret rptr
+            }
         }
     }
     g_main_pos = g_main_pos - 1
@@ -8572,7 +8646,7 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     }
 }
 
-fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) {
+fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -> i64 {
     if g_cur_fn_name_len == 4 {
         if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
             g_dbg_main_lets = g_dbg_main_lets + 1
@@ -8636,7 +8710,7 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
             arr_st.operand0 = arr_rhs_id
             arr_st.operand1 = arr_slot
             emit(jfn, cur, &arr_st)
-            ret
+            ret cur
         }
     }
     g_main_pos = g_main_pos + 1
@@ -8682,17 +8756,48 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         }
     }
     rhs_id = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+    ; ? operator: unwrap Result, early-return on Err
+    let let_cur = cur
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_QUESTION {
+        g_main_pos = g_main_pos + 1
+        ; Load tag from Result ptr (offset 0)
+        let ld_tag = Instr{}
+        ld_tag.op = OP_LOAD_MEM
+        ld_tag.itype = TYPE_I64
+        ld_tag.operand0 = rhs_id
+        let tag_val = emit(jfn, let_cur, &ld_tag)
+        let one_id = emit_const(jfn, let_cur, TYPE_I64, 1)
+        let is_err = emit_binop(jfn, let_cur, OP_CMP_EQ, tag_val, one_id)
+        let err_bb = create_block_live(jfn)
+        let ok_bb = create_block_live(jfn)
+        emit_br(jfn, let_cur, is_err, err_bb, ok_bb)
+        ; In err_bb: return the Result pointer as-is
+        let ret_i = Instr{}
+        ret_i.op = OP_RET
+        ret_i.operand0 = rhs_id
+        emit(jfn, err_bb, &ret_i)
+        ; Continue in ok_bb: extract the val field (offset 8)
+        let off8_id = emit_const(jfn, ok_bb, TYPE_I64, 8)
+        let val_ptr = emit_binop(jfn, ok_bb, OP_ADD, rhs_id, off8_id)
+        let ld_val = Instr{}
+        ld_val.op = OP_LOAD_MEM
+        ld_val.itype = TYPE_I64
+        ld_val.operand0 = val_ptr
+        rhs_id = emit(jfn, ok_bb, &ld_val)
+        let_cur = ok_bb
+    }
     let slot = bind_name(jfn, name_start, name_len, bind_stype)
     if skip_store == 0 {
         if rhs_id == -1 {
-            rhs_id = emit_const(jfn, cur, TYPE_I64, 0)
+            rhs_id = emit_const(jfn, let_cur, TYPE_I64, 0)
         }
         let ins = Instr{}
         ins.op = OP_STORE
         ins.operand0 = rhs_id
         ins.operand1 = slot
-        emit(jfn, cur, &ins)
+        emit(jfn, let_cur, &ins)
     }
+    ret let_cur
 }
 
 ; Handles: name.field[idx] = val  AND  name.field[idx].subfield = val
@@ -8822,7 +8927,7 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                     } else if t == TOK_LOOP {
                         cur = live_compile_loop(toks0, stab, src, jfn, cur)
                     } else if t == TOK_LET {
-                        live_compile_let_stmt(toks0, stab, src, jfn, cur)
+                        cur = live_compile_let_stmt(toks0, stab, src, jfn, cur)
                     } else if t == TOK_RET {
                         g_main_pos = g_main_pos + 1
                         let val_id = emit_const(jfn, cur, TYPE_I64, 0)
