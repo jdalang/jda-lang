@@ -1,0 +1,101 @@
+fn matmul(a: i64, b: i64, out: i64) -> i64 {
+    let M = tensor_shape(a, 0)
+    let K = tensor_shape(a, 1)
+    let N = tensor_shape(b, 1)
+    let i = 0
+    loop i < M {
+        let j = 0
+        loop j < N {
+            let acc = f64_from_int(0)
+            let k = 0
+            loop k < K {
+                let idx_a = i * K + k
+                let av = tensor_get(a, idx_a)
+                let idx_b = k * N + j
+                let bv = tensor_get(b, idx_b)
+                let prod = f64_mul(av, bv)
+                acc = f64_add(acc, prod)
+                k = k + 1
+            }
+            let idx_o = i * N + j
+            tensor_set(out, idx_o, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    ; 2x2 matmul: [[1,2],[3,4]] x [[5,6],[7,8]] = [[19,22],[43,50]]
+    let a = tensor_new2(2, 2)
+    let b = tensor_new2(2, 2)
+    let c = tensor_new2(2, 2)
+    let va0 = f64_from_int(1)
+    tensor_set(a, 0, va0)
+    let va1 = f64_from_int(2)
+    tensor_set(a, 1, va1)
+    let va2 = f64_from_int(3)
+    tensor_set(a, 2, va2)
+    let va3 = f64_from_int(4)
+    tensor_set(a, 3, va3)
+    let vb0 = f64_from_int(5)
+    tensor_set(b, 0, vb0)
+    let vb1 = f64_from_int(6)
+    tensor_set(b, 1, vb1)
+    let vb2 = f64_from_int(7)
+    tensor_set(b, 2, vb2)
+    let vb3 = f64_from_int(8)
+    tensor_set(b, 3, vb3)
+    matmul(a, b, c)
+    let c00 = f64_to_int(tensor_get(c, 0))
+    let c01 = f64_to_int(tensor_get(c, 1))
+    let c10 = f64_to_int(tensor_get(c, 2))
+    let c11 = f64_to_int(tensor_get(c, 3))
+    if c00 == 19 and c01 == 22 and c10 == 43 and c11 == 50 {
+        print "matmul 2x2 ok"
+    }
+    ; 2x3 x 3x2 = 2x2: [[1,2,3],[4,5,6]] x [[7,8],[9,10],[11,12]] = [[58,64],[139,154]]
+    let a2 = tensor_new2(2, 3)
+    let b2 = tensor_new2(3, 2)
+    let c2 = tensor_new2(2, 2)
+    let w0 = f64_from_int(1)
+    tensor_set(a2, 0, w0)
+    let w1 = f64_from_int(2)
+    tensor_set(a2, 1, w1)
+    let w2 = f64_from_int(3)
+    tensor_set(a2, 2, w2)
+    let w3 = f64_from_int(4)
+    tensor_set(a2, 3, w3)
+    let w4 = f64_from_int(5)
+    tensor_set(a2, 4, w4)
+    let w5 = f64_from_int(6)
+    tensor_set(a2, 5, w5)
+    let x0 = f64_from_int(7)
+    tensor_set(b2, 0, x0)
+    let x1 = f64_from_int(8)
+    tensor_set(b2, 1, x1)
+    let x2 = f64_from_int(9)
+    tensor_set(b2, 2, x2)
+    let x3 = f64_from_int(10)
+    tensor_set(b2, 3, x3)
+    let x4 = f64_from_int(11)
+    tensor_set(b2, 4, x4)
+    let x5 = f64_from_int(12)
+    tensor_set(b2, 5, x5)
+    matmul(a2, b2, c2)
+    let r00 = f64_to_int(tensor_get(c2, 0))
+    let r01 = f64_to_int(tensor_get(c2, 1))
+    let r10 = f64_to_int(tensor_get(c2, 2))
+    let r11 = f64_to_int(tensor_get(c2, 3))
+    if r00 == 58 and r01 == 64 and r10 == 139 and r11 == 154 {
+        print "matmul 2x3 ok"
+    }
+    tensor_free(a)
+    tensor_free(b)
+    tensor_free(c)
+    tensor_free(a2)
+    tensor_free(b2)
+    tensor_free(c2)
+    ret 0
+}
