@@ -211,6 +211,11 @@ const OP_AVX_SCLF64  = 86
 const OP_AVX_SUMF64  = 87
 const OP_AVX_DOTF64  = 88
 
+; GPU/PTX opcodes
+const OP_GPU_CHECK   = 89
+const OP_GPU_MATMUL  = 90
+const OP_GPU_VECADD  = 91
+
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
 const PHYS_RCX = 1
@@ -7055,6 +7060,31 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.operand2 = arg2
         ret emit(jfn, bb, &ins)
     }
+    if name_len == 14 and streq(src, name_start, 14, "gpu_has_nvidia") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GPU_CHECK
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "gpu_matmul") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GPU_MATMUL
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ins.bb_target0 = arg4
+        ins.bb_target1 = arg5
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "gpu_vecadd") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GPU_VECADD
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8735,6 +8765,31 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.operand0 = arg0
         ins.operand1 = arg1
         ins.operand2 = arg2
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 14 and streq(g_src_buf_ptr, name.str_start, 14, "gpu_has_nvidia") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GPU_CHECK
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "gpu_matmul") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GPU_MATMUL
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ins.bb_target0 = arg4
+        ins.bb_target1 = arg5
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "gpu_vecadd") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GPU_VECADD
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
         ret emit(g_jfn, bb, &ins)
     }
 
@@ -14280,6 +14335,457 @@ fn lower_avx512_dot(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_pop_r(out, pos, PHYS_R12)
 }
 
+; ========== GPU/PTX lowering (CPU fallback) ==========
+
+fn lower_gpu_check(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; Try open("/dev/nvidiactl", O_RDONLY) — returns 1 if NVIDIA driver present, 0 otherwise
+    ; Branchless: compute result via arithmetic, always close fd (harmless if negative)
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    ; SUB RSP, 16
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xEC)
+    emit_byte(out, pos, 0x10)
+    ; MOV DWORD [RSP], 0x7665642F "/dev"
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x04)
+    emit_byte(out, pos, 0x24)
+    emit_i32_le(out, pos, 0x7665642F)
+    ; MOV DWORD [RSP+4], 0x69766E2F "/nvi"
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x04)
+    emit_i32_le(out, pos, 0x69766E2F)
+    ; MOV DWORD [RSP+8], 0x63616964 "diac"
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x08)
+    emit_i32_le(out, pos, 0x63616964)
+    ; MOV DWORD [RSP+12], 0x00006C74 "tl\0\0"
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x0C)
+    emit_i32_le(out, pos, 0x00006C74)
+    ; MOV EAX, 2 (SYS_open)
+    emit_byte(out, pos, 0xB8)
+    emit_i32_le(out, pos, 2)
+    ; MOV RDI, RSP (filename ptr)
+    emit_mov_rr(out, pos, PHYS_RDI, PHYS_RSP)
+    ; XOR ESI, ESI (O_RDONLY=0)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xF6)
+    ; XOR EDX, EDX (mode=0)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xD2)
+    ; SYSCALL
+    emit_syscall_instr(out, pos)
+    ; ADD RSP, 16
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC4)
+    emit_byte(out, pos, 0x10)
+    ; Save fd for close: MOV RDI, RAX
+    emit_mov_rr(out, pos, PHYS_RDI, PHYS_RAX)
+    ; Branchless: has_gpu = NOT(RAX >> 63) & 1
+    ; SAR RAX, 63 — RAX = 0 if fd>=0, -1 if fd<0
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xF8)
+    emit_byte(out, pos, 0x3F)
+    ; NOT RAX — RAX = -1 if fd>=0, 0 if fd<0
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xF7)
+    emit_byte(out, pos, 0xD0)
+    ; AND EAX, 1 — RAX = 1 if fd>=0, 0 if fd<0
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xE0)
+    emit_byte(out, pos, 0x01)
+    ; PUSH RAX (save result)
+    emit_push_r(out, pos, PHYS_RAX)
+    ; Close fd (harmless if negative — returns -EBADF which we ignore)
+    ; RDI already has fd
+    ; MOV EAX, 3 (SYS_close)
+    emit_byte(out, pos, 0xB8)
+    emit_i32_le(out, pos, 3)
+    emit_syscall_instr(out, pos)
+    ; POP RAX (restore result: 0 or 1)
+    emit_pop_r(out, pos, PHYS_RAX)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+}
+
+fn lower_gpu_vecadd(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; gpu_vecadd(a_tensor, b_tensor, c_tensor, len) → 0
+    ; CPU fallback: SSE2 ADDSD loop on tensor data (offset 0x50)
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+    emit_push_r(out, pos, r2)
+    let r3 = get_or_load(ctx.ra, out, pos, ins.operand3)
+    emit_push_r(out, pos, r3)
+    ; Pop: RCX=len, RDX=c, RSI=b, RDI=a
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDX)
+    emit_pop_r(out, pos, PHYS_RSI)
+    emit_pop_r(out, pos, PHYS_RDI)
+    ; Get data pointers: handle + 0x50
+    ; ADD RDI, 0x50
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x50)
+    ; ADD RSI, 0x50
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x50)
+    ; ADD RDX, 0x50
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC2)
+    emit_byte(out, pos, 0x50)
+    ; TEST RCX, RCX
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x85)
+    emit_byte(out, pos, 0xC9)
+    ; JE .done
+    let je_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x84)
+    emit_i32_le(out, pos, 0)
+    ; .loop:
+    let loop_top = pos[0]
+    ; MOVSD XMM0, [RDI]
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x07)
+    ; ADDSD XMM0, [RSI]
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0x06)
+    ; MOVSD [RDX], XMM0
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x11)
+    emit_byte(out, pos, 0x02)
+    ; ADD RDI, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x08)
+    ; ADD RSI, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x08)
+    ; ADD RDX, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC2)
+    emit_byte(out, pos, 0x08)
+    ; DEC RCX
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC9)
+    ; JNE .loop (backward)
+    let jne_rel = loop_top - (pos[0] + 6)
+    emit_jne_rel32(out, pos, jne_rel)
+    ; .done: patch JE
+    let va_done = pos[0]
+    let je_rel = va_done - (je_off + 6)
+    poke_byte(out, je_off + 2, i32_b0(je_rel))
+    poke_byte(out, je_off + 3, i32_b1(je_rel))
+    poke_byte(out, je_off + 4, i32_b2(je_rel))
+    poke_byte(out, je_off + 5, i32_b3(je_rel))
+    ; XOR EAX, EAX (return 0)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xC0)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    consume_use(ctx, ins.operand2)
+    consume_use(ctx, ins.operand3)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+}
+
+fn lower_gpu_matmul(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; gpu_matmul(a, b, c, M, N, K) → 0
+    ; CPU fallback: triple-loop matmul on tensor data (f64)
+    ; Stack after push: [RSP+40]=a, [RSP+32]=b, [RSP+24]=c, [RSP+16]=M, [RSP+8]=N, [RSP+0]=K
+    ; Registers: RDI=i, RSI=j, RDX=k, RAX/RCX=temp, XMM0=acc, XMM1/XMM2=temp
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+    emit_push_r(out, pos, r2)
+    let r3 = get_or_load(ctx.ra, out, pos, ins.operand3)
+    emit_push_r(out, pos, r3)
+    let r4 = get_or_load(ctx.ra, out, pos, ins.bb_target0)
+    emit_push_r(out, pos, r4)
+    let r5 = get_or_load(ctx.ra, out, pos, ins.bb_target1)
+    emit_push_r(out, pos, r5)
+    ; Stack: [RSP+40]=a, [RSP+32]=b, [RSP+24]=c, [RSP+16]=M, [RSP+8]=N, [RSP+0]=K
+    ; Convert tensor handles to data ptrs (ADD QWORD [RSP+off], 0x50)
+    ; ADD QWORD [RSP+40], 0x50
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x28)
+    emit_byte(out, pos, 0x50)
+    ; ADD QWORD [RSP+32], 0x50
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x20)
+    emit_byte(out, pos, 0x50)
+    ; ADD QWORD [RSP+24], 0x50
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x18)
+    emit_byte(out, pos, 0x50)
+    ; XOR EDI, EDI (i=0)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xFF)
+    ; .outer_top:
+    let outer_top = pos[0]
+    ; CMP RDI, [RSP+16] (i < M)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x3B)
+    emit_byte(out, pos, 0x7C)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x10)
+    ; JGE .done
+    let jge_done_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8D)
+    emit_i32_le(out, pos, 0)
+    ; XOR ESI, ESI (j=0)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xF6)
+    ; .mid_top:
+    let mid_top = pos[0]
+    ; CMP RSI, [RSP+8] (j < N)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x3B)
+    emit_byte(out, pos, 0x74)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x08)
+    ; JGE .outer_inc
+    let jge_oinc_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8D)
+    emit_i32_le(out, pos, 0)
+    ; XORPD XMM0, XMM0 (acc=0.0)
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x57)
+    emit_byte(out, pos, 0xC0)
+    ; XOR EDX, EDX (k=0)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xD2)
+    ; .inner_top:
+    let inner_top = pos[0]
+    ; CMP RDX, [RSP+0] (k < K)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x3B)
+    emit_byte(out, pos, 0x14)
+    emit_byte(out, pos, 0x24)
+    ; JGE .store
+    let jge_store_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8D)
+    emit_i32_le(out, pos, 0)
+    ; --- Compute a[i*K+k] ---
+    ; MOV RAX, RDI (i)
+    emit_mov_rr(out, pos, PHYS_RAX, PHYS_RDI)
+    ; IMUL RAX, [RSP+0] (K)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xAF)
+    emit_byte(out, pos, 0x04)
+    emit_byte(out, pos, 0x24)
+    ; ADD RAX, RDX (k)
+    emit_add_rr(out, pos, PHYS_RAX, PHYS_RDX)
+    ; SHL RAX, 3
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xE0)
+    emit_byte(out, pos, 0x03)
+    ; ADD RAX, [RSP+40] (a_data)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x28)
+    ; MOVSD XMM1, [RAX]
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x08)
+    ; --- Compute b[k*N+j] ---
+    ; MOV RCX, RDX (k)
+    emit_mov_rr(out, pos, PHYS_RCX, PHYS_RDX)
+    ; IMUL RCX, [RSP+8] (N)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xAF)
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x08)
+    ; ADD RCX, RSI (j)
+    emit_add_rr(out, pos, PHYS_RCX, PHYS_RSI)
+    ; SHL RCX, 3
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xE1)
+    emit_byte(out, pos, 0x03)
+    ; ADD RCX, [RSP+32] (b_data)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x20)
+    ; MOVSD XMM2, [RCX]
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x11)
+    ; MULSD XMM1, XMM2
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x59)
+    emit_byte(out, pos, 0xCA)
+    ; ADDSD XMM0, XMM1
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0xC1)
+    ; INC RDX (k++)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC2)
+    ; JMP .inner_top
+    let jmp_inner = inner_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_inner)
+    ; .store: patch JGE
+    let store_off = pos[0]
+    let jge_s_rel = store_off - (jge_store_off + 6)
+    poke_byte(out, jge_store_off + 2, i32_b0(jge_s_rel))
+    poke_byte(out, jge_store_off + 3, i32_b1(jge_s_rel))
+    poke_byte(out, jge_store_off + 4, i32_b2(jge_s_rel))
+    poke_byte(out, jge_store_off + 5, i32_b3(jge_s_rel))
+    ; --- Store c[i*N+j] = XMM0 ---
+    ; MOV RAX, RDI (i)
+    emit_mov_rr(out, pos, PHYS_RAX, PHYS_RDI)
+    ; IMUL RAX, [RSP+8] (N)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xAF)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x08)
+    ; ADD RAX, RSI (j)
+    emit_add_rr(out, pos, PHYS_RAX, PHYS_RSI)
+    ; SHL RAX, 3
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xE0)
+    emit_byte(out, pos, 0x03)
+    ; ADD RAX, [RSP+24] (c_data)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x18)
+    ; MOVSD [RAX], XMM0
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x11)
+    emit_byte(out, pos, 0x00)
+    ; INC RSI (j++)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC6)
+    ; JMP .mid_top
+    let jmp_mid = mid_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_mid)
+    ; .outer_inc: patch JGE
+    let oinc_off = pos[0]
+    let jge_o_rel = oinc_off - (jge_oinc_off + 6)
+    poke_byte(out, jge_oinc_off + 2, i32_b0(jge_o_rel))
+    poke_byte(out, jge_oinc_off + 3, i32_b1(jge_o_rel))
+    poke_byte(out, jge_oinc_off + 4, i32_b2(jge_o_rel))
+    poke_byte(out, jge_oinc_off + 5, i32_b3(jge_o_rel))
+    ; INC RDI (i++)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC7)
+    ; JMP .outer_top
+    let jmp_outer = outer_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_outer)
+    ; .done: patch JGE
+    let mm_done = pos[0]
+    let jge_d_rel = mm_done - (jge_done_off + 6)
+    poke_byte(out, jge_done_off + 2, i32_b0(jge_d_rel))
+    poke_byte(out, jge_done_off + 3, i32_b1(jge_d_rel))
+    poke_byte(out, jge_done_off + 4, i32_b2(jge_d_rel))
+    poke_byte(out, jge_done_off + 5, i32_b3(jge_d_rel))
+    ; Clean up stack frame (6 pushed qwords = 48 bytes)
+    ; ADD RSP, 48
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC4)
+    emit_byte(out, pos, 0x30)
+    ; XOR EAX, EAX (return 0)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xC0)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    consume_use(ctx, ins.operand2)
+    consume_use(ctx, ins.operand3)
+    consume_use(ctx, ins.bb_target0)
+    consume_use(ctx, ins.bb_target1)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+}
+
+fn lower_instr_gpu(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let op = ins.op
+    if op == OP_GPU_CHECK { lower_gpu_check(ins, ctx, out, pos) }
+    if op == OP_GPU_CHECK { ret 1 }
+    if op == OP_GPU_VECADD { lower_gpu_vecadd(ins, ctx, out, pos) }
+    if op == OP_GPU_VECADD { ret 1 }
+    if op == OP_GPU_MATMUL { lower_gpu_matmul(ins, ctx, out, pos) }
+    if op == OP_GPU_MATMUL { ret 1 }
+    ret 0
+}
+
 fn lower_instr_avx512(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let op = ins.op
     if op == OP_AVX_CHECK { lower_avx512_check(ins, ctx, out, pos) }
@@ -14431,7 +14937,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
-    if lower_instr_float(ins, ctx, out, pos) == 1 or lower_instr_tensor(ins, ctx, out, pos) == 1 or lower_instr_avx512(ins, ctx, out, pos) == 1 {
+    if lower_instr_float(ins, ctx, out, pos) == 1 or lower_instr_tensor(ins, ctx, out, pos) == 1 or lower_instr_avx512(ins, ctx, out, pos) == 1 or lower_instr_gpu(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
