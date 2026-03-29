@@ -1,0 +1,62 @@
+; Test GPU matrix multiply with CPU fallback
+; A[2,3] * B[3,2] = C[2,2]
+
+fn main() -> i64 {
+    ; A = [[1,2,3],[4,5,6]]
+    let a = tensor_new2(2, 3)
+    let v1 = f64_from_int(1)
+    let v2 = f64_from_int(2)
+    let v3 = f64_from_int(3)
+    let v4 = f64_from_int(4)
+    let v5 = f64_from_int(5)
+    let v6 = f64_from_int(6)
+    tensor_set(a, 0, v1)
+    tensor_set(a, 1, v2)
+    tensor_set(a, 2, v3)
+    tensor_set(a, 3, v4)
+    tensor_set(a, 4, v5)
+    tensor_set(a, 5, v6)
+
+    ; B = [[7,8],[9,10],[11,12]]
+    let b = tensor_new2(3, 2)
+    let v7 = f64_from_int(7)
+    let v8 = f64_from_int(8)
+    let v9 = f64_from_int(9)
+    let v10 = f64_from_int(10)
+    let v11 = f64_from_int(11)
+    let v12 = f64_from_int(12)
+    tensor_set(b, 0, v7)
+    tensor_set(b, 1, v8)
+    tensor_set(b, 2, v9)
+    tensor_set(b, 3, v10)
+    tensor_set(b, 4, v11)
+    tensor_set(b, 5, v12)
+
+    ; C = A*B → [[58,64],[139,154]]
+    ; C[0,0] = 1*7 + 2*9 + 3*11 = 7+18+33 = 58
+    ; C[0,1] = 1*8 + 2*10 + 3*12 = 8+20+36 = 64
+    ; C[1,0] = 4*7 + 5*9 + 6*11 = 28+45+66 = 139
+    ; C[1,1] = 4*8 + 5*10 + 6*12 = 32+50+72 = 154
+    let c = tensor_new2(2, 2)
+    let zero = f64_from_int(0)
+    tensor_fill(c, zero)
+
+    gpu_matmul(a, b, c, 2, 2, 3)
+
+    let r0 = f64_to_int(tensor_get(c, 0))
+    let r1 = f64_to_int(tensor_get(c, 1))
+    let r2 = f64_to_int(tensor_get(c, 2))
+    let r3 = f64_to_int(tensor_get(c, 3))
+
+    if r0 == 58 and r1 == 64 {
+        print "matmul row0 ok"
+    }
+    if r2 == 139 and r3 == 154 {
+        print "matmul row1 ok"
+    }
+
+    tensor_free(a)
+    tensor_free(b)
+    tensor_free(c)
+    ret 0
+}
