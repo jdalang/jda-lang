@@ -1,0 +1,103 @@
+; Test autograd: chain rule — composite function gradients
+; f(x) = exp(x*x + 1) → df/dx = exp(x*x+1) * 2x
+; g(x) = tanh(3*x) → dg/dx = (1 - tanh(3x)^2) * 3
+
+fn grad_check_close(analytical: i64, numerical: i64, eps: i64) -> i64 {
+    let diff = f64_sub(analytical, numerical)
+    let abs_diff = f64_abs(diff)
+    if f64_gt(eps, abs_diff) == 1 { ret 1 }
+    ret 0
+}
+
+fn main() -> i64 {
+    let x = f64_from_int(1)
+    let one = f64_from_int(1)
+    let two = f64_from_int(2)
+    let three = f64_from_int(3)
+    let ten_k = f64_from_int(10000)
+    let h = f64_div(one, ten_k)
+    let eps = f64_from_int(1)
+    let twoh = f64_mul(two, h)
+
+    ; f(x) = exp(x*x + 1)
+    let xx = f64_mul(x, x)
+    let xx1 = f64_add(xx, one)
+    let f_val = f64_exp(xx1)
+
+    ; Backward: df/dx = exp(x*x+1) * 2x
+    let grad_f = f64_from_int(1)
+    let d_exp = f64_mul(grad_f, f_val)
+    let d_xx = f64_mul(two, x)
+    let df_dx = f64_mul(d_exp, d_xx)
+
+    ; Numerical df/dx (pre-compute all nested calls)
+    let xh = f64_add(x, h)
+    let xmh = f64_sub(x, h)
+    let xxp = f64_mul(xh, xh)
+    let xxm = f64_mul(xmh, xmh)
+    let xxp1 = f64_add(xxp, one)
+    let xxm1 = f64_add(xxm, one)
+    let fp = f64_exp(xxp1)
+    let fm = f64_exp(xxm1)
+    let fp_fm = f64_sub(fp, fm)
+    let num_df = f64_div(fp_fm, twoh)
+
+    let ok1 = grad_check_close(df_dx, num_df, eps)
+    if ok1 == 1 {
+        print "grad chain exp ok"
+    }
+
+    ; g(x) = tanh(3*x)
+    let tx = f64_mul(three, x)
+    let g_val = f64_tanh(tx)
+
+    ; Backward: dg/dx = (1 - tanh(3x)^2) * 3
+    let grad_g = f64_from_int(1)
+    let g2 = f64_mul(g_val, g_val)
+    let d_tanh = f64_sub(one, g2)
+    let d_tanh_gc = f64_mul(grad_g, d_tanh)
+    let dg_dx = f64_mul(d_tanh_gc, three)
+
+    ; Numerical dg/dx (pre-compute nested calls)
+    let txh = f64_mul(three, xh)
+    let txmh = f64_mul(three, xmh)
+    let gp = f64_tanh(txh)
+    let gm = f64_tanh(txmh)
+    let gp_gm = f64_sub(gp, gm)
+    let num_dg = f64_div(gp_gm, twoh)
+
+    let ok2 = grad_check_close(dg_dx, num_dg, eps)
+    if ok2 == 1 {
+        print "grad chain tanh ok"
+    }
+
+    ; h(x) = log(x*x + 1) where x=2
+    ; dh/dx = 1/(x*x+1) * 2x
+    let x2 = f64_from_int(2)
+    let h2 = f64_div(one, ten_k)
+    let x2x2 = f64_mul(x2, x2)
+    let x2x2_1 = f64_add(x2x2, one)
+    let h_val = f64_log(x2x2_1)
+
+    let d_log = f64_div(one, x2x2_1)
+    let d_x2x2 = f64_mul(two, x2)
+    let dh_dx = f64_mul(d_log, d_x2x2)
+
+    let x2h = f64_add(x2, h2)
+    let x2mh = f64_sub(x2, h2)
+    let x2p = f64_mul(x2h, x2h)
+    let x2m = f64_mul(x2mh, x2mh)
+    let x2p1 = f64_add(x2p, one)
+    let x2m1 = f64_add(x2m, one)
+    let hp = f64_log(x2p1)
+    let hm = f64_log(x2m1)
+    let twoh2 = f64_mul(two, h2)
+    let hp_hm = f64_sub(hp, hm)
+    let num_dh = f64_div(hp_hm, twoh2)
+
+    let ok3 = grad_check_close(dh_dx, num_dh, eps)
+    if ok3 == 1 {
+        print "grad chain log ok"
+    }
+    ret 0
+}
