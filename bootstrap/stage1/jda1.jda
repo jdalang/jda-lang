@@ -2527,12 +2527,19 @@ fn lookup_global2(name_start: i64, name_len: i64, src: &i8) -> i64 {
 }
 
 fn stab_set_struct_head(stab: &StructTable, sid: i64, st_name_start: i64, st_name_len: i64, base: i64) {
+    print("SSH0\n")
     stab.names[sid]  = st_name_start
+    print("SSH1\n")
     stab.nlens[sid]  = st_name_len
+    print("SSH2_sid=") print_i64(sid) print("\n")
     stab.fbases[sid] = base
+    print("SSH3\n")
     g_struct_name_off[sid] = st_name_start
+    print("SSH4\n")
     g_struct_name_len[sid] = st_name_len
+    print("SSH5\n")
     g_struct_flat_cnt = sid + 1
+    print("SSH6\n")
 }
 
 fn stab_set_struct_tail(stab: &StructTable, sid: i64, fcnt: i64, off: i64, base: i64) {
@@ -2548,23 +2555,33 @@ fn parse_struct_decl(toks: &Token, stab: &StructTable, src: &i8) {
     if tok_type_at_raw(toks, g_main_pos) != TOK_STRUCT {
         ret
     }
+    print("PSD0\n")
     let st_name_start = tok_str_start_at(toks, g_main_pos + 1)
     let st_name_len = tok_str_len_at(toks, g_main_pos + 1)
     expect(TOK_STRUCT)
+    print("PSD1\n")
     expect(TOK_IDENT)
+    print("PSD2\n")
     expect(TOK_LBRACE)
+    print("PSD3\n")
 
     let sid = stab.cnt
+    print("PSD4\n")
     let base = stab.field_cnt
+    print("PSD5\n")
     stab_set_struct_head(stab, sid, st_name_start, st_name_len, base)
+    print("PSD6\n")
 
     let fcnt = 0
     let off  = 0
+    print("PSD6A\n")
     loop tok_type_at_raw(toks, g_main_pos) != TOK_RBRACE and tok_type_at_raw(toks, g_main_pos) != TOK_EOF {
+        print("PSD6B\n")
         let fname_start = tok_str_start_at(toks, g_main_pos)
         let fname_len = tok_str_len_at(toks, g_main_pos)
         expect(TOK_IDENT)
         expect(TOK_COLON)
+        print("PSD6C\n")
         let field_t = TYPE_I64
         let arr = 0
         let type_is_ptr = 0
@@ -2605,9 +2622,13 @@ fn parse_struct_decl(toks: &Token, stab: &StructTable, src: &i8) {
             if sid_x >= 0 { elem_sz = g_struct_sizes[sid_x] }
         }
         let fi = base + fcnt
+        print("PSD6D fi=") print_i64(fi) print("\n")
         stab.fnames[fi]   = fname_start
+        print("PSD6E\n")
         stab.flens[fi]    = fname_len
+        print("PSD6F\n")
         stab.foffs[fi]    = off
+        print("PSD6G\n")
         stab.ftypes[fi]   = field_t
         stab.fis_array[fi]= arr
         stab.fowners[fi]  = sid
@@ -7750,6 +7771,72 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
     }
 }
 
+; Handles: name.field[idx] = val
+; On entry: pos[0] points to 'name', pos+1=DOT, pos+2=IDENT(field), pos+3=LBRACK
+fn compile_dot_bracket_store_case(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    ; g_main_pos points at name IDENT. Read name and field before advancing.
+    let dbs_name_start = tok_str_start_at(toks, g_main_pos)
+    let dbs_name_len   = tok_str_len_at(toks, g_main_pos)
+    let dbs_field_start = tok_str_start_at(toks, g_main_pos + 2)
+    let dbs_field_len   = tok_str_len_at(toks, g_main_pos + 2)
+    g_main_pos = g_main_pos + 4
+    let dbs_idx_id = codegen_expr_inline(toks, &g_main_pos, stab, src, jfn, bb)
+    if tok_type_at(toks, g_main_pos) == TOK_RBRACK {
+        g_main_pos = g_main_pos + 1
+    }
+    if tok_type_at(toks, g_main_pos) != TOK_EQ {
+        ret bb
+    }
+    g_main_pos = g_main_pos + 1
+    let dbs_rhs_id = codegen_expr_inline(toks, &g_main_pos, stab, src, jfn, bb)
+    if dbs_rhs_id < 0 { dbs_rhs_id = emit_const(jfn, bb, TYPE_I64, 0) }
+    let dbs_slot = lookup_slot_name(jfn, dbs_name_start, dbs_name_len)
+    let dbs_base_id = -1
+    let dbs_base_stype = TYPE_I64
+    if dbs_slot != -1 {
+        let dbs_ld = Instr{}
+        dbs_ld.op = OP_LOAD
+        dbs_ld.operand0 = dbs_slot
+        dbs_base_id = emit(jfn, bb, &dbs_ld)
+        dbs_base_stype = lookup_stype_name(jfn, dbs_name_start, dbs_name_len)
+    }
+    if dbs_slot == -1 {
+        let dbs_gi = lookup_global2(dbs_name_start, dbs_name_len, src)
+        if dbs_gi != -1 {
+            dbs_base_stype = load_i64_at(g_glob_stype, dbs_gi)
+            dbs_base_id = emit_gaddr(jfn, bb, dbs_gi)
+            if load_i64_at(g_glob_is_addr, dbs_gi) == 1 {
+                let dbs_ldg = Instr{}
+                dbs_ldg.op = OP_LOAD_MEM
+                dbs_ldg.operand0 = dbs_base_id
+                dbs_base_id = emit(jfn, bb, &dbs_ldg)
+            }
+        }
+    }
+    if dbs_base_id == -1 { ret bb }
+    let dbs_sid = base_type(dbs_base_stype)
+    let dbs_fi = lookup_field_idx_flat(dbs_sid, src, dbs_field_start, dbs_field_len)
+    if dbs_fi == -1 {
+        dbs_fi = lookup_field_idx_any(stab, src, dbs_sid, dbs_field_start, dbs_field_len)
+    }
+    let dbs_foff = 0
+    if dbs_fi >= 0 { dbs_foff = g_field_byte_off[dbs_fi] }
+    let dbs_arr_base = dbs_base_id
+    if dbs_foff != 0 {
+        let dbs_foff_id = emit_const(jfn, bb, TYPE_I64, dbs_foff)
+        dbs_arr_base = emit_binop(jfn, bb, OP_ADD, dbs_base_id, dbs_foff_id)
+    }
+    let dbs_esz_id = emit_const(jfn, bb, TYPE_I64, 8)
+    let dbs_boff = emit_binop(jfn, bb, OP_MUL, dbs_idx_id, dbs_esz_id)
+    let dbs_addr = emit_binop(jfn, bb, OP_ADD, dbs_arr_base, dbs_boff)
+    let dbs_st = Instr{}
+    dbs_st.op = OP_STORE_MEM
+    dbs_st.operand0 = dbs_rhs_id
+    dbs_st.operand1 = dbs_addr
+    emit(jfn, bb, &dbs_st)
+    ret bb
+}
+
 fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let cur = bb
     let keep_going = 1
@@ -7892,6 +7979,17 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                                         stg.operand0 = rhs_id
                                         stg.operand1 = gaddr
                                         emit(jfn, cur, &stg)
+                                    }
+                                }
+                            } else if t1 == TOK_DOT {
+                                let t3 = tok_type_at(toks0, g_main_pos + 3)
+                                if t3 == TOK_LBRACK {
+                                    cur = compile_dot_bracket_store_case(toks0, stab, src, jfn, cur)
+                                } else {
+                                    let pos_before2 = g_main_pos
+                                    codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+                                    if g_main_pos <= pos_before2 and g_main_pos < g_dbg_tok_cnt {
+                                        g_main_pos = g_main_pos + 1
                                     }
                                 }
                             } else {
@@ -8964,26 +9062,8 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_ctx_heap = alloc_pages(100)
     g_ctx = g_ctx_heap as &LowerCtx
     print("CTX_ALLOC\n")
-    ; Hardcoded globals bootstrap
-    let name_off = alloc_pages(8)
-    print("AP1\n")
-    let goff = alloc_pages(8)
-    print("AP2\n")
-    let gsize = alloc_pages(8)
-    print("AP3\n")
-    let gtype = alloc_pages(8)
-    print("BS_ALLOC\n")
-    print("NMO=") print_i64(g_glob_cnt) print("\n")
-    ; g_glob_name_off (idx 0)
-    name_off[0] = 0 ; dummy
-    goff[0] = 0
-    gsize[0] = 8
-    print("BS_IDX\n")
-    g_glob_name_off = name_off
-    print("BS_NAMEOFF\n")
-    g_glob_off      = goff
-    g_glob_size     = gsize
-    g_glob_stype    = gtype
+    ; Bootstrap: alloc_pages gives zero-initialized memory so entry 0 is already zero.
+    ; Just set the count and total size to skip slot 0 (dummy entry).
     g_glob_cnt      = 1
     g_glob_total_sz = 1024
     print("BS_DONE\n")
@@ -8993,16 +9073,26 @@ fn main(argc: i64, argv_ptr: &i64) {
 
     print("PRE_LOOP\n")
     ; Main Compilation Loop
+    print("PL0\n")
     g_main_pos = 0
+    print("PL1\n")
     loop g_main_pos < g_scan_tok_cnt {
+        print("LP\n")
         let top_t = tok_type_at_raw(toks, g_main_pos)
+        print("TT=") print_i64(top_t) print(" POS=") print_i64(g_main_pos) print("\n")
         let top_start = tok_str_start_at(toks, g_main_pos)
+        print("TS=") print_i64(top_start) print(" DTC=") print_i64(g_dbg_tok_cnt) print("\n")
         let top_len = tok_str_len_at(toks, g_main_pos)
+        print("TL\n")
         if top_t == TOK_CONST {
+            print("C\n")
             parse_const_decl(toks)
+            print("CD\n")
         } else if top_t == TOK_STRUCT {
+            print("ST\n")
             parse_struct_decl(toks, g_stab_ptr, src_buf)
         } else if top_t == TOK_FN or (top_len == 2 and streq(src_buf, top_start, 2, "fn") == 1) {
+            print("FN:") print_span(src_buf, tok_str_start_at(toks, g_main_pos + 1), tok_str_len_at(toks, g_main_pos + 1)) print("\n")
             let fn_tok_pos = g_main_pos
             let cur_name_off = tok_str_start_at(toks, g_main_pos + 1)
             let cur_name_len = tok_str_len_at(toks, g_main_pos + 1)
@@ -9158,8 +9248,11 @@ fn main(argc: i64, argv_ptr: &i64) {
                 ; GURANTEED ADVANCE
                 g_main_pos = fn_rbrace_scan + 1
         } else if top_t == TOK_LET or (top_len == 3 and streq(src_buf, top_start, 3, "let") == 1) {
+            print("LT\n")
             skip_top_level_let(toks, g_stab_ptr, src_buf)
+            print("LD\n")
         } else {
+            print("EL\n")
             g_main_pos = g_main_pos + 1
         }
     }
