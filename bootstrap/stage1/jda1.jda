@@ -215,7 +215,7 @@ struct Instr {
 
 struct BasicBlock {
     id:        i64
-    instrs:    Instr[512]
+    instrs:    Instr[2048]
     instr_cnt: i64
     label_off: i64
 }
@@ -230,7 +230,7 @@ struct VarEntry {
 struct JirFunction {
     src:        &i8
     src_len:    i64
-    blocks:     BasicBlock[512]
+    blocks:     BasicBlock[256]
     block_cnt:  i64
     vars:       VarEntry[256]
     var_cnt:    i64
@@ -257,9 +257,9 @@ struct Fixup {
 
 struct RegAlloc {
     pool:      i32[8]
-    val2reg:   i32[4096]
+    val2reg:   i32[8192]
     reg2val:   i64[8]
-    spill_off: i64[4096]
+    spill_off: i64[8192]
     sp_top:    i64
 }
 
@@ -267,8 +267,8 @@ struct LowerCtx {
     ra:         RegAlloc
     fixups:     Fixup[8192]
     fix_cnt:    i64
-    bb_offsets: i64[512]
-    use_cnt:    i32[4096]
+    bb_offsets: i64[256]
+    use_cnt:    i32[8192]
 }
 
 struct StructTable {
@@ -733,7 +733,6 @@ fn skip_top_level_let_rhs(toks: &Token, stab: &StructTable, src: &i8) {
     g_glob_is_addr[gidx] = decl_is_addr
     let is_int_tok = is_skip_rhs_int_tok(t)
     if is_int_tok {
-        g_glob_is_addr[gidx] = 0  ; pointer global with integer initial value: load value in expressions
         g_main_pos = g_main_pos + 1
         ret ok(0)
     }
@@ -1000,7 +999,7 @@ fn live_codegen_expr_inline(bb: i64) -> i64 {
 
 fn regalloc_free_old(ra: &RegAlloc, val_id: i64) {
     if val_id < 0 { ret ok(0) }
-    if val_id >= 4096 { ret ok(0) }
+    if val_id >= 8192 { ret ok(0) }
     let idx = ra.val2reg[val_id]
     if idx == -1 { ret ok(0) }
     if idx < 0 { ret ok(0) }
@@ -1068,10 +1067,11 @@ fn char_to_tok(c: i8) {
 fn classify_keyword_len2(src: &i8, start: i64, len: i64) {
     let c0 = load_i8_at(src, start)
     let c1 = load_i8_at(src, start + 1)
-    let tok = ((c0 == 102 and c1 == 110) * TOK_FN) +
-        ((c0 == 105 and c1 == 102) * TOK_IF) +
-        ((c0 == 111 and c1 == 114) * TOK_OR) +
-        ((c0 == 105 and c1 == 56) * TOK_I8)
+    let m_fn = (c0 == 102 and c1 == 110) * TOK_FN
+    let m_if = (c0 == 105 and c1 == 102) * TOK_IF
+    let m_or = (c0 == 111 and c1 == 114) * TOK_OR
+    let m_i8 = (c0 == 105 and c1 == 56) * TOK_I8
+    let tok = m_fn + m_if + m_or + m_i8
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -1079,12 +1079,13 @@ fn classify_keyword_len3(src: &i8, start: i64, len: i64) {
     let c0 = load_i8_at(src, start)
     let c1 = load_i8_at(src, start + 1)
     let c2 = load_i8_at(src, start + 2)
-    let tok = ((c0 == 108 and c1 == 101 and c2 == 116) * TOK_LET) +
-        ((c0 == 114 and c1 == 101 and c2 == 116) * TOK_RET) +
-        ((c0 == 97 and c1 == 110 and c2 == 100) * TOK_AND) +
-        ((c0 == 105 and c1 == 54 and c2 == 52) * TOK_I64) +
-        ((c0 == 105 and c1 == 51 and c2 == 50) * TOK_I32) +
-        ((c0 == 102 and c1 == 54 and c2 == 52) * TOK_F64)
+    let m_let = (c0 == 108 and c1 == 101 and c2 == 116) * TOK_LET
+    let m_ret = (c0 == 114 and c1 == 101 and c2 == 116) * TOK_RET
+    let m_and = (c0 == 97 and c1 == 110 and c2 == 100) * TOK_AND
+    let m_i64 = (c0 == 105 and c1 == 54 and c2 == 52) * TOK_I64
+    let m_i32 = (c0 == 105 and c1 == 51 and c2 == 50) * TOK_I32
+    let m_f64 = (c0 == 102 and c1 == 54 and c2 == 52) * TOK_F64
+    let tok = m_let + m_ret + m_and + m_i64 + m_i32 + m_f64
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -1093,8 +1094,9 @@ fn classify_keyword_len4(src: &i8, start: i64, len: i64) {
     let c1 = load_i8_at(src, start + 1)
     let c2 = load_i8_at(src, start + 2)
     let c3 = load_i8_at(src, start + 3)
-    let tok = ((c0 == 101 and c1 == 108 and c2 == 115 and c3 == 101) * TOK_ELSE) +
-        ((c0 == 108 and c1 == 111 and c2 == 111 and c3 == 112) * TOK_LOOP)
+    let m_else = (c0 == 101 and c1 == 108 and c2 == 115 and c3 == 101) * TOK_ELSE
+    let m_loop = (c0 == 108 and c1 == 111 and c2 == 111 and c3 == 112) * TOK_LOOP
+    let tok = m_else + m_loop
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -1104,9 +1106,16 @@ fn classify_keyword_len5(src: &i8, start: i64, len: i64) {
     let c2 = load_i8_at(src, start + 2)
     let c3 = load_i8_at(src, start + 3)
     let c4 = load_i8_at(src, start + 4)
-    let tok = ((c0 == 109 and c1 == 97 and c2 == 116 and c3 == 99 and c4 == 104) * TOK_MATCH) +
-        ((c0 == 112 and c1 == 114 and c2 == 105 and c3 == 110 and c4 == 116) * TOK_PRINT) +
-        ((c0 == 99 and c1 == 111 and c2 == 110 and c3 == 115 and c4 == 116) * TOK_CONST)
+    let p_eq0 = (c0 == 112)
+    let p_eq1 = (c1 == 114)
+    let p_eq2 = (c2 == 105)
+    let p_eq3 = (c3 == 110)
+    let p_eq4 = (c4 == 116)
+    let p_cond = (p_eq0 and p_eq1 and p_eq2 and p_eq3 and p_eq4)
+    let m_print = p_cond * TOK_PRINT
+    let m_match = (c0 == 109 and c1 == 97 and c2 == 116 and c3 == 99 and c4 == 104) * TOK_MATCH
+    let m_const = (c0 == 99 and c1 == 111 and c2 == 110 and c3 == 115 and c4 == 116) * TOK_CONST
+    let tok = m_match + m_print + m_const
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -1681,20 +1690,7 @@ fn ltw_adv() {
 }
 
 fn tok_set_type(toks: &Token, idx: i64, v: i64) {
-    if idx == 0 { print("TST_ENTRY\n") }
-    if idx == 0 {
-        print("TST_TOKS=")
-        print_i64(toks as i64)
-        print("\n")
-        let stack_probe = 0
-        print("STACK_ADDR=")
-        print_i64(&stack_probe as i64)
-        print("\n")
-    }
-    let local_idx = idx
-    if idx == 0 { print("TST_BEFORE_STRUCT_WRITE\n") }
-    toks[local_idx].type = v
-    if idx == 0 { print("TST_AFTER_STRUCT_WRITE\n") }
+    toks[idx].type = v
 }
 fn tok_set_start(toks: &Token, idx: i64, v: i64) {
     toks[idx].str_start = v
@@ -1707,27 +1703,19 @@ fn tok_set_imm(toks: &Token, idx: i64, v: i64) {
 }
 
 fn lex_global_fast() -> i32 {
-    print("LGF_ENTRY\n")
     g_lex_src_ptr = g_src_buf_ptr
     g_lex_src_len = g_runtime_src_len
     g_lex_pos_i = 0
     g_lex_count = 0
-    print("LGF_LOOP\n")
     loop g_lex_pos_i < g_runtime_src_len {
-        if g_lex_pos_i == 0 { print("LGF_FIRST_ITER\n") }
         g_lex_cur_char = load_i8_at(g_src_buf_ptr, g_lex_pos_i)
-        if g_lex_pos_i == 0 { print("LGF_AFTER_LOAD\n") }
         g_lex_handled = 0
-        if g_lex_pos_i == 0 { print("LGF_HANDLED0\n") }
         let pre_is_space = is_space_char(g_lex_cur_char)
-        if g_lex_count == 0 and pre_is_space == 1 { print("LGF_IS_SPACE\n") }
         if pre_is_space == 1 {
             g_lex_pos_i = g_lex_pos_i + 1
             g_lex_handled = 1
         }
-        if g_lex_pos_i == 0 { print("LGF_AFTER_SPACE\n") }
         if g_lex_handled == 0 and g_lex_cur_char == 59 {
-            print("LGF_SEMICOLON\n")
             g_lex_pos_i = g_lex_pos_i + 1
             loop g_lex_pos_i < g_runtime_src_len {
                 let nl = load_i8_at(g_src_buf_ptr, g_lex_pos_i)
@@ -1736,7 +1724,6 @@ fn lex_global_fast() -> i32 {
                     break
                 }
             }
-            print("LGF_SEMI_DONE\n")
             g_lex_handled = 1
         }
         if g_lex_handled == 0 and g_lex_cur_char == 34 {
@@ -1756,36 +1743,21 @@ fn lex_global_fast() -> i32 {
             g_lex_handled = 1
         }
         if g_lex_handled == 0 and is_ident_start(g_lex_cur_char) == 1 {
-            if g_lex_count < 1 { print("LGF_IDENT_START\n") }
             g_cmp_name_start = g_lex_pos_i
             loop g_lex_pos_i < g_lex_src_len {
                 let ic = load_i8_at(g_lex_src_ptr, g_lex_pos_i)
-                if g_lex_count < 1 and g_lex_pos_i == g_cmp_name_start { print("LGF_IDENT_LOOP1\n") }
                 if is_ident_continue(ic) == 1 {
                     g_lex_pos_i = g_lex_pos_i + 1
                 } else {
                     break
                 }
             }
-            if g_lex_count < 1 { print("LGF_IDENT_DONE\n") }
             g_ltw_len = g_lex_pos_i - g_cmp_name_start
-            if g_lex_count < 1 { print("LGF_CLASSIFY\n") }
             g_ltw_val = classify_keyword(g_lex_src_ptr, g_cmp_name_start, g_ltw_len)
-            if g_lex_count < 1 { print("LGF_CLASSIFIED\n") }
-            if g_lex_count < 1 {
-                print("TOKS=")
-                print_i64(g_dbg_toks_init as i64)
-                print("\n")
-                print("CNT=")
-                print_i64(g_lex_count)
-                print("\n")
-            }
             if g_lex_count >= 262143 {
                 panic("Token buffer overflow")
             }
-            if g_lex_count < 1 { print("LGF_PRE_TOK_SET\n") }
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            if g_lex_count < 1 { print("LGF_POST_TOK_SET\n") }
             tok_set_start(g_dbg_toks_init, g_lex_count, g_cmp_name_start)
             tok_set_len(g_dbg_toks_init, g_lex_count, g_ltw_len)
             g_lex_count = g_lex_count + 1
@@ -1911,7 +1883,6 @@ fn lex_global_fast() -> i32 {
             g_lex_pos_i = g_lex_pos_i + 1
         }
     }
-    print("LGF_AFTER_LOOP\n")
     tok_set_type(g_dbg_toks_init, g_lex_count, TOK_EOF)
     g_scan_tok_cnt = g_lex_count
     ret g_lex_count
@@ -2066,7 +2037,9 @@ fn run_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, fn_n
     loop scan_i + 3 < src_len {
         let c0 = src[scan_i]
         if line_start == 1 {
-            if c0 == 102 and src[scan_i + 1] == 110 and src[scan_i + 2] == 32 {
+            let rs_c1 = src[scan_i + 1]
+            let rs_c2 = src[scan_i + 2]
+            if c0 == 102 and rs_c1 == 110 and rs_c2 == 32 {
                 let name_start = scan_i + 3
                 let name_end = name_start
                 let keep_name = 1
@@ -3665,8 +3638,8 @@ fn new_block(jfn: &JirFunction) -> i64 {
 
 fn create_block_live(jfn: &JirFunction) -> i64 {
     let id = jfn.block_cnt
-    let ok = id < 512
-    let out_id = ok * id + (ok == 0) * 511
+    let ok = id < 256
+    let out_id = ok * id + (ok == 0) * 255
     jfn.blocks[out_id].id        = out_id
     jfn.blocks[out_id].instr_cnt = 0
     jfn.blocks[out_id].label_off = -1
@@ -3678,8 +3651,8 @@ fn create_block(jfn: &JirFunction) -> i64 {
     let id = jfn.block_cnt
     let nonneg = id >= 0
     let clamped_lo = nonneg * id
-    let ok = clamped_lo < 512
-    let out_id = ok * clamped_lo + (ok == 0) * 511
+    let ok = clamped_lo < 256
+    let out_id = ok * clamped_lo + (ok == 0) * 255
     jfn.blocks[out_id].id        = out_id
     jfn.blocks[out_id].instr_cnt = 0
     jfn.blocks[out_id].label_off = -1
@@ -3702,13 +3675,13 @@ fn copy_instr(dst: &Instr, src: &Instr) {
 }
 
 fn emit(jfn: &JirFunction, bb: i64, ins: &Instr) -> i64 {
-    let bb_ok = bb >= 0 and bb < 512
+    let bb_ok = bb >= 0 and bb < 256
     let safe_bb = bb_ok * bb
     let slot = jfn.blocks[safe_bb].instr_cnt
     let slot_nonneg = slot >= 0
     let slot_clamped_lo = slot_nonneg * slot
-    let slot_ok = bb_ok and slot_nonneg and slot_clamped_lo < 512
-    let safe_slot = slot_ok * slot_clamped_lo + (slot_ok == 0) * 511
+    let slot_ok = bb_ok and slot_nonneg and slot_clamped_lo < 2048
+    let safe_slot = slot_ok * slot_clamped_lo + (slot_ok == 0) * 2047
     copy_instr(&jfn.blocks[safe_bb].instrs[safe_slot], ins)
     jfn.blocks[safe_bb].instrs[safe_slot].dead = 0
     jfn.blocks[safe_bb].instrs[safe_slot].id = jfn.next_id
@@ -3841,7 +3814,8 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
         let s_len = tok_str_len_at(toks, pos[0])
         pos[0] = pos[0] + 1
         val_id = emit_strlit_raw(jfn, bb, s_start, s_len)
-        len_id = emit_const(jfn, bb, TYPE_I64, s_len)
+        ; len_id stays -1 so OP_STRLEN computes the decoded length at runtime
+        ; (s_len is source token length, not decoded byte count for escape sequences)
     } else if pt != TOK_RPAREN and pt != TOK_EOF {
         val_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
     }
@@ -4883,25 +4857,55 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
             }
         } else if tok_type == TOK_LBRACK {
             pos[0] = pos[0] + 1
-            let ld = Instr{}
-            ld.op = OP_LOAD_MEM
-            ld.itype = base_type(cur_stype)
             let idx_tok_pos = pos[0]
-            let elem_sz_i = type_sizeof(cur_stype)
-            if tok_type_at(toks, idx_tok_pos) == TOK_INT and tok_type_at(toks, idx_tok_pos + 1) == TOK_RBRACK {
-                ld.operand0 = expr_id
-                ld.imm = tok_imm_at(toks, idx_tok_pos) * elem_sz_i
+            let is_int_fast = tok_type_at(toks, idx_tok_pos) == TOK_INT and tok_type_at(toks, idx_tok_pos + 1) == TOK_RBRACK
+            let imm_off = 0
+            let idx_id = -1
+            if is_int_fast {
+                imm_off = tok_imm_at(toks, idx_tok_pos)
                 pos[0] = pos[0] + 1
                 expect(TOK_RBRACK)
-                expr_id = emit(jfn, bb, &ld)
             } else {
-                let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+                idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
                 expect(TOK_RBRACK)
-                let elem_sz = emit_const(jfn, bb, TYPE_I64, elem_sz_i)
-                let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
-                let addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
-                ld.operand0 = addr
-                expr_id = emit(jfn, bb, &ld)
+            }
+            let next_is_dot = tok_type_at(toks, pos[0]) == TOK_DOT
+            let elem_sz_i = type_sizeof(cur_stype)
+            if next_is_dot {
+                let bst = cur_stype
+                if bst >= 0 and bst < stab.cnt {
+                    let struct_sz = stab.sizes[bst]
+                    if struct_sz > 0 {
+                        elem_sz_i = struct_sz
+                    }
+                }
+            }
+            if next_is_dot {
+                let dot_addr = -1
+                if is_int_fast {
+                    let c = emit_const(jfn, bb, TYPE_I64, imm_off * elem_sz_i)
+                    dot_addr = emit_binop(jfn, bb, OP_ADD, expr_id, c)
+                } else {
+                    let elem_sz_v = emit_const(jfn, bb, TYPE_I64, elem_sz_i)
+                    let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_v)
+                    dot_addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
+                }
+                expr_id = dot_addr
+            } else {
+                let ld = Instr{}
+                ld.op = OP_LOAD_MEM
+                ld.itype = base_type(cur_stype)
+                if is_int_fast {
+                    ld.operand0 = expr_id
+                    ld.imm = imm_off * elem_sz_i
+                    expr_id = emit(jfn, bb, &ld)
+                } else {
+                    let elem_sz_v = emit_const(jfn, bb, TYPE_I64, elem_sz_i)
+                    let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_v)
+                    let arr_addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
+                    ld.operand0 = arr_addr
+                    expr_id = emit(jfn, bb, &ld)
+                }
             }
             cur_stype = base_type(cur_stype)
         } else {
@@ -5843,8 +5847,16 @@ fn live_codegen_postfix_inline(bb: i64) -> i64 {
         let ns = tok_str_start_at(g_dbg_toks_init, start_pos)
         let nl = tok_str_len_at(g_dbg_toks_init, start_pos)
         cur_stype = lookup_stype_name(g_jfn, ns, nl)
-        if cur_stype >= TYPE_PTR_FLAG { cur_stype = base_type(cur_stype) }
-        if cur_stype == -1 {
+        let not_found = 0
+        if cur_stype == -1 { not_found = 1 }
+        if cur_stype >= TYPE_PTR_FLAG {
+            ; primitive pointer param (&i8, &i64, etc.) — strip flag, keep positive
+            cur_stype = base_type(cur_stype)
+        } else if cur_stype >= 0 {
+            ; struct param (no pointer flag due to param storage bug) — encode as negative
+            cur_stype = (0 - cur_stype) - 1
+        }
+        if not_found == 1 {
             let gi = lookup_global2(ns, nl, g_src_buf_ptr)
             if gi != -1 { cur_stype = base_type(load_i64_at(g_glob_stype, gi)) }
         }
@@ -5862,6 +5874,7 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
         let field_sl = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos)
         expect(TOK_IDENT)
         let sid = cur_stype
+        if sid < 0 { sid = (0 - sid) - 1 }
         let fi = lookup_field_idx_flat(sid, g_src_buf_ptr, field_ss, field_sl)
         let fi_ok = 1
         if fi == -1 { fi_ok = 0 }
@@ -5877,10 +5890,13 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
         if is_array_field != 1 {
             let ld = Instr{}
             ld.op = OP_LOAD_MEM
+            ld.itype = base_type(next_stype)
             ld.operand0 = addr
             next_expr = emit(g_jfn, bb, &ld)
+            ret live_codegen_postfix_rest(bb, next_expr, next_stype)
         }
-        ret live_codegen_postfix_rest(bb, next_expr, next_stype)
+        ; array field: encode struct element type as negative for further access
+        ret live_codegen_postfix_rest(bb, addr, (0 - next_stype) - 1)
     }
     let is_index = 0
     if tok_type == TOK_LBRACK { is_index = 1 }
@@ -5888,11 +5904,23 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
         g_main_pos = g_main_pos + 1
         let idx_id = live_codegen_expr_inline(bb)
         expect(TOK_RBRACK)
-        let elem_sz = emit_const(g_jfn, bb, TYPE_I64, 8)
+        if cur_stype < 0 {
+            ; struct element type (negative encoding: struct_sid = -(cur_stype)-1)
+            let struct_sid = (0 - cur_stype) - 1
+            let elem_sz_i = g_struct_sizes[struct_sid]
+            let elem_sz = emit_const(g_jfn, bb, TYPE_I64, elem_sz_i)
+            let byte_off = emit_binop(g_jfn, bb, OP_MUL, idx_id, elem_sz)
+            let addr = emit_binop(g_jfn, bb, OP_ADD, expr_id, byte_off)
+            ret live_codegen_postfix_rest(bb, addr, cur_stype)
+        }
+        ; primitive element type (positive cur_stype)
+        let elem_sz_i = type_sizeof(cur_stype)
+        let elem_sz = emit_const(g_jfn, bb, TYPE_I64, elem_sz_i)
         let byte_off = emit_binop(g_jfn, bb, OP_MUL, idx_id, elem_sz)
         let addr = emit_binop(g_jfn, bb, OP_ADD, expr_id, byte_off)
         let ld = Instr{}
         ld.op = OP_LOAD_MEM
+        ld.itype = cur_stype
         ld.operand0 = addr
         let next_expr = emit(g_jfn, bb, &ld)
         ret live_codegen_postfix_rest(bb, next_expr, cur_stype)
@@ -6332,7 +6360,7 @@ fn fold_constants(jfn: &JirFunction) {
 }
 
 fn dce(jfn: &JirFunction) {
-    let used = i32[4096]
+    let used = i32[8192]
     let bi = 0
     ; Mark all consumed operands and side-effecting ops
     loop bi < jfn.block_cnt {
@@ -6422,8 +6450,8 @@ fn regalloc_init(ra: &RegAlloc) {
         i = i + 1
     }
     let ra_bytes = ra as &i8
-    fill_bytes(ra_bytes + 32, 16384, 255)
-    fill_i64_words((ra_bytes + 16480) as &i64, 4096, -1)
+    fill_bytes(ra_bytes + 32, 32768, 255)
+    fill_i64_words((ra_bytes + 32864) as &i64, 8192, -1)
     ; Spill slots start at 8 (growing up). Local variable slots now start at
     ; jfn.next_slot_off = 65536 (set in function reset), so no collision.
     ra.sp_top = 8
@@ -6468,7 +6496,7 @@ fn reg_pool_at(idx: i64) -> i32 {
 fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     let valid = 1
     if val_id < 0 { valid = 0 }
-    if val_id >= 4096 { valid = 0 }
+    if val_id >= 8192 { valid = 0 }
     if valid != 1 { ret reg_pool_at(0) }
     let i = 0
     loop i < N_ALLOC_REGS {
@@ -6483,7 +6511,7 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     let victim = ra.reg2val[0]
     let spill_reg = reg_pool_at(0)
     if victim < 0 { ret spill_reg }
-    if victim >= 4096 { ret spill_reg }
+    if victim >= 8192 { ret spill_reg }
     let next_sp = ra.sp_top + 8
     ra.sp_top = next_sp
     ra.spill_off[victim]  = next_sp
@@ -6497,7 +6525,7 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
 fn regalloc_get(ra: &RegAlloc, val_id: i64) -> i32 {
     let valid = 1
     if val_id < 0 { valid = 0 }
-    if val_id >= 4096 { valid = 0 }
+    if val_id >= 8192 { valid = 0 }
     if valid != 1 { ret -1 }
     let idx = ra.val2reg[val_id]
     let idx_ok = 1
@@ -6511,7 +6539,7 @@ fn regalloc_get(ra: &RegAlloc, val_id: i64) -> i32 {
 fn regalloc_free(ra: &RegAlloc, val_id: i64) {
     let valid = 1
     if val_id < 0 { valid = 0 }
-    if val_id >= 4096 { valid = 0 }
+    if val_id >= 8192 { valid = 0 }
     if valid != 1 { ret ok(0) }
     let idx = ra.val2reg[val_id]
     let idx_ok = 1
@@ -6527,7 +6555,7 @@ fn regalloc_free(ra: &RegAlloc, val_id: i64) {
 fn mark_use(ctx: &LowerCtx, val_id: i64) {
     let valid = 1
     if val_id < 0 { valid = 0 }
-    if val_id >= 4096 { valid = 0 }
+    if val_id >= 8192 { valid = 0 }
     if valid != 1 { ret ok(0) }
     let cur = ctx.use_cnt[val_id]
     ctx.use_cnt[val_id] = cur + 1
@@ -6536,7 +6564,7 @@ fn mark_use(ctx: &LowerCtx, val_id: i64) {
 fn consume_use(ctx: &LowerCtx, val_id: i64) {
     let valid = 1
     if val_id < 0 { valid = 0 }
-    if val_id >= 4096 { valid = 0 }
+    if val_id >= 8192 { valid = 0 }
     if valid != 1 { ret ok(0) }
     let cur = ctx.use_cnt[val_id]
     let next = cur - 1
@@ -6971,7 +6999,7 @@ fn emit_restore_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
 fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     let valid = 1
     if val_id < 0 { valid = 0 }
-    if val_id >= 4096 { valid = 0 }
+    if val_id >= 8192 { valid = 0 }
     if valid != 1 { ret PHYS_RAX }
     let r = regalloc_get(ra, val_id)
     let cached = 0
@@ -7058,7 +7086,7 @@ fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     
     emit_syscall_instr(out, pos)
     
-    if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
+    if ins.id >= 0 and ins.id < 8192 and ctx.use_cnt[ins.id] > 0 {
         emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
         emit_restore_pool(ctx.ra, out, pos)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
@@ -7426,7 +7454,7 @@ fn lower_instr_alloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     emit_syscall_instr(out, pos)
     let keep_res = 1
     if ins.id < 0 { keep_res = 0 }
-    if ins.id >= 4096 { keep_res = 0 }
+    if ins.id >= 8192 { keep_res = 0 }
     if ctx.use_cnt[ins.id] <= 0 { keep_res = 0 }
     if keep_res == 1 {
         emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
@@ -7513,7 +7541,7 @@ fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_call_rel32(out, pos, 0)
     let keep_res = 1
     if ins.id < 0 { keep_res = 0 }
-    if ins.id >= 4096 { keep_res = 0 }
+    if ins.id >= 8192 { keep_res = 0 }
     if ctx.use_cnt[ins.id] <= 0 { keep_res = 0 }
     if keep_res == 1 {
         emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
@@ -7725,7 +7753,6 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
 fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let cur = bb
     let keep_going = 1
-    let dbg_stmt = 0
     loop keep_going == 1 {
         let before_stmt = g_main_pos
         let toks0 = g_dbg_toks_init
@@ -7734,418 +7761,6 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
             keep_going = 0
         }
         let t = tok_type_at_raw(toks0, g_main_pos)
-        if g_cur_fn_name_len == 22 {
-            if streq(src, g_cur_fn_name_start, 22, "skip_top_level_let_rhs") == 1 {
-                if dbg_stmt == 0 { print("S0\n") }
-                if dbg_stmt == 1 { print("S1\n") }
-                if dbg_stmt == 2 { print("S2\n") }
-                if dbg_stmt == 3 { print("S3\n") }
-                if dbg_stmt == 4 { print("S4\n") }
-                if dbg_stmt == 5 { print("S5\n") }
-                if dbg_stmt == 6 { print("S6\n") }
-                if dbg_stmt == 7 { print("S7\n") }
-                if dbg_stmt == 8 { print("S8\n") }
-                if dbg_stmt == 9 { print("S9\n") }
-                if dbg_stmt > 200 { panic("skip_top_level_let_rhs stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 25 {
-            if streq(src, g_cur_fn_name_start, 25, "compile_ident_stmt_inline") == 1 {
-                if dbg_stmt == 0 { print("I0\n") }
-                if dbg_stmt == 1 { print("I1\n") }
-                if dbg_stmt == 2 { print("I2\n") }
-                if dbg_stmt == 3 { print("I3\n") }
-                if dbg_stmt == 4 { print("I4\n") }
-                if dbg_stmt == 5 { print("I5\n") }
-                if dbg_stmt == 6 { print("I6\n") }
-                if dbg_stmt == 7 { print("I7\n") }
-                if dbg_stmt == 8 { print("I8\n") }
-                if dbg_stmt == 9 { print("I9\n") }
-                if dbg_stmt > 200 { panic("compile_ident_stmt_inline stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 16 {
-            if streq(src, g_cur_fn_name_start, 16, "lex_handle_minus") == 1 {
-                if dbg_stmt == 0 { print("M0\n") }
-                if dbg_stmt == 1 { print("M1\n") }
-                if dbg_stmt == 2 { print("M2\n") }
-                if dbg_stmt == 3 { print("M3\n") }
-                if dbg_stmt == 4 { print("M4\n") }
-                if dbg_stmt == 5 { print("M5\n") }
-                if dbg_stmt == 6 { print("M6\n") }
-                if dbg_stmt == 7 { print("M7\n") }
-                if dbg_stmt == 8 { print("M8S\n") }
-                if dbg_stmt > 200 { panic("lex_handle_minus stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 13 {
-            if streq(src, g_cur_fn_name_start, 13, "lex_handle_eq") == 1 {
-                if dbg_stmt == 0 { print("E0\n") }
-                if dbg_stmt == 1 { print("E1\n") }
-                if dbg_stmt == 2 { print("E2\n") }
-                if dbg_stmt == 3 { print("E3\n") }
-                if dbg_stmt == 4 { print("E4\n") }
-                if dbg_stmt == 5 { print("E5\n") }
-                if dbg_stmt == 6 { print("E6\n") }
-                if dbg_stmt == 7 { print("E7\n") }
-                if dbg_stmt == 8 { print("E8\n") }
-                if dbg_stmt == 9 { print("E9\n") }
-                if dbg_stmt > 200 { panic("lex_handle_eq stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 18 {
-            if streq(src, g_cur_fn_name_start, 18, "lex_handle_gt_next") == 1 {
-                if dbg_stmt == 0 { print("Q0\n") }
-                if dbg_stmt == 1 { print("Q1\n") }
-                if dbg_stmt == 2 { print("Q2\n") }
-                if dbg_stmt == 3 { print("Q3\n") }
-                if dbg_stmt == 4 { print("Q4\n") }
-                if dbg_stmt == 5 { print("Q5\n") }
-                if dbg_stmt == 6 { print("Q6\n") }
-                if dbg_stmt > 200 { panic("lex_handle_gt_next stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 20 {
-            if streq(src, g_cur_fn_name_start, 20, "find_matching_rbrace") == 1 {
-                if dbg_stmt == 0 { print("R0\n") }
-                if dbg_stmt == 1 { print("R1\n") }
-                if dbg_stmt == 2 { print("R2\n") }
-                if dbg_stmt == 3 { print("R3\n") }
-                if dbg_stmt == 4 { print("R4\n") }
-                if dbg_stmt == 5 { print("R5\n") }
-                if dbg_stmt == 6 { print("R6\n") }
-                if dbg_stmt == 7 { print("R7\n") }
-                if dbg_stmt > 200 { panic("find_matching_rbrace stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 10 {
-            if streq(src, g_cur_fn_name_start, 10, "parse_type") == 1 {
-                if dbg_stmt == 0 { print("T0\n") }
-                if dbg_stmt == 1 { print("T1\n") }
-                if dbg_stmt == 2 { print("T2\n") }
-                if dbg_stmt == 3 { print("T3\n") }
-                if dbg_stmt == 4 { print("T4\n") }
-                if dbg_stmt == 5 { print("T5\n") }
-                if dbg_stmt == 6 { print("T6\n") }
-                if dbg_stmt == 7 { print("T7\n") }
-                if dbg_stmt == 8 { print("T8\n") }
-                if dbg_stmt > 200 { panic("parse_type stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 13 {
-            if streq(src, g_cur_fn_name_start, 13, "parse_primary") == 1 {
-                if dbg_stmt == 0 { print("Y0\n") }
-                if dbg_stmt == 1 { print("Y1\n") }
-                if dbg_stmt == 2 { print("Y2\n") }
-                if dbg_stmt == 3 { print("Y3\n") }
-                if dbg_stmt == 4 { print("Y4\n") }
-                if dbg_stmt == 5 { print("Y5\n") }
-                if dbg_stmt == 6 { print("Y6\n") }
-                if dbg_stmt == 7 { print("Y7\n") }
-                if dbg_stmt == 8 { print("Y8\n") }
-                if dbg_stmt == 9 { print("Y9\n") }
-                if dbg_stmt > 200 { panic("parse_primary stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 24 {
-            if streq(src, g_cur_fn_name_start, 24, "parse_primary_ident_rest") == 1 {
-                if dbg_stmt == 0 { print("Z0\n") }
-                if dbg_stmt == 1 { print("Z1\n") }
-                if dbg_stmt == 2 { print("Z2\n") }
-                if dbg_stmt == 3 { print("Z3\n") }
-                if dbg_stmt == 4 { print("Z4\n") }
-                if dbg_stmt == 5 { print("Z5\n") }
-                if dbg_stmt == 6 { print("Z6\n") }
-                if dbg_stmt == 7 { print("Z7\n") }
-                if dbg_stmt == 8 { print("Z8\n") }
-                if dbg_stmt == 9 { print("Z9\n") }
-                if dbg_stmt > 200 { panic("parse_primary_ident_rest stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 32 {
-            if streq(src, g_cur_fn_name_start, 32, "parse_primary_ident_after_lbrace") == 1 {
-                if dbg_stmt == 0 { print("W0\n") }
-                if dbg_stmt == 1 { print("W1\n") }
-                if dbg_stmt == 2 { print("W2\n") }
-                if dbg_stmt == 3 { print("W3\n") }
-                if dbg_stmt == 4 { print("W4\n") }
-                if dbg_stmt == 5 { print("W5\n") }
-                if dbg_stmt == 6 { print("W6\n") }
-                if dbg_stmt == 7 { print("W7\n") }
-                if dbg_stmt == 8 { print("W8\n") }
-                if dbg_stmt == 9 { print("W9\n") }
-                if dbg_stmt > 200 { panic("parse_primary_ident_after_lbrace stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 22 {
-            if streq(src, g_cur_fn_name_start, 22, "parse_primary_nonunary") == 1 {
-                if dbg_stmt == 0 { print("V0\n") }
-                if dbg_stmt == 1 { print("V1\n") }
-                if dbg_stmt == 2 { print("V2\n") }
-                if dbg_stmt == 3 { print("V3\n") }
-                if dbg_stmt == 4 { print("V4\n") }
-                if dbg_stmt == 5 { print("V5\n") }
-                if dbg_stmt > 200 { panic("parse_primary_nonunary stmt blowup") }
-            }
-            if streq(src, g_cur_fn_name_start, 22, "lower_instr_callalloc2") == 1 {
-                if dbg_stmt == 0 { print("CA0\n") }
-                if dbg_stmt == 1 { print("CA1\n") }
-                if dbg_stmt == 2 { print("CA2\n") }
-                if dbg_stmt == 3 { print("CA3\n") }
-                if dbg_stmt == 4 { print("CA4\n") }
-                if dbg_stmt == 5 { print("CA5\n") }
-                if dbg_stmt == 6 { print("CA6\n") }
-                if dbg_stmt > 200 { panic("callalloc2 stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 6 {
-            if streq(src, g_cur_fn_name_start, 6, "expect") == 1 {
-                if dbg_stmt == 0 { print("X0\n") }
-                if dbg_stmt == 1 { print("X1\n") }
-                if dbg_stmt == 2 { print("X2\n") }
-                if dbg_stmt == 3 { print("X3\n") }
-                if dbg_stmt == 4 { print("X4\n") }
-                if dbg_stmt > 200 { panic("expect stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 13 {
-            if streq(src, g_cur_fn_name_start, 13, "lookup_global") == 1 {
-                if dbg_stmt == 0 { print("G0\n") }
-                if dbg_stmt == 1 { print("G1\n") }
-                if dbg_stmt == 2 { print("G2\n") }
-                if dbg_stmt == 3 { print("G3\n") }
-                if dbg_stmt == 4 { print("G4\n") }
-                if dbg_stmt == 5 { print("G5\n") }
-                if dbg_stmt == 6 { print("G6\n") }
-                if dbg_stmt > 200 { panic("lookup_global stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 14 {
-            if streq(src, g_cur_fn_name_start, 14, "lookup_global2") == 1 {
-                if dbg_stmt == 0 { print("H0\n") }
-                if dbg_stmt == 1 { print("H1\n") }
-                if dbg_stmt == 2 { print("H2\n") }
-                if dbg_stmt == 3 { print("H3\n") }
-                if dbg_stmt == 4 { print("H4\n") }
-                if dbg_stmt == 5 { print("H5\n") }
-                if dbg_stmt == 6 { print("H6\n") }
-                if dbg_stmt > 200 { panic("lookup_global2 stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 19 {
-            if streq(src, g_cur_fn_name_start, 19, "lookup_global2_from") == 1 {
-                if dbg_stmt == 0 { print("J0\n") }
-                if dbg_stmt == 1 { print("J1\n") }
-                if dbg_stmt == 2 { print("J2\n") }
-                if dbg_stmt == 3 { print("J3\n") }
-                if dbg_stmt == 4 { print("J4\n") }
-                if dbg_stmt == 5 { print("J5\n") }
-                if dbg_stmt == 6 { print("J6\n") }
-                if dbg_stmt > 200 { panic("lookup_global2_from stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 30 {
-            if streq(src, g_cur_fn_name_start, 30, "try_compile_field_store_inline") == 1 {
-                if dbg_stmt == 0 { print("K0\n") }
-                if dbg_stmt == 1 { print("K1\n") }
-                if dbg_stmt == 2 { print("K2\n") }
-                if dbg_stmt == 3 { print("K3\n") }
-                if dbg_stmt == 4 { print("K4\n") }
-                if dbg_stmt == 5 { print("K5\n") }
-                if dbg_stmt == 6 { print("K6\n") }
-                if dbg_stmt == 7 { print("K7\n") }
-                if dbg_stmt == 8 { print("K8\n") }
-                if dbg_stmt > 200 { panic("try_compile_field_store_inline stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 25 {
-            if streq(src, g_cur_fn_name_start, 25, "compile_expr_stmt2_inline") == 1 {
-                if dbg_stmt == 0 { print("L0\n") }
-                if dbg_stmt == 1 { print("L1\n") }
-                if dbg_stmt == 2 { print("L2\n") }
-                if dbg_stmt == 3 { print("L3\n") }
-                if dbg_stmt == 4 { print("L4\n") }
-                if dbg_stmt == 5 { print("L5\n") }
-                if dbg_stmt == 6 { print("L6\n") }
-                if dbg_stmt == 7 { print("L7\n") }
-                if dbg_stmt == 8 { print("L8\n") }
-                if dbg_stmt == 9 { print("L9\n") }
-                if dbg_stmt == 10 { print("LA\n") }
-                if dbg_stmt == 11 { print("LB\n") }
-                if dbg_stmt == 12 { print("LC\n") }
-                if dbg_stmt > 200 { panic("compile_expr_stmt2_inline stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 30 {
-            if streq(src, g_cur_fn_name_start, 30, "compile_expr_stmt_ident_inline") == 1 {
-                if dbg_stmt == 0 { print("C0\n") }
-                if dbg_stmt == 1 { print("C1\n") }
-                if dbg_stmt == 2 { print("C2\n") }
-                if dbg_stmt == 3 { print("C3\n") }
-                if dbg_stmt == 4 { print("C4\n") }
-                if dbg_stmt == 5 { print("C5\n") }
-                if dbg_stmt == 6 { print("C6\n") }
-                if dbg_stmt == 7 { print("C7\n") }
-                if dbg_stmt == 8 { print("C8\n") }
-                if dbg_stmt == 9 { print("C9\n") }
-                if dbg_stmt == 10 { print("CA\n") }
-                if dbg_stmt == 11 { print("CB\n") }
-                if dbg_stmt == 12 { print("CC\n") }
-                if dbg_stmt == 13 { print("CD\n") }
-                if dbg_stmt == 14 { print("CE\n") }
-                if dbg_stmt == 15 { print("CF\n") }
-                if dbg_stmt == 16 { print("CG\n") }
-                if dbg_stmt == 17 { print("CH\n") }
-                if dbg_stmt == 18 { print("CI\n") }
-                if dbg_stmt == 19 { print("CJ\n") }
-                if dbg_stmt > 200 { panic("compile_expr_stmt_ident_inline stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 18 {
-            if streq(src, g_cur_fn_name_start, 18, "codegen_add_inline") == 1 {
-                if dbg_stmt == 0 { print("A0\n") }
-                if dbg_stmt == 1 { print("A1\n") }
-                if dbg_stmt == 2 { print("A2\n") }
-                if dbg_stmt == 3 { print("A3\n") }
-                if dbg_stmt == 4 { print("A4\n") }
-                if dbg_stmt == 5 { print("A5\n") }
-                if dbg_stmt == 6 { print("A6\n") }
-                if dbg_stmt == 7 { print("A7\n") }
-                if dbg_stmt == 8 { print("A8\n") }
-                if dbg_stmt == 9 { print("A9\n") }
-                if dbg_stmt > 200 { panic("codegen_add_inline stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 23 {
-            if streq(src, g_cur_fn_name_start, 23, "codegen_add_inline_tail") == 1 {
-                if dbg_stmt == 0 { print("R0\n") }
-                if dbg_stmt == 1 { print("R1\n") }
-                if dbg_stmt == 2 { print("R2\n") }
-                if dbg_stmt == 3 { print("R3\n") }
-                if dbg_stmt == 4 { print("R4\n") }
-                if dbg_stmt == 5 { print("R5\n") }
-                if dbg_stmt == 6 { print("R6\n") }
-                if dbg_stmt == 7 { print("R7\n") }
-                if dbg_stmt == 8 { print("R8\n") }
-                if dbg_stmt == 9 { print("R9\n") }
-                if dbg_stmt > 200 { panic("codegen_add_inline_tail stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 18 {
-            if streq(src, g_cur_fn_name_start, 18, "codegen_mul_inline") == 1 {
-                if dbg_stmt == 0 { print("U0\n") }
-                if dbg_stmt == 1 { print("U1\n") }
-                if dbg_stmt == 2 { print("U2\n") }
-                if dbg_stmt == 3 { print("U3\n") }
-                if dbg_stmt == 4 { print("U4\n") }
-                if dbg_stmt == 5 { print("U5\n") }
-                if dbg_stmt == 6 { print("U6\n") }
-                if dbg_stmt == 7 { print("U7\n") }
-                if dbg_stmt == 8 { print("U8\n") }
-                if dbg_stmt == 9 { print("U9\n") }
-                if dbg_stmt > 200 { panic("codegen_mul_inline stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 18 {
-            if streq(src, g_cur_fn_name_start, 18, "codegen_rel_inline") == 1 {
-                if dbg_stmt == 0 { print("Q0\n") }
-                if dbg_stmt == 1 { print("Q1\n") }
-                if dbg_stmt == 2 { print("Q2\n") }
-                if dbg_stmt == 3 { print("Q3\n") }
-                if dbg_stmt == 4 { print("Q4\n") }
-                if dbg_stmt == 5 { print("Q5\n") }
-                if dbg_stmt == 6 { print("Q6\n") }
-                if dbg_stmt == 7 { print("Q7\n") }
-                if dbg_stmt == 8 { print("Q8\n") }
-                if dbg_stmt == 9 { print("Q9\n") }
-                if dbg_stmt > 200 { panic("codegen_rel_inline stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 21 {
-            if streq(src, g_cur_fn_name_start, 21, "fold_add_chain_inline") == 1 {
-                if dbg_stmt == 0 { print("F0\n") }
-                if dbg_stmt == 1 { print("F1\n") }
-                if dbg_stmt == 2 { print("F2\n") }
-                if dbg_stmt == 3 { print("F3\n") }
-                if dbg_stmt == 4 { print("F4\n") }
-                if dbg_stmt == 5 { print("F5\n") }
-                if dbg_stmt == 6 { print("F6\n") }
-                if dbg_stmt == 7 { print("F7\n") }
-                if dbg_stmt == 8 { print("F8\n") }
-                if dbg_stmt == 9 { print("F9\n") }
-                if dbg_stmt > 200 { panic("fold_add_chain_inline stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 19 {
-            if streq(src, g_cur_fn_name_start, 19, "fold_add_chain_rest") == 1 {
-                if dbg_stmt == 0 { print("G0\n") }
-                if dbg_stmt == 1 { print("G1\n") }
-                if dbg_stmt == 2 { print("G2\n") }
-                if dbg_stmt == 3 { print("G3\n") }
-                if dbg_stmt == 4 { print("G4\n") }
-                if dbg_stmt == 5 { print("G5\n") }
-                if dbg_stmt == 6 { print("G6\n") }
-                if dbg_stmt == 7 { print("G7\n") }
-                if dbg_stmt == 8 { print("G8\n") }
-                if dbg_stmt == 9 { print("G9\n") }
-                if dbg_stmt > 200 { panic("fold_add_chain_rest stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 12 {
-            if streq(src, g_cur_fn_name_start, 12, "lex_scan_int") == 1 {
-                if dbg_stmt == 0 { print("LSI0\n") }
-                if dbg_stmt == 1 { print("LSI1\n") }
-                if dbg_stmt == 2 { print("LSI2\n") }
-                if dbg_stmt == 3 { print("LSI3\n") }
-                if dbg_stmt == 4 { print("LSI4\n") }
-                if dbg_stmt == 5 { print("LSI5\n") }
-                if dbg_stmt == 6 { print("LSI6\n") }
-                if dbg_stmt > 200 { panic("lex_scan_int stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 20 {
-            if streq(src, g_cur_fn_name_start, 20, "fold_add_chain_apply") == 1 {
-                if dbg_stmt == 0 { print("N0\n") }
-                if dbg_stmt == 1 { print("N1\n") }
-                if dbg_stmt == 2 { print("N2\n") }
-                if dbg_stmt == 3 { print("N3\n") }
-                if dbg_stmt == 4 { print("N4\n") }
-                if dbg_stmt == 5 { print("N5\n") }
-                if dbg_stmt == 6 { print("N6\n") }
-                if dbg_stmt == 7 { print("N7\n") }
-                if dbg_stmt == 8 { print("N8\n") }
-                if dbg_stmt == 9 { print("N9\n") }
-                if dbg_stmt > 200 { panic("fold_add_chain_apply stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 15 {
-            if streq(src, g_cur_fn_name_start, 15, "parse_expr_stmt") == 1 {
-                if dbg_stmt == 0 { print("P0\n") }
-                if dbg_stmt == 1 { print("P1\n") }
-                if dbg_stmt == 2 { print("P2\n") }
-                if dbg_stmt == 3 { print("P3\n") }
-                if dbg_stmt == 4 { print("P4\n") }
-                if dbg_stmt == 5 { print("P5\n") }
-                if dbg_stmt == 6 { print("P6\n") }
-                if dbg_stmt == 7 { print("P7\n") }
-                if dbg_stmt == 8 { print("P8\n") }
-                if dbg_stmt == 9 { print("P9\n") }
-                if dbg_stmt > 200 { panic("parse_expr_stmt stmt blowup") }
-            }
-        }
-        if g_cur_fn_name_len == 26 {
-            if streq(src, g_cur_fn_name_start, 26, "parse_expr_stmt_ident_fast") == 1 {
-                if dbg_stmt == 0 { print("N0\n") }
-                if dbg_stmt == 1 { print("N1\n") }
-                if dbg_stmt == 2 { print("N2\n") }
-                if dbg_stmt == 3 { print("N3\n") }
-                if dbg_stmt == 4 { print("N4\n") }
-                if dbg_stmt == 5 { print("N5\n") }
-                if dbg_stmt == 6 { print("N6\n") }
-                if dbg_stmt == 7 { print("N7\n") }
-                if dbg_stmt > 200 { panic("parse_expr_stmt_ident_fast stmt blowup") }
-            }
-        }
         
         if keep_going == 0 {
         } else if t == TOK_RBRACE or t == TOK_EOF {
@@ -8307,7 +7922,6 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                     keep_going = 0
                 }
             }
-            dbg_stmt = dbg_stmt + 1
         }
     }
     ret cur
@@ -9017,30 +8631,15 @@ fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFuncti
     let merge_bb = create_block_live(jfn)
     let saved_loop_ctrl = g_loop_ctrl
     g_loop_ctrl = merge_bb
-    if g_cur_fn_name_len == 12 {
-        if streq(src, g_cur_fn_name_start, 12, "lex_scan_int") == 1 { print("LCL0\n") }
-    }
     let cond_id = live_codegen_expr_inline(start_bb)
-    if g_cur_fn_name_len == 12 {
-        if streq(src, g_cur_fn_name_start, 12, "lex_scan_int") == 1 { print("LCL1\n") }
-    }
     emit_br(jfn, start_bb, cond_id, body_bb, merge_bb)
-    if g_cur_fn_name_len == 12 {
-        if streq(src, g_cur_fn_name_start, 12, "lex_scan_int") == 1 { print("LCL2\n") }
-    }
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE {
         g_loop_ctrl = saved_loop_ctrl
         ret merge_bb
     }
     g_main_pos = g_main_pos + 1
-    if g_cur_fn_name_len == 12 {
-        if streq(src, g_cur_fn_name_start, 12, "lex_scan_int") == 1 { print("LCL3\n") }
-    }
     let body_end = live_compile_block(g_dbg_toks_init, stab, src, jfn, body_bb)
     g_loop_ctrl = saved_loop_ctrl
-    if g_cur_fn_name_len == 12 {
-        if streq(src, g_cur_fn_name_start, 12, "lex_scan_int") == 1 { print("LCL4\n") }
-    }
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_RBRACE {
         g_main_pos = g_main_pos + 1
     } else if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_EOF {
@@ -9129,7 +8728,7 @@ fn lower_fn_store_params(jfn: &JirFunction, out: &i8, pos: &i64) {
 
 fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
     let ui = 0
-    loop ui < 4096 {
+    loop ui < 8192 {
         ctx.use_cnt[ui] = 0
         ui = ui + 1
     }
@@ -9179,7 +8778,7 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
         if ctx.fixups[fi].kind == 0 {
             let co = ctx.fixups[fi].code_off
             let tb = ctx.fixups[fi].target_bb
-            if tb >= 0 and tb < jfn.block_cnt and tb < 512 and co >= 0 and co + 3 < pos[0] {
+            if tb >= 0 and tb < jfn.block_cnt and tb < 256 and co >= 0 and co + 3 < pos[0] {
                 let target_off = ctx.bb_offsets[tb]
                 let rel = target_off - (co + 4)
                 poke_byte(out, co,     rel & 0xFF)
@@ -9258,6 +8857,7 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
 ; ============================================================
 
 fn main(argc: i64, argv_ptr: &i64) {
+    print("M_START\n")
     let src_path: &i8 = 0
     let out_path: &i8 = 0
     g_argv_base = argv_ptr
@@ -9283,79 +8883,29 @@ fn main(argc: i64, argv_ptr: &i64) {
     let toks = alloc_pages(2048) ; 8MiB
     g_dbg_toks = toks
     g_dbg_toks_init = toks
-    ; Test: print addr then write immediately (no function calls between)
-    let toks_p = toks as &i64
-    let toks_i8 = toks as &i8
-    let pre_val = load_i8_at(toks_i8, 0)
-    print("TOKS_READ_OK=")
-    print_i64(pre_val as i64)
-    print("\n")
-    print("PRE_WRITE_ADDR=")
-    print_i64(toks_p as i64)
-    print("\n")
-    toks_p[0] = 99
-    print("TOKS_ADDR=")
-    print_i64(toks as i64)
-    print("\n")
-    print("EARLY_WRITE_OK\n")
-    print("GLOBAL_WRITE_TEST\n")
-    g_lex_count = 999
-    print("GLOBAL_WRITE_OK\n")
-    print("TOKS_P_ADDR=")
-    print_i64(toks_p as i64)
-    print("\n")
-    print("TOKS_WRITE_TEST\n")
-    toks_p[0] = 99
-    print("TOKS_WRITE_OK\n")
-    print("PRE_LEX\n")
-    print("SRC_LEN=")
-    print_i64(g_runtime_src_len)
-    print("\n")
-    print("SRC_BUF=")
-    print_i64(g_src_buf_ptr as i64)
-    print("\n")
     let tok_cnt = lex_main_input()
-    print("POST_LEX\n")
     g_dbg_tok_cnt = g_lex_count
     g_scan_tok_cnt = g_lex_count
-
-    print("PINIT\n")
+    print("TOKCNT=") print_i64(g_scan_tok_cnt) print("\n")
     init_large_post_lex_state()
-    print("PCONST\n")
+    print("POST_INIT\n")
     run_top_const_prelude(g_dbg_toks_init, g_src_buf_ptr, g_runtime_src_len)
-    print("PSTRUCT\n")
+    print("POST_CONST\n")
     run_top_struct_prelude(g_dbg_toks_init, g_stab_ptr, g_src_buf_ptr, g_runtime_src_len)
-    print("PFNSCAN\n")
-
+    print("POST_STRUCT\n")
     ; Pass 1: Scan for global functions
-    print("PA\n")
     let fn_name_off = alloc_pages(1)
-    print("PB=")
-    print_i64(fn_name_off as i64)
-    print("\n")
     let fn_name_len = alloc_pages(1)
-    print("PC=")
-    print_i64(fn_name_len as i64)
-    print("\n")
     let fn_code_off = alloc_pages(2) ; 1024 entries
-    print("PD=")
-    print_i64(fn_code_off as i64)
-    print("\n")
     prepare_top_fn_scan(toks, src_buf, src_len, fn_name_off, fn_name_len)
-    print("M7\n")
-
+    print("POST_FNSCAN\n")
     ; Prepare output buffers
     let code_buf = alloc_pages(4096) ; 16MB
-    print("M7A\n")
     let code_len = 0
     let merged_str = alloc_pages(64)  ; 256KB
-    print("M7B\n")
     let merged_pos = 0
     let glob_buf = alloc_pages(128)  ; 512KB
-    print("M7C\n")
-
     ; _start: preserve initial stack frame, mmap heap, then call main(argc, argv)
-    print("M7D\n")
     emit_byte(code_buf, &code_len, 0x48)             ; mov rbp, rsp
     emit_byte(code_buf, &code_len, 0x89)
     emit_byte(code_buf, &code_len, 0xE5)
@@ -9397,7 +8947,6 @@ fn main(argc: i64, argv_ptr: &i64) {
     emit_byte(code_buf, &code_len, 0xFF)
     emit_byte(code_buf, &code_len, 0x0F)
     emit_byte(code_buf, &code_len, 0x05)
-    print("M7E\n")
 
     ; Fixup arrays
     let gf_strtab_co   = alloc_pages(16)
@@ -9409,57 +8958,44 @@ fn main(argc: i64, argv_ptr: &i64) {
     let gf_call_nlen   = alloc_pages(16)
     let gf_call_cnt    = 0
 
-    print("M7F\n")
-    g_jfn_heap = alloc_pages(8192)
+    g_jfn_heap = alloc_pages(16384)
+    print("JFN_ALLOC\n")
     g_jfn = g_jfn_heap as &JirFunction
-    g_ctx_heap = alloc_pages(96)
+    g_ctx_heap = alloc_pages(100)
     g_ctx = g_ctx_heap as &LowerCtx
-    print("M7G\n")
+    print("CTX_ALLOC\n")
     ; Hardcoded globals bootstrap
-    print("M7H\n")
     let name_off = alloc_pages(8)
+    print("AP1\n")
     let goff = alloc_pages(8)
+    print("AP2\n")
     let gsize = alloc_pages(8)
+    print("AP3\n")
     let gtype = alloc_pages(8)
-    
+    print("BS_ALLOC\n")
+    print("NMO=") print_i64(g_glob_cnt) print("\n")
     ; g_glob_name_off (idx 0)
     name_off[0] = 0 ; dummy
     goff[0] = 0
     gsize[0] = 8
-    
+    print("BS_IDX\n")
     g_glob_name_off = name_off
+    print("BS_NAMEOFF\n")
     g_glob_off      = goff
     g_glob_size     = gsize
     g_glob_stype    = gtype
     g_glob_cnt      = 1
     g_glob_total_sz = 1024
-
-    print("M7I\n")
+    print("BS_DONE\n")
     let jfn = g_jfn
     let ctx = g_ctx
     g_entry_main_idx = -1
 
+    print("PRE_LOOP\n")
     ; Main Compilation Loop
     g_main_pos = 0
-    print("M7J\n")
-    if g_scan_tok_cnt == 0 { print("SCNT_ZERO\n") }
-    if g_scan_tok_cnt > 0  { print("SCNT_POS\n")  }
     loop g_main_pos < g_scan_tok_cnt {
-        print("ML\n")
-        print("ML_TOKS=")
-        print_i64(toks as i64)
-        print(" POS=")
-        print_i64(g_main_pos)
-        print("\n")
-        let toks_raw = toks as &i64
-        let raw0 = toks_raw[0]
-        print("RAW0=")
-        print_i64(raw0)
-        print("\n")
         let top_t = tok_type_at_raw(toks, g_main_pos)
-        print("ML_T=")
-        print_i64(top_t)
-        print("\n")
         let top_start = tok_str_start_at(toks, g_main_pos)
         let top_len = tok_str_len_at(toks, g_main_pos)
         if top_t == TOK_CONST {
@@ -9573,13 +9109,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 regalloc_init(ctx as &RegAlloc)
                 ctx.fix_cnt = 0
                 let cb = create_block_live(jfn)
-                print_span(src_buf, cur_name_off, cur_name_len)
-                print("\n")
-                print("M8\n")
                 live_compile_block(toks, g_stab_ptr, src_buf, jfn, cb)
-                print("BLOCKS=")
-                print_i64(jfn.block_cnt)
-                print("\n")
                 if cur_name_len == 15 {
                     if streq(src_buf, cur_name_off, 15, "lex_handle_bang") == 1 {
                         if jfn.block_cnt > 64 { panic("lex_handle_bang block blowup") }
@@ -9590,9 +9120,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                         if jfn.block_cnt > 512 { panic("lex_handle_minus block blowup") }
                     }
                 }
-                print("M9A\n")
                 lower_fn(jfn, ctx, code_buf, &code_len, is_main)
-                print("MA\n")
 
                 ; Collect fixups
                 let ci = 0
@@ -9627,8 +9155,6 @@ fn main(argc: i64, argv_ptr: &i64) {
                     merged_pos = merged_pos + 1
                     si_copy = si_copy + 1
                 }
-                print("MB\n")
-
                 ; GURANTEED ADVANCE
                 g_main_pos = fn_rbrace_scan + 1
         } else if top_t == TOK_LET or (top_len == 3 and streq(src_buf, top_start, 3, "let") == 1) {
@@ -9638,10 +9164,10 @@ fn main(argc: i64, argv_ptr: &i64) {
         }
     }
 
+    print("LOOP_DONE\n")
     ; ---- Patch Entry Point ----
     let m_off = load_i64_at(fn_code_off, 0)
     if g_entry_main_idx >= 0 { m_off = g_entry_main_idx }
-    print("MC\n")
     let entry_call_imm_off = 49
     let entry_call_next_off = 53
     let e_rel = m_off - entry_call_next_off
@@ -9701,20 +9227,13 @@ fn main(argc: i64, argv_ptr: &i64) {
         }
         ci_f = ci_f + 1
     }
-    print("MD\n")
-    print("out_path=")
-    print(out_path)
-    print("\n")
     let out_fd = syscall(2, out_path, 577, 493)
-    print("out_fd=")
-    print_i64(out_fd)
-    print("\n")
     if out_fd < 0 { panic("open output failed") }
     g_emit_glob_buf = glob_buf
     g_emit_glob_len = g_glob_total_sz
     if g_glob_total_sz > 0 { fill_bytes(glob_buf, g_glob_total_sz, 0) }
-    print("ME\n")
     
+    print("CODELEN=") print_i64(code_len) print("\n")
     write_elf(out_fd, code_buf, code_len, merged_str, merged_pos)
     syscall(3, out_fd, 0, 0)
     syscall(60, 0, 0, 0)
