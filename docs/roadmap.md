@@ -22,7 +22,7 @@
 - [ ] CLI interface (`jda build`, `jda run`)
 - [ ] Error diagnostics with line/column reporting
 - [ ] Linux installer script
-- [ ] Retire jda0 — use self-hosted jda1 as the bootstrap compiler
+- [x] Retire jda0 — use self-hosted jda1 as the bootstrap compiler
 - [ ] Minimal standard library: `fs` (file I/O via syscalls), `fmt` (formatting), `time`
 - [ ] Versioning and release process
 
