@@ -55,30 +55,27 @@ fn main() -> i64 {
 
 ## Building
 
-Requires Docker Desktop (builds target Linux x86-64).
+Requires Docker Desktop (builds target Linux x86-64). No NASM or assembly tools needed — the bootstrap compiler is a self-hosted Jda binary.
 
 ```bash
 # Build the Docker image (once)
 docker build -t jda-build docker/
 
-# Stage 1: assemble jda0, compile jda1
+# Build jda1 from the bootstrap compiler
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make stage1
 
-# Full self-host pipeline (4 stages)
+# Verify self-hosting convergence
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
-  -v $(PWD)/bootstrap:/jda -w /jda/stage0 jda-build sh -c "
-    ./jda1 ../stage1/jda1.jda jda1_sh2 2>/dev/null &&
-    ./jda1_sh2 ../stage1/jda1.jda jda1_sh3 2>/dev/null &&
-    ./jda1_sh3 ../stage1/jda1.jda jda1_sh4 2>/dev/null &&
-    cmp jda1_sh3 jda1_sh4 && echo CONVERGED"
+  -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make selfhost
 ```
 
 ## Repository Layout
 
 ```
 bootstrap/
-  stage0/          jda0 assembler source + Makefile
+  bin/             jda1-bootstrap binary (self-hosted, checked in)
+  stage0/          jda0 assembler source (legacy) + Makefile
   stage1/          jda1 compiler source (jda1.jda)
   selfhost/        built self-host binaries (gitignored)
 docs/              project documentation
