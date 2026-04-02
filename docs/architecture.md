@@ -1,5 +1,7 @@
 # Jda Compiler Architecture
 
+Jda bypasses LLVM and builds its own compiler pipeline entirely in Jda — from lexer to machine code. No C, no C++, no external compiler infrastructure.
+
 ## Bootstrap Pipeline
 
 Jda is bootstrapped from assembly with zero external dependencies:
@@ -91,3 +93,14 @@ docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
 ```
 
 The large stack ulimit (500 MB) is needed because `JirFunction` is 6.3 MB and the compiler processes 250+ functions.
+
+## Future Architecture
+
+JIR is designed to grow beyond basic x86-64 code generation:
+
+- **Optimization passes** — loop tiling, SIMD auto-vectorization (AVX-512/NEON), all written in Jda
+- **GPU backends** — JIR → PTX (NVIDIA) and ROCm (AMD) for native tensor compilation
+- **ARM64 backend** — direct machine code generation for Apple Silicon and ARM servers
+- **Compile-time autograd** — JIR analysis to generate backward passes for ML training
+
+The goal is a fully self-contained compiler infrastructure where every optimization pass and backend is written in Jda itself — no LLVM, no MLIR, no C++ anywhere in the stack.

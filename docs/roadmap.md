@@ -1,86 +1,111 @@
 # Jda Roadmap
 
-## Stage 1 — Self-Hosting Lock ✅ COMPLETE (April 2, 2026)
+## Phase 1 — Bootstrapping & Self-Hosting ✅ COMPLETE
 
-The compiler compiles itself and reaches a fixed point.
+*Goal: Get a working compiler without touching C, C++, or any existing high-level language.*
 
-**Delivered:**
-- Multi-function programs (250+ functions)
-- Struct definitions with field access and nested fields
-- Array declarations and indexing (stack and mmap-backed)
-- Pointer/reference support (address-of, dereference, pass-by-reference)
-- const declarations with global constant tables
-- Logical operators (and, or), comparison operators (==, !=, <, >, <=, >=)
-- else-if chains
-- String escape sequences (\n, \t, \\, \")
-- print(string), print_i64(int)
-- 6-argument function calls (System V ABI)
-- Inline asm blocks
-- syscall() built-in
-- SSA-based JIR with constant folding and DCE
-- Register allocator with spill support
-- x86-64 lowering and ELF64 binary output
-- Convergence: jda1_sh3 == jda1_sh4
+**Delivered (April 2, 2026):**
+- Stage 0 compiler in raw x86-64 assembly (NASM) — direct Linux syscalls, no libc
+- Stage 1 compiler written in Jda — lexer, parser, JIR codegen, optimizer, register allocator, x86-64 lowering, ELF writer
+- Full self-hosting: jda1 compiles itself to an identical binary (convergence proven)
+- SSA-based JIR with constant folding and dead code elimination
+- Multi-function programs (250+ functions), structs, arrays, pointers, inline asm, syscalls
 
-## Stage 2 — Minimal Release (Next)
+**C and C++ are officially eliminated from the toolchain.**
 
-Make Jda usable for external developers.
+---
 
-**Goals:**
-- CLI interface (`jda build`, `jda run`)
-- Proper error diagnostics with line/column reporting
-- Linux installer script
-- Minimal standard library (fs, time, fmt)
-- Remove jda0 dependency — use self-hosted jda1 as the bootstrap compiler
-- Versioning
+## Phase 2 — Minimal Release (Next)
 
-**Deliverable:** One-command install and build workflow.
+*Goal: Make Jda usable by external developers.*
 
-## Stage 3 — Language Core Maturity
+- [ ] CLI interface (`jda build`, `jda run`)
+- [ ] Error diagnostics with line/column reporting
+- [ ] Linux installer script
+- [ ] Retire jda0 — use self-hosted jda1 as the bootstrap compiler
+- [ ] Minimal standard library: `fs` (file I/O via syscalls), `fmt` (formatting), `time`
+- [ ] Versioning and release process
 
-Implement the features needed for real-world programs.
+**Deliverable**: One-command install and build workflow.
 
-**Goals:**
-- Full type checking and type inference
-- Enums and pattern matching
-- Result<T, E> and `?` operator
-- impl blocks and methods
-- Minimal generics (monomorphization)
-- Basic ownership model (single-owner rule)
+---
 
-**Deliverable:** Ability to build CLI tools and servers in Jda.
+## Phase 3 — Language Core Maturity
 
-## Stage 4 — Performance
+*Goal: Make Jda powerful enough for real-world programs.*
 
-**Goals:**
-- Graph-coloring register allocator
-- Function inlining
-- Tail-call optimization
-- Loop unrolling
-- Benchmark suite (vs C, Go, Rust)
+- [ ] Full type checking and type inference
+- [ ] Enums and pattern matching
+- [ ] `Result<T, E>` and `?` operator
+- [ ] `impl` blocks and methods
+- [ ] Generics (monomorphization)
+- [ ] Compile-Time Reference Counting (CTRC) — automated memory safety, no GC
+- [ ] Region-based allocation (arenas) for hot paths
+- [ ] Linear types for resource safety (files, sockets must be consumed)
 
-## Stage 5 — Concurrency (Optional Path A)
+**Deliverable**: Ability to build CLI tools and servers in Jda.
 
-- Lightweight threads (J-Threads)
-- Lock-free channels
-- Work-stealing scheduler
-- `spawn` keyword
-- Deadlock detection
+---
 
-## Stage 6 — ML Runtime (Optional Path B)
+## Phase 4 — Performance & Optimization
 
-- Tensor primitives with compile-time shape checking
-- Autograd
-- SIMD vectorization
-- GPU backend (PTX/ROCm)
-- Transformer demo
+*Goal: Prove Jda can match C/Rust performance.*
 
-## Stage 7 — Ecosystem
+- [ ] Graph-coloring register allocator
+- [ ] Function inlining
+- [ ] Tail-call optimization
+- [ ] Loop tiling and cache-line optimization
+- [ ] AVX-512 / NEON SIMD auto-vectorization pass in JIR
+- [ ] Benchmark suite (vs C, Go, Rust)
 
-- Package manager
-- Language server (LSP)
-- Formatter
-- Test framework
-- Documentation site
-- WASM playground
-- macOS and Windows backends
+---
+
+## Phase 5 — Concurrency Runtime
+
+*Goal: Match Go's concurrency with deterministic performance (no GC).*
+
+- [ ] J-Threads — lightweight green threads with M:N work-stealing scheduler
+- [ ] Actor model — isolated memory per actor, no shared state, no data races
+- [ ] Lock-free channels with zero-copy message passing (ownership transfer)
+- [ ] `spawn` keyword
+- [ ] Deadlock detection
+
+---
+
+## Phase 6 — Native Machine Learning
+
+*Goal: Replace Python as the ML language by making tensors and autograd native primitives.*
+
+- [ ] First-class `Tensor` type with compile-time shape checking
+- [ ] Compile-time autograd — compiler generates backward passes, no runtime graph
+- [ ] Jda-to-PTX backend — direct GPU compilation without CUDA C++ runtime
+- [ ] ROCm backend for AMD GPUs
+- [ ] CPU AVX-512 vectorization pass for tensor operations
+- [ ] Native ML standard library: `nn.Linear`, `nn.ReLU`, `optim.Adam` — all in Jda
+- [ ] Transformer demo — train a model in pure Jda
+
+---
+
+## Phase 7 — Ecosystem & Tooling
+
+- [ ] Package manager
+- [ ] Language server (LSP)
+- [ ] Formatter
+- [ ] Test framework
+- [ ] Documentation site
+- [ ] WASM playground
+- [ ] macOS and Windows backends
+- [ ] ARM64 backend
+
+---
+
+## Timeline (Solo Developer)
+
+| Milestone | Target |
+|-----------|--------|
+| Self-hosting | ✅ April 2026 |
+| Usable 0.1 release | ~2 months |
+| Strong language core | ~8 months |
+| Performance credibility | ~12 months |
+| Concurrency or ML identity | ~18 months |
+| Ecosystem maturity | ~24 months |
