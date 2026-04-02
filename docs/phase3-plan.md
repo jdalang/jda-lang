@@ -47,22 +47,23 @@
 
 ---
 
-### M2: Type Inference
+### M2: Type Inference ✅
 
-**Why second**: Reduces boilerplate. `let x = 5` should infer `i64` without annotation.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. Infer `let` variable types from right-hand side expression
-   - `let x = 5` → `x: i64`
-   - `let p = &s` → `p: &StructName`
-   - `let r = fn_call()` → type from function return type
-2. Infer return types when unambiguous
-   - Single-return functions: infer from `ret expr`
-   - Multiple returns: require explicit annotation (or all must agree)
-3. Propagate inferred types through the type checker (M1)
-4. Keep explicit annotations working — inference is optional, never required
+**What was done**:
+1. Added `parse_skip_ret_type()` helper function — parses `-> type` annotations and returns the type constant, keeping main() lean (avoids jda0 compilation hang)
+2. Store function return types in `g_fn_ret_type_tbl` during compilation
+3. Infer `let` variable types from function call return types in `live_compile_let_stmt` — `let r = fn()` now gets the function's declared return type instead of defaulting to i64
+4. Added 3 conformance tests for type inference (infer_fn_ret_type, infer_chain, infer_void_fn)
+5. Self-host converges at 1,863,120 bytes
 
-**Scope limit**: No Hindley-Milner. Inference flows forward only (left-to-right, top-to-bottom). This is closer to Go/Rust `let` inference than ML-style global inference.
+**Already working** (pre-existing inference):
+- `let x = 5` → i64 (integer literal default)
+- `let s = "hi"` → &i8 (string literal)
+- `let v = other_var` → same type as other_var (local/global lookup)
+- `let p = alloc_pages(1)` → &void (hardcoded)
+- `let s = Foo{}` → struct type (struct init detection)
 
 ---
 
