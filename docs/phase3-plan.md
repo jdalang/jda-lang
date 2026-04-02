@@ -171,34 +171,30 @@
 
 ---
 
-### M7: Compile-Time Reference Counting (CTRC)
+### M7: Compile-Time Reference Counting (CTRC) ✅
 
-**Why seventh**: Jda's memory safety story. Depends on type checking (M1) and methods (M6) for drop semantics.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. **Ownership tracking in the compiler**
-   - Each variable has an owner
-   - Assignment transfers ownership (move semantics by default)
-   - `let b = a` → `a` is no longer valid
+**What was done**:
+1. Added `OP_DROP` opcode (33) — new JIR instruction for memory deallocation
+2. Extended JirFunction struct with `var_owned[256]` and `var_alloc_sz[256]` parallel arrays for ownership tracking
+3. Added `clear_owned_flags()` helper to zero ownership arrays at function init
+4. Ownership marking in `live_compile_let_stmt`: detects `let x = alloc_pages(N)` with constant N, marks variable as owning `N * 4096` bytes
+5. Added `emit_drop()` helper: loads pointer from variable slot, emits OP_CONST for size, emits OP_DROP instruction
+6. Added `lower_instr_drop()`: lowers OP_DROP to `munmap(ptr, size)` syscall (rax=11, rdi=ptr, rsi=size)
+7. Wired OP_DROP into DCE used-marking and `lower_fn_mark_uses_instr` use-counting
+8. Added `ctrc_emit_drops()` and `ctrc_emit_drops_clear()` helpers for scanning owned vars and emitting drops
+9. Scope-exit drops in `live_compile_block`: saves var_cnt at block entry, drops owned vars at block exit, restores var_cnt
+10. Drops before `break` statements in loop bodies
+11. Added 3 conformance tests: drop_scope_basic, drop_early_return, drop_loop
+12. Self-host converges at 1,944,440 bytes (73/73 tests pass)
 
-2. **Compile-time refcount insertion**
-   - When the compiler can prove a value has exactly one owner → no refcount needed (most cases)
-   - When a value is shared (e.g., passed to multiple functions that store it) → insert `rc_inc`/`rc_dec` calls
-   - At scope exit → insert `rc_dec` for all owned values
+**Scope (v1 — Block-Scope Only)**:
+- Automatic munmap at scope exit for `alloc_pages(N)` with constant page count
+- Drops in nested scopes (if/loop blocks) only — function-level drops deferred to avoid escape-to-global issues
+- NOT in scope: ownership transfer detection, dynamic sizes, move semantics, struct field drops, function-level return drops (requires escape analysis)
 
-3. **Drop semantics**
-   - When refcount hits 0 at compile time → insert deallocation
-   - For structs with resources (files, sockets): call a `drop` method if defined in `impl`
-
-4. **JIR additions**: `OP_RC_INC`, `OP_RC_DEC`, `OP_DROP`
-
-5. **Escape analysis**
-   - Values that don't escape their scope → stack allocated, no refcount
-   - Values that escape (returned, stored in struct) → heap allocated with refcount header
-
-**Design principle**: Most programs should see zero runtime refcount overhead. CTRC is a compile-time optimization pass, not a runtime GC. The compiler statically determines lifetimes wherever possible and only falls back to refcounting for genuinely ambiguous ownership.
-
-**Risk**: This is the hardest milestone. Requires dataflow analysis across function boundaries. Start with local-scope-only analysis, extend to interprocedural later.
+**Key constraint**: No drops at function return (v1). Variables stored in globals (e.g., `g_stab_ptr = alloc_pages(50)`) would be incorrectly freed. Full escape analysis deferred to future work.
 
 ---
 

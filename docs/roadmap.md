@@ -49,7 +49,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] `Result<T, E>` and `?` operator ✅
 - [x] `impl` blocks and methods ✅
 - [x] Generics (monomorphization) ✅
-- [ ] Compile-Time Reference Counting (CTRC) — automated memory safety, no GC
+- [x] Compile-Time Reference Counting (CTRC) — automated memory safety, no GC ✅
 - [ ] Region-based allocation (arenas) for hot paths
 - [ ] Linear types for resource safety (files, sockets must be consumed)
 
