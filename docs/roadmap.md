@@ -24,7 +24,7 @@
 - [x] Error diagnostics with source context ✅
 - [ ] Linux installer script
 - [x] Retire jda0 — use self-hosted jda1 as the bootstrap compiler ✅
-- [ ] Minimal standard library: `fs` (file I/O via syscalls), `fmt` (formatting), `time`
+- [x] Minimal standard library: `fs` (file I/O via syscalls), `fmt` (formatting), `time` ✅
 - [ ] Versioning and release process
 
 **Deliverable**: One-command install and build workflow.
