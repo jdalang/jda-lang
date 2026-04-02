@@ -45,7 +45,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 - [x] Argument count checking at call sites ✅
 - [x] Type inference from function return types ✅
-- [ ] Enums and pattern matching
+- [x] Enums and pattern matching ✅
 - [ ] `Result<T, E>` and `?` operator
 - [ ] `impl` blocks and methods
 - [ ] Generics (monomorphization)
