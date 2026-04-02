@@ -43,7 +43,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 *Goal: Make Jda powerful enough for real-world programs.*
 
-- [ ] Full type checking and type inference
+- [x] Argument count checking at call sites ✅
 - [ ] Enums and pattern matching
 - [ ] `Result<T, E>` and `?` operator
 - [ ] `impl` blocks and methods
