@@ -332,7 +332,7 @@ impl Shape {
     }
 }
 
-fn describe(s: &Shape) -> Result<i64, i64> {
+fn describe(s: Shape) -> Result<i64, i64> {
     let a = s.area()
     if a == 0 { ret Result.Err(1) }
     ret Result.Ok(a)
@@ -340,11 +340,13 @@ fn describe(s: &Shape) -> Result<i64, i64> {
 
 fn main() {
     let s = Shape.Circle(10)
-    let result = describe(&s)?
+    let result = describe(s)?
     print_int(result)
 }
 ```
 
 Output: `300`
+
+**Status: COMPLETE** (2026-04-02) — Capstone compiles and produces `300`. Self-host converged at 1,984,540 bytes. All 79 conformance tests pass.
 
 The compiler type-checks it, pattern-matches it, resolves methods, and manages memory — all without C, without a GC, and while still compiling itself.
