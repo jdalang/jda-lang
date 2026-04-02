@@ -1,0 +1,250 @@
+; =============================================================================
+; jda::prelude -- Standard Library Prelude
+; =============================================================================
+; Includes: fmt, fs, time
+; Usage: jda build --include stdlib/prelude.jda myapp.jda
+; =============================================================================
+
+; --- core: byte-level memory access ---
+; NOTE: buf[idx] = val in the same function scope does i64-stride stores.
+; Use set_byte/get_byte for byte-granularity access on raw buffers.
+
+fn set_byte(buf: &i8, off: i64, val: i64) {
+    buf[off] = val
+}
+
+fn get_byte(buf: &i8, off: i64) -> i64 {
+    ret buf[off]
+}
+
+; --- fmt: string formatting and utilities ---
+
+fn fmt_i64(buf: &i8, val: i64) -> i64 {
+    let v = val
+    let neg = 0
+    if v < 0 {
+        neg = 1
+        v = 0 - v
+    }
+    if v == 0 {
+        buf[0] = 48
+        ret 1
+    }
+    let pos = 20
+    let len = 0
+    loop v > 0 {
+        pos = pos - 1
+        let digit = v - (v / 10) * 10
+        buf[pos] = digit + 48
+        v = v / 10
+        len = len + 1
+    }
+    if neg == 1 {
+        pos = pos - 1
+        buf[pos] = 45
+        len = len + 1
+    }
+    let i = 0
+    loop i < len {
+        let src_pos = pos + i
+        let ch = buf[src_pos]
+        buf[i] = ch
+        i = i + 1
+    }
+    ret len
+}
+
+fn fmt_hex(buf: &i8, val: i64) -> i64 {
+    let v = val
+    set_byte(buf, 0, 48)
+    set_byte(buf, 1, 120)
+    if v == 0 {
+        set_byte(buf, 2, 48)
+        ret 3
+    }
+    ; Write hex digits backwards into temp, then copy forward
+    let tmp = alloc_pages(1)
+    let pos = 20
+    let len = 0
+    loop v > 0 {
+        pos = pos - 1
+        let nibble = v - (v / 16) * 16
+        if nibble < 10 {
+            set_byte(tmp, pos, nibble + 48)
+        } else {
+            set_byte(tmp, pos, nibble + 87)
+        }
+        v = v / 16
+        len = len + 1
+    }
+    ; Copy from tmp to buf starting at offset 2
+    let i = 0
+    loop i < len {
+        let src_pos = pos + i
+        let dst_pos = 2 + i
+        let ch = get_byte(tmp, src_pos)
+        set_byte(buf, dst_pos, ch)
+        i = i + 1
+    }
+    ret len + 2
+}
+
+fn str_len(s: &i8) -> i64 {
+    let i = 0
+    loop s[i] != 0 {
+        i = i + 1
+    }
+    ret i
+}
+
+fn str_eq(a: &i8, b: &i8) -> i64 {
+    let i = 0
+    loop a[i] != 0 {
+        if a[i] != b[i] { ret 0 }
+        i = i + 1
+    }
+    if b[i] != 0 { ret 0 }
+    ret 1
+}
+
+fn str_copy(dst: &i8, src: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        dst[i] = src[i]
+        i = i + 1
+    }
+    ret len
+}
+
+fn mem_set(dst: &i8, val: i64, len: i64) {
+    let i = 0
+    loop i < len {
+        dst[i] = val
+        i = i + 1
+    }
+}
+
+fn eprint_str(s: &i8, len: i64) {
+    syscall(1, 2, s, len)
+}
+
+fn print_str(s: &i8, len: i64) {
+    syscall(1, 1, s, len)
+}
+
+fn print_int(val: i64) {
+    let pi_buf: &i8 = alloc_pages(1)
+    let pi_len = fmt_i64(pi_buf, val)
+    print_str(pi_buf, pi_len)
+}
+
+; --- fs: file I/O ---
+
+fn fs_read_file(path: &i8, buf: &i8, max_bytes: i64) -> i64 {
+    let fd = syscall(2, path, 0, 0)
+    if fd < 0 { ret -1 }
+    let total = 0
+    let keep = 1
+    loop keep == 1 {
+        let remaining = max_bytes - total
+        if remaining < 1 { keep = 0 }
+        if keep == 1 {
+            let n = syscall(0, fd, buf + total, remaining)
+            if n < 1 {
+                keep = 0
+            } else {
+                total = total + n
+            }
+        }
+    }
+    syscall(3, fd, 0, 0)
+    ret total
+}
+
+fn fs_write_file(path: &i8, data: &i8, len: i64) -> i64 {
+    let fd = syscall(2, path, 577, 420)
+    if fd < 0 { ret -1 }
+    let n = syscall(1, fd, data, len)
+    syscall(3, fd, 0, 0)
+    ret n
+}
+
+fn fs_append_file(path: &i8, data: &i8, len: i64) -> i64 {
+    let fd = syscall(2, path, 1089, 420)
+    if fd < 0 { ret -1 }
+    let n = syscall(1, fd, data, len)
+    syscall(3, fd, 0, 0)
+    ret n
+}
+
+fn fs_exists(path: &i8) -> i64 {
+    let r = syscall(21, path, 0, 0)
+    if r == 0 { ret 1 }
+    ret 0
+}
+
+fn fs_unlink(path: &i8) -> i64 {
+    let r = syscall(87, path, 0, 0)
+    if r < 0 { ret -1 }
+    ret 0
+}
+
+fn fs_mkdir(path: &i8) -> i64 {
+    let r = syscall(83, path, 493, 0)
+    if r < 0 { ret -1 }
+    ret 0
+}
+
+fn fs_file_size(path: &i8) -> i64 {
+    let statbuf = alloc_pages(1)
+    let r = syscall(4, path, statbuf, 0)
+    if r < 0 { ret -1 }
+    let size_ptr: &i64 = statbuf + 48
+    let size = size_ptr[0]
+    ret size
+}
+
+; --- time: clocks and sleep ---
+
+struct Timespec {
+    tv_sec: i64
+    tv_nsec: i64
+}
+
+fn time_now_ns() -> i64 {
+    let ts = Timespec{}
+    syscall(228, 1, &ts, 0)
+    ret ts.tv_sec * 1000000000 + ts.tv_nsec
+}
+
+fn time_now_us() -> i64 {
+    let ns = time_now_ns()
+    ret ns / 1000
+}
+
+fn time_now_ms() -> i64 {
+    let ns = time_now_ns()
+    ret ns / 1000000
+}
+
+fn time_sleep_ns(ns: i64) {
+    let req = Timespec{}
+    req.tv_sec = ns / 1000000000
+    req.tv_nsec = ns - req.tv_sec * 1000000000
+    syscall(35, &req, 0, 0)
+}
+
+fn time_sleep_ms(ms: i64) {
+    time_sleep_ns(ms * 1000000)
+}
+
+fn time_elapsed_ns(start_ns: i64) -> i64 {
+    let now = time_now_ns()
+    ret now - start_ns
+}
+
+fn time_unix_secs() -> i64 {
+    let ts = Timespec{}
+    syscall(228, 0, &ts, 0)
+    ret ts.tv_sec
+}
