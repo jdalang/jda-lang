@@ -147,47 +147,27 @@
 
 ---
 
-### M6: `impl` Blocks and Methods
+### M6: `impl` Blocks and Methods ✅
 
-**Why sixth**: Depends on type checking (M1) and benefits from generics (M5). Methods make structs usable.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. **`impl` block syntax**
-   ```jda
-   struct Point {
-       x: i64
-       y: i64
-   }
+**What was done**:
+1. Added `TOK_IMPL=51` keyword, recognized in `classify_keyword_len4`
+2. Token-level pre-expansion: `expand_impl_blocks()` scans for `impl StructName { fn ... }` patterns, copies method tokens to end of token array with mangled names (e.g., `Point_sum` → `fn Point_sum(self: &Point) -> i64 { ... }`), hides originals as TOK_EOF
+3. `&self` parameter transformation: `(&self)` → `(self: &Point)` during token copy
+4. Method name mangling via `build_method_mangle()` — writes "StructName_method" and "\nfn StructName_method " to source buffer for FN_SCAN detection
+5. Impl table stored in `g_genfn_buf[200+]` (reuses generic function buffer at higher offsets): count at [200], entries at [201+i*6] with {sn_off, sn_len, mn_off, mn_len, moff, mlen}
+6. Method call dispatch in both codegen paths:
+   - Non-live `codegen_postfix_inline`: when field lookup fails and next token is LPAREN, lookup impl method and dispatch via `live_codegen_method_call`
+   - Live `live_codegen_postfix_rest`: same pattern with direct call
+7. Associated function dispatch: `StructName.method(args)` → `StructName_method(args)` in both `codegen_primary_ident_inline` and `live_codegen_primary_ident_inline`
+8. `live_codegen_method_call` function: emits OP_CALL with self_id as implicit first arg
+9. Added 1 conformance test: impl_method (struct Point with sum method)
+10. Self-host converges at 1,935,105 bytes (70/70 tests pass)
 
-   impl Point {
-       fn new(x: i64, y: i64) -> Point {
-           let p = Point{}
-           p.x = x
-           p.y = y
-           ret p
-       }
+**Scope**: Methods as syntactic sugar over functions. No vtable, no dynamic dispatch. `&self` methods only (no move self). Single impl block per struct. Up to 64 methods total across all impl blocks.
 
-       fn distance(&self, other: &Point) -> i64 {
-           let dx = other.x - self.x
-           let dy = other.y - self.y
-           ret dx * dx + dy * dy
-       }
-   }
-   ```
-
-2. **Method dispatch** — desugar to function calls
-   - `p.distance(&q)` → `Point_distance(&p, &q)`
-   - `&self` is an implicit first parameter
-   - Name mangling: `StructName_method_name`
-
-3. **Associated functions** (no self) — constructors
-   - `Point.new(3, 4)` → `Point_new(3, 4)`
-
-4. **Method resolution**
-   - When parsing `expr.name(args)`, check if `name` is a field (field access) or a method (method call)
-   - Lookup in the impl table for the struct type
-
-**Implementation**: Methods are syntactic sugar over functions. No vtable, no dynamic dispatch. This keeps it simple and zero-cost.
+**Key constraint**: `copy_method_toks` limited to 4 parameters (jda0 bootstrap has 6-arg limit). Reads struct name/method offsets from impl table internally.
 
 ---
 
