@@ -70,6 +70,31 @@ docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make selfhost
 ```
 
+## CLI Usage
+
+```bash
+# Compile a .jda file (output name derived from input: hello.jda → hello)
+jda build hello.jda
+
+# Compile with explicit output path
+jda build hello.jda -o my_binary
+
+# Compile and run immediately
+jda run hello.jda
+
+# Show version
+jda --version
+
+# Show help
+jda --help
+```
+
+Legacy syntax is also supported for backward compatibility:
+
+```bash
+jda hello.jda output_binary
+```
+
 ## Repository Layout
 
 ```
