@@ -1,0 +1,26 @@
+fn step1(x: i64) -> i64 {
+    if x == 0 { ret Result.Err(10) }
+    ret Result.Ok(x * 2)
+}
+
+fn step2(x: i64) -> i64 {
+    let a = step1(x)?
+    ret Result.Ok(a + 1)
+}
+
+fn step3(x: i64) -> i64 {
+    let b = step2(x)?
+    ret Result.Ok(b + 100)
+}
+
+fn main() {
+    let r1 = step3(5)
+    let r2 = step3(0)
+    let t1 = r1[0]
+    let v1 = r1[1]
+    let t2 = r2[0]
+    let v2 = r2[1]
+    if t1 == 0 and v1 == 111 and t2 == 1 and v2 == 10 {
+        print("ok")
+    }
+}

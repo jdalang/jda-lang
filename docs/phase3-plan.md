@@ -86,38 +86,20 @@
 
 ---
 
-### M4: `Result<T, E>` and `?` Operator
+### M4: `Result<T, E>` and `?` Operator ✅
 
-**Why fourth**: Depends on enums (M3). This is Jda's error handling story.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. **Result as a built-in enum** (or stdlib enum once generics exist)
-   ```jda
-   enum Result {
-       Ok(val: i64)
-       Err(code: i64)
-   }
-   ```
-   - Initially: `Result` holds i64 values only (no generics yet)
-   - After M5 (generics): `Result<T, E>` with type parameters
+**What was done**:
+1. Added `TOK_QUESTION=50` token and `?` character (ASCII 63) to lexer
+2. `Result.Ok(val)` and `Result.Err(code)` create 16-byte heap allocations: `{tag: i64, val: i64}` where tag=0 for Ok, tag=1 for Err
+3. Result construction handled in both codegen paths (non-live `codegen_primary_ident_inline` and live `live_codegen_primary_ident_inline`)
+4. `?` operator in `let` statements: loads tag from Result pointer, branches to early-return (propagating the Err Result) or extracts the Ok value
+5. Changed `live_compile_let_stmt` to return `-> i64` (the current basic block, which changes when `?` creates branch blocks)
+6. Added 4 conformance tests: result_basic, result_err, result_question, result_chain
+7. Self-host converges at 1,881,233 bytes
 
-2. **`?` operator** — early return on Err
-   ```jda
-   fn read_config() -> Result {
-       let fd = fs_open("config.txt")?
-       let data = fs_read(fd, buf, 1024)?
-       ret Result.Ok(data)
-   }
-   ```
-   - Desugars to: `let tmp = expr; match tmp { Err(e) => ret Result.Err(e), Ok(v) => v }`
-   - Parser: `?` is a postfix unary operator
-   - Codegen: emit match + conditional return
-
-3. **Standard error codes**
-   - `ERR_NOT_FOUND = 1`, `ERR_PERMISSION = 2`, `ERR_IO = 3`, etc.
-   - Update stdlib functions to return `Result` instead of raw i64
-
-**Test plan**: Result creation, `?` propagation, nested `?`, error bubbling through call chains.
+**Scope**: Result holds i64 values only (no generics). `?` works in `let x = expr?` context (live compilation path). Standard error codes deferred to stdlib work.
 
 ---
 
