@@ -203,6 +203,14 @@ const OP_TLEN        = 80
 const OP_TSHAPE      = 81
 const OP_TDATA       = 82
 
+; AVX-512 opcodes
+const OP_AVX_CHECK   = 83
+const OP_AVX_ADDF64  = 84
+const OP_AVX_MULF64  = 85
+const OP_AVX_SCLF64  = 86
+const OP_AVX_SUMF64  = 87
+const OP_AVX_DOTF64  = 88
+
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
 const PHYS_RCX = 1
@@ -7000,6 +7008,53 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.operand0 = arg0
         ret emit(jfn, bb, &ins)
     }
+    if name_len == 12 and streq(src, name_start, 12, "avx512_check") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_CHECK
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 14 and streq(src, name_start, 14, "avx512_add_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_ADDF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 14 and streq(src, name_start, 14, "avx512_mul_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_MULF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 16 and streq(src, name_start, 16, "avx512_scale_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_SCLF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 14 and streq(src, name_start, 14, "avx512_sum_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_SUMF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 14 and streq(src, name_start, 14, "avx512_dot_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_DOTF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ret emit(jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8633,6 +8688,53 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         let ins = Instr{}
         ins.op = OP_TDATA
         ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 12 and streq(g_src_buf_ptr, name.str_start, 12, "avx512_check") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_CHECK
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 14 and streq(g_src_buf_ptr, name.str_start, 14, "avx512_add_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_ADDF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 14 and streq(g_src_buf_ptr, name.str_start, 14, "avx512_mul_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_MULF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 16 and streq(g_src_buf_ptr, name.str_start, 16, "avx512_scale_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_SCLF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 14 and streq(g_src_buf_ptr, name.str_start, 14, "avx512_sum_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_SUMF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 14 and streq(g_src_buf_ptr, name.str_start, 14, "avx512_dot_f64") == 1 {
+        let ins = Instr{}
+        ins.op = OP_AVX_DOTF64
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
         ret emit(g_jfn, bb, &ins)
     }
 
@@ -13527,6 +13629,674 @@ fn lower_tensor_meta(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     }
 }
 
+; ── AVX-512 lowering ──────────────────────────────────────────────────
+
+fn lower_avx512_check(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; CPUID leaf 7 ECX=0 → EBX bit 16 = AVX-512F
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    ; push rbx (CPUID clobbers it)
+    emit_push_r(out, pos, PHYS_RBX)
+    ; xor ecx, ecx  (31 C9)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xC9)
+    ; mov eax, 7  (B8 07 00 00 00)
+    emit_byte(out, pos, 0xB8)
+    emit_byte(out, pos, 0x07)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    ; cpuid  (0F A2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xA2)
+    ; bt ebx, 16  (0F BA E3 10)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xBA)
+    emit_byte(out, pos, 0xE3)
+    emit_byte(out, pos, 0x10)
+    ; pop rbx
+    emit_pop_r(out, pos, PHYS_RBX)
+    ; sbb rax, rax  (48 19 C0) — sets RAX to -1 if CF=1, 0 if CF=0
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x19)
+    emit_byte(out, pos, 0xC0)
+    ; neg rax  (48 F7 D8) — -1 → 1, 0 → 0
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xF7)
+    emit_byte(out, pos, 0xD8)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+}
+
+; Helper: emit EVEX 4-byte prefix
+; mm: map (1=0F, 2=0F38), vvvv: src2 reg (0-7), W: 0 or 1
+; reg_hi/rm_hi: 0 for regs 0-7
+fn emit_evex(out: &i8, pos: &i64, mm: i64, W: i64, vvvv: i64, LL: i64) {
+    ; Byte 0: 0x62
+    emit_byte(out, pos, 0x62)
+    ; P0: R~=1 X~=1 B~=1 R'~=1 0 0 mm
+    let p0 = 0xF0 + mm
+    emit_byte(out, pos, p0)
+    ; P1: W vvvv~ 1 pp(01=66)
+    let nvvvv = 15 - vvvv
+    let p1_lo = nvvvv * 8
+    let p1 = W * 128 + p1_lo + 5
+    emit_byte(out, pos, p1)
+    ; P2: z=0 L'L b=0 V'~=1 aaa=000
+    let p2 = LL * 32 + 8
+    emit_byte(out, pos, p2)
+}
+
+; Emit EVEX vectorized elementwise: dst[i] = a[i] OP b[i]
+; opcode: 0x58=VADDPD, 0x59=VMULPD, 0x5C=VSUBPD
+; Args already in RDI=dst, RSI=a, RDX=b, RCX=n
+fn emit_avx512_elemwise_body(out: &i8, pos: &i64, opcode: i64) {
+    ; Main loop: process 8 f64s at a time
+    let loop_top = pos[0]
+    ; CMP RCX, 8  (48 83 F9 08)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xF9)
+    emit_byte(out, pos, 0x08)
+    ; JL tail  (0F 8C rel32) — patch later
+    let jl_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8C)
+    emit_i32_le(out, pos, 0)
+    ; VMOVUPD ZMM0, [RSI]  — EVEX.mm=1 W=1 vvvv=0 LL=2(512) opcode=0x10
+    ; ModRM: mod=00 reg=0(zmm0) rm=6(rsi) → 0x06
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x06)
+    ; VOP ZMM0, ZMM0, [RDX] — EVEX.mm=1 W=1 vvvv=0(zmm0) LL=2
+    ; ModRM: mod=00 reg=0(zmm0) rm=2(rdx) → 0x02
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, opcode)
+    emit_byte(out, pos, 0x02)
+    ; VMOVUPD [RDI], ZMM0 — opcode=0x11
+    ; ModRM: mod=00 reg=0(zmm0) rm=7(rdi) → 0x07
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x11)
+    emit_byte(out, pos, 0x07)
+    ; ADD RSI, 64  (48 83 C6 40)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x40)
+    ; ADD RDX, 64  (48 83 C2 40)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC2)
+    emit_byte(out, pos, 0x40)
+    ; ADD RDI, 64  (48 83 C7 40)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x40)
+    ; SUB RCX, 8  (48 83 E9 08)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xE9)
+    emit_byte(out, pos, 0x08)
+    ; JMP loop_top
+    let jmp_rel = loop_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel)
+    ; Patch JL forward
+    let tail_off = pos[0]
+    let jl_rel = tail_off - (jl_off + 6)
+    poke_byte(out, jl_off + 2, i32_b0(jl_rel))
+    poke_byte(out, jl_off + 3, i32_b1(jl_rel))
+    poke_byte(out, jl_off + 4, i32_b2(jl_rel))
+    poke_byte(out, jl_off + 5, i32_b3(jl_rel))
+    ; Scalar tail: process remaining elements one at a time
+    ; CMP RCX, 0
+    let tail_top = pos[0]
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xF9)
+    emit_byte(out, pos, 0x00)
+    ; JE done (0F 84 rel32)
+    let je_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x84)
+    emit_i32_le(out, pos, 0)
+    ; MOVSD XMM0, [RSI]  (F2 0F 10 06)
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x06)
+    ; scalar op XMM0, [RDX]
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    if opcode == 0x58 {
+        emit_byte(out, pos, 0x58)
+    }
+    if opcode == 0x59 {
+        emit_byte(out, pos, 0x59)
+    }
+    if opcode == 0x5C {
+        emit_byte(out, pos, 0x5C)
+    }
+    emit_byte(out, pos, 0x02)
+    ; MOVSD [RDI], XMM0  (F2 0F 11 07)
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x11)
+    emit_byte(out, pos, 0x07)
+    ; ADD RSI, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x08)
+    ; ADD RDX, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC2)
+    emit_byte(out, pos, 0x08)
+    ; ADD RDI, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x08)
+    ; DEC RCX  (48 FF C9)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC9)
+    ; JMP tail_top
+    let jmp_rel2 = tail_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel2)
+    ; Patch JE to here
+    let done_off = pos[0]
+    let je_rel = done_off - (je_off + 6)
+    poke_byte(out, je_off + 2, i32_b0(je_rel))
+    poke_byte(out, je_off + 3, i32_b1(je_rel))
+    poke_byte(out, je_off + 4, i32_b2(je_rel))
+    poke_byte(out, je_off + 5, i32_b3(je_rel))
+}
+
+fn lower_avx512_add(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; avx512_add_f64(dst_ptr, a_ptr, b_ptr, count)
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+    emit_push_r(out, pos, r2)
+    let r3 = get_or_load(ctx.ra, out, pos, ins.operand3)
+    emit_push_r(out, pos, r3)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDX)
+    emit_pop_r(out, pos, PHYS_RSI)
+    emit_pop_r(out, pos, PHYS_RDI)
+    emit_avx512_elemwise_body(out, pos, 0x58)
+    emit_restore_pool(ctx.ra, out, pos)
+    emit_pop_r(out, pos, PHYS_R12)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    consume_use(ctx, ins.operand2)
+    consume_use(ctx, ins.operand3)
+}
+
+fn lower_avx512_mul(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; avx512_mul_f64(dst_ptr, a_ptr, b_ptr, count)
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+    emit_push_r(out, pos, r2)
+    let r3 = get_or_load(ctx.ra, out, pos, ins.operand3)
+    emit_push_r(out, pos, r3)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDX)
+    emit_pop_r(out, pos, PHYS_RSI)
+    emit_pop_r(out, pos, PHYS_RDI)
+    emit_avx512_elemwise_body(out, pos, 0x59)
+    emit_restore_pool(ctx.ra, out, pos)
+    emit_pop_r(out, pos, PHYS_R12)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    consume_use(ctx, ins.operand2)
+    consume_use(ctx, ins.operand3)
+}
+
+fn lower_avx512_scale(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; avx512_scale_f64(dst_ptr, a_ptr, scalar_bits, count)
+    ; Broadcasts scalar to ZMM1, then VMULPD ZMM0, ZMMx, ZMM1
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+    emit_push_r(out, pos, r2)
+    let r3 = get_or_load(ctx.ra, out, pos, ins.operand3)
+    emit_push_r(out, pos, r3)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_R8)
+    emit_pop_r(out, pos, PHYS_RSI)
+    emit_pop_r(out, pos, PHYS_RDI)
+    ; Move scalar bits to XMM1: MOVQ XMM1, R8  (66 49 0F 6E C8)
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x6E)
+    emit_byte(out, pos, 0xC8)
+    ; VBROADCASTSD ZMM1, XMM1 — EVEX mm=2 W=1 vvvv=0 LL=2, opcode=0x19
+    ; ModRM: mod=11 reg=1(zmm1) rm=1(xmm1) → 0xC9
+    emit_evex(out, pos, 2, 1, 0, 2)
+    emit_byte(out, pos, 0x19)
+    emit_byte(out, pos, 0xC9)
+    ; Main loop
+    let loop_top = pos[0]
+    ; CMP RCX, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xF9)
+    emit_byte(out, pos, 0x08)
+    ; JL tail
+    let jl_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8C)
+    emit_i32_le(out, pos, 0)
+    ; VMOVUPD ZMM0, [RSI]
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x06)
+    ; VMULPD ZMM0, ZMM0, ZMM1 — vvvv=0(zmm0), ModRM=11,000,001=0xC1
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x59)
+    emit_byte(out, pos, 0xC1)
+    ; VMOVUPD [RDI], ZMM0
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x11)
+    emit_byte(out, pos, 0x07)
+    ; ADD RSI, 64
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x40)
+    ; ADD RDI, 64
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x40)
+    ; SUB RCX, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xE9)
+    emit_byte(out, pos, 0x08)
+    let jmp_rel = loop_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel)
+    ; Patch JL
+    let tail_off = pos[0]
+    let jl_rel = tail_off - (jl_off + 6)
+    poke_byte(out, jl_off + 2, i32_b0(jl_rel))
+    poke_byte(out, jl_off + 3, i32_b1(jl_rel))
+    poke_byte(out, jl_off + 4, i32_b2(jl_rel))
+    poke_byte(out, jl_off + 5, i32_b3(jl_rel))
+    ; Scalar tail
+    let tail_top = pos[0]
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xF9)
+    emit_byte(out, pos, 0x00)
+    let je_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x84)
+    emit_i32_le(out, pos, 0)
+    ; MOVSD XMM0, [RSI]
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x06)
+    ; MULSD XMM0, XMM1
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x59)
+    emit_byte(out, pos, 0xC1)
+    ; MOVSD [RDI], XMM0
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x11)
+    emit_byte(out, pos, 0x07)
+    ; ADD RSI, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x08)
+    ; ADD RDI, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x08)
+    ; DEC RCX
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC9)
+    let jmp_rel2 = tail_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel2)
+    ; Patch JE
+    let done_off = pos[0]
+    let je_rel = done_off - (je_off + 6)
+    poke_byte(out, je_off + 2, i32_b0(je_rel))
+    poke_byte(out, je_off + 3, i32_b1(je_rel))
+    poke_byte(out, je_off + 4, i32_b2(je_rel))
+    poke_byte(out, je_off + 5, i32_b3(je_rel))
+    emit_restore_pool(ctx.ra, out, pos)
+    emit_pop_r(out, pos, PHYS_R12)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    consume_use(ctx, ins.operand2)
+    consume_use(ctx, ins.operand3)
+}
+
+fn lower_avx512_sum(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; avx512_sum_f64(a_ptr, count) → f64 bits in i64
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RSI)
+    ; VXORPD ZMM0, ZMM0, ZMM0 — zero accumulator
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x57)
+    emit_byte(out, pos, 0xC0)
+    ; Main loop
+    let loop_top = pos[0]
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xF9)
+    emit_byte(out, pos, 0x08)
+    let jl_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8C)
+    emit_i32_le(out, pos, 0)
+    ; VADDPD ZMM0, ZMM0, [RSI]
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0x06)
+    ; ADD RSI, 64
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x40)
+    ; SUB RCX, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xE9)
+    emit_byte(out, pos, 0x08)
+    let jmp_rel = loop_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel)
+    ; Patch JL
+    let tail_off = pos[0]
+    let jl_rel = tail_off - (jl_off + 6)
+    poke_byte(out, jl_off + 2, i32_b0(jl_rel))
+    poke_byte(out, jl_off + 3, i32_b1(jl_rel))
+    poke_byte(out, jl_off + 4, i32_b2(jl_rel))
+    poke_byte(out, jl_off + 5, i32_b3(jl_rel))
+    ; Horizontal reduce ZMM0 → XMM0
+    ; VEXTRACTF64X4 YMM1, ZMM0, 1 — extract upper 256 bits
+    ; EVEX mm=3 W=1 vvvv=0 LL=2, opcode=0x1B, ModRM=11,000,001=0xC1, imm8=1
+    emit_evex(out, pos, 3, 1, 0, 2)
+    emit_byte(out, pos, 0x1B)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0x01)
+    ; VADDPD YMM0, YMM0, YMM1 — LL=1(256)
+    emit_evex(out, pos, 1, 1, 0, 1)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0xC1)
+    ; VEXTRACTF128 XMM1, YMM0, 1 — EVEX mm=3 W=0 vvvv=0 LL=1, opcode=0x19
+    emit_evex(out, pos, 3, 0, 0, 1)
+    emit_byte(out, pos, 0x19)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0x01)
+    ; ADDPD XMM0, XMM1  (66 0F 58 C1)
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0xC1)
+    ; MOVHLPS XMM1, XMM0  (0F 12 C8)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x12)
+    emit_byte(out, pos, 0xC8)
+    ; ADDSD XMM0, XMM1  (F2 0F 58 C1)
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0xC1)
+    ; Scalar tail: add remaining elements
+    let tail_top = pos[0]
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xF9)
+    emit_byte(out, pos, 0x00)
+    let je_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x84)
+    emit_i32_le(out, pos, 0)
+    ; ADDSD XMM0, [RSI]  (F2 0F 58 06)
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0x06)
+    ; ADD RSI, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x08)
+    ; DEC RCX
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC9)
+    let jmp_rel2 = tail_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel2)
+    ; Patch JE
+    let done_off = pos[0]
+    let je_rel = done_off - (je_off + 6)
+    poke_byte(out, je_off + 2, i32_b0(je_rel))
+    poke_byte(out, je_off + 3, i32_b1(je_rel))
+    poke_byte(out, je_off + 4, i32_b2(je_rel))
+    poke_byte(out, je_off + 5, i32_b3(je_rel))
+    ; MOVQ RAX, XMM0  (66 48 0F 7E C0)
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x7E)
+    emit_byte(out, pos, 0xC0)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+}
+
+fn lower_avx512_dot(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; avx512_dot_f64(a_ptr, b_ptr, count) → f64 bits in i64
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+    emit_push_r(out, pos, r2)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDX)
+    emit_pop_r(out, pos, PHYS_RSI)
+    ; VXORPD ZMM0, ZMM0, ZMM0 — zero accumulator
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x57)
+    emit_byte(out, pos, 0xC0)
+    ; Main loop
+    let loop_top = pos[0]
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xF9)
+    emit_byte(out, pos, 0x08)
+    let jl_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8C)
+    emit_i32_le(out, pos, 0)
+    ; VMOVUPD ZMM1, [RSI]
+    ; EVEX reg=1(zmm1) rm=6(rsi) → ModRM 0x0E
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x0E)
+    ; VFMADD231PD ZMM0, ZMM1, [RDX]
+    ; acc += a[i] * b[i]: ZMM0 = ZMM1 * [RDX] + ZMM0
+    ; Map: 0F38 (mm=2), opcode: 0xB8 (VFMADD231PD)
+    ; vvvv=1(zmm1), ModRM: reg=0(zmm0) rm=2(rdx) → 0x02
+    emit_evex(out, pos, 2, 1, 1, 2)
+    emit_byte(out, pos, 0xB8)
+    emit_byte(out, pos, 0x02)
+    ; ADD RSI, 64
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x40)
+    ; ADD RDX, 64
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC2)
+    emit_byte(out, pos, 0x40)
+    ; SUB RCX, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xE9)
+    emit_byte(out, pos, 0x08)
+    let jmp_rel = loop_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel)
+    ; Patch JL
+    let tail_off = pos[0]
+    let jl_rel = tail_off - (jl_off + 6)
+    poke_byte(out, jl_off + 2, i32_b0(jl_rel))
+    poke_byte(out, jl_off + 3, i32_b1(jl_rel))
+    poke_byte(out, jl_off + 4, i32_b2(jl_rel))
+    poke_byte(out, jl_off + 5, i32_b3(jl_rel))
+    ; Horizontal reduce ZMM0 → scalar XMM0
+    ; VEXTRACTF64X4 YMM1, ZMM0, 1
+    emit_evex(out, pos, 3, 1, 0, 2)
+    emit_byte(out, pos, 0x1B)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0x01)
+    ; VADDPD YMM0, YMM0, YMM1
+    emit_evex(out, pos, 1, 1, 0, 1)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0xC1)
+    ; VEXTRACTF128 XMM1, YMM0, 1
+    emit_evex(out, pos, 3, 0, 0, 1)
+    emit_byte(out, pos, 0x19)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0x01)
+    ; ADDPD XMM0, XMM1
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0xC1)
+    ; MOVHLPS XMM1, XMM0
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x12)
+    emit_byte(out, pos, 0xC8)
+    ; ADDSD XMM0, XMM1
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0xC1)
+    ; Scalar tail: accumulate remaining
+    let tail_top = pos[0]
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xF9)
+    emit_byte(out, pos, 0x00)
+    let je_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x84)
+    emit_i32_le(out, pos, 0)
+    ; MOVSD XMM1, [RSI]
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x10)
+    emit_byte(out, pos, 0x0E)
+    ; MULSD XMM1, [RDX]
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x59)
+    emit_byte(out, pos, 0x0A)
+    ; ADDSD XMM0, XMM1
+    emit_byte(out, pos, 0xF2)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x58)
+    emit_byte(out, pos, 0xC1)
+    ; ADD RSI, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x08)
+    ; ADD RDX, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC2)
+    emit_byte(out, pos, 0x08)
+    ; DEC RCX
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC9)
+    let jmp_rel2 = tail_top - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel2)
+    ; Patch JE
+    let done_off = pos[0]
+    let je_rel = done_off - (je_off + 6)
+    poke_byte(out, je_off + 2, i32_b0(je_rel))
+    poke_byte(out, je_off + 3, i32_b1(je_rel))
+    poke_byte(out, je_off + 4, i32_b2(je_rel))
+    poke_byte(out, je_off + 5, i32_b3(je_rel))
+    ; MOVQ RAX, XMM0
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x7E)
+    emit_byte(out, pos, 0xC0)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    consume_use(ctx, ins.operand2)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+}
+
+fn lower_instr_avx512(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let op = ins.op
+    if op == OP_AVX_CHECK { lower_avx512_check(ins, ctx, out, pos) }
+    if op == OP_AVX_CHECK { ret 1 }
+    if op == OP_AVX_ADDF64 { lower_avx512_add(ins, ctx, out, pos) }
+    if op == OP_AVX_ADDF64 { ret 1 }
+    if op == OP_AVX_MULF64 { lower_avx512_mul(ins, ctx, out, pos) }
+    if op == OP_AVX_MULF64 { ret 1 }
+    if op == OP_AVX_SCLF64 { lower_avx512_scale(ins, ctx, out, pos) }
+    if op == OP_AVX_SCLF64 { ret 1 }
+    if op == OP_AVX_SUMF64 { lower_avx512_sum(ins, ctx, out, pos) }
+    if op == OP_AVX_SUMF64 { ret 1 }
+    if op == OP_AVX_DOTF64 { lower_avx512_dot(ins, ctx, out, pos) }
+    if op == OP_AVX_DOTF64 { ret 1 }
+    ret 0
+}
+
 fn lower_instr_tensor(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let op = ins.op
     if op == OP_TNEW1 { lower_tensor_new1(ins, ctx, out, pos) }
@@ -13661,7 +14431,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
-    if lower_instr_float(ins, ctx, out, pos) == 1 or lower_instr_tensor(ins, ctx, out, pos) == 1 {
+    if lower_instr_float(ins, ctx, out, pos) == 1 or lower_instr_tensor(ins, ctx, out, pos) == 1 or lower_instr_avx512(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }

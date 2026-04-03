@@ -180,7 +180,7 @@ fn tensor_transpose(a: &Tensor, out: &Tensor)           ; 2D transpose
 
 ---
 
-### M5: AVX-512 Vectorization
+### M5: AVX-512 Vectorization ✅
 
 **Target**: 16× speedup on tensor operations via 512-bit SIMD.
 
