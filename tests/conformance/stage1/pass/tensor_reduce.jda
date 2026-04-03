@@ -1,0 +1,63 @@
+fn tensor_sum(a: i64) -> i64 {
+    let n = tensor_len(a)
+    let acc = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        acc = f64_add(acc, v)
+        i = i + 1
+    }
+    ret acc
+}
+
+fn tensor_mean(a: i64) -> i64 {
+    let s = tensor_sum(a)
+    let n = tensor_len(a)
+    let fn_val = f64_from_int(n)
+    let r = f64_div(s, fn_val)
+    ret r
+}
+
+fn tensor_max(a: i64) -> i64 {
+    let n = tensor_len(a)
+    let mx = tensor_get(a, 0)
+    let i = 1
+    loop i < n {
+        let v = tensor_get(a, i)
+        if f64_gt(v, mx) == 1 {
+            mx = v
+        }
+        i = i + 1
+    }
+    ret mx
+}
+
+fn main() -> i64 {
+    let t = tensor_new1(4)
+    ; t = [10, 20, 30, 40]
+    let v10 = f64_from_int(10)
+    tensor_set(t, 0, v10)
+    let v20 = f64_from_int(20)
+    tensor_set(t, 1, v20)
+    let v30 = f64_from_int(30)
+    tensor_set(t, 2, v30)
+    let v40 = f64_from_int(40)
+    tensor_set(t, 3, v40)
+    ; sum = 100
+    let s = f64_to_int(tensor_sum(t))
+    if s == 100 {
+        print "sum ok"
+    }
+    ; mean = 25
+    let m = f64_to_int(tensor_mean(t))
+    if m == 25 {
+        print "mean ok"
+    }
+    ; max = 40
+    let mx = f64_to_int(tensor_max(t))
+    if mx == 40 {
+        print "max ok"
+    }
+    tensor_free(t)
+    ret 0
+}
