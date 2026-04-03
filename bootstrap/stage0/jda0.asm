@@ -31,7 +31,7 @@ GLB_SZ           equ 48
 TOK_BUF_CAP      equ 8388608  ; 8MB = 262144 tokens at TOK_SZ=32
 CST_TBL_CAP      equ 65536
 STT_TBL_CAP      equ 131072   ; 42 struct entries at STR_SZ=3104
-FN_TBL_CAP       equ 131072   ; 455 fn entries at FN_SZ=288
+FN_TBL_CAP       equ 262144   ; 910 fn entries at FN_SZ=288 (was 131072)
 LOC_TBL_CAP      equ 65536
 GLB_TBL_CAP      equ 32768
 SRC_BUF_CAP      equ 16777216

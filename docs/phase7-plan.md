@@ -112,7 +112,7 @@ When GPR ≥ 8 (R8-R15), the function set REX.R (bit 2) but GPR is in the rm fie
 
 ---
 
-### M3: Heap-Allocated Tensor Type
+### M3: Heap-Allocated Tensor Type ✅
 
 **Target**: `Tensor` as a runtime struct with shape metadata and data pointer.
 
@@ -438,7 +438,7 @@ This is the capstone that proves Jda can replace Python for real ML workloads.
 |-----------|--------------|-----------------|
 | M1: Float types | ~800 | `let x: f32 = 3.14; let y = x * x` |
 | M2: Float printing & math | ~400 | `print_float(exp(1.0))` → 2.718281... |
-| M3: Tensor type | ~300 | `tensor_new([1024,1024])`, get/set |
+| M3: Tensor type ✅ | ~300 | `tensor_new([1024,1024])`, get/set |
 | M4: CPU tensor ops | ~500 | `matmul([M,K], [K,N])` correct |
 | M5: AVX-512 | ~600 | matmul 16× faster |
 | M6: Autograd | ~700 | `@differentiable fn loss()` generates `loss_grad()` |
