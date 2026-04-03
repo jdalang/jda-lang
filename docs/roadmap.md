@@ -68,7 +68,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] Function inlining (emit_byte, poke_byte x86-level) ✅
 - [x] Tail-call optimization ✅
 - [x] Peephole optimization ✅
-- [ ] Benchmark suite (vs C, Go, Rust)
+- [x] Benchmark suite (vs C, fib35/sieve/sum_loop + self-compile) ✅
 
 ---
 
