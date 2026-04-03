@@ -397,7 +397,7 @@ Jda source → JIR → PTX text → assemble (cuModuleLoad) → launch (cuLaunch
 
 ---
 
-### M9: ROCm Backend (AMD GPU)
+### M9: ROCm Backend (AMD GPU) ✅
 
 **Target**: Same capabilities as M8 but for AMD GPUs via KFD (Kernel Fusion Driver).
 
