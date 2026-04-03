@@ -47,39 +47,25 @@ These are explicitly deferred:
 
 ## Milestones (in dependency order)
 
-### M1: Atomic Operations (~200 lines in jda1.jda)
+### M1: Atomic Operations ✅
 
-**Target**: Provide the primitive building blocks for lock-free data structures.
+**Completed**: April 3, 2026
 
-#### Problem
-The channel and scheduler implementations need atomic memory operations. x86-64 provides these via `LOCK`-prefixed instructions, but the compiler has no way to emit them.
+**What was done**:
+1. Added 5 new JIR opcodes: OP_ATOMIC_LOAD(35), OP_ATOMIC_STORE(36), OP_ATOMIC_CAS(37), OP_ATOMIC_ADD(38), OP_RDTSC(39)
+2. Added builtin function name recognition in both `codegen_call_inline` and `live_codegen_call_inline` for: `atomic_load`, `atomic_store`, `atomic_cmpxchg`, `atomic_fetch_add`, `rdtsc`
+3. Added DCE handling (operand marking + side-effect marking) for all 5 opcodes
+4. Added `lower_fn_mark_uses_instr` handling for all 5 opcodes
+5. Added `lower_instr_atomic` function with x86-64 lowering:
+   - `OP_ATOMIC_LOAD`: `MOV r, [addr]` (x86 loads are naturally acquire-ordered)
+   - `OP_ATOMIC_STORE`: `XCHG [addr], r` (implicit LOCK prefix, full barrier)
+   - `OP_ATOMIC_CAS`: `LOCK CMPXCHG [RDI], RCX` (push/pop pattern for safe register setup)
+   - `OP_ATOMIC_ADD`: `LOCK XADD [RDI], RCX` (push/pop pattern)
+   - `OP_RDTSC`: `RDTSC; SHL RDX,32; OR RAX,RDX` (combine EDX:EAX into 64-bit)
+6. All 86 conformance tests pass (4 new: `atomic_load_store`, `atomic_cas`, `atomic_fetch_add`, `rdtsc_basic`)
+7. Self-host converged at 1,711,980 bytes
 
-#### Solution: New JIR Opcodes + x86 Lowering
-
-Add 5 new JIR opcodes:
-
-| Opcode | Semantics | x86-64 Emission |
-|--------|-----------|-----------------|
-| `OP_ATOMIC_LOAD` | Load with acquire semantics | `MOV r, [addr]` (x86 loads are naturally acquire) |
-| `OP_ATOMIC_STORE` | Store with release semantics | `MOV [addr], r; MFENCE` or `XCHG [addr], r` |
-| `OP_ATOMIC_CAS` | Compare-and-swap | `LOCK CMPXCHG [addr], r` |
-| `OP_ATOMIC_ADD` | Fetch-and-add | `LOCK XADD [addr], r` |
-| `OP_RDTSC` | Read timestamp counter | `RDTSC; SHL RDX,32; OR RAX,RDX` |
-
-**Compiler changes**:
-1. Add opcode constants (OP_ATOMIC_LOAD=35, OP_ATOMIC_STORE=36, OP_ATOMIC_CAS=37, OP_ATOMIC_ADD=38, OP_RDTSC=39)
-2. Recognize `atomic_load`, `atomic_store`, `atomic_cmpxchg`, `atomic_fetch_add`, `rdtsc` as builtin function names in `codegen_call_inline`
-3. Emit appropriate JIR opcodes instead of OP_CALL
-4. Add lowering cases in `lower_instr` for each opcode
-5. x86 encoding:
-   - `LOCK CMPXCHG [mem], r`: `F0 REX.W 0F B1 /r` — expects old value in RAX, new in operand register, sets RAX to actual value, ZF=1 if swapped
-   - `LOCK XADD [mem], r`: `F0 REX.W 0F C1 /r` — atomically adds, returns old value in operand register
-   - `RDTSC`: `0F 31` — result in EDX:EAX
-   - `MFENCE`: `0F AE F0` — full memory barrier
-
-**Tests**: `atomic_load_store`, `atomic_cas_basic`, `atomic_fetch_add`, `rdtsc_monotonic`
-
-**Risk**: LOW. Atomic ops are self-contained — they don't change existing codegen. Each is a fixed x86 byte sequence.
+**Impact**: Provides the primitive building blocks needed for lock-free channels (M5) and the work-stealing scheduler (M6). No existing codegen changed — the new opcodes are only emitted when user code calls the builtin functions.
 
 ---
 
