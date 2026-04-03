@@ -216,6 +216,11 @@ const OP_GPU_CHECK   = 89
 const OP_GPU_MATMUL  = 90
 const OP_GPU_VECADD  = 91
 
+; ROCm/AMD GPU opcodes
+const OP_ROCM_CHECK  = 92
+const OP_ROCM_MATMUL = 93
+const OP_ROCM_VECADD = 94
+
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
 const PHYS_RCX = 1
@@ -7085,6 +7090,31 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.operand3 = arg3
         ret emit(jfn, bb, &ins)
     }
+    if name_len == 12 and streq(src, name_start, 12, "rocm_has_amd") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ROCM_CHECK
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 11 and streq(src, name_start, 11, "rocm_matmul") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ROCM_MATMUL
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ins.bb_target0 = arg4
+        ins.bb_target1 = arg5
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 11 and streq(src, name_start, 11, "rocm_vecadd") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ROCM_VECADD
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8786,6 +8816,31 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "gpu_vecadd") == 1 {
         let ins = Instr{}
         ins.op = OP_GPU_VECADD
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 12 and streq(g_src_buf_ptr, name.str_start, 12, "rocm_has_amd") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ROCM_CHECK
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "rocm_matmul") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ROCM_MATMUL
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.operand3 = arg3
+        ins.bb_target0 = arg4
+        ins.bb_target1 = arg5
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "rocm_vecadd") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ROCM_VECADD
         ins.operand0 = arg0
         ins.operand1 = arg1
         ins.operand2 = arg2
@@ -14786,6 +14841,102 @@ fn lower_instr_gpu(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 0
 }
 
+; ========== ROCm/AMD GPU lowering (CPU fallback) ==========
+
+fn lower_rocm_check(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    ; Try open("/dev/kfd", O_RDONLY) — returns 1 if AMD KFD driver present, 0 otherwise
+    ; Branchless: SAR/NOT/AND computes 0/1, always close fd
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    ; SUB RSP, 16
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xEC)
+    emit_byte(out, pos, 0x10)
+    ; MOV DWORD [RSP], 0x7665642F "/dev"
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x04)
+    emit_byte(out, pos, 0x24)
+    emit_i32_le(out, pos, 0x7665642F)
+    ; MOV DWORD [RSP+4], 0x0064666B2F — wrong, need "/kfd" at bytes 4-7
+    ; '/' 'k' 'f' 'd' = 0x2F 0x6B 0x66 0x64 → LE DWORD = 0x64666B2F
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x04)
+    emit_i32_le(out, pos, 0x64666B2F)
+    ; MOV DWORD [RSP+8], 0x00000000
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x08)
+    emit_i32_le(out, pos, 0)
+    ; MOV DWORD [RSP+12], 0x00000000
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x44)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 0x0C)
+    emit_i32_le(out, pos, 0)
+    ; MOV EAX, 2 (SYS_open)
+    emit_byte(out, pos, 0xB8)
+    emit_i32_le(out, pos, 2)
+    ; MOV RDI, RSP
+    emit_mov_rr(out, pos, PHYS_RDI, PHYS_RSP)
+    ; XOR ESI, ESI (O_RDONLY)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xF6)
+    ; XOR EDX, EDX
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xD2)
+    ; SYSCALL
+    emit_syscall_instr(out, pos)
+    ; ADD RSP, 16
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC4)
+    emit_byte(out, pos, 0x10)
+    ; Save fd for close: MOV RDI, RAX
+    emit_mov_rr(out, pos, PHYS_RDI, PHYS_RAX)
+    ; SAR RAX, 63
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xF8)
+    emit_byte(out, pos, 0x3F)
+    ; NOT RAX
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xF7)
+    emit_byte(out, pos, 0xD0)
+    ; AND EAX, 1
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xE0)
+    emit_byte(out, pos, 0x01)
+    ; PUSH RAX (save result)
+    emit_push_r(out, pos, PHYS_RAX)
+    ; MOV EAX, 3 (SYS_close)
+    emit_byte(out, pos, 0xB8)
+    emit_i32_le(out, pos, 3)
+    emit_syscall_instr(out, pos)
+    ; POP RAX (restore 0 or 1)
+    emit_pop_r(out, pos, PHYS_RAX)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+}
+
+fn lower_instr_rocm(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let op = ins.op
+    if op == OP_ROCM_CHECK { lower_rocm_check(ins, ctx, out, pos) }
+    if op == OP_ROCM_CHECK { ret 1 }
+    ; ROCm vecadd/matmul reuse GPU CPU fallback (same SSE2 loops)
+    if op == OP_ROCM_VECADD { lower_gpu_vecadd(ins, ctx, out, pos) }
+    if op == OP_ROCM_VECADD { ret 1 }
+    if op == OP_ROCM_MATMUL { lower_gpu_matmul(ins, ctx, out, pos) }
+    if op == OP_ROCM_MATMUL { ret 1 }
+    ret 0
+}
+
 fn lower_instr_avx512(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let op = ins.op
     if op == OP_AVX_CHECK { lower_avx512_check(ins, ctx, out, pos) }
@@ -14937,7 +15088,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
-    if lower_instr_float(ins, ctx, out, pos) == 1 or lower_instr_tensor(ins, ctx, out, pos) == 1 or lower_instr_avx512(ins, ctx, out, pos) == 1 or lower_instr_gpu(ins, ctx, out, pos) == 1 {
+    if lower_instr_float(ins, ctx, out, pos) == 1 or lower_instr_tensor(ins, ctx, out, pos) == 1 or lower_instr_avx512(ins, ctx, out, pos) == 1 or lower_instr_gpu(ins, ctx, out, pos) == 1 or lower_instr_rocm(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
