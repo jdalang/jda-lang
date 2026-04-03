@@ -9578,10 +9578,114 @@ fn lower_instr_alloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 1
 }
 
+fn try_inline_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    ; Try to inline known small functions instead of full CALL sequence.
+    ; Uses save_pool/restore_pool to avoid register eviction bugs:
+    ; multiple get_or_load calls can evict earlier args' registers.
+    let src = g_src_buf_ptr
+    let nlen = ins.str_len
+    let nstart = ins.str_start
+    let argc = ins.operand3
+
+    ; emit_byte(out, pos, b) — 3 args
+    if nlen == 9 and argc == 3 {
+        if streq(src, nstart, 9, "emit_byte") == 1 {
+            ; Save context, load args, emit inline body, restore
+            emit_push_r(out, pos, PHYS_R12)
+            emit_save_pool(ctx.ra, out, pos)
+            ; Load each arg and push immediately (safe from eviction)
+            let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+            emit_push_r(out, pos, r0)
+            let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+            emit_push_r(out, pos, r1)
+            let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+            emit_push_r(out, pos, r2)
+            ; Pop into calling convention regs
+            emit_pop_r(out, pos, PHYS_RDX)
+            emit_pop_r(out, pos, PHYS_RSI)
+            emit_pop_r(out, pos, PHYS_RDI)
+            ; Inline body as raw bytes:
+            ; MOV R12, [RSI]:  4C 8B 26
+            emit_byte(out, pos, 0x4C)
+            emit_byte(out, pos, 0x8B)
+            emit_byte(out, pos, 0x26)
+            ; ADD R12, RDI:    49 01 FC
+            emit_byte(out, pos, 0x49)
+            emit_byte(out, pos, 0x01)
+            emit_byte(out, pos, 0xFC)
+            ; MOV [R12], DL:   41 88 14 24
+            emit_byte(out, pos, 0x41)
+            emit_byte(out, pos, 0x88)
+            emit_byte(out, pos, 0x14)
+            emit_byte(out, pos, 0x24)
+            ; MOV R12, [RSI]:  4C 8B 26
+            emit_byte(out, pos, 0x4C)
+            emit_byte(out, pos, 0x8B)
+            emit_byte(out, pos, 0x26)
+            ; INC R12:         49 FF C4
+            emit_byte(out, pos, 0x49)
+            emit_byte(out, pos, 0xFF)
+            emit_byte(out, pos, 0xC4)
+            ; MOV [RSI], R12:  4C 89 26
+            emit_byte(out, pos, 0x4C)
+            emit_byte(out, pos, 0x89)
+            emit_byte(out, pos, 0x26)
+            emit_restore_pool(ctx.ra, out, pos)
+            emit_pop_r(out, pos, PHYS_R12)
+            consume_use(ctx, ins.operand0)
+            consume_use(ctx, ins.operand1)
+            consume_use(ctx, ins.operand2)
+            ret 1
+        }
+    }
+
+    ; poke_byte(buf, off, val) — 3 args
+    if nlen == 9 and argc == 3 {
+        if streq(src, nstart, 9, "poke_byte") == 1 {
+            emit_push_r(out, pos, PHYS_R12)
+            emit_save_pool(ctx.ra, out, pos)
+            let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+            emit_push_r(out, pos, r0)
+            let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+            emit_push_r(out, pos, r1)
+            let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+            emit_push_r(out, pos, r2)
+            emit_pop_r(out, pos, PHYS_RDX)
+            emit_pop_r(out, pos, PHYS_RSI)
+            emit_pop_r(out, pos, PHYS_RDI)
+            ; Inline body as raw bytes: buf[off] = val
+            ; RDI=buf, RSI=off, RDX=val, R12=scratch
+            ; MOV R12, RDI:  4C 8B E7
+            emit_byte(out, pos, 0x4C)
+            emit_byte(out, pos, 0x8B)
+            emit_byte(out, pos, 0xE7)
+            ; ADD R12, RSI:  49 01 F4
+            emit_byte(out, pos, 0x49)
+            emit_byte(out, pos, 0x01)
+            emit_byte(out, pos, 0xF4)
+            ; MOV [R12], DL: 41 88 14 24
+            emit_byte(out, pos, 0x41)
+            emit_byte(out, pos, 0x88)
+            emit_byte(out, pos, 0x14)
+            emit_byte(out, pos, 0x24)
+            emit_restore_pool(ctx.ra, out, pos)
+            emit_pop_r(out, pos, PHYS_R12)
+            consume_use(ctx, ins.operand0)
+            consume_use(ctx, ins.operand1)
+            consume_use(ctx, ins.operand2)
+            ret 1
+        }
+    }
+
+    ret 0
+}
+
 fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_call = 0
     if ins.op == OP_CALL { is_call = 1 }
     if is_call != 1 { ret 0 }
+    let inlined = try_inline_call(ins, ctx, out, pos)
+    if inlined == 1 { ret 1 }
     emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
     lower_instr_call_args(ins, ctx, out, pos)
