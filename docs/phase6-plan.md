@@ -161,7 +161,7 @@ Phase 6 supports spawning function calls only (not arbitrary blocks — that req
 
 ---
 
-### M4: Single-Threaded Scheduler (~200 lines in jda1.jda)
+### M4: Single-Threaded Scheduler (~200 lines in jda1.jda) ✅
 
 **Target**: A working cooperative scheduler on a single OS thread. Spawn, yield, and resume J-Threads.
 
