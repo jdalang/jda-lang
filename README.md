@@ -1,6 +1,10 @@
-# Jda
+<p align="center">
+  <img src="assets/jda-logo.png" alt="Jda Programming Language" width="300">
+</p>
 
-A systems programming language built from scratch — zero dependency on C, C++, Rust, or Python. Bootstrapped from raw x86-64 assembly. The compiler compiles itself.
+<h1 align="center">Jda</h1>
+
+<p align="center">A systems programming language built from scratch — zero dependency on C, C++, Rust, or Python.<br>Bootstrapped from raw x86-64 assembly. The compiler compiles itself.</p>
 
 Jda is designed to resolve the performance/safety/ergonomics trilemma:
 
