@@ -119,7 +119,7 @@ fn jthread_switch(from: &mut JThread, to: &mut JThread) {
 
 ---
 
-### M3: spawn Keyword + Thread Stacks (~250 lines in jda1.jda)
+### M3: spawn Keyword + Thread Stacks (~250 lines in jda1.jda) ✅
 
 **Target**: `spawn expr` creates a new J-Thread that runs `expr` and returns a thread ID.
 
