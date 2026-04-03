@@ -262,7 +262,7 @@ PyTorch builds a runtime computation graph, allocating nodes for every operation
 
 ---
 
-### M7: Neural Network Library
+### M7: Neural Network Library ✅
 
 **Target**: Train a 2-layer MLP on XOR in pure Jda.
 

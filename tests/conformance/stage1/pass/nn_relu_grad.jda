@@ -1,0 +1,83 @@
+; Test ReLU forward + backward
+
+fn relu_forward(a: i64, out: i64) -> i64 {
+    let n = tensor_len(a)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        if f64_gt(v, zero) == 1 {
+            tensor_set(out, i, v)
+        } else {
+            tensor_set(out, i, zero)
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn relu_backward(a: i64, grad_out: i64, grad_in: i64) -> i64 {
+    let n = tensor_len(a)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let ai = tensor_get(a, i)
+        let go = tensor_get(grad_out, i)
+        let gi = tensor_get(grad_in, i)
+        if f64_gt(ai, zero) == 1 {
+            let new_gi = f64_add(gi, go)
+            tensor_set(grad_in, i, new_gi)
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    ; a = [-2, -1, 0, 1, 3]
+    let a = tensor_new1(5)
+    let out = tensor_new1(5)
+    let vm2 = f64_from_int(-2)
+    tensor_set(a, 0, vm2)
+    let vm1 = f64_from_int(-1)
+    tensor_set(a, 1, vm1)
+    let v0 = f64_from_int(0)
+    tensor_set(a, 2, v0)
+    let v1 = f64_from_int(1)
+    tensor_set(a, 3, v1)
+    let v3 = f64_from_int(3)
+    tensor_set(a, 4, v3)
+
+    relu_forward(a, out)
+    let r0 = f64_to_int(tensor_get(out, 0))
+    let r1 = f64_to_int(tensor_get(out, 1))
+    let r2 = f64_to_int(tensor_get(out, 2))
+    let r3 = f64_to_int(tensor_get(out, 3))
+    let r4 = f64_to_int(tensor_get(out, 4))
+    ; Expected: [0, 0, 0, 1, 3]
+    if r0 == 0 and r1 == 0 and r2 == 0 and r3 == 1 and r4 == 3 {
+        print "relu fwd ok"
+    }
+
+    ; Backward: grad_out = [1,1,1,1,1], a's sign gates the gradient
+    let grad_out = tensor_new1(5)
+    let grad_in = tensor_new1(5)
+    tensor_fill(grad_out, v1)
+    tensor_fill(grad_in, v0)
+    relu_backward(a, grad_out, grad_in)
+    let g0 = f64_to_int(tensor_get(grad_in, 0))
+    let g1 = f64_to_int(tensor_get(grad_in, 1))
+    let g2 = f64_to_int(tensor_get(grad_in, 2))
+    let g3 = f64_to_int(tensor_get(grad_in, 3))
+    let g4 = f64_to_int(tensor_get(grad_in, 4))
+    ; Expected: [0, 0, 0, 1, 1]
+    if g0 == 0 and g1 == 0 and g2 == 0 and g3 == 1 and g4 == 1 {
+        print "relu bwd ok"
+    }
+
+    tensor_free(a)
+    tensor_free(out)
+    tensor_free(grad_out)
+    tensor_free(grad_in)
+    ret 0
+}
