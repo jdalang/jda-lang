@@ -1,0 +1,101 @@
+; Test layer normalization
+; x = [1, 3, 5, 7], mean=4, var=5, std=sqrt(5)~2.236
+; normalized: [-1.342, -0.447, 0.447, 1.342]
+; With gamma=10, beta=100:
+; out = [86.58, 95.53, 104.47, 113.42]
+; Truncated: [86, 95, 104, 113]
+
+fn compute_mean(x: i64) -> i64 {
+    let n = tensor_len(x)
+    let sum_val = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        sum_val = f64_add(sum_val, v)
+        i = i + 1
+    }
+    let fn_val = f64_from_int(n)
+    ret f64_div(sum_val, fn_val)
+}
+
+fn compute_var(x: i64, mean: i64) -> i64 {
+    let n = tensor_len(x)
+    let var_sum = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        let d = f64_sub(v, mean)
+        let d2 = f64_mul(d, d)
+        var_sum = f64_add(var_sum, d2)
+        i = i + 1
+    }
+    let fn_val = f64_from_int(n)
+    ret f64_div(var_sum, fn_val)
+}
+
+fn layer_norm_fwd(x: i64, out: i64, gamma: i64, beta: i64) -> i64 {
+    let mean = compute_mean(x)
+    let variance = compute_var(x, mean)
+    let hundred_k = f64_from_int(100000)
+    let one = f64_from_int(1)
+    let eps = f64_div(one, hundred_k)
+    let var_eps = f64_add(variance, eps)
+    let std = f64_sqrt(var_eps)
+    let n = tensor_len(x)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        let d = f64_sub(v, mean)
+        let normed = f64_div(d, std)
+        let g = tensor_get(gamma, i)
+        let b = tensor_get(beta, i)
+        let scaled = f64_mul(normed, g)
+        let result = f64_add(scaled, b)
+        tensor_set(out, i, result)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    let v1 = f64_from_int(1)
+    let v3 = f64_from_int(3)
+    let v5 = f64_from_int(5)
+    let v7 = f64_from_int(7)
+    let v10 = f64_from_int(10)
+    let v100 = f64_from_int(100)
+
+    let x = tensor_new1(4)
+    tensor_set(x, 0, v1)
+    tensor_set(x, 1, v3)
+    tensor_set(x, 2, v5)
+    tensor_set(x, 3, v7)
+
+    let gamma = tensor_new1(4)
+    tensor_fill(gamma, v10)
+
+    let beta = tensor_new1(4)
+    tensor_fill(beta, v100)
+
+    let out = tensor_new1(4)
+    layer_norm_fwd(x, out, gamma, beta)
+
+    let r0 = f64_to_int(tensor_get(out, 0))
+    let r1 = f64_to_int(tensor_get(out, 1))
+    let r2 = f64_to_int(tensor_get(out, 2))
+    let r3 = f64_to_int(tensor_get(out, 3))
+
+    ; Expected: 86, 95, 104, 113
+    if r0 == 86 and r1 == 95 {
+        print "norm low ok"
+    }
+    if r2 == 104 and r3 == 113 {
+        print "norm high ok"
+    }
+
+    tensor_free(x)
+    tensor_free(gamma)
+    tensor_free(beta)
+    tensor_free(out)
+    ret 0
+}

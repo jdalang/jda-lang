@@ -1,0 +1,338 @@
+; Transformer Building Blocks — pure Jda
+; Built on tensor builtins and f64 builtins from M1-M3.
+; Implements scaled dot-product attention, layer norm, GELU,
+; embedding lookup, positional encoding for transformer models.
+;
+; NOTE: Functions are structured to avoid the jda0 codegen bug where
+; having 3+ loops with f64_exp in one function causes segfaults.
+; Multi-loop operations are split into helper functions.
+
+; ── Row-wise Softmax Helpers ────────────────────────────────────────
+
+fn row_max(x: i64, base: i64, cols: i64) -> i64 {
+    let mx = tensor_get(x, base)
+    let c = 1
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(x, idx)
+        if f64_gt(v, mx) == 1 {
+            mx = v
+        }
+        c = c + 1
+    }
+    ret mx
+}
+
+; Softmax a single row at offset base, writing to out at same offset
+fn softmax_row(x: i64, out: i64, base: i64, cols: i64) -> i64 {
+    let mx = row_max(x, base, cols)
+    let exp_sum = f64_from_int(0)
+    let c = 0
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(x, idx)
+        let shifted = f64_sub(v, mx)
+        let e = f64_exp(shifted)
+        tensor_set(out, idx, e)
+        exp_sum = f64_add(exp_sum, e)
+        c = c + 1
+    }
+    c = 0
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(out, idx)
+        let normed = f64_div(v, exp_sum)
+        tensor_set(out, idx, normed)
+        c = c + 1
+    }
+    ret 0
+}
+
+; Row-wise softmax: x[rows, cols] -> out[rows, cols]
+fn softmax_rows(x: i64, out: i64, rows: i64, cols: i64) -> i64 {
+    let r = 0
+    loop r < rows {
+        let base = r * cols
+        softmax_row(x, out, base, cols)
+        r = r + 1
+    }
+    ret 0
+}
+
+; ── Layer Normalization Helpers ─────────────────────────────────────
+
+fn compute_mean(x: i64) -> i64 {
+    let n = tensor_len(x)
+    let sum_val = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        sum_val = f64_add(sum_val, v)
+        i = i + 1
+    }
+    let fn_val = f64_from_int(n)
+    ret f64_div(sum_val, fn_val)
+}
+
+fn compute_var(x: i64, mean: i64) -> i64 {
+    let n = tensor_len(x)
+    let var_sum = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        let d = f64_sub(v, mean)
+        let d2 = f64_mul(d, d)
+        var_sum = f64_add(var_sum, d2)
+        i = i + 1
+    }
+    let fn_val = f64_from_int(n)
+    ret f64_div(var_sum, fn_val)
+}
+
+fn norm_apply(x: i64, out: i64, mean: i64, std: i64, gamma: i64, beta: i64) -> i64 {
+    let n = tensor_len(x)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        let d = f64_sub(v, mean)
+        let normed = f64_div(d, std)
+        let g = tensor_get(gamma, i)
+        let b = tensor_get(beta, i)
+        let scaled = f64_mul(normed, g)
+        let result = f64_add(scaled, b)
+        tensor_set(out, i, result)
+        i = i + 1
+    }
+    ret 0
+}
+
+; Layer normalization: x[n] -> out[n], with scale gamma[n] and shift beta[n]
+fn layer_norm_fwd(x: i64, out: i64, gamma: i64, beta: i64) -> i64 {
+    let mean = compute_mean(x)
+    let variance = compute_var(x, mean)
+    let hundred_k = f64_from_int(100000)
+    let one = f64_from_int(1)
+    let eps = f64_div(one, hundred_k)
+    let var_eps = f64_add(variance, eps)
+    let std = f64_sqrt(var_eps)
+    norm_apply(x, out, mean, std, gamma, beta)
+    ret 0
+}
+
+; ── Scaled Dot-Product Attention ────────────────────────────────────
+
+fn attn_scores(q: i64, k: i64, scores: i64, seq: i64, dk: i64) -> i64 {
+    let dk_f = f64_from_int(dk)
+    let sqrt_dk = f64_sqrt(dk_f)
+    let i = 0
+    loop i < seq {
+        let j = 0
+        loop j < seq {
+            let acc = f64_from_int(0)
+            let p = 0
+            loop p < dk {
+                let q_idx = i * dk + p
+                let k_idx = j * dk + p
+                let qv = tensor_get(q, q_idx)
+                let kv = tensor_get(k, k_idx)
+                let prod = f64_mul(qv, kv)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let scaled = f64_div(acc, sqrt_dk)
+            let s_idx = i * seq + j
+            tensor_set(scores, s_idx, scaled)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn attn_apply(attn: i64, v: i64, out: i64, seq: i64, dk: i64) -> i64 {
+    let i = 0
+    loop i < seq {
+        let j = 0
+        loop j < dk {
+            let acc = f64_from_int(0)
+            let p = 0
+            loop p < seq {
+                let a_idx = i * seq + p
+                let v_idx = p * dk + j
+                let av = tensor_get(attn, a_idx)
+                let vv = tensor_get(v, v_idx)
+                let prod = f64_mul(av, vv)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let o_idx = i * dk + j
+            tensor_set(out, o_idx, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+; Scaled dot-product attention
+; Q[seq, dk], K[seq, dk], V[seq, dk] -> out[seq, dk]
+; Computes: softmax(Q @ K^T / sqrt(dk)) @ V
+fn attention_fwd(q: i64, k: i64, v: i64, out: i64, seq: i64, dk: i64) -> i64 {
+    let scores = tensor_new2(seq, seq)
+    attn_scores(q, k, scores, seq, dk)
+    let attn = tensor_new2(seq, seq)
+    softmax_rows(scores, attn, seq, seq)
+    attn_apply(attn, v, out, seq, dk)
+    tensor_free(scores)
+    tensor_free(attn)
+    ret 0
+}
+
+; ── GELU Activation ─────────────────────────────────────────────────
+; Approximation: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+fn gelu_fwd(x: i64, out: i64) -> i64 {
+    let n = tensor_len(x)
+    let one = f64_from_int(1)
+    let two = f64_from_int(2)
+    let half = f64_div(one, two)
+    let c1_num = f64_from_int(7979)
+    let c1_den = f64_from_int(10000)
+    let c1 = f64_div(c1_num, c1_den)
+    let c2_num = f64_from_int(44715)
+    let c2_den = f64_from_int(1000000)
+    let c2 = f64_div(c2_num, c2_den)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        let x2 = f64_mul(v, v)
+        let x3 = f64_mul(x2, v)
+        let inner = f64_mul(c2, x3)
+        inner = f64_add(v, inner)
+        inner = f64_mul(c1, inner)
+        let t = f64_tanh(inner)
+        let tp1 = f64_add(one, t)
+        let r = f64_mul(half, v)
+        r = f64_mul(r, tp1)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+    ret 0
+}
+
+; ── Embedding Lookup ────────────────────────────────────────────────
+; tokens[seq] (f64 integers), table[vocab, d_model] -> out[seq, d_model]
+fn embed_fwd(tokens: i64, table: i64, out: i64, seq: i64, d_model: i64) -> i64 {
+    let i = 0
+    loop i < seq {
+        let tok_f = tensor_get(tokens, i)
+        let tok = f64_to_int(tok_f)
+        let j = 0
+        loop j < d_model {
+            let t_idx = tok * d_model + j
+            let v = tensor_get(table, t_idx)
+            let o_idx = i * d_model + j
+            tensor_set(out, o_idx, v)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+; ── Sinusoidal Positional Encoding ──────────────────────────────────
+; Adds positional encoding to x[seq, d_model] in-place
+; PE(pos, 2i) = sin(pos / 10000^(2i/d))
+; PE(pos, 2i+1) = cos(pos / 10000^(2i/d))
+fn pos_encode(x: i64, seq: i64, d_model: i64) -> i64 {
+    let base = f64_from_int(10000)
+    let dm_f = f64_from_int(d_model)
+    let pos = 0
+    loop pos < seq {
+        let i = 0
+        loop i < d_model {
+            let idx = pos * d_model + i
+            let old = tensor_get(x, idx)
+            let i_half = (i / 2) * 2
+            let ih_f = f64_from_int(i_half)
+            let exp_val = f64_div(ih_f, dm_f)
+            let denom = f64_pow(base, exp_val)
+            let pos_f = f64_from_int(pos)
+            let angle = f64_div(pos_f, denom)
+            let is_odd = i - (i / 2) * 2
+            let pe = f64_from_int(0)
+            if is_odd == 0 {
+                pe = f64_sin(angle)
+            } else {
+                pe = f64_cos(angle)
+            }
+            let result = f64_add(old, pe)
+            tensor_set(x, idx, result)
+            i = i + 1
+        }
+        pos = pos + 1
+    }
+    ret 0
+}
+
+; ── Linear Layer Forward ────────────────────────────────────────────
+; x[M, K] @ W^T[N, K] + bias[N] -> out[M, N]
+; W stored as [N, K] (each row is an output neuron's weights)
+fn linear_fwd(x: i64, w: i64, bias: i64, out: i64) -> i64 {
+    let M = tensor_shape(x, 0)
+    let K = tensor_shape(x, 1)
+    let N = tensor_shape(w, 0)
+    let i = 0
+    loop i < M {
+        let j = 0
+        loop j < N {
+            let acc = tensor_get(bias, j)
+            let p = 0
+            loop p < K {
+                let x_idx = i * K + p
+                let w_idx = j * K + p
+                let xv = tensor_get(x, x_idx)
+                let wv = tensor_get(w, w_idx)
+                let prod = f64_mul(xv, wv)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let o_idx = i * N + j
+            tensor_set(out, o_idx, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+; ── Residual Add ────────────────────────────────────────────────────
+; out[i] = a[i] + b[i] for all elements
+fn residual_add(a: i64, b: i64, out: i64) -> i64 {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_add(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+    ret 0
+}
+
+; ── ReLU Activation ─────────────────────────────────────────────────
+fn relu_fwd(x: i64, out: i64) -> i64 {
+    let n = tensor_len(x)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(x, i)
+        if f64_gt(v, zero) == 1 {
+            tensor_set(out, i, v)
+        } else {
+            tensor_set(out, i, zero)
+        }
+        i = i + 1
+    }
+    ret 0
+}
