@@ -78,8 +78,8 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 - [x] P1: Right-sized stack frames (524KB→actual usage, fib35: 709x→5.6x) ✅
 - [ ] P2: Eliminate unconditional spilling (lazy spill on eviction)
-- [ ] P3: Selective register save/restore (only save live regs around calls)
-- [ ] P4: Stack probe skip for small frames (<4KB)
+- [x] P3: Selective register save/restore (only save live regs around calls, -60KB binary) ✅
+- [x] P4: Stack probe skip for small frames (<64KB, eliminates probe for all P1-sized frames) ✅
 - [ ] P5: Callee-saved register preference (add R13-R15)
 
 ---
