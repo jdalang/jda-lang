@@ -80,7 +80,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] P2: Conditional spilling (skip spill for single-use values, -264KB binary, fib35: 5.4x→5.0x) ✅
 - [x] P3: Selective register save/restore (only save live regs around calls, -60KB binary) ✅
 - [x] P4: Stack probe skip for small frames (<64KB, eliminates probe for all P1-sized frames) ✅
-- [ ] P5: Callee-saved register preference (add R13-R15)
+- [x] P5: Callee-saved register preference (push/pop R13-R15 in prologue/epilogue, fib35: 5.0x→3.7x) ✅
 
 ---
 
