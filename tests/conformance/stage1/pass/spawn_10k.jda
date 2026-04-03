@@ -1,0 +1,46 @@
+; DoD 2: Spawn 10,000 J-Threads without OOM
+let g_queue: &i64 = 0
+let g_head = 0
+let g_tail = 0
+let g_current: &i64 = 0
+let g_main_ctx: &i64 = 0
+let g_count = 0
+
+fn __thread_done() {
+    g_count = g_count + 1
+    if g_head == g_tail {
+        ctx_switch(g_current, g_main_ctx)
+    } else {
+        let next: &i64 = g_queue[g_head]
+        g_head = g_head + 1
+        let old = g_current
+        g_current = next
+        ctx_switch(old, next)
+    }
+}
+
+fn noop() {
+    let x = 1
+}
+
+fn main() {
+    g_queue = alloc_pages(20)
+    g_main_ctx = alloc_pages(1)
+
+    let i = 0
+    loop i < 10000 {
+        let t = spawn noop()
+        g_queue[g_tail] = t
+        g_tail = g_tail + 1
+        i = i + 1
+    }
+
+    let first: &i64 = g_queue[g_head]
+    g_head = g_head + 1
+    g_current = first
+    ctx_switch(g_main_ctx, first)
+
+    if g_count == 10000 {
+        print("ok")
+    }
+}
