@@ -244,7 +244,7 @@ Implement `concurrency/channel.jda` as a compilable Jda library. The design is a
 
 ---
 
-### M6: OS Thread Pool + M:N Scheduling (~400 lines in jda1.jda)
+### M6: OS Thread Pool + M:N Scheduling (~400 lines in jda1.jda) ✅
 
 **Target**: Multiple OS threads running J-Threads in parallel, with work-stealing.
 
