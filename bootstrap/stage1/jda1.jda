@@ -161,6 +161,10 @@ const OP_ATOMIC_ADD   = 38
 const OP_RDTSC        = 39
 const OP_CTX_SWITCH   = 40
 const OP_FN_ADDR      = 41
+const OP_CHAN_NEW     = 42
+const OP_CHAN_SEND    = 43
+const OP_CHAN_RECV    = 44
+const OP_CHAN_CLOSE   = 45
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -6682,6 +6686,33 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ret emit(jfn, bb, &ins)
     }
 
+    ; Channel builtins
+    if name_len == 8 and streq(src, name_start, 8, "chan_new") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_NEW
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 9 and streq(src, name_start, 9, "chan_send") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_SEND
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 9 and streq(src, name_start, 9, "chan_recv") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_RECV
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "chan_close") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_CLOSE
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -8039,6 +8070,33 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ret emit(g_jfn, bb, &ins)
     }
 
+    ; Channel builtins
+    if name.str_len == 8 and streq(g_src_buf_ptr, name.str_start, 8, "chan_new") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_NEW
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 9 and streq(g_src_buf_ptr, name.str_start, 9, "chan_send") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_SEND
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 9 and streq(g_src_buf_ptr, name.str_start, 9, "chan_recv") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_RECV
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "chan_close") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_CLOSE
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -8334,7 +8392,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
-            if op == OP_ATOMIC_LOAD {
+            if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE {
                 if o0 >= 0 { used[o0] = 1 }
             }
             if op == OP_ATOMIC_STORE {
@@ -8346,7 +8404,7 @@ fn dce(jfn: &JirFunction) {
                 if o1 >= 0 { used[o1] = 1 }
                 if o2 >= 0 { used[o2] = 1 }
             }
-            if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH {
+            if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
@@ -8383,7 +8441,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ATOMIC_STORE { used[id] = 1 }
             if op == OP_ATOMIC_CAS   { used[id] = 1 }
             if op == OP_ATOMIC_ADD   { used[id] = 1 }
-            if op == OP_RDTSC or op == OP_CTX_SWITCH { used[id] = 1 }
+            if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -8730,6 +8788,7 @@ fn emit_i64_le(out: &i8, pos: &i64, val: i64) {
     let i = 0
     loop i < 8 {
         let b = mod256(val)
+        if b < 0 { b = b + 256 }
         emit_byte(out, pos, b)
         val = (val - b) / 256
         i = i + 1
@@ -10570,6 +10629,359 @@ fn lower_instr_atomic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 0
 }
 
+; emit MOV reg, [base + disp8]: REX.W 8B ModRM(01,reg,base) disp8
+fn emit_load_disp8(out: &i8, pos: &i64, dst: i32, base: i32, disp: i64) {
+    let dst_hi = dst / 8
+    let base_hi = base / 8
+    emit_byte(out, pos, 72 + dst_hi * 4 + base_hi)
+    emit_byte(out, pos, 0x8B)
+    let dst3 = mod8(dst)
+    let base3 = mod8(base)
+    if base3 == 4 {
+        emit_byte(out, pos, 0x44 + dst3 * 8)
+        emit_byte(out, pos, 0x24)
+    } else {
+        emit_byte(out, pos, 0x40 + dst3 * 8 + base3)
+    }
+    emit_byte(out, pos, disp)
+}
+
+; emit MOV [base + disp8], src: REX.W 89 ModRM(01,src,base) disp8
+fn emit_store_disp8(out: &i8, pos: &i64, base: i32, disp: i64, src: i32) {
+    let src_hi = src / 8
+    let base_hi = base / 8
+    emit_byte(out, pos, 72 + src_hi * 4 + base_hi)
+    emit_byte(out, pos, 0x89)
+    let src3 = mod8(src)
+    let base3 = mod8(base)
+    if base3 == 4 {
+        emit_byte(out, pos, 0x44 + src3 * 8)
+        emit_byte(out, pos, 0x24)
+    } else {
+        emit_byte(out, pos, 0x40 + src3 * 8 + base3)
+    }
+    emit_byte(out, pos, disp)
+}
+
+; emit MOV [base + idx*8], src: REX.W 89 ModRM(00,src,100) SIB(11,idx,base)
+fn emit_store_sib8(out: &i8, pos: &i64, base: i32, idx: i32, src: i32) {
+    let src_hi = src / 8
+    let base_hi = base / 8
+    let idx_hi = idx / 8
+    emit_byte(out, pos, 72 + src_hi * 4 + idx_hi * 2 + base_hi)
+    emit_byte(out, pos, 0x89)
+    let src3 = mod8(src)
+    let base3 = mod8(base)
+    let idx3 = mod8(idx)
+    emit_byte(out, pos, src3 * 8 + 4)
+    emit_byte(out, pos, 0xC0 + idx3 * 8 + base3)
+}
+
+; emit MOV dst, [base + idx*8]: REX.W 8B ModRM(00,dst,100) SIB(11,idx,base)
+fn emit_load_sib8(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32) {
+    let dst_hi = dst / 8
+    let base_hi = base / 8
+    let idx_hi = idx / 8
+    emit_byte(out, pos, 72 + dst_hi * 4 + idx_hi * 2 + base_hi)
+    emit_byte(out, pos, 0x8B)
+    let dst3 = mod8(dst)
+    let base3 = mod8(base)
+    let idx3 = mod8(idx)
+    emit_byte(out, pos, dst3 * 8 + 4)
+    emit_byte(out, pos, 0xC0 + idx3 * 8 + base3)
+}
+
+fn lower_instr_chan(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let op = ins.op
+
+    ; OP_CHAN_NEW: chan_new(cap) -> channel pointer
+    ; Channel layout: [cap(0), head(8), tail(16), count(24), closed(32), buf(40+)]
+    ; Allocate (cap*8+40) bytes via mmap, store cap at offset 0.
+    ; mmap returns zeroed pages so head/tail/count/closed are already 0.
+    if op == OP_CHAN_NEW {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+        ; Compute size = cap*8 + 40 + 4095, round to page
+        let cap_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, cap_r)
+        ; pop cap into RCX, compute size in RSI
+        emit_pop_r(out, pos, PHYS_RCX)
+        ; RSI = RCX * 8: LEA RSI, [RCX*8]
+        ; Use SHL RCX,3 then ADD RCX,4095+40 then AND RCX,~4095 then MOV RSI,RCX
+        ; Simpler: MOV RSI, RCX; SHL RSI, 3; ADD RSI, 4136; AND RSI, -4096
+        emit_mov_rr(out, pos, PHYS_RSI, PHYS_RCX)
+        ; SHL RSI, 3: 48 C1 E6 03
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC1)
+        emit_byte(out, pos, 0xE6)
+        emit_byte(out, pos, 3)
+        ; ADD RSI, 4136 (40 header + 4096-1 for rounding): 48 81 C6 imm32
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x81)
+        emit_byte(out, pos, 0xC6)
+        emit_byte(out, pos, 0x28)
+        emit_byte(out, pos, 0x10)
+        emit_byte(out, pos, 0)
+        emit_byte(out, pos, 0)
+        ; AND RSI, -4096: 48 81 E6 00 F0 FF FF
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x81)
+        emit_byte(out, pos, 0xE6)
+        emit_byte(out, pos, 0x00)
+        emit_byte(out, pos, 0xF0)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xFF)
+        ; Save cap (RCX) across syscall — syscall clobbers RCX and R11
+        emit_push_r(out, pos, PHYS_RCX)
+        ; mmap(0, RSI, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
+        emit_mov_imm64(out, pos, PHYS_RAX, 9)
+        emit_mov_imm64(out, pos, PHYS_RDI, 0)
+        emit_mov_imm64(out, pos, PHYS_RDX, 3)
+        emit_mov_imm64(out, pos, PHYS_R10, 0x22)
+        emit_mov_imm64(out, pos, PHYS_R8, -1)
+        emit_mov_imm64(out, pos, PHYS_R9, 0)
+        emit_syscall_instr(out, pos)
+        ; Restore cap into RCX
+        emit_pop_r(out, pos, PHYS_RCX)
+        ; RAX = channel pointer, store cap at [RAX+0]
+        emit_store_disp8(out, pos, PHYS_RAX, 0, PHYS_RCX)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 { emit_mov_rr(out, pos, dst, PHYS_R12) }
+        let cnsp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, cnsp)
+        ra_set_spill(&ctx.ra, ins.id, cnsp)
+        emit_store_spill(out, pos, cnsp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        consume_use(ctx, ins.operand0)
+        ret 1
+    }
+
+    ; OP_CHAN_SEND: chan_send(ch, val) -> 0=ok, 1=full, -1=closed
+    if op == OP_CHAN_SEND {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        emit_pop_r(out, pos, PHYS_RSI)
+        emit_pop_r(out, pos, PHYS_RDI)
+        ; RDI=ch, RSI=val
+        ; Check closed: if [RDI+32] != 0, return -1
+        emit_load_disp8(out, pos, PHYS_RAX, PHYS_RDI, 32)
+        emit_cmp_zero(out, pos, PHYS_RAX)
+        ; JNE .closed (forward jump, patch later)
+        emit_byte(out, pos, 0x75)
+        let closed_patch = pos[0]
+        emit_byte(out, pos, 0)
+        ; Check full: load count=[RDI+24], cap=[RDI]
+        emit_load_disp8(out, pos, PHYS_RCX, PHYS_RDI, 24)
+        emit_load_mem_reg(out, pos, PHYS_RDX, PHYS_RDI)
+        emit_cmp_rr(out, pos, PHYS_RCX, PHYS_RDX)
+        ; JE .full (forward jump, patch later)
+        emit_byte(out, pos, 0x74)
+        let full_patch = pos[0]
+        emit_byte(out, pos, 0)
+        ; Load tail=[RDI+16] into RAX
+        emit_load_disp8(out, pos, PHYS_RAX, PHYS_RDI, 16)
+        ; Compute buf_base = RDI + 40 into RDX
+        emit_mov_rr(out, pos, PHYS_RDX, PHYS_RDI)
+        ; ADD RDX, 40: 48 83 C2 28
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC2)
+        emit_byte(out, pos, 40)
+        ; MOV [RDX + RAX*8], RSI
+        emit_store_sib8(out, pos, PHYS_RDX, PHYS_RAX, PHYS_RSI)
+        ; tail++: INC RAX (48 FF C0)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xC0)
+        ; if tail == cap, wrap to 0: load cap again into RDX
+        emit_load_mem_reg(out, pos, PHYS_RDX, PHYS_RDI)
+        emit_cmp_rr(out, pos, PHYS_RAX, PHYS_RDX)
+        ; JNE +2 (skip XOR)
+        emit_byte(out, pos, 0x75)
+        emit_byte(out, pos, 2)
+        ; XOR EAX, EAX (31 C0)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC0)
+        ; Store tail: MOV [RDI+16], RAX
+        emit_store_disp8(out, pos, PHYS_RDI, 16, PHYS_RAX)
+        ; count++: load, inc, store
+        emit_load_disp8(out, pos, PHYS_RCX, PHYS_RDI, 24)
+        ; INC RCX (48 FF C1)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xC1)
+        emit_store_disp8(out, pos, PHYS_RDI, 24, PHYS_RCX)
+        ; Return 0: XOR EAX, EAX
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC0)
+        ; JMP .done
+        emit_byte(out, pos, 0xEB)
+        let done_patch = pos[0]
+        emit_byte(out, pos, 0)
+        ; .full: return 1
+        let full_target = pos[0]
+        let full_rel = full_target - full_patch
+        poke_byte(out, full_patch, full_rel - 1)
+        emit_mov_imm64(out, pos, PHYS_RAX, 1)
+        ; JMP .done
+        emit_byte(out, pos, 0xEB)
+        let done_patch2 = pos[0]
+        emit_byte(out, pos, 0)
+        ; .closed: return -1
+        let closed_target = pos[0]
+        let closed_rel = closed_target - closed_patch
+        poke_byte(out, closed_patch, closed_rel - 1)
+        emit_mov_imm64(out, pos, PHYS_RAX, -1)
+        ; .done:
+        let done_target = pos[0]
+        let done_rel1 = done_target - done_patch
+        let done_rel2 = done_target - done_patch2
+        poke_byte(out, done_patch, done_rel1 - 1)
+        poke_byte(out, done_patch2, done_rel2 - 1)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 { emit_mov_rr(out, pos, dst, PHYS_R12) }
+        let cssp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, cssp)
+        ra_set_spill(&ctx.ra, ins.id, cssp)
+        emit_store_spill(out, pos, cssp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        ret 1
+    }
+
+    ; OP_CHAN_RECV: chan_recv(ch) -> value, or -1 if closed+empty, -2 if empty
+    if op == OP_CHAN_RECV {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        emit_pop_r(out, pos, PHYS_RDI)
+        ; RDI=ch
+        ; Load count=[RDI+24]
+        emit_load_disp8(out, pos, PHYS_RCX, PHYS_RDI, 24)
+        emit_cmp_zero(out, pos, PHYS_RCX)
+        ; JNE .has_data (forward jump, patch later)
+        emit_byte(out, pos, 0x75)
+        let has_data_patch = pos[0]
+        emit_byte(out, pos, 0)
+        ; count==0: check closed
+        emit_load_disp8(out, pos, PHYS_RAX, PHYS_RDI, 32)
+        emit_cmp_zero(out, pos, PHYS_RAX)
+        ; JNE .closed_empty
+        emit_byte(out, pos, 0x75)
+        let closed_patch = pos[0]
+        emit_byte(out, pos, 0)
+        ; empty but not closed: return -2
+        emit_mov_imm64(out, pos, PHYS_RAX, -2)
+        ; JMP .done
+        emit_byte(out, pos, 0xEB)
+        let done_patch = pos[0]
+        emit_byte(out, pos, 0)
+        ; .closed_empty: return -1
+        let closed_target = pos[0]
+        let cr_closed_rel = closed_target - closed_patch
+        poke_byte(out, closed_patch, cr_closed_rel - 1)
+        emit_mov_imm64(out, pos, PHYS_RAX, -1)
+        ; JMP .done
+        emit_byte(out, pos, 0xEB)
+        let done_patch2 = pos[0]
+        emit_byte(out, pos, 0)
+        ; .has_data:
+        let has_data_target = pos[0]
+        let hd_rel = has_data_target - has_data_patch
+        poke_byte(out, has_data_patch, hd_rel - 1)
+        ; Load head=[RDI+8] into RAX
+        emit_load_disp8(out, pos, PHYS_RAX, PHYS_RDI, 8)
+        ; Compute buf_base = RDI + 40 into RDX
+        emit_mov_rr(out, pos, PHYS_RDX, PHYS_RDI)
+        ; ADD RDX, 40
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xC2)
+        emit_byte(out, pos, 40)
+        ; Load value: MOV RSI, [RDX + RAX*8]
+        emit_load_sib8(out, pos, PHYS_RSI, PHYS_RDX, PHYS_RAX)
+        ; head++: INC RAX
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xC0)
+        ; if head == cap, wrap to 0
+        emit_load_mem_reg(out, pos, PHYS_RDX, PHYS_RDI)
+        emit_cmp_rr(out, pos, PHYS_RAX, PHYS_RDX)
+        ; JNE +2
+        emit_byte(out, pos, 0x75)
+        emit_byte(out, pos, 2)
+        ; XOR EAX, EAX
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC0)
+        ; Store head: MOV [RDI+8], RAX
+        emit_store_disp8(out, pos, PHYS_RDI, 8, PHYS_RAX)
+        ; count--: load, dec, store
+        emit_load_disp8(out, pos, PHYS_RCX, PHYS_RDI, 24)
+        ; DEC RCX (48 FF C9)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xC9)
+        emit_store_disp8(out, pos, PHYS_RDI, 24, PHYS_RCX)
+        ; Return value in RSI -> RAX
+        emit_mov_rr(out, pos, PHYS_RAX, PHYS_RSI)
+        ; .done:
+        let done_target = pos[0]
+        let cr_done_r1 = done_target - done_patch
+        let cr_done_r2 = done_target - done_patch2
+        poke_byte(out, done_patch, cr_done_r1 - 1)
+        poke_byte(out, done_patch2, cr_done_r2 - 1)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 { emit_mov_rr(out, pos, dst, PHYS_R12) }
+        let crsp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, crsp)
+        ra_set_spill(&ctx.ra, ins.id, crsp)
+        emit_store_spill(out, pos, crsp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        consume_use(ctx, ins.operand0)
+        ret 1
+    }
+
+    ; OP_CHAN_CLOSE: chan_close(ch) -> 0
+    if op == OP_CHAN_CLOSE {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        emit_pop_r(out, pos, PHYS_RDI)
+        ; MOV qword [RDI+32], 1: store 1 at closed flag
+        emit_mov_imm64(out, pos, PHYS_RAX, 1)
+        emit_store_disp8(out, pos, PHYS_RDI, 32, PHYS_RAX)
+        ; Return 0
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC0)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 { emit_mov_rr(out, pos, dst, PHYS_R12) }
+        let ccsp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, ccsp)
+        ra_set_spill(&ctx.ra, ins.id, ccsp)
+        emit_store_spill(out, pos, ccsp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        consume_use(ctx, ins.operand0)
+        ret 1
+    }
+
+    ret 0
+}
+
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     if lower_instr_constlike(ins, ctx, jfn, out, pos) == 1 {
@@ -10659,6 +11071,11 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if lower_instr_atomic(ins, ctx, out, pos) == 1 {
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
+        ret ok(0)
+    }
+
+    if lower_instr_chan(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
@@ -11934,7 +12351,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
         if o3 >= 6 { mark_use(ctx, ins.imm) }
     }
-    if op == OP_ATOMIC_LOAD {
+    if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE {
         mark_use(ctx, o0)
     }
     if op == OP_ATOMIC_STORE {
@@ -11946,7 +12363,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o1)
         mark_use(ctx, o2)
     }
-    if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH {
+    if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
