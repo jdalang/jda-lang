@@ -224,7 +224,7 @@ JIR pass that detects tensor loops and rewrites with vector ops. Complex and fra
 
 ---
 
-### M6: Compile-Time Autograd
+### M6: Compile-Time Autograd ✅
 
 **Target**: `@differentiable` attribute triggers compiler-generated backward pass.
 
