@@ -4877,8 +4877,8 @@ fn emit_binop(jfn: &JirFunction, bb: i64, op: i32, a: i64, b: i64) -> i64 {
 fn emit_spawn_jir(jfn: &JirFunction, bb: i64, fn_name_start: i64, fn_name_len: i64) -> i64 {
     ; Desugar spawn into JIR: alloc stack, alloc JThread, set rsp/rbp/rip
     let page_sz = emit_const(jfn, bb, TYPE_I64, 4096)
-    ; 1. Alloc 8 pages (32KB) for thread stack
-    let pages_c = emit_const(jfn, bb, TYPE_I64, 8)
+    ; 1. Alloc 16 pages (64KB) for thread stack
+    let pages_c = emit_const(jfn, bb, TYPE_I64, 16)
     let stack_sz = emit_binop(jfn, bb, OP_MUL, pages_c, page_sz)
     let ai = Instr{}
     ai.op = OP_ALLOC
@@ -4891,8 +4891,8 @@ fn emit_spawn_jir(jfn: &JirFunction, bb: i64, fn_name_start: i64, fn_name_len: i
     ai2.op = OP_ALLOC
     ai2.operand0 = jt_sz
     let jthread = emit(jfn, bb, &ai2)
-    ; 3. stack_top = base + 32768 - 8 (aligned, room for return addr)
-    let off_c = emit_const(jfn, bb, TYPE_I64, 32760)
+    ; 3. stack_top = base + 65536 - 8 (aligned, room for return addr)
+    let off_c = emit_const(jfn, bb, TYPE_I64, 65528)
     let stack_top = emit_binop(jfn, bb, OP_ADD, stack_base, off_c)
     ; 4. Get function address
     let fi = Instr{}
