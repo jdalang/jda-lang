@@ -280,4 +280,4 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 **Cutting a release:**
 ```bash
 # Update VERSION file, then:
-git tag v0.1.1 && git push --tags
+git tag v0.1.2 && git push --tags
