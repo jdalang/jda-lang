@@ -348,7 +348,7 @@ fn main() {
 
 ---
 
-### M8: PTX Backend (NVIDIA GPU)
+### M8: PTX Backend (NVIDIA GPU) ✅
 
 **Target**: Offload matmul to NVIDIA GPU via direct ioctls — no CUDA toolkit.
 
