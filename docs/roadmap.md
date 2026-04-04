@@ -130,12 +130,17 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] 4 new conformance tests using assertion functions ✅
 - [x] 154 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
-### M2: Package Manager
-- `jda.toml` manifest file — name, version, dependencies, build config
-- `jda pkg init` / `jda pkg add <name>` / `jda pkg build`
-- Git-based dependency resolution (tag-pinned versions, no central registry initially)
-- Module system: `import "pkg/module"` resolves from `jda.toml` deps
-- Lockfile (`jda.lock`) for reproducible builds
+### M2: Package Manager ✅ COMPLETE
+
+**Delivered (April 4, 2026):**
+- [x] `jda.toml` manifest file — name, version, dependencies, build config ✅
+- [x] `jda pkg init` / `jda pkg add <name> <url> [tag]` / `jda pkg build` / `jda pkg deps` (`tools/jda-pkg.sh`) ✅
+- [x] Git-based dependency resolution (tag-pinned versions, clone + checkout) ✅
+- [x] Module system: dependency source concatenated before entry point from `jda.toml` deps ✅
+- [x] Lockfile (`jda.lock`) — records name, tag, exact commit hash, URL for reproducible builds ✅
+- [x] Docker-aware compilation (auto-detects macOS, uses jda-build container) ✅
+- [x] 4 new conformance tests, 8 integration tests ✅
+- [x] 158 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
 ### M3: Language Server Protocol (LSP)
 - Written in Jda (self-hosted tooling)
