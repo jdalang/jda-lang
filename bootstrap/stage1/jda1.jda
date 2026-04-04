@@ -173,7 +173,7 @@ const N_ALLOC_REGS = 7
 
 struct Token {
     type:      i64
-    pad:       i64
+    line:      i64
     str_start: i64
     str_len:   i64
     imm:       i64
@@ -362,6 +362,7 @@ let g_ltw_len: i64 = 0
 let g_ltw_val: i64 = 0
 let g_ltw_tmp: i64 = 0
 let g_lex_adv: i64 = 0
+let g_lex_line: i64 = 1
 let g_fn_lbrace_tmp = 0
 let g_fn_rbrace_tmp = -1
 let g_skip_fn_body_compile_tmp = 0
@@ -422,15 +423,18 @@ fn lex_store_tok3(toks: &Token, idx: i64, typ: i64, start: i64, len: i64) {
     toks[idx].type = typ
     toks[idx].str_start = start
     toks[idx].str_len = len
+    toks[idx].line = g_lex_line
 }
 
 fn lex_store_tok1(toks: &Token, idx: i64, typ: i64) {
     toks[idx].type = typ
+    toks[idx].line = g_lex_line
 }
 
 fn lex_store_tok_int(toks: &Token, idx: i64, val: i64) {
     toks[idx].type = TOK_INT
     toks[idx].imm = val
+    toks[idx].line = g_lex_line
 }
 
 fn tok_type_at_raw(toks: &Token, idx: i64) -> i64 {
@@ -549,6 +553,7 @@ fn lex_emit_marked_string(toks: &Token) {
     toks[idx].type = TOK_STR
     toks[idx].str_start = g_cmp_name_start
     toks[idx].str_len = len
+    toks[idx].line = g_lex_line
     g_lex_count = g_lex_count + 1
 }
 
@@ -557,6 +562,7 @@ fn lex_handle_gt_next(toks: &Token, pos: &i64) {
     let nxt = load_i8_at(g_lex_src_ptr, next + 1)
     let tok = ((nxt == 62) * TOK_SHR) + ((nxt == 61) * TOK_GTE) + ((nxt != 62 and nxt != 61) * char_to_tok(62))
     toks[g_lex_count].type = tok
+    toks[g_lex_count].line = g_lex_line
     g_lex_count = g_lex_count + 1
     pos[0] = next + 1 + (nxt == 62) + (nxt == 61)
 }
@@ -566,6 +572,7 @@ fn lex_handle_lt_next(toks: &Token, pos: &i64) {
     let nxt = load_i8_at(g_lex_src_ptr, next + 1)
     let tok = ((nxt == 60) * TOK_SHL) + ((nxt == 61) * TOK_LTE) + ((nxt != 60 and nxt != 61) * char_to_tok(60))
     toks[g_lex_count].type = tok
+    toks[g_lex_count].line = g_lex_line
     g_lex_count = g_lex_count + 1
     pos[0] = next + 1 + (nxt == 60) + (nxt == 61)
 }
@@ -587,6 +594,7 @@ fn lex_emit_ident_or_kw(toks: &Token, pos: &i64) {
     toks[idx].type = kw
     toks[idx].str_start = start
     toks[idx].str_len = len
+    toks[idx].line = g_lex_line
     g_lex_count = g_lex_count + 1
 }
 
@@ -609,6 +617,7 @@ fn lex_emit_ident_local(src: &i8, src_len: i64, toks: &Token, pos: &i64, count: 
     toks[count].type = kw
     toks[count].str_start = start
     toks[count].str_len = len
+    toks[count].line = g_lex_line
     pos[0] = stop
     ret count + 1
 }
@@ -1245,6 +1254,7 @@ fn emit_lex_tok(out_toks: &Token, count: &i64, tok: i32) {
         panic("Token buffer overflow")
     }
     out_toks[cur].type = tok
+    out_toks[cur].line = g_lex_line
     count[0] = cur + 1
 }
 
@@ -1255,6 +1265,7 @@ fn lex_handle_minus(toks: &Token, pos: &i64) {
         if nxt == 62 {
             if g_lex_count >= 262143 { panic("Token buffer overflow") }
             toks[g_lex_count].type = 22
+            toks[g_lex_count].line = g_lex_line
             g_lex_count = g_lex_count + 1
             pos[0] = pos[0] + 2
             ret
@@ -1262,12 +1273,14 @@ fn lex_handle_minus(toks: &Token, pos: &i64) {
     }
     if g_lex_count >= 262143 { panic("Token buffer overflow") }
     toks[g_lex_count].type = char_to_tok(45)
+    toks[g_lex_count].line = g_lex_line
     g_lex_count = g_lex_count + 1
     pos[0] = pos[0] + 1
 }
 
 fn lex_handle_eq(toks: &Token, pos: &i64) {
     toks[g_lex_count].type = char_to_tok(61)
+    toks[g_lex_count].line = g_lex_line
     g_lex_count = g_lex_count + 1
     pos[0] = pos[0] + 1
 }
@@ -1353,6 +1366,7 @@ fn lex_small_tail_dispatch(toks: &Token, src: &i8, src_len: i64) {
     if lex_try_op(toks, c) == 1 { ret 0 }
     if g_lex_count >= 262143 { panic("Token buffer overflow") }
     toks[g_lex_count].type = char_to_tok(c)
+    toks[g_lex_count].line = g_lex_line
     g_lex_count = g_lex_count + 1
     g_lex_pos_i = g_lex_pos_i + 1
 }
@@ -1360,14 +1374,17 @@ fn lex_small_tail_dispatch(toks: &Token, src: &i8, src_len: i64) {
 fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
     let p = 0
     let count = 0
+    g_lex_line = 1
     loop p < src_len {
         let c = src[p]
         if c == 32 or c == 10 or c == 9 or c == 13 {
+            if c == 10 { g_lex_line = g_lex_line + 1 }
             p = p + 1
         } else if c == 59 {
             p = p + 1
             loop p < src_len {
                 if src[p] == 10 {
+                    g_lex_line = g_lex_line + 1
                     p = p + 1
                     break
                 }
@@ -1413,6 +1430,7 @@ fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
             toks[count].type = kw
             toks[count].str_start = start
             toks[count].str_len = len
+            toks[count].line = g_lex_line
             count = count + 1
         } else if c == 34 {
             let start = p + 1
@@ -1438,65 +1456,78 @@ fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
             toks[count].type = TOK_STR
             toks[count].str_start = start
             toks[count].str_len = p - start
+            toks[count].line = g_lex_line
             count = count + 1
             if p < src_len and src[p] == 34 { p = p + 1 }
         } else if c == 45 {
             if p + 1 < src_len and src[p + 1] == 62 {
                 toks[count].type = TOK_ARROW
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 2
             } else {
                 toks[count].type = char_to_tok(c)
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 1
             }
         } else if c == 61 {
             if p + 1 < src_len and src[p + 1] == 61 {
                 toks[count].type = TOK_EQEQ
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 2
             } else {
                 toks[count].type = TOK_EQ
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 1
             }
         } else if c == 33 {
             if p + 1 < src_len and src[p + 1] == 61 {
                 toks[count].type = TOK_NEQ
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 2
             } else {
                 toks[count].type = char_to_tok(c)
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 1
             }
         } else if c == 62 {
             if p + 1 < src_len and src[p + 1] == 61 {
                 toks[count].type = TOK_GTE
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 2
             } else {
                 toks[count].type = TOK_GT
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 1
             }
         } else if c == 60 {
             if p + 1 < src_len and src[p + 1] == 61 {
                 toks[count].type = TOK_LTE
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 2
             } else {
                 toks[count].type = TOK_LT
+                toks[count].line = g_lex_line
                 count = count + 1
                 p = p + 1
             }
         } else {
             toks[count].type = char_to_tok(c)
+            toks[count].line = g_lex_line
             count = count + 1
             p = p + 1
         }
     }
     toks[count].type = TOK_EOF
+    toks[count].line = g_lex_line
     ret count
 }
 
@@ -1544,6 +1575,7 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
     let p = 0
     let count = 0
     g_lex_count = 0
+    g_lex_line = 1
     g_small_has_main = small_input_has_main(src, src_len)
     g_scan_tok_cnt = 0
     if src == 0 { panic("LSF_SRC_NULL") }
@@ -1551,11 +1583,13 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
     loop p < src_len {
         let c = load_i8_at(src, p)
         if c == 32 or c == 10 or c == 9 or c == 13 {
+            if c == 10 { g_lex_line = g_lex_line + 1 }
             p = p + 1
         } else if c == 59 {
             p = p + 1
             loop p < src_len {
                 if load_i8_at(src, p) == 10 {
+                    g_lex_line = g_lex_line + 1
                     p = p + 1
                     break
                 }
@@ -1569,6 +1603,7 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
             toks[count].type = kw
             toks[count].str_start = start
             toks[count].str_len = len
+            toks[count].line = g_lex_line
             count = count + 1
             g_lex_count = count
             g_scan_tok_cnt = count
@@ -1595,6 +1630,7 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
             toks[count].type = TOK_STR
             toks[count].str_start = start
             toks[count].str_len = p - start
+            toks[count].line = g_lex_line
             count = count + 1
             g_lex_count = count
             g_scan_tok_cnt = count
@@ -1604,12 +1640,14 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
         } else if c == 45 {
             if p + 1 < src_len and load_i8_at(src, p + 1) == 62 {
                 toks[count].type = TOK_ARROW
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
                 p = p + 2
             } else {
                 toks[count].type = char_to_tok(c)
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
@@ -1618,12 +1656,14 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
         } else if c == 61 {
             if p + 1 < src_len and load_i8_at(src, p + 1) == 61 {
                 toks[count].type = TOK_EQEQ
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
                 p = p + 2
             } else {
                 toks[count].type = TOK_EQ
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
@@ -1632,12 +1672,14 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
         } else if c == 33 {
             if p + 1 < src_len and load_i8_at(src, p + 1) == 61 {
                 toks[count].type = TOK_NEQ
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
                 p = p + 2
             } else {
                 toks[count].type = char_to_tok(c)
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
@@ -1646,12 +1688,14 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
         } else if c == 62 {
             if p + 1 < src_len and load_i8_at(src, p + 1) == 61 {
                 toks[count].type = TOK_GTE
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
                 p = p + 2
             } else {
                 toks[count].type = TOK_GT
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
@@ -1660,12 +1704,14 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
         } else if c == 60 {
             if p + 1 < src_len and load_i8_at(src, p + 1) == 61 {
                 toks[count].type = TOK_LTE
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
                 p = p + 2
             } else {
                 toks[count].type = TOK_LT
+                toks[count].line = g_lex_line
                 count = count + 1
                 g_lex_count = count
                 g_scan_tok_cnt = count
@@ -1674,12 +1720,14 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
         } else if c >= 48 and c <= 57 {
             let new_p = lex_int_store(src, src_len, p, toks, count)
             toks[count].type = TOK_INT
+            toks[count].line = g_lex_line
             count = count + 1
             g_lex_count = count
             g_scan_tok_cnt = count
             p = new_p
         } else {
             toks[count].type = char_to_tok(c)
+            toks[count].line = g_lex_line
             count = count + 1
             g_lex_count = count
             g_scan_tok_cnt = count
@@ -1687,6 +1735,7 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
         }
     }
     toks[count].type = TOK_EOF
+    toks[count].line = g_lex_line
     g_lex_count = count
     g_scan_tok_cnt = count
     ret count
@@ -1743,6 +1792,8 @@ fn lex_write_tok_int_at(idx: i64, val: i64) {
 fn ltw1(typ: i64) {
     g_ltw_val = typ
     store_i64_at(g_ltw_base, g_ltw_off, g_ltw_val)
+    g_ltw_tmp = g_ltw_off + 1
+    store_i64_at(g_ltw_base, g_ltw_tmp, g_lex_line)
 }
 
 ; ltw3: write str/kw token (type, str_start, str_len) at current cursor.
@@ -1751,6 +1802,8 @@ fn ltw3(typ: i64, start: i64, len: i64) {
     g_ltw_start = start
     g_ltw_len = len
     store_i64_at(g_ltw_base, g_ltw_off, g_ltw_val)
+    g_ltw_tmp = g_ltw_off + 1
+    store_i64_at(g_ltw_base, g_ltw_tmp, g_lex_line)
     g_ltw_tmp = g_ltw_off + 2
     store_i64_at(g_ltw_base, g_ltw_tmp, g_ltw_start)
     g_ltw_tmp = g_ltw_off + 3
@@ -1761,6 +1814,8 @@ fn ltw3(typ: i64, start: i64, len: i64) {
 fn ltw_int(val: i64) {
     g_ltw_val = val
     store_i64_at(g_ltw_base, g_ltw_off, TOK_INT)
+    g_ltw_tmp = g_ltw_off + 1
+    store_i64_at(g_ltw_base, g_ltw_tmp, g_lex_line)
     g_ltw_tmp = g_ltw_off + 4
     store_i64_at(g_ltw_base, g_ltw_tmp, g_ltw_val)
 }
@@ -1781,17 +1836,27 @@ fn tok_set_len(toks: &Token, idx: i64, v: i64) {
 fn tok_set_imm(toks: &Token, idx: i64, v: i64) {
     toks[idx].imm = v
 }
+fn tok_set_line(toks: &Token, idx: i64, v: i64) {
+    toks[idx].line = v
+}
+fn tok_line_at(toks: &Token, idx: i64) -> i64 {
+    ret toks[idx].line
+}
 
 fn lex_global_fast() -> i32 {
     g_lex_src_ptr = g_src_buf_ptr
     g_lex_src_len = g_runtime_src_len
     g_lex_pos_i = 0
     g_lex_count = 0
+    g_lex_line = 1
     loop g_lex_pos_i < g_runtime_src_len {
         g_lex_cur_char = load_i8_at(g_src_buf_ptr, g_lex_pos_i)
         g_lex_handled = 0
         let pre_is_space = is_space_char(g_lex_cur_char)
         if pre_is_space == 1 {
+            if g_lex_cur_char == 10 {
+                g_lex_line = g_lex_line + 1
+            }
             g_lex_pos_i = g_lex_pos_i + 1
             g_lex_handled = 1
         }
@@ -1801,6 +1866,7 @@ fn lex_global_fast() -> i32 {
                 let nl = load_i8_at(g_src_buf_ptr, g_lex_pos_i)
                 g_lex_pos_i = g_lex_pos_i + 1
                 if nl == 10 {
+                    g_lex_line = g_lex_line + 1
                     break
                 }
             }
@@ -1816,6 +1882,7 @@ fn lex_global_fast() -> i32 {
             tok_set_type(g_dbg_toks_init, g_lex_count, TOK_STR)
             tok_set_start(g_dbg_toks_init, g_lex_count, g_cmp_name_start)
             tok_set_len(g_dbg_toks_init, g_lex_count, g_ltw_len)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             if g_lex_pos_i < g_lex_src_len {
                 g_lex_pos_i = g_lex_pos_i + 1
@@ -1840,6 +1907,7 @@ fn lex_global_fast() -> i32 {
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
             tok_set_start(g_dbg_toks_init, g_lex_count, g_cmp_name_start)
             tok_set_len(g_dbg_toks_init, g_lex_count, g_ltw_len)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             g_lex_handled = 1
         }
@@ -1851,6 +1919,7 @@ fn lex_global_fast() -> i32 {
                 }
                 tok_set_type(g_dbg_toks_init, g_lex_count, TOK_INT)
                 tok_set_imm(g_dbg_toks_init, g_lex_count, g_ltw_val)
+                tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
                 g_lex_count = g_lex_count + 1
                 g_lex_handled = 1
             }
@@ -1869,6 +1938,7 @@ fn lex_global_fast() -> i32 {
                 panic("Token buffer overflow")
             }
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + g_lex_adv
             g_lex_handled = 1
@@ -1887,6 +1957,7 @@ fn lex_global_fast() -> i32 {
                 panic("Token buffer overflow")
             }
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + g_lex_adv
             g_lex_handled = 1
@@ -1905,6 +1976,7 @@ fn lex_global_fast() -> i32 {
                 panic("Token buffer overflow")
             }
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + g_lex_adv
             g_lex_handled = 1
@@ -1927,6 +1999,7 @@ fn lex_global_fast() -> i32 {
                 panic("Token buffer overflow")
             }
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + g_lex_adv
             g_lex_handled = 1
@@ -1949,6 +2022,7 @@ fn lex_global_fast() -> i32 {
                 panic("Token buffer overflow")
             }
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + g_lex_adv
             g_lex_handled = 1
@@ -1959,11 +2033,13 @@ fn lex_global_fast() -> i32 {
                 panic("Token buffer overflow")
             }
             tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + 1
         }
     }
     tok_set_type(g_dbg_toks_init, g_lex_count, TOK_EOF)
+    tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
     g_scan_tok_cnt = g_lex_count
     ret g_lex_count
 }
