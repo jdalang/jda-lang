@@ -2487,6 +2487,31 @@ fn peek_token(toks: &Token, pos: i64) -> i32 {
     ret next_t
 }
 
+; Parse return type annotation (-> type) if present, advance g_main_pos past it.
+; Returns the parsed type constant (TYPE_VOID if no -> annotation).
+fn parse_skip_ret_type(toks: &Token) -> i64 {
+    if tok_type_at(toks, g_main_pos) != TOK_ARROW { ret TYPE_VOID }
+    g_main_pos = g_main_pos + 1
+    let is_ptr = 0
+    if tok_type_at(toks, g_main_pos) == TOK_AMP {
+        is_ptr = 1
+        g_main_pos = g_main_pos + 1
+    }
+    let rt = tok_type_at(toks, g_main_pos)
+    g_main_pos = g_main_pos + 1
+    if is_ptr == 1 {
+        if rt == TOK_I64 { ret TYPE_PTR_I64 }
+        if rt == TOK_I32 { ret TYPE_PTR_I32 }
+        if rt == TOK_I8  { ret TYPE_PTR_I8 }
+        ret TYPE_PTR
+    }
+    if rt == TOK_I64 { ret TYPE_I64 }
+    if rt == TOK_I32 { ret TYPE_I32 }
+    if rt == TOK_I8  { ret TYPE_I8 }
+    if rt == TOK_F64 { ret TYPE_F64 }
+    ret TYPE_I64
+}
+
 fn find_matching_rbrace(toks: &Token, lbrace_idx: i64) -> i64 {
     if lbrace_idx < 0 {
         ret -1
@@ -8566,6 +8591,14 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
             let sid_init = lookup_struct(stab, src, rhs_start0, rhs_len0)
             if sid_init >= 0 { bind_stype = sid_init + 1000 }
         }
+        ; Function call: infer type from return type
+        if next_rhs_t == TOK_LPAREN and g_fn_ret_type_tbl != 0 {
+            let call_fi = resolve_top_fn_index(src, rhs_start0, rhs_len0, g_fn_name_off_tbl, g_fn_name_len_tbl)
+            if call_fi >= 0 and call_fi < 512 {
+                let call_rt = load_i64_at(g_fn_ret_type_tbl, call_fi)
+                if call_rt != TYPE_VOID { bind_stype = call_rt }
+            }
+        }
     }
     rhs_id = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
     let slot = bind_name(jfn, name_start, name_len, bind_stype)
@@ -10193,17 +10226,11 @@ fn main(argc: i64, argv_ptr: &i64) {
                 }
                 expect(TOK_RPAREN)
 
-                ; Parse return type (-> type) if present
-                if tok_type_at(toks, g_main_pos) == TOK_ARROW {
-                    g_main_pos = g_main_pos + 1
-                    if tok_type_at(toks, g_main_pos) == TOK_AMP {
-                        g_main_pos = g_main_pos + 1
-                    }
-                    g_main_pos = g_main_pos + 1
-                }
-                ; Store param count
+                ; Parse return type and store function metadata
+                let fn_ret_type = parse_skip_ret_type(toks)
                 if fi >= 0 and fi < 512 {
                     store_i64_at(fn_param_cnts, fi, jfn.param_cnt)
+                    store_i64_at(fn_ret_types, fi, fn_ret_type)
                 }
 
                 expect(TOK_LBRACE)
