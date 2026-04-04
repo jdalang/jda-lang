@@ -214,7 +214,7 @@ fn main() {
 
 ---
 
-### M5: Channels (~150 lines in jda1.jda)
+### M5: Channels (~150 lines in jda1.jda) ✅
 
 **Target**: Lock-free MPSC channels for inter-thread communication.
 
