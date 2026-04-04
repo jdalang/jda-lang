@@ -67,50 +67,22 @@
 
 ---
 
-### M3: Enums and Pattern Matching
+### M3: Enums and Pattern Matching ✅
 
-**Why third**: Foundation for `Result<T, E>` (M4) and idiomatic error handling.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. **Enum declarations** — add to lexer, parser, and struct table
-   ```jda
-   enum Color {
-       Red
-       Green
-       Blue
-   }
-   ```
-   - Simple enums: variants are integer tags (0, 1, 2...)
-   - Storage: i64 tag value
+**What was done**:
+1. Added `enum` keyword to lexer (`TOK_ENUM=49`, recognized in `classify_keyword_len4`)
+2. Added `parse_enum_decl()` — parses `enum Name { Var1 Var2 ... }` into packed flat buffer (enum name + variant names + tag values)
+3. Added `lookup_enum_dot()` — resolves `EnumName.Variant` → integer tag by scanning packed buffer
+4. Added enum variant access in both codegen paths:
+   - `codegen_primary_ident_inline` (non-live path for pre-compiled functions)
+   - `live_codegen_primary_ident_inline` (live path for main compilation)
+5. Used packed buffer approach (2 globals: `g_enum_buf`, `g_enum_buf_len`) to stay within jda0's global variable limit
+6. Added 4 conformance tests: enum_basic, enum_compare, enum_if, enum_multi
+7. Self-host converges at 1,870,506 bytes
 
-2. **Enum with associated data** (tagged unions)
-   ```jda
-   enum Shape {
-       Circle(radius: i64)
-       Rect(w: i64, h: i64)
-   }
-   ```
-   - Storage: i64 tag + union of largest variant's fields
-   - Compiler computes max variant size for allocation
-
-3. **Pattern matching** — complete the `NODE_MATCH` codegen
-   ```jda
-   match shape {
-       Circle(r) => r * r * 3
-       Rect(w, h) => w * h
-   }
-   ```
-   - Lower to: load tag → compare → branch → extract fields
-   - Exhaustiveness checking: warn if not all variants covered
-
-4. **Enum in if conditions** (sugar)
-   ```jda
-   if color == Color.Red { ... }
-   ```
-
-**JIR additions**: `OP_TAG_LOAD` (extract tag from enum), `OP_VARIANT_LOAD` (extract field from variant)
-
-**Test plan**: 10+ conformance tests covering simple enums, data enums, nested match, exhaustiveness.
+**Scope**: Simple tag-only enums (variants are integer constants 0, 1, 2...). Tagged unions with associated data and full pattern matching deferred to a future milestone.
 
 ---
 
