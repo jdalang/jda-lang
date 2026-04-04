@@ -297,7 +297,7 @@ Flags: `CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE
 
 ---
 
-### M7: I/O Integration (epoll) (~250 lines in jda1.jda)
+### M7: I/O Integration (epoll) (~250 lines in jda1.jda) ✅
 
 **Target**: Non-blocking I/O that yields to the scheduler instead of blocking the OS thread.
 
