@@ -151,6 +151,7 @@ const OP_SHL      = 29  ; Left shift
 const OP_GADDR    = 30
 const OP_ARGV_BASE= 31
 const OP_ARGC_GET = 32
+const OP_DROP     = 33
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -243,6 +244,8 @@ struct JirFunction {
     stab:       &StructTable
     param_cnt:  i64
     param_slots:i64[16]
+    var_owned:  i64[256]
+    var_alloc_sz: i64[256]
 }
 
 struct ConstVal {
@@ -3010,6 +3013,14 @@ fn scan_fn_bounds(fn_tok_pos: i64, src_len: i64, out_lbrace: &i64, out_rbrace: &
     ret ok(0)
 }
 
+fn clear_owned_flags(jfn: &JirFunction) {
+    let oi = 0
+    loop oi < 256 {
+        jfn.var_owned[oi] = 0
+        oi = oi + 1
+    }
+}
+
 fn init_top_jfn(jfn: &JirFunction, src: &i8, src_len: i64, stab: &StructTable) {
     jfn.src = src
     jfn.src_len = src_len
@@ -3020,6 +3031,7 @@ fn init_top_jfn(jfn: &JirFunction, src: &i8, src_len: i64, stab: &StructTable) {
     jfn.strtab_pos = 0
     jfn.next_slot_off = 65536
     jfn.next_id = 0
+    clear_owned_flags(jfn)
     ret ok(0)
 }
 
@@ -4666,6 +4678,20 @@ fn emit_const(jfn: &JirFunction, bb: i64, itype: i32, imm: i64) -> i64 {
     ins.itype = itype
     ins.imm   = imm
     ret emit(jfn, bb, &ins)
+}
+
+fn emit_drop(jfn: &JirFunction, bb: i64, var_idx: i64) -> i64 {
+    let slot = jfn.vars[var_idx].slot_off
+    let ld = Instr{}
+    ld.op = OP_LOAD
+    ld.operand0 = slot
+    let ptr_id = emit(jfn, bb, &ld)
+    let sz_id = emit_const(jfn, bb, TYPE_I64, jfn.var_alloc_sz[var_idx])
+    let di = Instr{}
+    di.op = OP_DROP
+    di.operand0 = ptr_id
+    di.operand1 = sz_id
+    ret emit(jfn, bb, &di)
 }
 
 fn emit_binop(jfn: &JirFunction, bb: i64, op: i32, a: i64, b: i64) -> i64 {
@@ -7827,6 +7853,10 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ALLOC {
                 if o0 >= 0 { used[o0] = 1 }
             }
+            if op == OP_DROP {
+                if o0 >= 0 { used[o0] = 1 }
+                if o1 >= 0 { used[o1] = 1 }
+            }
             if op == OP_CALL {
                 if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
                 if o3 >= 2 { if o1 >= 0 { used[o1] = 1 } }
@@ -7840,6 +7870,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_JMP     { used[id] = 1 }
             if op == OP_SYSCALL { used[id] = 1 }
             if op == OP_ALLOC   { used[id] = 1 }
+            if op == OP_DROP    { used[id] = 1 }
             if op == OP_CALL    { used[id] = 1 }
             if op == OP_STORE   { used[id] = 1 }
             if op == OP_PRINT_INT { used[id] = 1 }
@@ -9235,6 +9266,22 @@ fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     }
 }
 
+fn lower_instr_drop(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    if ins.op != OP_DROP { ret 0 }
+    ; munmap(ptr, size): rax=11, rdi=ptr, rsi=size
+    emit_save_pool(ctx.ra, out, pos)
+    let ptr_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    if ptr_r != PHYS_RDI { emit_mov_rr(out, pos, PHYS_RDI, ptr_r) }
+    let sz_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+    if sz_r != PHYS_RSI { emit_mov_rr(out, pos, PHYS_RSI, sz_r) }
+    emit_mov_imm64(out, pos, PHYS_RAX, 11)
+    emit_syscall_instr(out, pos)
+    emit_restore_pool(ctx.ra, out, pos)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    ret 1
+}
+
 fn lower_instr_callalloc2(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let handled = lower_instr_alloc(ins, ctx, out, pos)
     if handled == 1 { ret 1 }
@@ -9352,6 +9399,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if lower_instr_ctrl(ins, ctx, out, pos) == 1 { ret ok(0) }
+    if lower_instr_drop(ins, ctx, out, pos) == 1 { ret ok(0) }
     if lower_instr_callalloc2(ins, ctx, out, pos) == 1 {
         ensure_spilled(ctx.ra, out, pos, ins.id)
         ret ok(0)
@@ -9442,6 +9490,7 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
     let skip_store = 0
     let bind_stype = TYPE_I64
     let rhs_id = -1
+    let ctrc_pages = 0
     let rhs_t = tok_type_at_raw(toks0, g_main_pos)
     if rhs_t == TOK_STR {
         bind_stype = TYPE_PTR_I8
@@ -9462,6 +9511,10 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         }
         if rhs_len0 == 11 and streq(src, rhs_start0, 11, "alloc_pages") == 1 {
             bind_stype = TYPE_PTR
+            ; CTRC: detect alloc_pages(N) with constant pages arg
+            if tok_type_at_raw(toks0, g_main_pos + 1) == TOK_LPAREN and tok_type_at_raw(toks0, g_main_pos + 2) == TOK_INT and peek_token(toks0, g_main_pos + 2) == TOK_RPAREN {
+                ctrc_pages = tok_imm_at(toks0, g_main_pos + 2)
+            }
         } else if rhs_len0 == 8 and streq(src, rhs_start0, 8, "get_argv") == 1 {
             bind_stype = TYPE_PTR_I8
         }
@@ -9512,6 +9565,12 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         let_cur = ok_bb
     }
     let slot = bind_name(jfn, name_start, name_len, bind_stype)
+    ; CTRC: mark ownership for alloc_pages(N) with constant arg
+    if ctrc_pages > 0 {
+        let vidx = jfn.var_cnt - 1
+        jfn.var_owned[vidx] = 1
+        jfn.var_alloc_sz[vidx] = ctrc_pages * 4096
+    }
     if skip_store == 0 {
         if rhs_id == -1 {
             rhs_id = emit_const(jfn, let_cur, TYPE_I64, 0)
@@ -9628,8 +9687,30 @@ fn compile_dot_bracket_store_case(toks: &Token, stab: &StructTable, src: &i8, jf
     ret bb
 }
 
+fn ctrc_emit_drops(jfn: &JirFunction, bb: i64, from: i64, to: i64) {
+    let ci = from
+    loop ci < to {
+        if jfn.var_owned[ci] == 1 {
+            emit_drop(jfn, bb, ci)
+        }
+        ci = ci + 1
+    }
+}
+
+fn ctrc_emit_drops_clear(jfn: &JirFunction, bb: i64, from: i64, to: i64) {
+    let ci = from
+    loop ci < to {
+        if jfn.var_owned[ci] == 1 {
+            emit_drop(jfn, bb, ci)
+            jfn.var_owned[ci] = 0
+        }
+        ci = ci + 1
+    }
+}
+
 fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let cur = bb
+    let saved_var_cnt = jfn.var_cnt
     let keep_going = 1
     loop keep_going == 1 {
         let before_stmt = g_main_pos
@@ -9678,6 +9759,8 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         }
                         if is_break_stmt == 1 {
                             g_main_pos = g_main_pos + 1
+                            ; CTRC: drop owned vars from current scope before break
+                            ctrc_emit_drops(jfn, cur, saved_var_cnt, jfn.var_cnt)
                             emit_jmp(jfn, cur, g_loop_ctrl)
                             keep_going = 0
                         }
@@ -9810,6 +9893,9 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
             }
         }
     }
+    ; CTRC: drop owned vars from this scope at block exit
+    ctrc_emit_drops_clear(jfn, cur, saved_var_cnt, jfn.var_cnt)
+    jfn.var_cnt = saved_var_cnt
     ret cur
 }
 
@@ -10460,6 +10546,10 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
     }
     if op == OP_ALLOC {
         mark_use(ctx, o0)
+    }
+    if op == OP_DROP {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
     }
     if op == OP_CALL {
         if o3 >= 1 { mark_use(ctx, o0) }
