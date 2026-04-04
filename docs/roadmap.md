@@ -72,7 +72,19 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 ---
 
-## Phase 5 — Concurrency Runtime
+## Phase 5 — Performance Deep Dive
+
+*Goal: Close the gap with C -O2. Target: fib35 <5x, sum_loop <3x, self-compile <5s.*
+
+- [x] P1: Right-sized stack frames (524KB→actual usage, fib35: 709x→5.6x) ✅
+- [ ] P2: Eliminate unconditional spilling (lazy spill on eviction)
+- [ ] P3: Selective register save/restore (only save live regs around calls)
+- [ ] P4: Stack probe skip for small frames (<4KB)
+- [ ] P5: Callee-saved register preference (add R13-R15)
+
+---
+
+## Phase 6 — Concurrency Runtime
 
 *Goal: Match Go's concurrency with deterministic performance (no GC).*
 
@@ -84,7 +96,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 ---
 
-## Phase 6 — Native Machine Learning
+## Phase 7 — Native Machine Learning
 
 *Goal: Replace Python as the ML language by making tensors and autograd native primitives.*
 
@@ -98,7 +110,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 ---
 
-## Phase 7 — Ecosystem & Tooling
+## Phase 8 — Ecosystem & Tooling
 
 - [ ] Package manager
 - [ ] Language server (LSP)
