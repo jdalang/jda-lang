@@ -413,7 +413,7 @@ Similar to M8 but using:
 
 ---
 
-### M10: Transformer Demo
+### M10: Transformer Demo ✅
 
 **Target**: Train a small transformer (GPT-2-like, ~1M params) in pure Jda.
 

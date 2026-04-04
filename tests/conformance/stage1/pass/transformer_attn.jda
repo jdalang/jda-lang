@@ -1,0 +1,157 @@
+; Test scaled dot-product attention
+; Q=[[2,0],[0,2]], K=[[2,0],[0,2]], V=[[10,20],[30,40]]
+; scores = Q@K^T / sqrt(2) = [[2.83,0],[0,2.83]]
+; softmax row0 ~ [0.944, 0.056], row1 ~ [0.056, 0.944]
+; out ~ [[11.1, 21.1], [28.9, 38.9]]
+; Truncated: [11, 21, 28, 38]
+
+fn row_max(x: i64, base: i64, cols: i64) -> i64 {
+    let mx = tensor_get(x, base)
+    let c = 1
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(x, idx)
+        if f64_gt(v, mx) == 1 {
+            mx = v
+        }
+        c = c + 1
+    }
+    ret mx
+}
+
+fn softmax_row(x: i64, out: i64, base: i64, cols: i64) -> i64 {
+    let mx = row_max(x, base, cols)
+    let exp_sum = f64_from_int(0)
+    let c = 0
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(x, idx)
+        let shifted = f64_sub(v, mx)
+        let e = f64_exp(shifted)
+        tensor_set(out, idx, e)
+        exp_sum = f64_add(exp_sum, e)
+        c = c + 1
+    }
+    c = 0
+    loop c < cols {
+        let idx = base + c
+        let v = tensor_get(out, idx)
+        let normed = f64_div(v, exp_sum)
+        tensor_set(out, idx, normed)
+        c = c + 1
+    }
+    ret 0
+}
+
+fn attention_fwd(q: i64, k: i64, v: i64, out: i64, seq: i64, dk: i64) -> i64 {
+    let scores = tensor_new2(seq, seq)
+    let dk_f = f64_from_int(dk)
+    let sqrt_dk = f64_sqrt(dk_f)
+    let i = 0
+    loop i < seq {
+        let j = 0
+        loop j < seq {
+            let acc = f64_from_int(0)
+            let p = 0
+            loop p < dk {
+                let q_idx = i * dk + p
+                let k_idx = j * dk + p
+                let qv = tensor_get(q, q_idx)
+                let kv = tensor_get(k, k_idx)
+                let prod = f64_mul(qv, kv)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let scaled = f64_div(acc, sqrt_dk)
+            let s_idx = i * seq + j
+            tensor_set(scores, s_idx, scaled)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ; Softmax each row
+    let attn = tensor_new2(seq, seq)
+    let r = 0
+    loop r < seq {
+        let base = r * seq
+        softmax_row(scores, attn, base, seq)
+        r = r + 1
+    }
+    ; out = attn @ V
+    i = 0
+    loop i < seq {
+        let j = 0
+        loop j < dk {
+            let acc = f64_from_int(0)
+            let p = 0
+            loop p < seq {
+                let a_idx = i * seq + p
+                let v_idx = p * dk + j
+                let av = tensor_get(attn, a_idx)
+                let vv = tensor_get(v, v_idx)
+                let prod = f64_mul(av, vv)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let o_idx = i * dk + j
+            tensor_set(out, o_idx, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    tensor_free(scores)
+    tensor_free(attn)
+    ret 0
+}
+
+fn main() -> i64 {
+    let two = f64_from_int(2)
+    let zero = f64_from_int(0)
+    let v10 = f64_from_int(10)
+    let v20 = f64_from_int(20)
+    let v30 = f64_from_int(30)
+    let v40 = f64_from_int(40)
+
+    ; Q = [[2,0],[0,2]]
+    let q = tensor_new2(2, 2)
+    tensor_set(q, 0, two)
+    tensor_set(q, 1, zero)
+    tensor_set(q, 2, zero)
+    tensor_set(q, 3, two)
+
+    ; K = [[2,0],[0,2]]
+    let k = tensor_new2(2, 2)
+    tensor_set(k, 0, two)
+    tensor_set(k, 1, zero)
+    tensor_set(k, 2, zero)
+    tensor_set(k, 3, two)
+
+    ; V = [[10,20],[30,40]]
+    let v = tensor_new2(2, 2)
+    tensor_set(v, 0, v10)
+    tensor_set(v, 1, v20)
+    tensor_set(v, 2, v30)
+    tensor_set(v, 3, v40)
+
+    let out = tensor_new2(2, 2)
+    attention_fwd(q, k, v, out, 2, 2)
+
+    let r0 = f64_to_int(tensor_get(out, 0))
+    let r1 = f64_to_int(tensor_get(out, 1))
+    let r2 = f64_to_int(tensor_get(out, 2))
+    let r3 = f64_to_int(tensor_get(out, 3))
+
+    ; Expected: 11, 21, 28, 38 (truncated)
+    if r0 == 11 and r1 == 21 {
+        print "attn row0 ok"
+    }
+    if r2 == 28 and r3 == 38 {
+        print "attn row1 ok"
+    }
+
+    tensor_free(q)
+    tensor_free(k)
+    tensor_free(v)
+    tensor_free(out)
+    ret 0
+}
