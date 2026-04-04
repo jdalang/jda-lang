@@ -15,18 +15,18 @@
 
 ---
 
-## Phase 2 — Minimal Release (Next)
+## Phase 2 — Minimal Release ✅ COMPLETE
 
 *Goal: Make Jda usable by external developers.*
 
 - [x] CLI interface (`jda build`, `jda run`) ✅
 - [x] Line/column tracking in lexer ✅
 - [x] Error diagnostics with source context ✅
-- [ ] Linux installer script
+- [x] Linux installer script ✅
 - [x] Retire jda0 — use self-hosted jda1 as the bootstrap compiler ✅
 - [x] Minimal standard library: `fs` (file I/O via syscalls), `fmt` (formatting), `time` ✅
 - [x] Test runner & CI (50 conformance tests, GitHub Actions) ✅
-- [ ] Versioning and release process
+- [x] Versioning and release process ✅
 
 **Deliverable**: One-command install and build workflow.
 
