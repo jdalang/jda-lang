@@ -82,32 +82,33 @@ Float values are stored as i64 bit patterns (IEEE 754) in general-purpose regist
 
 ---
 
-### M2: Float Printing & Math Builtins
+### M2: Math Builtins ✅ COMPLETE (April 3, 2026)
 
-**Target**: Print f32/f64 values, basic math functions.
+**Target**: Transcendental math functions for ML training (exp, log, pow, sin, cos, tanh, abs).
 
-#### Problem
-`print_int` only handles integers. ML training loops need to print loss values. Also need math functions: exp, log, pow, sin, cos, tanh.
+#### What was done
 
-#### Solution
+**7 new builtin functions** (recognized in codegen_call_inline and live_codegen_call_inline):
+- `f64_abs(f)` → OP_FABS=67: clear sign bit via SSE ANDPD with 0x7FFFFFFFFFFFFFFF mask
+- `f64_exp(f)` → OP_FEXP=68: x87 FPU sequence — 2^(x·log₂(e)) via FLDL2E, FMULP, F2XM1, FSCALE
+- `f64_log(f)` → OP_FLOG=69: x87 FPU sequence — ln(2)·log₂(x) via FLDLN2, FYL2X
+- `f64_pow(x,y)` → OP_FPOW=70: x87 FPU sequence — 2^(y·log₂(x)) via FYL2X then 2^ST0
+- `f64_sin(f)` → OP_FSIN=71: x87 FSIN instruction
+- `f64_cos(f)` → OP_FCOS=72: x87 FCOS instruction
+- `f64_tanh(f)` → OP_FTANH=73: x87 FPU sequence — (exp(2x)-1)/(exp(2x)+1)
 
-**print_float builtin**:
-- Grisu2 or simple digit extraction algorithm for f64 → string
-- Format: fixed decimal for |x| in [0.001, 1e6], scientific otherwise
-- Emit as inline x86 in `lower_print_float`
+**Architecture — x87 FPU for transcendentals**:
+SSE has no exp/log/sin/cos instructions. These use the x87 FPU via data transfer:
+MOVSD [RSP]→XMM0, FLD QWORD [RSP], x87 ops, FSTP QWORD [RSP], MOVSD XMM0→[RSP].
+abs uses SSE ANDPD (no x87 needed).
 
-**Math builtins** (all f64 → f64):
-- `exp(x)`: Taylor series or minimax polynomial (12 terms for 1e-15 precision)
-- `log(x)`: Range reduction + polynomial (Cephes algorithm)
-- `pow(x, y)`: `exp(y * log(x))`
-- `sqrt(x)`: x86 `SQRTSD` instruction (exact)
-- `sin(x)`, `cos(x)`: Range reduction + Chebyshev polynomial
-- `tanh(x)`: `(exp(2x) - 1) / (exp(2x) + 1)`
-- `abs(x)`: Clear sign bit with `ANDPD`
+**Critical bug fix — emit_movq_xmm_to_gpr REX prefix encoding**:
+When GPR ≥ 8 (R8-R15), the function set REX.R (bit 2) but GPR is in the rm field of ModRM, requiring REX.B (bit 0). This caused `MOVQ RAX, XMM8` instead of `MOVQ R8, XMM0` under register pressure. Fixed by changing `rex + 4` to `rex + 1` for gpr ≥ 8, and adding `rex + 4` for xmm ≥ 8. Bug existed since M1 but only manifested when high registers were allocated for float results.
 
-These are pure math with no dependencies — emit as inline x86 sequences.
-
-**Tests**: `print_float.jda`, `math_exp.jda`, `math_log.jda`, `math_sqrt.jda`, `math_trig.jda`
+**Results**:
+- 120 conformance tests pass (118 existing + 2 new: math_builtins, math_pow_tanh)
+- Self-host converged: jda1_sh2 == jda1_sh3 (1,863,445 bytes)
+- All 7 math builtins tested: abs, sin, cos, exp, log, pow, tanh
 
 ---
 
