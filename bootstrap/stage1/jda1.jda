@@ -401,6 +401,26 @@ let g_cur_fn_name_start = 0
 let g_cur_fn_name_len = 0
 let g_cur_fn_end = 0
 let g_top_fn_cnt = 0
+; Lambda stash for deferred compilation
+let g_lambda_cnt = 0
+; Compile state globals for lambda compilation helper
+let g_code_buf: &i8 = 0
+let g_merged_str: &i8 = 0
+let g_gf_strtab_co: &i64 = 0
+let g_gf_strtab_tgt: &i64 = 0
+let g_gf_strtab_base: &i64 = 0
+let g_gf_call_co: &i64 = 0
+let g_gf_call_name: &i64 = 0
+let g_gf_call_nlen: &i64 = 0
+; Counters shared between main loop and lambda helper
+let g_lam_code_len = 0
+let g_lam_merged_pos = 0
+let g_lam_strtab_cnt = 0
+let g_lam_call_cnt = 0
+let g_lambda_starts: &i64 = 0
+let g_lambda_ends: &i64 = 0
+let g_lambda_name_offs: &i64 = 0
+let g_lambda_name_lens: &i64 = 0
 let g_top_main_idx = -1
 let g_dbg_main_prints = 0
 let g_dbg_main_lets = 0
@@ -1579,7 +1599,7 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     expect(TOK_EQ)
     if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
-    if gidx >= 120 { panic("Too many globals") }
+    if gidx >= 200 { panic("Too many globals") }
     g_glob_name_off[gidx] = name_start
     g_glob_name_len[gidx] = name_len
     g_glob_off[gidx] = g_glob_total_sz
@@ -3188,8 +3208,6 @@ fn should_force_small_top_fn(src_len: i64, loop_pos: i64) -> i64 {
 }
 
 fn lex_small_stub(src: &i8, src_len: i64, toks: &Token) -> i64 {
-    ; Minimal synthetic token stream for small-input bring-up:
-    ; fn main() {}
     toks[0].type = TOK_FN
     toks[1].type = TOK_IDENT
     toks[1].str_start = 3
@@ -3215,13 +3233,10 @@ fn emit_small_stub_tokens() -> i64 {
     ret 6
 }
 
-; Post-lex pass: convert character literal token triples to TOK_INT
-; jda1 lexer doesn't handle single quotes, so 'X' becomes 3 tokens:
-;   TOK_EOF (quote), TOK_IDENT or TOK_INT (char), TOK_EOF (quote)
-; This function merges those triples into a single TOK_INT with ASCII value
 fn fix_char_literals(src: &i8, toks: &Token, cnt: &i64) {
     ret ok(0)
 }
+
 
 ; ============================================================
 ; 3. PARSER HELPERS
@@ -6526,6 +6541,11 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         pos[0] = pos[0] + 1
         ret emit_const(jfn, bb, TYPE_I64, t_imm)
     }
+    ; Lambda: fn(...) -> T { ... }
+    ; TOK_FN==0 so keyword classifier can't produce it; fn is lexed as TOK_IDENT
+    if t_type == TOK_IDENT and tok_str_len_at(toks, pos[0]) == 2 and streq(src, tok_str_start_at(toks, pos[0]), 2, "fn") == 1 and tok_type_at(toks, pos[0] + 1) == TOK_LPAREN {
+        ret codegen_lambda_inline(toks, pos, src, jfn, bb)
+    }
     if t_type == TOK_IDENT {
         ret codegen_primary_ident_inline(toks, pos, stab, src, jfn, bb)
     }
@@ -6604,6 +6624,67 @@ fn codegen_arg_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         ret emit_const(jfn, bb, TYPE_I64, 0)
     }
     ret codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+}
+
+fn codegen_lambda_inline(toks: &Token, pos: &i64, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    ; pos[0] points at TOK_FN. Next is TOK_LPAREN.
+    let lam_start = pos[0]
+    pos[0] = pos[0] + 1
+    ; Skip to matching '}'
+    let depth = 0
+    let found = 0
+    loop found == 0 {
+        let lt = tok_type_at(toks, pos[0])
+        if lt == TOK_LBRACE { depth = depth + 1 }
+        if lt == TOK_RBRACE {
+            depth = depth - 1
+            if depth == 0 {
+                pos[0] = pos[0] + 1
+                found = 1
+            }
+        }
+        if lt == TOK_EOF { found = 1 }
+        if found == 0 { pos[0] = pos[0] + 1 }
+    }
+    let lam_end = pos[0]
+    ; Generate name "__lambda_N" in source buffer
+    let nm_off = g_runtime_src_len
+    poke_byte(src, nm_off, 95)
+    poke_byte(src, nm_off + 1, 95)
+    poke_byte(src, nm_off + 2, 108)
+    poke_byte(src, nm_off + 3, 97)
+    poke_byte(src, nm_off + 4, 109)
+    poke_byte(src, nm_off + 5, 98)
+    poke_byte(src, nm_off + 6, 100)
+    poke_byte(src, nm_off + 7, 97)
+    poke_byte(src, nm_off + 8, 95)
+    let nm_len = 9
+    let lnum = g_lambda_cnt
+    if lnum < 10 {
+        poke_byte(src, nm_off + nm_len, 48 + lnum)
+        nm_len = nm_len + 1
+    } else {
+        let tens = lnum / 10
+        let ones = lnum - (tens * 10)
+        poke_byte(src, nm_off + nm_len, 48 + tens)
+        nm_len = nm_len + 1
+        poke_byte(src, nm_off + nm_len, 48 + ones)
+        nm_len = nm_len + 1
+    }
+    g_runtime_src_len = nm_off + nm_len
+    ; Stash for deferred compilation
+    let li = g_lambda_cnt
+    g_lambda_starts[li] = lam_start
+    g_lambda_ends[li] = lam_end
+    g_lambda_name_offs[li] = nm_off
+    g_lambda_name_lens[li] = nm_len
+    g_lambda_cnt = g_lambda_cnt + 1
+    ; Emit OP_FN_ADDR with generated name
+    let fins = Instr{}
+    fins.op = OP_FN_ADDR
+    fins.str_start = nm_off
+    fins.str_len = nm_len
+    ret emit(jfn, bb, &fins)
 }
 
 fn codegen_call_fn_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -8016,6 +8097,12 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
 
 fn live_codegen_primary2_inline(bb: i64) -> i64 {
     let tt = tok_type_at(g_dbg_toks_init, g_main_pos)
+    ; Lambda: fn(...) -> T { ... }
+    ; TOK_FN==0 so keyword classifier can't produce it; fn is lexed as TOK_IDENT
+    if tt == TOK_IDENT and tok_str_len_at_raw(g_dbg_toks_init, g_main_pos) == 2 and streq(g_src_buf_ptr, tok_str_start_at_raw(g_dbg_toks_init, g_main_pos), 2, "fn") == 1 and tok_type_at_raw(g_dbg_toks_init, g_main_pos + 1) == TOK_LPAREN {
+        g_main_pos = g_main_pos + 1
+        ret live_codegen_lambda_inline(bb)
+    }
     let is_ident = 0
     if tt == TOK_IDENT { is_ident = 1 }
     if is_ident == 1 {
@@ -8373,6 +8460,68 @@ fn live_codegen_method_call(name: &Token, bb: i64, self_id: i64) -> i64 {
     ins.str_start = name.str_start
     ins.str_len   = name.str_len
     ret emit(g_jfn, bb, &ins)
+}
+
+fn live_codegen_lambda_inline(bb: i64) -> i64 {
+    ; g_main_pos points at TOK_LPAREN (already past TOK_FN due to advance in caller).
+    let lam_start = g_main_pos - 1
+    ; Skip to matching '}' — count brace depth
+    let depth = 0
+    let found = 0
+    loop found == 0 {
+        let lt = tok_type_at(g_dbg_toks_init, g_main_pos)
+        if lt == TOK_LBRACE { depth = depth + 1 }
+        if lt == TOK_RBRACE {
+            depth = depth - 1
+            if depth == 0 {
+                g_main_pos = g_main_pos + 1
+                found = 1
+            }
+        }
+        if lt == TOK_EOF { found = 1 }
+        if found == 0 { g_main_pos = g_main_pos + 1 }
+    }
+    let lam_end = g_main_pos
+    ; Generate name "__lambda_N" in source buffer
+    let nm_off = g_runtime_src_len
+    ; "__lambda_" = 9 chars: 95 95 108 97 109 98 100 97 95
+    poke_byte(g_src_buf_ptr, nm_off, 95)
+    poke_byte(g_src_buf_ptr, nm_off + 1, 95)
+    poke_byte(g_src_buf_ptr, nm_off + 2, 108)
+    poke_byte(g_src_buf_ptr, nm_off + 3, 97)
+    poke_byte(g_src_buf_ptr, nm_off + 4, 109)
+    poke_byte(g_src_buf_ptr, nm_off + 5, 98)
+    poke_byte(g_src_buf_ptr, nm_off + 6, 100)
+    poke_byte(g_src_buf_ptr, nm_off + 7, 97)
+    poke_byte(g_src_buf_ptr, nm_off + 8, 95)
+    let nm_len = 9
+    ; Append digit(s) for g_lambda_cnt
+    let lnum = g_lambda_cnt
+    if lnum < 10 {
+        poke_byte(g_src_buf_ptr, nm_off + nm_len, 48 + lnum)
+        nm_len = nm_len + 1
+    } else {
+        let tens = lnum / 10
+        let ones = lnum - (tens * 10)
+        poke_byte(g_src_buf_ptr, nm_off + nm_len, 48 + tens)
+        nm_len = nm_len + 1
+        poke_byte(g_src_buf_ptr, nm_off + nm_len, 48 + ones)
+        nm_len = nm_len + 1
+    }
+    g_runtime_src_len = nm_off + nm_len
+    ; Stash for deferred compilation
+    let li = g_lambda_cnt
+    g_lambda_starts[li] = lam_start
+    g_lambda_ends[li] = lam_end
+    g_lambda_name_offs[li] = nm_off
+    g_lambda_name_lens[li] = nm_len
+    g_lambda_cnt = g_lambda_cnt + 1
+    ; Emit OP_FN_ADDR with generated name
+    let fins = Instr{}
+    fins.op = OP_FN_ADDR
+    fins.str_start = nm_off
+    fins.str_len = nm_len
+    ret emit(g_jfn, bb, &fins)
 }
 
 fn live_codegen_call_fn_inline(bb: i64) -> i64 {
@@ -16876,6 +17025,122 @@ fn print_usage() {
 ; 13. ENTRY POINT
 ; ============================================================
 
+fn compile_stashed_lambdas(toks: &Token, src: &i8, src_len: i64) {
+    let jfn = g_jfn
+    let ctx = g_ctx
+    let lam_i = 0
+    loop lam_i < g_lambda_cnt {
+        let saved_pos = g_main_pos
+        let lno = g_lambda_name_offs[lam_i]
+        let lnl = g_lambda_name_lens[lam_i]
+        let lfi = g_top_fn_cnt
+        if lfi < 1024 {
+            store_i64_at(g_fn_name_off_tbl, lfi, lno)
+            store_i64_at(g_fn_name_len_tbl, lfi, lnl)
+            g_top_fn_cnt = lfi + 1
+        }
+        init_top_jfn(jfn, src, src_len, g_stab_ptr)
+        set_cur_fn_name(lno, lnl)
+        ; Store code offset BEFORE compilation (start of lambda code)
+        if lfi < 1024 { store_i64_at(g_fn_code_off_tbl, lfi, g_lam_code_len) }
+        g_main_pos = g_lambda_starts[lam_i] + 1
+        expect(TOK_LPAREN)
+        compile_lambda_params_and_body(toks, src, jfn, ctx)
+        g_main_pos = saved_pos
+        lam_i = lam_i + 1
+    }
+    g_lambda_cnt = 0
+}
+
+fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx: &LowerCtx) {
+    ; Parse params
+    let more = 0
+    if tok_type_at(toks, g_main_pos) != TOK_RPAREN { more = 1 }
+    loop more == 1 {
+        let ns = tok_str_start_at(toks, g_main_pos)
+        let nl = tok_str_len_at(toks, g_main_pos)
+        expect(TOK_IDENT)
+        let st = TYPE_I64
+        if tok_type_at(toks, g_main_pos) == TOK_COLON {
+            g_main_pos = g_main_pos + 1
+            if tok_type_at(toks, g_main_pos) == TOK_AMP { g_main_pos = g_main_pos + 1 }
+            let pt = tok_type_at(toks, g_main_pos)
+            if pt == TOK_I32 { st = TYPE_I32 }
+            if pt == TOK_I8  { st = TYPE_I8 }
+            if pt == TOK_F64 { st = TYPE_F64 }
+            g_main_pos = g_main_pos + 1
+        }
+        let sl = bind_name(jfn, ns, nl, st)
+        if jfn.param_cnt < 16 {
+            jfn.param_slots[jfn.param_cnt] = sl
+            jfn.param_cnt = jfn.param_cnt + 1
+        }
+        if tok_type_at(toks, g_main_pos) == TOK_COMMA { g_main_pos = g_main_pos + 1 }
+        else { more = 0 }
+    }
+    expect(TOK_RPAREN)
+    parse_skip_ret_type(toks)
+    expect(TOK_LBRACE)
+    ; Record code offset before lowering
+    let pre_len = g_lam_code_len
+    ; Compile body
+    regalloc_init(ctx as &RegAlloc)
+    ctx.fix_cnt = 0
+    let bb = create_block_live(jfn)
+    let fb = live_compile_block(toks, g_stab_ptr, src, jfn, bb)
+    let rv = emit_const(jfn, fb, TYPE_I64, 0)
+    let ri = Instr{}
+    ri.op = OP_RET
+    ri.operand0 = rv
+    emit(jfn, fb, &ri)
+    fold_constants(jfn)
+    dce(jfn)
+    tail_call_opt(jfn)
+    peephole(jfn)
+    lower_fn(jfn, ctx, g_code_buf, &g_lam_code_len, 0)
+    compile_lambda_fixups(ctx)
+}
+
+fn compile_lambda_fixups(ctx: &LowerCtx) {
+    let sc = g_lam_strtab_cnt
+    let cc = g_lam_call_cnt
+    let mp = g_lam_merged_pos
+    let i = 0
+    loop i < ctx.fix_cnt {
+        let k = ctx.fixups[i].kind
+        if k == 1 {
+            g_gf_strtab_co[sc]   = ctx.fixups[i].code_off
+            g_gf_strtab_tgt[sc]  = ctx.fixups[i].target_bb
+            g_gf_strtab_base[sc] = mp
+            sc = sc + 1
+        } else if k == 3 {
+            let tb = ctx.fixups[i].target_bb
+            let nt = 0 - tb
+            g_gf_strtab_co[sc]   = ctx.fixups[i].code_off
+            g_gf_strtab_tgt[sc]  = nt - 1
+            g_gf_strtab_base[sc] = 0
+            sc = sc + 1
+        } else if k == 2 {
+            g_gf_call_co[cc]   = ctx.fixups[i].code_off
+            g_gf_call_name[cc] = ctx.fixups[i].target_bb
+            g_gf_call_nlen[cc] = ctx.fixups[i].str_len
+            cc = cc + 1
+        }
+        i = i + 1
+    }
+    g_lam_strtab_cnt = sc
+    g_lam_call_cnt = cc
+    let jfn = g_jfn
+    let si = 0
+    let slen = jfn.strtab_pos
+    loop si < slen {
+        poke_byte(g_merged_str, mp, jfn.strtab[si])
+        mp = mp + 1
+        si = si + 1
+    }
+    g_lam_merged_pos = mp
+}
+
 fn main(argc: i64, argv_ptr: &i64) {
     let src_path: &i8 = 0
     let out_path: &i8 = 0
@@ -17021,6 +17286,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     let fn_param_cnts = alloc_pages(2)
     g_fn_name_off_tbl = fn_name_off
     g_fn_name_len_tbl = fn_name_len
+    g_fn_code_off_tbl = fn_code_off
     g_fn_param_cnt_tbl = fn_param_cnts
     ; Enum table (packed flat buffer)
     g_enum_buf = alloc_pages(1)
@@ -17053,6 +17319,9 @@ fn main(argc: i64, argv_ptr: &i64) {
     let merged_str = alloc_pages(64)  ; 256KB
     let merged_pos = 0
     let glob_buf = alloc_pages(128)  ; 512KB
+    ; Set compile state globals for lambda helper
+    g_code_buf = code_buf
+    g_merged_str = merged_str
     print("BUFS_OK\n")
     print("PRE_EMIT\n")
     ; _start: preserve initial stack frame, mmap heap, then call main(argc, argv)
@@ -17149,11 +17418,24 @@ fn main(argc: i64, argv_ptr: &i64) {
     let gf_call_name   = alloc_pages(16)
     let gf_call_nlen   = alloc_pages(16)
     let gf_call_cnt    = 0
+    ; Set fixup globals for lambda helper
+    g_gf_strtab_co = gf_strtab_co
+    g_gf_strtab_tgt = gf_strtab_tgt
+    g_gf_strtab_base = gf_strtab_base
+    g_gf_call_co = gf_call_co
+    g_gf_call_name = gf_call_name
+    g_gf_call_nlen = gf_call_nlen
     ; JirFunction + LowerCtx heap allocation
     g_jfn_heap = alloc_pages(16384)
     g_jfn = g_jfn_heap as &JirFunction
     g_ctx_heap = alloc_pages(100)
     g_ctx = g_ctx_heap as &LowerCtx
+    ; Lambda stash arrays (64 entries each)
+    g_lambda_starts = alloc_pages(1) as &i64
+    g_lambda_ends = alloc_pages(1) as &i64
+    g_lambda_name_offs = alloc_pages(1) as &i64
+    g_lambda_name_lens = alloc_pages(1) as &i64
+    g_lambda_cnt = 0
     ; Bootstrap: alloc_pages gives zero-initialized memory so entry 0 is already zero.
     ; Just set the count and total size to skip slot 0 (dummy entry).
     g_glob_cnt      = 1
@@ -17359,6 +17641,18 @@ fn main(argc: i64, argv_ptr: &i64) {
                 }
                 ; GURANTEED ADVANCE
                 g_main_pos = fn_rbrace_scan + 1
+                ; Compile stashed lambdas as top-level functions
+                if g_lambda_cnt > 0 {
+                    g_lam_code_len = code_len
+                    g_lam_merged_pos = merged_pos
+                    g_lam_strtab_cnt = gf_strtab_cnt
+                    g_lam_call_cnt = gf_call_cnt
+                    compile_stashed_lambdas(toks, src_buf, src_len)
+                    code_len = g_lam_code_len
+                    merged_pos = g_lam_merged_pos
+                    gf_strtab_cnt = g_lam_strtab_cnt
+                    gf_call_cnt = g_lam_call_cnt
+                }
         } else if top_t == TOK_LET or (top_len == 3 and streq(src_buf, top_start, 3, "let") == 1) {
             skip_top_level_let(toks, g_stab_ptr, src_buf)
         } else {
