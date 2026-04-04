@@ -63,11 +63,11 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 *Goal: Prove Jda can match C/Rust performance.*
 
+- [x] Constant folding + dead code elimination ✅
 - [ ] Graph-coloring register allocator
 - [ ] Function inlining
 - [ ] Tail-call optimization
-- [ ] Loop tiling and cache-line optimization
-- [ ] AVX-512 / NEON SIMD auto-vectorization pass in JIR
+- [ ] Peephole optimization
 - [ ] Benchmark suite (vs C, Go, Rust)
 
 ---

@@ -11767,6 +11767,8 @@ fn main(argc: i64, argv_ptr: &i64) {
                         if jfn.block_cnt > 512 { panic("lex_handle_minus block blowup") }
                     }
                 }
+                fold_constants(jfn)
+                dce(jfn)
                 lower_fn(jfn, ctx, code_buf, &code_len, is_main)
                 ; Collect fixups
                 let ci = 0
