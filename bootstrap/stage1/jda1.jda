@@ -170,6 +170,9 @@ const OP_CLONE_THREAD = 47
 const OP_FUTEX_WAIT   = 48
 const OP_FUTEX_WAKE   = 49
 const OP_GET_TID      = 50
+const OP_EPOLL_CREATE = 51
+const OP_EPOLL_CTL    = 52
+const OP_EPOLL_WAIT   = 53
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -6751,6 +6754,32 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ret emit(jfn, bb, &ins)
     }
 
+    ; Epoll builtins (M7)
+    if name_len == 13 and streq(src, name_start, 13, "epoll_create1") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_CREATE
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 9 and streq(src, name_start, 9, "epoll_ctl") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_CTL
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.bb_target0 = arg3
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "epoll_wait") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_WAIT
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.bb_target0 = arg3
+        ret emit(jfn, bb, &ins)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -8168,6 +8197,32 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ret emit(g_jfn, bb, &ins)
     }
 
+    ; Epoll builtins (M7)
+    if name.str_len == 13 and streq(g_src_buf_ptr, name.str_start, 13, "epoll_create1") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_CREATE
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 9 and streq(g_src_buf_ptr, name.str_start, 9, "epoll_ctl") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_CTL
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.bb_target0 = arg3
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "epoll_wait") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_WAIT
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ins.bb_target0 = arg3
+        ret emit(g_jfn, bb, &ins)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -8450,7 +8505,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
-            if op == OP_SYSCALL {
+            if op == OP_SYSCALL or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
                 if o2 >= 0 { used[o2] = 1 }
@@ -8463,7 +8518,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
-            if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID {
+            if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID or op == OP_EPOLL_CREATE {
                 if o0 >= 0 { used[o0] = 1 }
             }
             if op == OP_ATOMIC_STORE {
@@ -8512,7 +8567,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ATOMIC_STORE { used[id] = 1 }
             if op == OP_ATOMIC_CAS   { used[id] = 1 }
             if op == OP_ATOMIC_ADD   { used[id] = 1 }
-            if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE or op == OP_GET_TID { used[id] = 1 }
+            if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE or op == OP_GET_TID or op == OP_EPOLL_CREATE or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -11418,6 +11473,151 @@ fn lower_instr_mt(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 0
 }
 
+; ── M7: epoll builtins ──────────────────────────────────────────────
+fn lower_instr_epoll(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let op = ins.op
+
+    ; ── epoll_create1(flags) ────────────────────────────────────────
+    ; syscall 291: epoll_create1(flags) → epfd
+    if op == OP_EPOLL_CREATE {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_mov_rr(out, pos, PHYS_RDI, r0)
+        consume_use(ctx, ins.operand0)
+
+        ; rax = 291 (SYS_epoll_create1)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 291)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+
+        ; Result in RAX → R12
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        let sp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, sp)
+        ra_set_spill(&ctx.ra, ins.id, sp)
+        emit_store_spill(out, pos, sp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        ret 1
+    }
+
+    ; ── epoll_ctl(epfd, op, fd, event_ptr) ──────────────────────────
+    ; syscall 233: epoll_ctl(epfd, op, fd, event) → 0 or -errno
+    if op == OP_EPOLL_CTL {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+
+        ; Load all 4 operands via push/pop to avoid register conflicts
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        consume_use(ctx, ins.operand0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        consume_use(ctx, ins.operand1)
+        let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+        emit_push_r(out, pos, r2)
+        consume_use(ctx, ins.operand2)
+        let r3 = get_or_load(ctx.ra, out, pos, ins.bb_target0)
+        emit_push_r(out, pos, r3)
+        consume_use(ctx, ins.bb_target0)
+
+        ; Pop into syscall registers: event→R10, fd→RDX, op→RSI, epfd→RDI
+        ; R10 = event_ptr (4th syscall arg)
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x5A)
+        ; RDX = fd
+        emit_pop_r(out, pos, PHYS_RDX)
+        ; RSI = op
+        emit_pop_r(out, pos, PHYS_RSI)
+        ; RDI = epfd
+        emit_pop_r(out, pos, PHYS_RDI)
+
+        ; rax = 233 (SYS_epoll_ctl)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 233)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+
+        ; Result in RAX → R12
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        let sp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, sp)
+        ra_set_spill(&ctx.ra, ins.id, sp)
+        emit_store_spill(out, pos, sp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        ret 1
+    }
+
+    ; ── epoll_wait(epfd, events, maxevents, timeout) ────────────────
+    ; syscall 232: epoll_wait(epfd, events, maxevents, timeout) → nfds or -errno
+    if op == OP_EPOLL_WAIT {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+
+        ; Load all 4 operands via push/pop
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        consume_use(ctx, ins.operand0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        consume_use(ctx, ins.operand1)
+        let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)
+        emit_push_r(out, pos, r2)
+        consume_use(ctx, ins.operand2)
+        let r3 = get_or_load(ctx.ra, out, pos, ins.bb_target0)
+        emit_push_r(out, pos, r3)
+        consume_use(ctx, ins.bb_target0)
+
+        ; Pop into syscall registers: timeout→R10, maxevents→RDX, events→RSI, epfd→RDI
+        ; R10 = timeout (4th syscall arg)
+        emit_byte(out, pos, 0x41)
+        emit_byte(out, pos, 0x5A)
+        ; RDX = maxevents
+        emit_pop_r(out, pos, PHYS_RDX)
+        ; RSI = events
+        emit_pop_r(out, pos, PHYS_RSI)
+        ; RDI = epfd
+        emit_pop_r(out, pos, PHYS_RDI)
+
+        ; rax = 232 (SYS_epoll_wait)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 232)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+
+        ; Result in RAX → R12
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        let sp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, sp)
+        ra_set_spill(&ctx.ra, ins.id, sp)
+        emit_store_spill(out, pos, sp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        ret 1
+    }
+
+    ret 0
+}
+
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     if lower_instr_constlike(ins, ctx, jfn, out, pos) == 1 {
@@ -11517,6 +11717,11 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if lower_instr_mt(ins, ctx, out, pos) == 1 {
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
+        ret ok(0)
+    }
+
+    if lower_instr_epoll(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
@@ -12763,7 +12968,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
-    if op == OP_SYSCALL {
+    if op == OP_SYSCALL or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
         mark_use(ctx, o2)
@@ -12792,7 +12997,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
         if o3 >= 6 { mark_use(ctx, ins.imm) }
     }
-    if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID {
+    if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID or op == OP_EPOLL_CREATE {
         mark_use(ctx, o0)
     }
     if op == OP_ATOMIC_STORE {
