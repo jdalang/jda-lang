@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-x86_64:
+    name: Test (x86-64 Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,3 +37,69 @@ jobs:
           echo "=== Convergence check ==="
           cmp /tmp/jda1_a /tmp/jda1_b
           echo "CONVERGED — jda1_a == jda1_b ($(wc -c < /tmp/jda1_a) bytes)"
+
+  test-arm64:
+    name: Test (ARM64 Linux)
+    runs-on: ubuntu-24.04-arm
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify ARM64 platform
+        run: |
+          echo "Architecture: $(uname -m)"
+          test "$(uname -m)" = "aarch64"
+
+      - name: Run ARM64 tool tests
+        run: |
+          if command -v python3 &>/dev/null; then
+            echo "Python3 available: $(python3 --version)"
+            python3 tools/jda-arm64.sh --asm tests/conformance/stage1/pass/arm64_basic.jda > /dev/null
+            echo "ARM64 assembly generation: OK"
+          else
+            echo "SKIP: python3 not available"
+          fi
+
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify macOS platform
+        run: |
+          echo "Platform: $(uname -s) $(uname -m)"
+          sw_vers
+
+      - name: Run macOS tool tests
+        run: |
+          echo "Testing jda-macos assembly generation..."
+          python3 tools/jda-macos.sh --asm tests/conformance/stage1/pass/macos_basic.jda > /dev/null
+          echo "macOS assembly generation: OK"
+
+      - name: Build and run native macOS binary
+        run: |
+          printf 'fn main() {\n  print "ci ok"\n  ret 0\n}\n' > /tmp/ci_test.jda
+          python3 tools/jda-macos.sh -o /tmp/ci_test /tmp/ci_test.jda
+          out="$(/tmp/ci_test)"
+          test "$out" = "ci ok"
+          echo "Native macOS binary execution: OK"
+
+  benchmark:
+    name: Benchmark regression check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build jda1
+        run: |
+          ulimit -s unlimited
+          bootstrap/bin/jda1-bootstrap bootstrap/stage1/jda1.jda bootstrap/stage0/jda1
+          chmod +x bootstrap/stage0/jda1
+
+      - name: Run benchmarks
+        run: |
+          ulimit -s unlimited
+          bash tools/bench-ci.sh
