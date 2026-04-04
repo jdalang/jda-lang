@@ -1,28 +1,29 @@
 # Jda
 
-A systems programming language bootstrapped from raw x86-64 assembly. Zero dependency on C, C++, Rust, or Python at runtime. The compiler compiles itself.
+A systems programming language built from scratch — zero dependency on C, C++, Rust, or Python. Bootstrapped from raw x86-64 assembly. The compiler compiles itself.
 
-## Status
+Jda is designed to resolve the performance/safety/ergonomics trilemma:
 
-**Self-hosting achieved** (April 2, 2026). The compiler reaches a fixed point:
+- **Replace the C stack** — no libc, direct kernel syscalls, zero dependency conflicts
+- **Displace Python in AI** — native tensor primitives and compile-time autograd, no "two-language problem"
+- **Match Go's scalability** — lightweight actor-based concurrency without GC pauses
+- **Emulate Ruby's joy** — clean block-based syntax, minimal boilerplate
+
+## Current Status
+
+**Phase 1 complete: self-hosting achieved** (April 2, 2026).
+
+The compiler reaches a fixed point — it compiles its own source and produces an identical binary:
 
 ```
-jda0 (asm) → jda1 (374 KB) → jda1_sh2 (1.77 MB) → jda1_sh3 (1.77 MB) → jda1_sh4 (1.77 MB)
-                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-                                                              byte-identical — converged
+jda0 (asm) → jda1 (374 KB) → jda1_sh2 (1.77 MB) → jda1_sh3 → jda1_sh4
+                                                     ^^^^^^^^^^^^^^^^^^^^^^^^
+                                                     byte-identical — converged
 ```
 
-## What is Jda?
+C and C++ are officially eliminated from the toolchain. The Jda compiler is written entirely in Jda.
 
-Jda is a compiled language targeting Linux x86-64, built entirely from scratch:
-
-- **Stage 0** (`jda0`): Hand-written NASM assembler — the seed compiler
-- **Stage 1** (`jda1`): The real compiler, written in Jda itself (~330K lines of `.jda`)
-- **Self-host**: `jda1` compiles its own source code and produces an identical binary
-
-No libc, no linker scripts, no runtime. Raw syscalls, raw ELF, raw machine code.
-
-## Language Features
+## Language Features (Current)
 
 ```jda
 struct Point {
@@ -50,11 +51,11 @@ fn main() -> i64 {
 }
 ```
 
-**Supported**: functions, structs, arrays, pointers, references, if/else-if/else, loops, const declarations, logical operators, inline assembly, syscalls, string literals with escapes, print/print_i64.
+**Working**: functions, structs, arrays, pointers, references, if/else-if/else, loops, const declarations, logical operators, inline assembly, syscalls, string literals with escapes, print/print_i64, SSA-based IR with constant folding and DCE, register allocator with spill, x86-64 native code generation, ELF binary output.
 
 ## Building
 
-Requires Docker Desktop (builds target Linux x86-64 via emulation on macOS/ARM).
+Requires Docker Desktop (builds target Linux x86-64).
 
 ```bash
 # Build the Docker image (once)
@@ -64,7 +65,7 @@ docker build -t jda-build docker/
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make stage1
 
-# Self-host: full 4-stage pipeline
+# Full self-host pipeline (4 stages)
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD)/bootstrap:/jda -w /jda/stage0 jda-build sh -c "
     ./jda1 ../stage1/jda1.jda jda1_sh2 2>/dev/null &&
@@ -90,4 +91,12 @@ tools/             code generators and CI scripts
 ## Documentation
 
 - [Architecture](docs/architecture.md) — compiler internals and bootstrap pipeline
-- [Roadmap](docs/roadmap.md) — project stages and future plans
+- [Roadmap](docs/roadmap.md) — from self-hosting through ML runtime and ecosystem
+- [Vision](docs/vision.md) — design philosophy and the convergence architecture
+
+## Design Documents
+
+The original design specification is in the `.docx` files at the project root:
+- `Jda_A_Convergence_Architecture_for_Post-Moore_Systems_Programming.docx`
+- `Jda-Language-Technical-Implementation-Guide.docx`
+- `Jda-AI-Prompt-Master-Guide.docx`
