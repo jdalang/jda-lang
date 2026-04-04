@@ -1,0 +1,98 @@
+; AVX-512 vectorized tensor operations
+; These functions check for AVX-512 support at runtime and fall back to scalar.
+; Builtins: avx512_check, avx512_add_f64, avx512_mul_f64, avx512_scale_f64,
+;           avx512_sum_f64, avx512_dot_f64
+; All work on raw f64 pointers + element count. Use tensor_data(t) and tensor_len(t).
+
+fn vec_add(dst: i64, a: i64, b: i64) -> i64 {
+    let dp = tensor_data(dst)
+    let ap = tensor_data(a)
+    let bp = tensor_data(b)
+    let n = tensor_len(a)
+    if avx512_check() == 1 {
+        avx512_add_f64(dp, ap, bp, n)
+    } else {
+        let i = 0
+        loop i < n {
+            let va = tensor_get(a, i)
+            let vb = tensor_get(b, i)
+            let r = f64_add(va, vb)
+            tensor_set(dst, i, r)
+            i = i + 1
+        }
+    }
+    ret 0
+}
+
+fn vec_mul(dst: i64, a: i64, b: i64) -> i64 {
+    let dp = tensor_data(dst)
+    let ap = tensor_data(a)
+    let bp = tensor_data(b)
+    let n = tensor_len(a)
+    if avx512_check() == 1 {
+        avx512_mul_f64(dp, ap, bp, n)
+    } else {
+        let i = 0
+        loop i < n {
+            let va = tensor_get(a, i)
+            let vb = tensor_get(b, i)
+            let r = f64_mul(va, vb)
+            tensor_set(dst, i, r)
+            i = i + 1
+        }
+    }
+    ret 0
+}
+
+fn vec_scale(dst: i64, a: i64, s: i64) -> i64 {
+    let dp = tensor_data(dst)
+    let ap = tensor_data(a)
+    let n = tensor_len(a)
+    if avx512_check() == 1 {
+        avx512_scale_f64(dp, ap, s, n)
+    } else {
+        let i = 0
+        loop i < n {
+            let va = tensor_get(a, i)
+            let r = f64_mul(va, s)
+            tensor_set(dst, i, r)
+            i = i + 1
+        }
+    }
+    ret 0
+}
+
+fn vec_sum(a: i64) -> i64 {
+    let ap = tensor_data(a)
+    let n = tensor_len(a)
+    if avx512_check() == 1 {
+        ret avx512_sum_f64(ap, n)
+    }
+    let acc = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        acc = f64_add(acc, v)
+        i = i + 1
+    }
+    ret acc
+}
+
+fn vec_dot(a: i64, b: i64) -> i64 {
+    let ap = tensor_data(a)
+    let bp = tensor_data(b)
+    let n = tensor_len(a)
+    if avx512_check() == 1 {
+        ret avx512_dot_f64(ap, bp, n)
+    }
+    let acc = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let p = f64_mul(va, vb)
+        acc = f64_add(acc, p)
+        i = i + 1
+    }
+    ret acc
+}
