@@ -29,20 +29,19 @@
 
 ## Milestones (in dependency order)
 
-### M1: Activate Existing Optimization Passes
+### M1: Activate Existing Optimization Passes ✅
 
-**Why first**: `fold_constants()` and `dce()` are already written and tested implicitly by self-hosting — they just need to be called. This is the lowest-risk, highest-reward starting point.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. Wire `fold_constants()` into the compilation pipeline — call it after each function's JIR is complete, before lowering
-2. Wire `dce()` after constant folding — mark dead instructions so lowering skips them
-3. Verify self-host convergence with both passes active
-4. Add a compiler flag (`-O1`) to enable/disable optimizations
-5. Measure binary size reduction and compile time impact
+**What was done**:
+1. Wired `fold_constants(jfn)` and `dce(jfn)` into the compilation pipeline, called after JIR generation and before `lower_fn()` for every function
+2. Both passes were already implemented but never invoked — `fold_constants` folds constant arithmetic (ADD, SUB, MUL, DIV, SHR, SHL) and `dce` marks unused instructions as dead (skipped by lowering)
+3. All 79 conformance tests pass
+4. Self-host converged at 1,984,626 bytes
 
-**Expected impact**: 5-15% binary size reduction from eliminating dead constants and folded arithmetic.
+**Impact**: Minimal binary size change on the compiler itself (+86 bytes from the two call instructions) since jda1.jda has very little constant-foldable arithmetic. The passes will show benefit on user programs with computed constants.
 
-**Risk**: Low. Code is written. Main risk is that fold/dce interact badly with the lowering pass's own use-counting. Test incrementally.
+**Deferred**: Compiler flag (`-O1`) for enable/disable — not needed until optimization bugs require bisection.
 
 ---
 
