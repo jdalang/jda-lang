@@ -1,0 +1,41 @@
+fn main() -> i64 {
+    ; Create a 2x3 tensor
+    let t = tensor_new2(2, 3)
+    let len = tensor_len(t)
+    if len == 6 {
+        print "len ok"
+    }
+    let rows = tensor_shape(t, 0)
+    let cols = tensor_shape(t, 1)
+    if rows == 2 and cols == 3 {
+        print "shape ok"
+    }
+    ; Fill with values: row*10 + col
+    let r = 0
+    loop r < 2 {
+        let c = 0
+        loop c < 3 {
+            let idx = r * 3 + c
+            let val = r * 10 + c
+            let fval = f64_from_int(val)
+            tensor_set(t, idx, fval)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    ; Read back and verify
+    let v00 = f64_to_int(tensor_get(t, 0))
+    let v01 = f64_to_int(tensor_get(t, 1))
+    let v02 = f64_to_int(tensor_get(t, 2))
+    let v10 = f64_to_int(tensor_get(t, 3))
+    let v11 = f64_to_int(tensor_get(t, 4))
+    let v12 = f64_to_int(tensor_get(t, 5))
+    if v00 == 0 and v01 == 1 and v02 == 2 {
+        print "row0 ok"
+    }
+    if v10 == 10 and v11 == 11 and v12 == 12 {
+        print "row1 ok"
+    }
+    tensor_free(t)
+    ret 0
+}
