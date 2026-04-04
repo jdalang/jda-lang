@@ -105,7 +105,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 *Goal: Replace Python as the ML language by making tensors and autograd native primitives.*
 
 - [x] M1: Floating point types — f64 builtins (13 ops: arithmetic, cmp, sqrt, neg, print) ✅
-- [ ] M2: Float printing & math builtins (exp, log, pow, sin, cos, tanh)
+- [x] M2: Math builtins — 7 transcendental functions (abs, exp, log, pow, sin, cos, tanh) via x87 FPU ✅
 - [ ] M3: Heap-allocated Tensor type with shape metadata
 - [ ] M4: CPU tensor operations (matmul, elementwise, reductions)
 - [ ] M5: AVX-512 vectorization
