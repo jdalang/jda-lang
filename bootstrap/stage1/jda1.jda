@@ -422,7 +422,7 @@ let g_lambda_ends: &i64 = 0
 let g_lambda_name_offs: &i64 = 0
 let g_lambda_name_lens: &i64 = 0
 let g_top_main_idx = -1
-let g_dbg_main_prints = 0
+let g_lam_cur_idx = 0
 let g_dbg_main_lets = 0
 let g_dbg_main_exprs = 0
 let g_dbg_main_steps = 0
@@ -6672,19 +6672,151 @@ fn codegen_lambda_inline(toks: &Token, pos: &i64, src: &i8, jfn: &JirFunction, b
         nm_len = nm_len + 1
     }
     g_runtime_src_len = nm_off + nm_len
-    ; Stash for deferred compilation
+    ; Capture analysis: find enclosing-scope vars used in lambda body
     let li = g_lambda_cnt
+    let cap_cnt = 0
+    let cap_base = li * 8
+    ; Collect lambda param names (between first LPAREN and RPAREN)
+    let pp = lam_start + 2
+    let pp_starts: i64[8]
+    let pp_lens: i64[8]
+    let pp_cnt = 0
+    loop tok_type_at(toks, pp) != TOK_RPAREN and pp < lam_end {
+        if tok_type_at(toks, pp) == TOK_IDENT and tok_type_at(toks, pp + 1) == TOK_COLON {
+            if pp_cnt < 8 {
+                pp_starts[pp_cnt] = tok_str_start_at(toks, pp)
+                pp_lens[pp_cnt] = tok_str_len_at(toks, pp)
+                pp_cnt = pp_cnt + 1
+            }
+        }
+        pp = pp + 1
+    }
+    ; Find body start (first LBRACE)
+    let bp = lam_start + 1
+    loop tok_type_at(toks, bp) != TOK_LBRACE and bp < lam_end { bp = bp + 1 }
+    bp = bp + 1
+    ; Scan body for captured variables
+    loop bp < lam_end - 1 {
+        if tok_type_at(toks, bp) == TOK_IDENT {
+            let cs = tok_str_start_at(toks, bp)
+            let cl = tok_str_len_at(toks, bp)
+            ; Skip if it's a lambda param
+            let is_p = 0
+            let pi = 0
+            loop pi < pp_cnt {
+                if pp_lens[pi] == cl and str_match(src, pp_starts[pi], cs, cl) == 1 { is_p = 1 }
+                pi = pi + 1
+            }
+            if is_p == 0 {
+                ; Check if in enclosing function's var table
+                let slot = lookup_slot_name(jfn, cs, cl)
+                if slot != -1 {
+                    ; Check not already captured
+                    let dup = 0
+                    let di = 0
+                    loop di < cap_cnt {
+                        let dx = 64 + cap_base + di
+                        if g_lambda_name_offs[dx] == cl and str_match(src, g_lambda_ends[dx], cs, cl) == 1 { dup = 1 }
+                        di = di + 1
+                    }
+                    if dup == 0 and cap_cnt < 8 {
+                        let cx = 64 + cap_base + cap_cnt
+                        g_lambda_ends[cx] = cs
+                        g_lambda_name_offs[cx] = cl
+                        cap_cnt = cap_cnt + 1
+                    }
+                }
+            }
+        }
+        bp = bp + 1
+    }
+    g_lambda_starts[64 + li] = cap_cnt
+    ; Stash for deferred compilation
     g_lambda_starts[li] = lam_start
     g_lambda_ends[li] = lam_end
     g_lambda_name_offs[li] = nm_off
     g_lambda_name_lens[li] = nm_len
     g_lambda_cnt = g_lambda_cnt + 1
-    ; Emit OP_FN_ADDR with generated name
+    ; Emit fn_addr for the lambda
     let fins = Instr{}
     fins.op = OP_FN_ADDR
     fins.str_start = nm_off
     fins.str_len = nm_len
-    ret emit(jfn, bb, &fins)
+    let fn_id = emit(jfn, bb, &fins)
+    ; If no captures, return fn_addr directly
+    if cap_cnt == 0 { ret fn_id }
+    ; Closure: allocate struct [fn_ptr, cap0, cap1, ...] and return closure pointer
+    let sz_id = emit_const(jfn, bb, TYPE_I64, (1 + cap_cnt) * 8)
+    let cls_alloc = Instr{}
+    cls_alloc.op = OP_ALLOC
+    cls_alloc.operand0 = sz_id
+    let cls_id = emit(jfn, bb, &cls_alloc)
+    ; Store fn_ptr at [cls + 0]
+    let st0 = Instr{}
+    st0.op = OP_STORE_MEM
+    st0.operand0 = fn_id
+    st0.operand1 = cls_id
+    st0.itype = TYPE_I64
+    emit(jfn, bb, &st0)
+    ; Store each captured value
+    let ci = 0
+    loop ci < cap_cnt {
+        let cx = 64 + cap_base + ci
+        let cslot = lookup_slot_name(jfn, g_lambda_ends[cx], g_lambda_name_offs[cx])
+        let cld = Instr{}
+        cld.op = OP_LOAD
+        cld.operand0 = cslot
+        let cval = emit(jfn, bb, &cld)
+        let coff = emit_const(jfn, bb, TYPE_I64, (ci + 1) * 8)
+        let caddr = emit_binop(jfn, bb, OP_ADD, cls_id, coff)
+        let cst = Instr{}
+        cst.op = OP_STORE_MEM
+        cst.operand0 = cval
+        cst.operand1 = caddr
+        cst.itype = TYPE_I64
+        emit(jfn, bb, &cst)
+        ci = ci + 1
+    }
+    ret cls_id
+}
+
+fn codegen_call_closure_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    ; call_closure(cls, args...) -> load fn_ptr from [cls+0], call fn_ptr(cls, args...)
+    let cls_id = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
+    ; Load fn_ptr from [cls + 0]
+    let ld = Instr{}
+    ld.op = OP_LOAD_MEM
+    ld.operand0 = cls_id
+    ld.itype = TYPE_I64
+    let fn_ptr = emit(jfn, bb, &ld)
+    ; cls is the first arg to the thunk
+    let cc_argc = 2
+    let cc_a1 = cls_id
+    let cc_a2 = -1
+    let cc_a3 = -1
+    let cc_a4 = -1
+    let cc_a5 = -1
+    loop tok_type_at(toks, pos[0]) == TOK_COMMA {
+        pos[0] = pos[0] + 1
+        let cc_a = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
+        if cc_argc == 2 { cc_a2 = cc_a }
+        if cc_argc == 3 { cc_a3 = cc_a }
+        if cc_argc == 4 { cc_a4 = cc_a }
+        if cc_argc == 5 { cc_a5 = cc_a }
+        cc_argc = cc_argc + 1
+    }
+    expect(TOK_RPAREN)
+    let cc_ins = Instr{}
+    cc_ins.op = OP_CALL_IND
+    cc_ins.str_start = -1
+    cc_ins.operand0 = fn_ptr
+    cc_ins.operand1 = cc_a1
+    cc_ins.operand2 = cc_a2
+    cc_ins.operand3 = cc_argc
+    cc_ins.bb_target0 = cc_a3
+    cc_ins.bb_target1 = cc_a4
+    cc_ins.imm = cc_a5
+    ret emit(jfn, bb, &cc_ins)
 }
 
 fn codegen_call_fn_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -6741,6 +6873,9 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     ; call_fn(fn_ptr, args...) — indirect call via OP_CALL_IND
     if name_len == 7 and streq(src, name_start, 7, "call_fn") == 1 {
         ret codegen_call_fn_inline(toks, pos, stab, src, jfn, bb)
+    }
+    if name_len == 12 and streq(src, name_start, 12, "call_closure") == 1 {
+        ret codegen_call_closure_inline(toks, pos, stab, src, jfn, bb)
     }
     let arg_cnt = 0
     let arg0 = -1
@@ -8509,19 +8644,143 @@ fn live_codegen_lambda_inline(bb: i64) -> i64 {
         nm_len = nm_len + 1
     }
     g_runtime_src_len = nm_off + nm_len
-    ; Stash for deferred compilation
+    ; Capture analysis
     let li = g_lambda_cnt
+    let cap_cnt = 0
+    let cap_base = li * 8
+    ; Collect lambda param names
+    let pp = lam_start + 2
+    let pp_starts: i64[8]
+    let pp_lens: i64[8]
+    let pp_cnt = 0
+    loop tok_type_at(g_dbg_toks_init, pp) != TOK_RPAREN and pp < lam_end {
+        if tok_type_at(g_dbg_toks_init, pp) == TOK_IDENT and tok_type_at(g_dbg_toks_init, pp + 1) == TOK_COLON {
+            if pp_cnt < 8 {
+                pp_starts[pp_cnt] = tok_str_start_at(g_dbg_toks_init, pp)
+                pp_lens[pp_cnt] = tok_str_len_at(g_dbg_toks_init, pp)
+                pp_cnt = pp_cnt + 1
+            }
+        }
+        pp = pp + 1
+    }
+    ; Find body LBRACE
+    let bp = lam_start + 1
+    loop tok_type_at(g_dbg_toks_init, bp) != TOK_LBRACE and bp < lam_end { bp = bp + 1 }
+    bp = bp + 1
+    ; Scan body for captures
+    loop bp < lam_end - 1 {
+        if tok_type_at(g_dbg_toks_init, bp) == TOK_IDENT {
+            let cs = tok_str_start_at(g_dbg_toks_init, bp)
+            let cl = tok_str_len_at(g_dbg_toks_init, bp)
+            let is_p = 0
+            let pi = 0
+            loop pi < pp_cnt {
+                if pp_lens[pi] == cl and str_match(g_src_buf_ptr, pp_starts[pi], cs, cl) == 1 { is_p = 1 }
+                pi = pi + 1
+            }
+            if is_p == 0 {
+                let slot = lookup_slot_name(g_jfn, cs, cl)
+                if slot != -1 {
+                    let dup = 0
+                    let di = 0
+                    loop di < cap_cnt {
+                        let dx = 64 + cap_base + di
+                        if g_lambda_name_offs[dx] == cl and str_match(g_src_buf_ptr, g_lambda_ends[dx], cs, cl) == 1 { dup = 1 }
+                        di = di + 1
+                    }
+                    if dup == 0 and cap_cnt < 8 {
+                        let cx = 64 + cap_base + cap_cnt
+                        g_lambda_ends[cx] = cs
+                        g_lambda_name_offs[cx] = cl
+                        cap_cnt = cap_cnt + 1
+                    }
+                }
+            }
+        }
+        bp = bp + 1
+    }
+    g_lambda_starts[64 + li] = cap_cnt
+    ; Stash for deferred compilation
     g_lambda_starts[li] = lam_start
     g_lambda_ends[li] = lam_end
     g_lambda_name_offs[li] = nm_off
     g_lambda_name_lens[li] = nm_len
     g_lambda_cnt = g_lambda_cnt + 1
-    ; Emit OP_FN_ADDR with generated name
+    ; Emit fn_addr
     let fins = Instr{}
     fins.op = OP_FN_ADDR
     fins.str_start = nm_off
     fins.str_len = nm_len
-    ret emit(g_jfn, bb, &fins)
+    let fn_id = emit(g_jfn, bb, &fins)
+    if cap_cnt == 0 { ret fn_id }
+    ; Closure: allocate struct [fn_ptr, cap0, ...]
+    let sz_id = emit_const(g_jfn, bb, TYPE_I64, (1 + cap_cnt) * 8)
+    let cls_alloc = Instr{}
+    cls_alloc.op = OP_ALLOC
+    cls_alloc.operand0 = sz_id
+    let cls_id = emit(g_jfn, bb, &cls_alloc)
+    let st0 = Instr{}
+    st0.op = OP_STORE_MEM
+    st0.operand0 = fn_id
+    st0.operand1 = cls_id
+    st0.itype = TYPE_I64
+    emit(g_jfn, bb, &st0)
+    let ci = 0
+    loop ci < cap_cnt {
+        let cx = 64 + cap_base + ci
+        let cslot = lookup_slot_name(g_jfn, g_lambda_ends[cx], g_lambda_name_offs[cx])
+        let cld = Instr{}
+        cld.op = OP_LOAD
+        cld.operand0 = cslot
+        let cval = emit(g_jfn, bb, &cld)
+        let coff = emit_const(g_jfn, bb, TYPE_I64, (ci + 1) * 8)
+        let caddr = emit_binop(g_jfn, bb, OP_ADD, cls_id, coff)
+        let cst = Instr{}
+        cst.op = OP_STORE_MEM
+        cst.operand0 = cval
+        cst.operand1 = caddr
+        cst.itype = TYPE_I64
+        emit(g_jfn, bb, &cst)
+        ci = ci + 1
+    }
+    ret cls_id
+}
+
+fn live_codegen_call_closure_inline(bb: i64) -> i64 {
+    ; call_closure(cls, args...) -> load fn_ptr from [cls+0], call fn_ptr(cls, args...)
+    let cls_id = live_codegen_expr_inline(bb)
+    let ld = Instr{}
+    ld.op = OP_LOAD_MEM
+    ld.operand0 = cls_id
+    ld.itype = TYPE_I64
+    let fn_ptr = emit(g_jfn, bb, &ld)
+    let cc_argc = 2
+    let cc_a1 = cls_id
+    let cc_a2 = -1
+    let cc_a3 = -1
+    let cc_a4 = -1
+    let cc_a5 = -1
+    loop tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
+        g_main_pos = g_main_pos + 1
+        let cc_a = live_codegen_expr_inline(bb)
+        if cc_argc == 2 { cc_a2 = cc_a }
+        if cc_argc == 3 { cc_a3 = cc_a }
+        if cc_argc == 4 { cc_a4 = cc_a }
+        if cc_argc == 5 { cc_a5 = cc_a }
+        cc_argc = cc_argc + 1
+    }
+    expect(TOK_RPAREN)
+    let cc_ins = Instr{}
+    cc_ins.op = OP_CALL_IND
+    cc_ins.str_start = -1
+    cc_ins.operand0 = fn_ptr
+    cc_ins.operand1 = cc_a1
+    cc_ins.operand2 = cc_a2
+    cc_ins.operand3 = cc_argc
+    cc_ins.bb_target0 = cc_a3
+    cc_ins.bb_target1 = cc_a4
+    cc_ins.imm = cc_a5
+    ret emit(g_jfn, bb, &cc_ins)
 }
 
 fn live_codegen_call_fn_inline(bb: i64) -> i64 {
@@ -8573,6 +8832,9 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     ; call_fn(fn_ptr, args...) — indirect call via OP_CALL_IND
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "call_fn") == 1 {
         ret live_codegen_call_fn_inline(bb)
+    }
+    if name.str_len == 12 and streq(g_src_buf_ptr, name.str_start, 12, "call_closure") == 1 {
+        ret live_codegen_call_closure_inline(bb)
     }
     let is_alloc_pages = 0
     if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "alloc_pages") == 1 { is_alloc_pages = 1 }
@@ -17045,6 +17307,7 @@ fn compile_stashed_lambdas(toks: &Token, src: &i8, src_len: i64) {
         if lfi < 1024 { store_i64_at(g_fn_code_off_tbl, lfi, g_lam_code_len) }
         g_main_pos = g_lambda_starts[lam_i] + 1
         expect(TOK_LPAREN)
+        g_lam_cur_idx = lam_i
         compile_lambda_params_and_body(toks, src, jfn, ctx)
         g_main_pos = saved_pos
         lam_i = lam_i + 1
@@ -17053,6 +17316,25 @@ fn compile_stashed_lambdas(toks: &Token, src: &i8, src_len: i64) {
 }
 
 fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx: &LowerCtx) {
+    let lam_idx = g_lam_cur_idx
+    let cap_cnt = g_lambda_starts[64 + lam_idx]
+    let cap_base = lam_idx * 8
+    ; If closure, inject hidden first param "__cls"
+    let cls_slot = -1
+    if cap_cnt > 0 {
+        let cls_off = g_runtime_src_len
+        poke_byte(src, cls_off, 95)
+        poke_byte(src, cls_off + 1, 95)
+        poke_byte(src, cls_off + 2, 99)
+        poke_byte(src, cls_off + 3, 108)
+        poke_byte(src, cls_off + 4, 115)
+        g_runtime_src_len = cls_off + 5
+        cls_slot = bind_name(jfn, cls_off, 5, TYPE_I64)
+        if jfn.param_cnt < 16 {
+            jfn.param_slots[jfn.param_cnt] = cls_slot
+            jfn.param_cnt = jfn.param_cnt + 1
+        }
+    }
     ; Parse params
     let more = 0
     if tok_type_at(toks, g_main_pos) != TOK_RPAREN { more = 1 }
@@ -17081,12 +17363,41 @@ fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx
     expect(TOK_RPAREN)
     parse_skip_ret_type(toks)
     expect(TOK_LBRACE)
-    ; Record code offset before lowering
-    let pre_len = g_lam_code_len
     ; Compile body
     regalloc_init(ctx as &RegAlloc)
     ctx.fix_cnt = 0
     let bb = create_block_live(jfn)
+    ; If closure, unpack captured variables from __cls struct
+    if cap_cnt > 0 and cls_slot != -1 {
+        let ci = 0
+        loop ci < cap_cnt {
+            let cx = 64 + cap_base + ci
+            let cns = g_lambda_ends[cx]
+            let cnl = g_lambda_name_offs[cx]
+            ; Load __cls
+            let cls_ld = Instr{}
+            cls_ld.op = OP_LOAD
+            cls_ld.operand0 = cls_slot
+            let cls_val = emit(jfn, bb, &cls_ld)
+            ; Compute address: cls + (ci+1)*8
+            let coff_id = emit_const(jfn, bb, TYPE_I64, (ci + 1) * 8)
+            let caddr_id = emit_binop(jfn, bb, OP_ADD, cls_val, coff_id)
+            ; Load captured value
+            let cap_ld = Instr{}
+            cap_ld.op = OP_LOAD_MEM
+            cap_ld.operand0 = caddr_id
+            cap_ld.itype = TYPE_I64
+            let cap_val = emit(jfn, bb, &cap_ld)
+            ; Bind as local variable with captured name
+            let cap_slot = bind_name(jfn, cns, cnl, TYPE_I64)
+            let cap_st = Instr{}
+            cap_st.op = OP_STORE
+            cap_st.operand0 = cap_val
+            cap_st.operand1 = cap_slot
+            emit(jfn, bb, &cap_st)
+            ci = ci + 1
+        }
+    }
     let fb = live_compile_block(toks, g_stab_ptr, src, jfn, bb)
     let rv = emit_const(jfn, fb, TYPE_I64, 0)
     let ri = Instr{}
