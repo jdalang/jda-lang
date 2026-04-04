@@ -69,7 +69,7 @@ These are explicitly deferred:
 
 ---
 
-### M2: Inline Assembly Blocks (~300 lines in jda1.jda)
+### M2: Inline Assembly Blocks ✅
 
 **Target**: Support `asm volatile { ... }` blocks for the context switch and future low-level primitives.
 
