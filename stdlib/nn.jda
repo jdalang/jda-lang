@@ -1,0 +1,206 @@
+; Neural Network Library — pure Jda, built on M1-M6 builtins
+; All functions use ≤6 args. Dimensions derived from tensor shapes.
+
+; ── Linear layer ─────────────────────────────────────────────────────
+; W[out_f, in_f], bias[out_f], x[batch, in_f], out[batch, out_f]
+
+fn linear_forward(x: i64, w: i64, bias: i64, out: i64) -> i64 {
+    let batch = tensor_shape(x, 0)
+    let in_f = tensor_shape(x, 1)
+    let out_f = tensor_shape(w, 0)
+    let i = 0
+    loop i < batch {
+        let j = 0
+        loop j < out_f {
+            let acc = tensor_get(bias, j)
+            let k = 0
+            loop k < in_f {
+                let x_idx = i * in_f + k
+                let w_idx = j * in_f + k
+                let xv = tensor_get(x, x_idx)
+                let wv = tensor_get(w, w_idx)
+                let prod = f64_mul(xv, wv)
+                acc = f64_add(acc, prod)
+                k = k + 1
+            }
+            let o_idx = i * out_f + j
+            tensor_set(out, o_idx, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn backward_weights(x: i64, w: i64, grad_out: i64, grad_w: i64) -> i64 {
+    let batch = tensor_shape(x, 0)
+    let in_f = tensor_shape(x, 1)
+    let out_f = tensor_shape(w, 0)
+    let j = 0
+    loop j < out_f {
+        let k = 0
+        loop k < in_f {
+            let acc = f64_from_int(0)
+            let i = 0
+            loop i < batch {
+                let go_idx = i * out_f + j
+                let x_idx = i * in_f + k
+                let gov = tensor_get(grad_out, go_idx)
+                let xv = tensor_get(x, x_idx)
+                let prod = f64_mul(gov, xv)
+                acc = f64_add(acc, prod)
+                i = i + 1
+            }
+            let gw_idx = j * in_f + k
+            let old = tensor_get(grad_w, gw_idx)
+            let nv = f64_add(old, acc)
+            tensor_set(grad_w, gw_idx, nv)
+            k = k + 1
+        }
+        j = j + 1
+    }
+    ret 0
+}
+
+fn backward_bias(grad_out: i64, grad_b: i64, batch: i64, out_f: i64) -> i64 {
+    let j = 0
+    loop j < out_f {
+        let acc = f64_from_int(0)
+        let i = 0
+        loop i < batch {
+            let idx = i * out_f + j
+            let v = tensor_get(grad_out, idx)
+            acc = f64_add(acc, v)
+            i = i + 1
+        }
+        let old = tensor_get(grad_b, j)
+        let nv = f64_add(old, acc)
+        tensor_set(grad_b, j, nv)
+        j = j + 1
+    }
+    ret 0
+}
+
+fn backward_input(w: i64, grad_out: i64, grad_in: i64) -> i64 {
+    let batch = tensor_shape(grad_in, 0)
+    let in_f = tensor_shape(grad_in, 1)
+    let out_f = tensor_shape(w, 0)
+    let i = 0
+    loop i < batch {
+        let k = 0
+        loop k < in_f {
+            let acc = f64_from_int(0)
+            let j = 0
+            loop j < out_f {
+                let go_idx = i * out_f + j
+                let w_idx = j * in_f + k
+                let gov = tensor_get(grad_out, go_idx)
+                let wv = tensor_get(w, w_idx)
+                let prod = f64_mul(gov, wv)
+                acc = f64_add(acc, prod)
+                j = j + 1
+            }
+            let gi_idx = i * in_f + k
+            let old = tensor_get(grad_in, gi_idx)
+            let nv = f64_add(old, acc)
+            tensor_set(grad_in, gi_idx, nv)
+            k = k + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+; ── Activations ──────────────────────────────────────────────────────
+
+fn relu_forward(a: i64, out: i64) -> i64 {
+    let n = tensor_len(a)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        if f64_gt(v, zero) == 1 {
+            tensor_set(out, i, v)
+        } else {
+            tensor_set(out, i, zero)
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn relu_backward(pre_relu: i64, grad_out: i64, grad_in: i64) -> i64 {
+    let n = tensor_len(pre_relu)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let ai = tensor_get(pre_relu, i)
+        let go = tensor_get(grad_out, i)
+        if f64_gt(ai, zero) == 1 {
+            tensor_set(grad_in, i, go)
+        } else {
+            tensor_set(grad_in, i, zero)
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+; ── Loss ─────────────────────────────────────────────────────────────
+
+fn mse_loss(pred: i64, target: i64) -> i64 {
+    let n = tensor_len(pred)
+    let acc = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let p = tensor_get(pred, i)
+        let t = tensor_get(target, i)
+        let d = f64_sub(p, t)
+        let d2 = f64_mul(d, d)
+        acc = f64_add(acc, d2)
+        i = i + 1
+    }
+    let fn_val = f64_from_int(n)
+    ret f64_div(acc, fn_val)
+}
+
+fn mse_backward(pred: i64, target: i64, grad_out: i64) -> i64 {
+    let n = tensor_len(pred)
+    let fn_val = f64_from_int(n)
+    let two = f64_from_int(2)
+    let scale = f64_div(two, fn_val)
+    let i = 0
+    loop i < n {
+        let p = tensor_get(pred, i)
+        let t = tensor_get(target, i)
+        let d = f64_sub(p, t)
+        let g = f64_mul(scale, d)
+        tensor_set(grad_out, i, g)
+        i = i + 1
+    }
+    ret 0
+}
+
+; ── Optimizer ────────────────────────────────────────────────────────
+
+fn sgd_step(params: i64, grads: i64, lr: i64) -> i64 {
+    let n = tensor_len(params)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let p = tensor_get(params, i)
+        let g = tensor_get(grads, i)
+        let update = f64_mul(lr, g)
+        let np = f64_sub(p, update)
+        tensor_set(params, i, np)
+        tensor_set(grads, i, zero)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn zero_tensor(t: i64) -> i64 {
+    let zero = f64_from_int(0)
+    tensor_fill(t, zero)
+    ret 0
+}
