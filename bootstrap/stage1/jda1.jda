@@ -8213,6 +8213,83 @@ fn tail_call_opt(jfn: &JirFunction) {
 }
 
 ; ============================================================
+; 7c. PEEPHOLE OPTIMIZATION
+; ============================================================
+; Strength reduction: MUL/DIV by power-of-2 → SHL/SHR
+; Runs after tail_call_opt, before lowering.
+
+fn log2_of_pow2(v: i64) -> i64 {
+    if v == 2 { ret 1 }
+    if v == 4 { ret 2 }
+    if v == 8 { ret 3 }
+    if v == 16 { ret 4 }
+    if v == 32 { ret 5 }
+    if v == 64 { ret 6 }
+    if v == 128 { ret 7 }
+    if v == 256 { ret 8 }
+    if v == 512 { ret 9 }
+    if v == 1024 { ret 10 }
+    if v == 2048 { ret 11 }
+    if v == 4096 { ret 12 }
+    if v == 8192 { ret 13 }
+    if v == 16384 { ret 14 }
+    if v == 32768 { ret 15 }
+    if v == 65536 { ret 16 }
+    ret -1
+}
+
+fn set_const_imm(jfn: &JirFunction, val_id: i64, new_imm: i64) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            if jfn.blocks[bi].instrs[ii].id == val_id {
+                if jfn.blocks[bi].instrs[ii].op == OP_CONST {
+                    jfn.blocks[bi].instrs[ii].imm = new_imm
+                    ret ok(0)
+                }
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+fn peephole(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let iop = jfn.blocks[bi].instrs[ii].op
+            ; Strength reduction: MUL by power-of-2 → SHL
+            if iop == OP_MUL {
+                let cv = find_const(jfn, jfn.blocks[bi].instrs[ii].operand1)
+                if cv.found == 1 {
+                    let lg = log2_of_pow2(cv.val)
+                    if lg >= 1 {
+                        jfn.blocks[bi].instrs[ii].op = OP_SHL
+                        set_const_imm(jfn, jfn.blocks[bi].instrs[ii].operand1, lg)
+                    }
+                }
+            }
+            ; Strength reduction: DIV by power-of-2 → SHR
+            if iop == OP_DIV {
+                let cv = find_const(jfn, jfn.blocks[bi].instrs[ii].operand1)
+                if cv.found == 1 {
+                    let lg = log2_of_pow2(cv.val)
+                    if lg >= 1 {
+                        jfn.blocks[bi].instrs[ii].op = OP_SHR
+                        set_const_imm(jfn, jfn.blocks[bi].instrs[ii].operand1, lg)
+                    }
+                }
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+; ============================================================
 ; 8. GREEDY REGISTER ALLOCATOR
 ; ============================================================
 ; Pool: rax rcx rdx rbx rsi rdi r10 r11
@@ -8546,12 +8623,11 @@ fn emit_cmp_rr(out: &i8, pos: &i64, a: i32, b: i32) {
 
 ; CMP r64, 0:  REX.W 83 /7 00
 fn emit_cmp_zero(out: &i8, pos: &i64, r: i32) {
-    let b = 0
-    if r >= 8 { b = 1 }
-    emit_byte(out, pos, 72 + b)
-    emit_byte(out, pos, 0x83)
-    emit_byte(out, pos, modrm_rr(7, r))
-    emit_byte(out, pos, 0x00)
+    ; TEST r, r — 3 bytes (vs CMP r, 0 which is 4 bytes)
+    ; Sets ZF=1 iff r==0, same semantics as CMP r, 0
+    emit_rex_w_rr(out, pos, r, r)
+    emit_byte(out, pos, 0x85)
+    emit_byte(out, pos, modrm_rr(r, r))
 }
 
 ; PUSH r64
@@ -9240,7 +9316,14 @@ fn lower_instr_constlike(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i
     if ins.op == OP_CONST { is_const = 1 }
     if is_const == 1 {
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_imm64(out, pos, dst, ins.imm)
+        if ins.imm == 0 {
+            ; XOR dst, dst — 3 bytes instead of MOV imm64 (10 bytes)
+            emit_rex_w_rr(out, pos, dst, dst)
+            emit_byte(out, pos, 0x33)
+            emit_byte(out, pos, modrm_rr(dst, dst))
+        } else {
+            emit_mov_imm64(out, pos, dst, ins.imm)
+        }
         let csp = ctx.ra.sp_top + 8
         ra_set_sp_top(&ctx.ra, csp)
         ra_set_spill(&ctx.ra, ins.id, csp)
@@ -12021,6 +12104,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 fold_constants(jfn)
                 dce(jfn)
                 tail_call_opt(jfn)
+                peephole(jfn)
                 lower_fn(jfn, ctx, code_buf, &code_len, is_main)
                 ; Collect fixups
                 let ci = 0

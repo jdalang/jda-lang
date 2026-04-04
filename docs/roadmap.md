@@ -67,7 +67,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] Expanded register allocator (7→10 regs, round-robin eviction) ✅
 - [x] Function inlining (emit_byte, poke_byte x86-level) ✅
 - [x] Tail-call optimization ✅
-- [ ] Peephole optimization
+- [x] Peephole optimization ✅
 - [ ] Benchmark suite (vs C, Go, Rust)
 
 ---
