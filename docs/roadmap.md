@@ -247,12 +247,18 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] 4 new conformance tests, 12 integration tests ✅
 - [x] 186 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
-### M10: CI/CD & Release Pipeline
-- GitHub Actions: build + test on x86-64 Linux, ARM64 Linux, macOS
-- Self-host convergence check in CI for every PR
-- Benchmark regression detection (flag >5% slowdowns)
-- Automated release builds: `.tar.gz` per platform, checksum file
-- Install script: `curl -fsSL https://jda-lang.org/install.sh | sh`
+### M10: CI/CD & Release Pipeline ✅ COMPLETE
+
+**Delivered (April 4, 2026):**
+- [x] Multi-platform CI — x86-64 Linux (build+test+convergence), ARM64 Linux, macOS (native binary build) ✅
+- [x] Self-host convergence check in CI for every PR (jda1_a == jda1_b) ✅
+- [x] Benchmark regression detection (`tools/bench-ci.sh`) — fib35, sum_loop, self-compile, binary size with >5% threshold ✅
+- [x] Benchmark baseline (`tools/bench-baseline.json`) for regression comparison ✅
+- [x] Multi-platform release builds — Linux x86-64, Linux ARM64, macOS tarballs with SHA-256 checksums ✅
+- [x] Updated `tools/package-release.sh` — x86_64/arm64/macos platform support, includes stdlib + tools ✅
+- [x] Multi-platform install script (`install.sh`) — auto-detects Linux x86-64/ARM64 and macOS ✅
+- [x] 4 new conformance tests, 12 integration tests ✅
+- [x] 190 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
 ---
 
@@ -266,6 +272,12 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 | Performance credibility | ✅ April 2026 |
 | Concurrency runtime | ✅ April 2026 |
 | Native ML | ✅ April 2026 |
-| Developer tooling (test, pkg, LSP, fmt) | Phase 8 M1-M5 |
-| Cross-platform (ARM64, macOS, WASM) | Phase 8 M6-M8 |
-| Production stdlib & CI | Phase 8 M9-M10 |
+| Developer tooling (test, pkg, LSP, fmt) | ✅ April 2026 |
+| Cross-platform (ARM64, macOS, WASM) | ✅ April 2026 |
+| Production stdlib & CI | ✅ April 2026 |
+
+
+**Cutting a release:**
+```bash
+# Update VERSION file, then:
+git tag v0.1.1 && git push --tags
