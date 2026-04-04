@@ -1,0 +1,23 @@
+; Test: multiple "dependency" functions used together (simulates multi-dep build)
+
+fn clamp(val: i64, lo: i64, hi: i64) -> i64 {
+    if val < lo { ret lo }
+    if val > hi { ret hi }
+    ret val
+}
+
+fn abs_val(x: i64) -> i64 {
+    if x < 0 { ret 0 - x }
+    ret x
+}
+
+fn main() -> i64 {
+    let a = clamp(50, 0, 100)
+    if a != 50 { syscall(60, 1, 0, 0) }
+    let b = clamp(200, 0, 100)
+    if b != 100 { syscall(60, 1, 0, 0) }
+    let c = abs_val(0 - 42)
+    if c != 42 { syscall(60, 1, 0, 0) }
+    print "pkg_deps ok"
+    ret 0
+}
