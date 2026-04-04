@@ -146,7 +146,7 @@ struct Tensor {
 
 ---
 
-### M4: CPU Tensor Operations
+### M4: CPU Tensor Operations ✅
 
 **Target**: matmul, elementwise ops, reductions — all on CPU with scalar f64/f32.
 

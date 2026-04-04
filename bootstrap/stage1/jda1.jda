@@ -13350,27 +13350,36 @@ fn lower_tensor_free(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
 }
 
 fn lower_tensor_get(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
     let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
     emit_push_r(out, pos, t_r)
     let idx_r = get_or_load(ctx.ra, out, pos, ins.operand1)
     emit_push_r(out, pos, idx_r)
     emit_pop_r(out, pos, PHYS_RCX)
     emit_pop_r(out, pos, PHYS_RDI)
+    ; LEA RAX, [RDI+0x50]
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x8D)
     emit_byte(out, pos, 0x47)
     emit_byte(out, pos, 0x50)
+    ; MOV RAX, [RAX+RCX*8]
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x8B)
     emit_byte(out, pos, 0x04)
     emit_byte(out, pos, 0xC8)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
     consume_use(ctx, ins.operand0)
     consume_use(ctx, ins.operand1)
     let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-    emit_mov_rr(out, pos, dst, PHYS_RAX)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
 }
 
 fn lower_tensor_set(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
     let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
     emit_push_r(out, pos, t_r)
     let idx_r = get_or_load(ctx.ra, out, pos, ins.operand1)
@@ -13380,49 +13389,62 @@ fn lower_tensor_set(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_pop_r(out, pos, PHYS_RDX)
     emit_pop_r(out, pos, PHYS_RCX)
     emit_pop_r(out, pos, PHYS_RDI)
+    ; LEA RAX, [RDI+0x50]
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x8D)
     emit_byte(out, pos, 0x47)
     emit_byte(out, pos, 0x50)
+    ; MOV [RAX+RCX*8], RDX
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x89)
     emit_byte(out, pos, 0x14)
     emit_byte(out, pos, 0xC8)
+    emit_restore_pool(ctx.ra, out, pos)
+    emit_pop_r(out, pos, PHYS_R12)
     consume_use(ctx, ins.operand0)
     consume_use(ctx, ins.operand1)
     consume_use(ctx, ins.operand2)
 }
 
 fn lower_tensor_fill(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
     let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
     emit_push_r(out, pos, t_r)
     let val_r = get_or_load(ctx.ra, out, pos, ins.operand1)
     emit_push_r(out, pos, val_r)
     emit_pop_r(out, pos, PHYS_RDX)
     emit_pop_r(out, pos, PHYS_RDI)
+    ; RCX = [RDI+8] (len)
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x8B)
     emit_byte(out, pos, 0x4F)
     emit_byte(out, pos, 0x08)
+    ; RSI = RDI + 80 (data area)
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x8D)
     emit_byte(out, pos, 0x77)
     emit_byte(out, pos, 0x50)
+    ; RAX = 0 (loop counter)
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x31)
     emit_byte(out, pos, 0xC0)
     let loop_off = pos[0]
+    ; CMP RAX, RCX
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x39)
     emit_byte(out, pos, 0xC8)
     let jge_off = pos[0]
+    ; JGE done
     emit_byte(out, pos, 0x0F)
     emit_byte(out, pos, 0x8D)
     emit_i32_le(out, pos, 0)
+    ; MOV [RSI+RAX*8], RDX
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x89)
     emit_byte(out, pos, 0x14)
     emit_byte(out, pos, 0xC6)
+    ; INC RAX
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0xFF)
     emit_byte(out, pos, 0xC0)
@@ -13434,6 +13456,8 @@ fn lower_tensor_fill(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     poke_byte(out, jge_off + 3, i32_b1(jge_rel))
     poke_byte(out, jge_off + 4, i32_b2(jge_rel))
     poke_byte(out, jge_off + 5, i32_b3(jge_rel))
+    emit_restore_pool(ctx.ra, out, pos)
+    emit_pop_r(out, pos, PHYS_R12)
     consume_use(ctx, ins.operand0)
     consume_use(ctx, ins.operand1)
 }
@@ -13441,48 +13465,65 @@ fn lower_tensor_fill(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
 fn lower_tensor_meta(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     let op = ins.op
     if op == OP_TLEN {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
         let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-        emit_push_r(out, pos, t_r)
-        emit_pop_r(out, pos, PHYS_RDI)
+        emit_mov_rr(out, pos, PHYS_RDI, t_r)
+        ; MOV RAX, [RDI+8]
         emit_byte(out, pos, 0x48)
         emit_byte(out, pos, 0x8B)
         emit_byte(out, pos, 0x47)
         emit_byte(out, pos, 0x08)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
         consume_use(ctx, ins.operand0)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_rr(out, pos, dst, PHYS_RAX)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        emit_pop_r(out, pos, PHYS_R12)
     }
     if op == OP_TSHAPE {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
         let t_r2 = get_or_load(ctx.ra, out, pos, ins.operand0)
         emit_push_r(out, pos, t_r2)
         let dim_r = get_or_load(ctx.ra, out, pos, ins.operand1)
         emit_push_r(out, pos, dim_r)
         emit_pop_r(out, pos, PHYS_RCX)
         emit_pop_r(out, pos, PHYS_RDI)
+        ; LEA RAX, [RDI+0x10]
         emit_byte(out, pos, 0x48)
         emit_byte(out, pos, 0x8D)
         emit_byte(out, pos, 0x47)
         emit_byte(out, pos, 0x10)
+        ; MOV RAX, [RAX+RCX*8]
         emit_byte(out, pos, 0x48)
         emit_byte(out, pos, 0x8B)
         emit_byte(out, pos, 0x04)
         emit_byte(out, pos, 0xC8)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
         let dst2 = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_rr(out, pos, dst2, PHYS_RAX)
+        emit_mov_rr(out, pos, dst2, PHYS_R12)
+        emit_pop_r(out, pos, PHYS_R12)
     }
     if op == OP_TDATA {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
         let t_r3 = get_or_load(ctx.ra, out, pos, ins.operand0)
-        emit_push_r(out, pos, t_r3)
-        emit_pop_r(out, pos, PHYS_RDI)
+        emit_mov_rr(out, pos, PHYS_RDI, t_r3)
+        ; LEA RAX, [RDI+0x50]
         emit_byte(out, pos, 0x48)
         emit_byte(out, pos, 0x8D)
         emit_byte(out, pos, 0x47)
         emit_byte(out, pos, 0x50)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
         consume_use(ctx, ins.operand0)
         let dst3 = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_rr(out, pos, dst3, PHYS_RAX)
+        emit_mov_rr(out, pos, dst3, PHYS_R12)
+        emit_pop_r(out, pos, PHYS_R12)
     }
 }
 
