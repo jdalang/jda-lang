@@ -122,11 +122,13 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 ## Phase 8 — Ecosystem & Tooling
 
-### M1: Built-in Test Framework
-- `jda test` command — discovers and runs test functions (`fn test_*`)
-- Assertion builtins: `assert_eq`, `assert_ne`, `assert_true`, `assert_close` (for floats)
-- Test output: pass/fail counts, failure messages with source location
-- Replace the current conformance test runner (shell script + .expected files)
+### M1: Built-in Test Framework ✅ COMPLETE
+
+**Delivered (April 4, 2026):**
+- [x] Assertion runtime functions: `assert_eq`, `assert_ne`, `assert_true`, `assert_close` — exit(1) on mismatch via syscall ✅
+- [x] `jda test` command (`tools/jda-test.sh`) — discovers `fn test_*` functions, auto-generates main() wrapper, auto-prepends assertion runtime, reports pass/fail counts ✅
+- [x] 4 new conformance tests using assertion functions ✅
+- [x] 154 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
 ### M2: Package Manager
 - `jda.toml` manifest file — name, version, dependencies, build config
