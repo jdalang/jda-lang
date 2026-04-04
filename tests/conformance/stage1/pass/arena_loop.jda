@@ -1,0 +1,17 @@
+fn main() {
+    let a = arena_new(1)
+    let i = 0
+    loop i < 10 {
+        let p = arena_alloc(a, 8)
+        p[0] = i
+        i = i + 1
+    }
+    arena_reset(a)
+    let q = arena_alloc(a, 8)
+    q[0] = 99
+    let v = q[0]
+    if v == 99 {
+        print("ok")
+    }
+    arena_destroy(a, 1)
+}

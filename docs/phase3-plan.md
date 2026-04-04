@@ -198,31 +198,36 @@
 
 ---
 
-### M8: Region-Based Allocation (Arenas)
+### M8: Region-Based Allocation (Arenas) ✅
 
 **Why eighth**: Performance complement to CTRC. Hot paths need bulk allocation/deallocation.
 
-**Tasks**:
-1. **Arena type**
-   ```jda
-   let arena = Arena.new(1024 * 1024)  ; 1MB region
-   let node = arena.alloc<Node>()
-   let buf = arena.alloc_array<i64>(256)
-   arena.reset()   ; free everything at once
-   arena.destroy()  ; release memory to OS
-   ```
+**Status**: Complete. Implemented as compiler built-in functions using existing JIR opcodes.
 
-2. **Implementation**
-   - Arena is a struct with a base pointer, current offset, and capacity
-   - `alloc<T>()` bumps the offset by `sizeof(T)`, returns pointer
-   - `reset()` sets offset back to 0 (O(1) bulk free)
-   - `destroy()` releases pages back to kernel
+**API** (v1 — function-based, no new opcodes):
+```jda
+let a = arena_new(1)           ; allocate 1 page (4096 bytes)
+let p = arena_alloc(a, 64)     ; bump-allocate 64 bytes, returns pointer
+arena_reset(a)                  ; reset position to 0 (O(1) bulk free)
+arena_destroy(a, 1)             ; release pages back to kernel (munmap)
+```
 
-3. **Integration with CTRC**
-   - Arena-allocated values are NOT refcounted (arena owns them)
-   - Compiler must track that arena references don't outlive the arena
+**Implementation details**:
+- Arena layout in memory: `[pos:i64, cap:i64, data...]` (16-byte header)
+- `arena_new(pages)`: mmap via OP_ALLOC, stores pos=0 and cap=pages*4096-16
+- `arena_alloc(arena, size)`: loads pos, computes arena+16+pos, updates pos+=size
+- `arena_reset(arena)`: stores 0 to [arena] (position field)
+- `arena_destroy(arena, pages)`: munmap via OP_DROP
+- All implemented by emitting sequences of existing JIR ops (OP_ALLOC, OP_LOAD_MEM, OP_STORE_MEM, OP_ADD, OP_DROP) — no new opcodes needed
+- Built-in recognition in both `codegen_call_inline` and `live_codegen_call_inline`
+- Type inference: arena_new and arena_alloc return TYPE_PTR
 
-**This can ship as a stdlib module initially**, then become a language primitive later.
+**Integration with CTRC**:
+- Arena-allocated values are NOT refcounted (arena owns them)
+- arena_new results are NOT marked as owned (no auto-drop at scope exit)
+- User manages arena lifetime explicitly via arena_destroy
+
+**Verification**: 76 conformance tests pass, self-host converged at 1,953,963 bytes
 
 ---
 
