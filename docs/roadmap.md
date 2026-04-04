@@ -158,11 +158,21 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] 4 new conformance tests, 8 LSP integration tests ✅
 - [x] 162 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
-### M4: Formatter
-- `jda fmt` — canonical formatting for all Jda source files
-- Consistent indentation (2 spaces), brace style, line length
-- Idempotent: running twice produces same output
-- `jda fmt --check` for CI enforcement
+### M4: Formatter ✅ COMPLETE
+
+**Delivered (April 4, 2026):**
+- [x] `jda fmt` command (`tools/jda-fmt.sh`) — canonical formatting for all Jda source files ✅
+- [x] Consistent 2-space indentation, opening brace on same line ✅
+- [x] Single blank line between top-level declarations, collapse multiple blank lines ✅
+- [x] Trailing whitespace removal, single trailing newline ✅
+- [x] Comment preservation (full-line and inline) ✅
+- [x] Idempotent: running twice produces identical output ✅
+- [x] `jda fmt --check` for CI enforcement (exit 1 if unformatted) ✅
+- [x] `jda fmt --diff` to preview changes ✅
+- [x] `jda fmt --stdin` for pipe integration ✅
+- [x] Directory recursive formatting ✅
+- [x] 4 new conformance tests, 12 integration tests ✅
+- [x] 166 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
 ### M5: Documentation Generator
 - `jda doc` — extract doc comments (`;; comment`) and generate HTML
