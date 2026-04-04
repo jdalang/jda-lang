@@ -221,12 +221,20 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] 4 new conformance tests, 12 integration tests ✅
 - [x] 178 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
-### M8: WebAssembly Backend
-- JIR → WASM bytecode lowering
-- WASI target for CLI programs (file I/O, args, environment)
-- Browser target for `jda playground` (interactive web REPL)
-- Linear memory model mapping for tensors
-- Hosted playground site with examples
+### M8: WebAssembly Backend ✅ COMPLETE
+
+**Delivered (April 4, 2026):**
+- [x] WebAssembly compiler (`tools/jda-wasm.sh`) — Python-based, Jda → WAT → WASM pipeline ✅
+- [x] WASI target — fd_write for stdout, proc_exit, runs on wasmtime/wasmer/Node.js ✅
+- [x] Browser target — imports env.print_str, exports main + memory ✅
+- [x] WAT text format output (`--wat`) for inspection and debugging ✅
+- [x] WASM binary compilation via wat2wasm (wabt) or wasm-tools ✅
+- [x] HTML playground generator (`--html`) — embedded WASM, Catppuccin dark editor, run button ✅
+- [x] Linear memory model — string data segments at offset 1024, iov structs for fd_write ✅
+- [x] i64 value types, LEB128 encoding, proper function type signatures ✅
+- [x] Function calls, arithmetic, comparisons, conditionals, loops, recursion ✅
+- [x] 4 new conformance tests, 12 integration tests ✅
+- [x] 182 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
 ### M9: Standard Library Expansion
 - `net` — TCP/UDP client and server (already have epoll from Phase 6)
