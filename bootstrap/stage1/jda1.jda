@@ -220,6 +220,7 @@ const OP_GPU_VECADD  = 91
 const OP_ROCM_CHECK  = 92
 const OP_ROCM_MATMUL = 93
 const OP_ROCM_VECADD = 94
+const OP_CALL_IND = 95
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -4807,6 +4808,14 @@ fn copy_instr(dst: &Instr, src: &Instr) {
     dst.bb_target1 = src.bb_target1
 }
 
+fn mark_ind(ip: &Instr) {
+    ip.str_len = OP_CALL_IND
+}
+
+fn add_ind_sentinel(x: i64) -> i64 {
+    ret x + OP_CALL_IND
+}
+
 fn emit(jfn: &JirFunction, bb: i64, ins: &Instr) -> i64 {
     let bb_ok = bb >= 0 and bb < 256
     let safe_bb = bb_ok * bb
@@ -6597,6 +6606,38 @@ fn codegen_arg_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
     ret codegen_expr_inline(toks, pos, stab, src, jfn, bb)
 }
 
+fn codegen_call_fn_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let cf_ptr = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
+    let cf_argc = 1
+    let cf_a1 = -1
+    let cf_a2 = -1
+    let cf_a3 = -1
+    let cf_a4 = -1
+    let cf_a5 = -1
+    loop tok_type_at(toks, pos[0]) == TOK_COMMA {
+        pos[0] = pos[0] + 1
+        let cf_a = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
+        if cf_argc == 1 { cf_a1 = cf_a }
+        if cf_argc == 2 { cf_a2 = cf_a }
+        if cf_argc == 3 { cf_a3 = cf_a }
+        if cf_argc == 4 { cf_a4 = cf_a }
+        if cf_argc == 5 { cf_a5 = cf_a }
+        cf_argc = cf_argc + 1
+    }
+    expect(TOK_RPAREN)
+    let cf_ins = Instr{}
+    cf_ins.op = OP_CALL_IND
+    cf_ins.str_start = -1
+    cf_ins.operand0 = cf_ptr
+    cf_ins.operand1 = cf_a1
+    cf_ins.operand2 = cf_a2
+    cf_ins.operand3 = cf_argc
+    cf_ins.bb_target0 = cf_a3
+    cf_ins.bb_target1 = cf_a4
+    cf_ins.imm = cf_a5
+    ret emit(jfn, bb, &cf_ins)
+}
+
 fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     if pos[0] <= 0 or pos[0] >= g_dbg_tok_cnt {
         ret emit_const(jfn, bb, TYPE_I64, 0)
@@ -6615,6 +6656,10 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         fins.str_start = fa_start
         fins.str_len = fa_len
         ret emit(jfn, bb, &fins)
+    }
+    ; call_fn(fn_ptr, args...) — indirect call via OP_CALL_IND
+    if name_len == 7 and streq(src, name_start, 7, "call_fn") == 1 {
+        ret codegen_call_fn_inline(toks, pos, stab, src, jfn, bb)
     }
     let arg_cnt = 0
     let arg0 = -1
@@ -8330,6 +8375,38 @@ fn live_codegen_method_call(name: &Token, bb: i64, self_id: i64) -> i64 {
     ret emit(g_jfn, bb, &ins)
 }
 
+fn live_codegen_call_fn_inline(bb: i64) -> i64 {
+    let cf_ptr = live_codegen_expr_inline(bb)
+    let cf_argc = 1
+    let cf_a1 = -1
+    let cf_a2 = -1
+    let cf_a3 = -1
+    let cf_a4 = -1
+    let cf_a5 = -1
+    loop tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
+        g_main_pos = g_main_pos + 1
+        let cf_a = live_codegen_expr_inline(bb)
+        if cf_argc == 1 { cf_a1 = cf_a }
+        if cf_argc == 2 { cf_a2 = cf_a }
+        if cf_argc == 3 { cf_a3 = cf_a }
+        if cf_argc == 4 { cf_a4 = cf_a }
+        if cf_argc == 5 { cf_a5 = cf_a }
+        cf_argc = cf_argc + 1
+    }
+    expect(TOK_RPAREN)
+    let cf_ins = Instr{}
+    cf_ins.op = OP_CALL_IND
+    cf_ins.str_start = -1
+    cf_ins.operand0 = cf_ptr
+    cf_ins.operand1 = cf_a1
+    cf_ins.operand2 = cf_a2
+    cf_ins.operand3 = cf_argc
+    cf_ins.bb_target0 = cf_a3
+    cf_ins.bb_target1 = cf_a4
+    cf_ins.imm = cf_a5
+    ret emit(g_jfn, bb, &cf_ins)
+}
+
 fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     expect(TOK_LPAREN)
     ; fn_addr(name) — argument is function name identifier, not expression
@@ -8343,6 +8420,10 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         fins.str_start = fa_start
         fins.str_len = fa_len
         ret emit(g_jfn, bb, &fins)
+    }
+    ; call_fn(fn_ptr, args...) — indirect call via OP_CALL_IND
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "call_fn") == 1 {
+        ret live_codegen_call_fn_inline(bb)
     }
     let is_alloc_pages = 0
     if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "alloc_pages") == 1 { is_alloc_pages = 1 }
@@ -9184,7 +9265,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
-            if op == OP_CALL {
+            if op == OP_CALL or op == OP_CALL_IND {
                 if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
                 if o3 >= 2 { if o1 >= 0 { used[o1] = 1 } }
                 if o3 >= 3 { if o2 >= 0 { used[o2] = 1 } }
@@ -9206,7 +9287,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_SYSCALL { used[id] = 1 }
             if op == OP_ALLOC   { used[id] = 1 }
             if op == OP_DROP    { used[id] = 1 }
-            if op == OP_CALL    { used[id] = 1 }
+            if op == OP_CALL or op == OP_CALL_IND { used[id] = 1 }
             if op == OP_TAIL_CALL { used[id] = 1 }
             if op == OP_STORE   { used[id] = 1 }
             if op == OP_PRINT_INT { used[id] = 1 }
@@ -11011,7 +11092,13 @@ fn lower_tail_call(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos
 fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_call = 0
     if ins.op == OP_CALL { is_call = 1 }
+    if ins.op == OP_CALL_IND { is_call = 1 }
     if is_call != 1 { ret 0 }
+    ; Handle indirect calls directly — avoid capturing 4-arg return value
+    if ins.op == OP_CALL_IND {
+        lower_instr_call_ind(ins, ctx, out, pos)
+        ret 1
+    }
     let inlined = try_inline_call(ins, ctx, out, pos)
     if inlined == 1 { ret 1 }
     emit_save_pool(ctx.ra, out, pos)
@@ -11106,6 +11193,62 @@ fn lower_instr_drop(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     emit_restore_pool(ctx.ra, out, pos)
     consume_use(ctx, ins.operand0)
     consume_use(ctx, ins.operand1)
+    ret 1
+}
+
+fn lower_instr_call_ind(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    if ins.op != OP_CALL_IND { ret 0 }
+    ; operand0=fn_ptr, operand1..=args, operand3=total_argc (fn_ptr + real args)
+    ; Use ins.operand3 directly to avoid local variable corruption across 4-arg calls
+    emit_save_pool(ctx.ra, out, pos)
+    ; Push fn pointer (operand0)
+    let fn_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, fn_r)
+    ; Push real args using ins.operand3 directly (avoids corrupted local)
+    ; argc >= 2 means real_argc >= 1 (at least 1 real arg beyond fn_ptr)
+    if ins.operand3 >= 2 { let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)   emit_push_r(out, pos, r1) }
+    if ins.operand3 >= 3 { let r2 = get_or_load(ctx.ra, out, pos, ins.operand2)   emit_push_r(out, pos, r2) }
+    if ins.operand3 >= 4 { let r3 = get_or_load(ctx.ra, out, pos, ins.bb_target0) emit_push_r(out, pos, r3) }
+    if ins.operand3 >= 5 { let r4 = get_or_load(ctx.ra, out, pos, ins.bb_target1) emit_push_r(out, pos, r4) }
+    if ins.operand3 >= 6 { let r5 = get_or_load(ctx.ra, out, pos, ins.imm)        emit_push_r(out, pos, r5) }
+    ; Pop args into calling convention regs (reverse order)
+    if ins.operand3 >= 6 { emit_pop_r(out, pos, PHYS_R9) }
+    if ins.operand3 >= 5 { emit_pop_r(out, pos, PHYS_R8) }
+    if ins.operand3 >= 4 { emit_pop_r(out, pos, PHYS_RDX) }
+    if ins.operand3 >= 3 { emit_pop_r(out, pos, PHYS_RSI) }
+    if ins.operand3 >= 2 { emit_pop_r(out, pos, PHYS_RDI) }
+    ; Pop fn pointer into RAX and call
+    emit_pop_r(out, pos, PHYS_RAX)
+    ; call rax: FF D0
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xD0)
+    ; Capture return value: mov r12,rax (4C 8B E0) then restore pool
+    let keep_res = 1
+    if ins.id < 0 { keep_res = 0 }
+    if ins.id >= 8192 { keep_res = 0 }
+    if ctx.use_cnt[ins.id] <= 0 { keep_res = 0 }
+    if keep_res == 1 {
+        ; mov r12, rax: 4C 8B E0 (inline to avoid 4-arg emit_mov_rr)
+        emit_byte(out, pos, 0x4C)
+        emit_byte(out, pos, 0x8B)
+        emit_byte(out, pos, 0xE0)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 { emit_mov_rr(out, pos, dst, PHYS_R12) }
+        let cesp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, cesp)
+        ra_set_spill(&ctx.ra, ins.id, cesp)
+        emit_store_spill(out, pos, cesp, dst)
+    } else {
+        emit_restore_pool(ctx.ra, out, pos)
+    }
+    ; Consume uses
+    consume_use(ctx, ins.operand0)
+    if ins.operand3 >= 2 { consume_use(ctx, ins.operand1) }
+    if ins.operand3 >= 3 { consume_use(ctx, ins.operand2) }
+    if ins.operand3 >= 4 { consume_use(ctx, ins.bb_target0) }
+    if ins.operand3 >= 5 { consume_use(ctx, ins.bb_target1) }
+    if ins.operand3 >= 6 { consume_use(ctx, ins.imm) }
     ret 1
 }
 
@@ -16363,7 +16506,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
-    if op == OP_CALL {
+    if op == OP_CALL or op == OP_CALL_IND {
         if o3 >= 1 { mark_use(ctx, o0) }
         if o3 >= 2 { mark_use(ctx, o1) }
         if o3 >= 3 { mark_use(ctx, o2) }
