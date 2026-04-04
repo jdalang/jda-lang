@@ -6,25 +6,19 @@ on:
       - 'v*'
 
 jobs:
-  release:
+  build-linux-x86_64:
+    name: Build (Linux x86-64)
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read version
-        id: version
-        run: echo "version=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
-
-      - name: Build jda1 from bootstrap
+      - name: Build jda1
         run: |
           ulimit -s unlimited
           bootstrap/bin/jda1-bootstrap bootstrap/stage1/jda1.jda bootstrap/stage0/jda1
           chmod +x bootstrap/stage0/jda1
 
-      - name: Self-host convergence check
+      - name: Self-host convergence
         run: |
           ulimit -s unlimited
           bootstrap/stage0/jda1 bootstrap/stage1/jda1.jda /tmp/jda1_a 2>/dev/null
@@ -34,8 +28,80 @@ jobs:
           cmp /tmp/jda1_a /tmp/jda1_b
           echo "CONVERGED — $(wc -c < /tmp/jda1_a) bytes"
 
-      - name: Package release
-        run: bash tools/package-release.sh ${{ steps.version.outputs.version }}
+      - name: Run conformance tests
+        run: |
+          ulimit -s unlimited
+          bash tools/run_tests.sh
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash tools/package-release.sh "$VERSION"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist/
+
+  build-linux-arm64:
+    name: Build (Linux ARM64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package ARM64
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash tools/package-release.sh "$VERSION" arm64
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          path: dist/
+
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package macOS
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash tools/package-release.sh "$VERSION" macos
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/
+
+  release:
+    name: Create Release
+    needs: [build-linux-x86_64, build-linux-arm64, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Merge checksums
+        run: |
+          cd dist
+          cat */checksums.txt > checksums.txt
+          echo "=== Release artifacts ==="
+          find . -name "*.tar.gz" -o -name "checksums.txt" | sort
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -50,18 +116,28 @@ jobs:
             curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | bash
             ```
 
-            Or download the tarball below and extract manually.
+            Or download the tarball for your platform below and extract manually.
+
+            ### Platforms
+
+            | Platform | Architecture | File |
+            |----------|-------------|------|
+            | Linux | x86-64 | `jda-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` |
+            | Linux | ARM64 | `jda-${{ steps.version.outputs.version }}-linux-arm64.tar.gz` |
+            | macOS | Universal | `jda-${{ steps.version.outputs.version }}-macos.tar.gz` |
 
             ### What's included
 
-            - `jda` — the Jda compiler (Linux x86-64, statically linked)
-            - `stdlib/` — standard library (fs, fmt, time)
+            - `jda` — the Jda compiler (statically linked)
+            - `stdlib/` — standard library (21 modules)
+            - `tools/` — jda-fmt, jda-doc, jda-lsp, jda-test, jda-pkg, jda-arm64, jda-macos, jda-wasm
 
             ### Verify
 
             ```bash
+            sha256sum -c checksums.txt
             jda --version
             ```
           files: |
-            dist/jda-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+            dist/*/*.tar.gz
             dist/checksums.txt
