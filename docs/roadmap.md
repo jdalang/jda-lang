@@ -236,14 +236,16 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] 4 new conformance tests, 12 integration tests ✅
 - [x] 182 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
-### M9: Standard Library Expansion
-- `net` — TCP/UDP client and server (already have epoll from Phase 6)
-- `http` — HTTP/1.1 server and client (built on `net`)
-- `crypto` — SHA-256, AES-256, HMAC (expand existing crypto.jda)
-- `json` — JSON parser and serializer (expand existing json.jda)
-- `io` — buffered reader/writer, stdin/stdout helpers
-- `os` — environment variables, process spawning, signal handling
-- `math` — integer math, random number generation, constants
+### M9: Standard Library Expansion ✅ COMPLETE
+
+**Delivered (April 4, 2026):**
+- [x] `io` module (`stdlib/io.jda`) — buffered read/write for stdin/stdout/stderr, read_line, print_i64, println ✅
+- [x] `os` module (`stdlib/os.jda`) — getenv, getcwd, chdir, getpid, fork, exec, wait, kill, sleep_ms, hostname, uname ✅
+- [x] `math` module (`stdlib/math.jda`) — abs, min, max, clamp, gcd, lcm, pow, isqrt, log2, factorial, fib, is_prime, next_pow2, divmod, rand (LCG) ✅
+- [x] Existing modules preserved: `net` (TCP/UDP/WebSocket/HTTP), `crypto` (SHA-256/AES-256/HMAC), `json` (parser/serializer), `fs` (file I/O), `fmt` (formatting), `time`, `process` ✅
+- [x] All stdlib uses direct Linux syscalls — no libc dependency ✅
+- [x] 4 new conformance tests, 12 integration tests ✅
+- [x] 186 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
 ### M10: CI/CD & Release Pipeline
 - GitHub Actions: build + test on x86-64 Linux, ARM64 Linux, macOS
