@@ -336,7 +336,7 @@ Flags: `CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE
 
 ---
 
-### M8: Deadlock Detection (~150 lines in jda1.jda)
+### M8: Deadlock Detection (~150 lines in jda1.jda) ✅
 
 **Target**: Detect when all J-Threads are blocked (waiting on channels or I/O) with no progress possible.
 
