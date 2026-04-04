@@ -1,0 +1,68 @@
+; Test autograd: addition and subtraction gradient rules
+
+fn grad_check_close(analytical: i64, numerical: i64, eps: i64) -> i64 {
+    let diff = f64_sub(analytical, numerical)
+    let abs_diff = f64_abs(diff)
+    if f64_gt(eps, abs_diff) == 1 { ret 1 }
+    ret 0
+}
+
+fn main() -> i64 {
+    let a = f64_from_int(3)
+    let b = f64_from_int(5)
+    let one = f64_from_int(1)
+    let two = f64_from_int(2)
+    let thousand = f64_from_int(1000)
+    let h = f64_div(one, thousand)
+    let hundred = f64_from_int(100)
+    let eps = f64_div(one, hundred)
+    let twoh = f64_mul(two, h)
+
+    ; c = a + b → dc/da = 1, dc/db = 1
+    let grad_c = f64_from_int(1)
+    let ga = grad_c
+    let gb = grad_c
+
+    ; Numerical dc/da
+    let ah = f64_add(a, h)
+    let amh = f64_sub(a, h)
+    let c_plus = f64_add(ah, b)
+    let c_minus = f64_add(amh, b)
+    let diff_a = f64_sub(c_plus, c_minus)
+    let num_ga = f64_div(diff_a, twoh)
+
+    ; Numerical dc/db
+    let bh = f64_add(b, h)
+    let bmh = f64_sub(b, h)
+    let c_plus_b = f64_add(a, bh)
+    let c_minus_b = f64_add(a, bmh)
+    let diff_b = f64_sub(c_plus_b, c_minus_b)
+    let num_gb = f64_div(diff_b, twoh)
+
+    let ok1 = grad_check_close(ga, num_ga, eps)
+    let ok2 = grad_check_close(gb, num_gb, eps)
+    if ok1 == 1 and ok2 == 1 {
+        print "grad add ok"
+    }
+
+    ; c = a - b → dc/da = 1, dc/db = -1
+    let gs_a = grad_c
+    let gs_b = f64_neg(grad_c)
+
+    let cs_plus = f64_sub(ah, b)
+    let cs_minus = f64_sub(amh, b)
+    let diff_sa = f64_sub(cs_plus, cs_minus)
+    let num_gsa = f64_div(diff_sa, twoh)
+
+    let csb_plus = f64_sub(a, bh)
+    let csb_minus = f64_sub(a, bmh)
+    let diff_sb = f64_sub(csb_plus, csb_minus)
+    let num_gsb = f64_div(diff_sb, twoh)
+
+    let ok3 = grad_check_close(gs_a, num_gsa, eps)
+    let ok4 = grad_check_close(gs_b, num_gsb, eps)
+    if ok3 == 1 and ok4 == 1 {
+        print "grad sub ok"
+    }
+    ret 0
+}
