@@ -30,6 +30,13 @@
 
 **Deliverable**: One-command install and build workflow.
 
+**Cutting a release:**
+```bash
+# Update VERSION file, then:
+git tag v0.1.0 && git push --tags
+```
+GitHub Actions will automatically build, verify convergence, and publish the release.
+
 ---
 
 ## Phase 3 — Language Core Maturity
