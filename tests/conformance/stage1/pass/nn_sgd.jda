@@ -1,0 +1,84 @@
+; Test SGD optimizer step and MSE loss
+
+fn mse_loss(pred: i64, target: i64) -> i64 {
+    let n = tensor_len(pred)
+    let acc = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let p = tensor_get(pred, i)
+        let t = tensor_get(target, i)
+        let d = f64_sub(p, t)
+        let d2 = f64_mul(d, d)
+        acc = f64_add(acc, d2)
+        i = i + 1
+    }
+    let fn_val = f64_from_int(n)
+    ret f64_div(acc, fn_val)
+}
+
+fn sgd_step(params: i64, grads: i64, lr: i64) -> i64 {
+    let n = tensor_len(params)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let p = tensor_get(params, i)
+        let g = tensor_get(grads, i)
+        let update = f64_mul(lr, g)
+        let new_p = f64_sub(p, update)
+        tensor_set(params, i, new_p)
+        tensor_set(grads, i, zero)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    ; MSE test: pred=[3,5], target=[1,2] → MSE = ((3-1)^2 + (5-2)^2)/2 = (4+9)/2 = 6.5
+    ; As int: 6 (truncated)
+    let pred = tensor_new1(2)
+    let target = tensor_new1(2)
+    let v3 = f64_from_int(3)
+    tensor_set(pred, 0, v3)
+    let v5 = f64_from_int(5)
+    tensor_set(pred, 1, v5)
+    let v1 = f64_from_int(1)
+    tensor_set(target, 0, v1)
+    let v2 = f64_from_int(2)
+    tensor_set(target, 1, v2)
+    let loss = mse_loss(pred, target)
+    let loss_i = f64_to_int(loss)
+    if loss_i == 6 {
+        print "mse loss ok"
+    }
+
+    ; SGD test: params=[10,20], grads=[2,4], lr=0.5
+    ; new_params = [10-0.5*2, 20-0.5*4] = [9, 18]
+    let params = tensor_new1(2)
+    let grads = tensor_new1(2)
+    let v10 = f64_from_int(10)
+    tensor_set(params, 0, v10)
+    let v20 = f64_from_int(20)
+    tensor_set(params, 1, v20)
+    tensor_set(grads, 0, v2)
+    let v4 = f64_from_int(4)
+    tensor_set(grads, 1, v4)
+    let half = f64_div(v1, v2)
+    sgd_step(params, grads, half)
+    let p0 = f64_to_int(tensor_get(params, 0))
+    let p1 = f64_to_int(tensor_get(params, 1))
+    if p0 == 9 and p1 == 18 {
+        print "sgd step ok"
+    }
+    ; Grads should be zeroed
+    let g0 = f64_to_int(tensor_get(grads, 0))
+    let g1 = f64_to_int(tensor_get(grads, 1))
+    if g0 == 0 and g1 == 0 {
+        print "sgd zero ok"
+    }
+
+    tensor_free(pred)
+    tensor_free(target)
+    tensor_free(params)
+    tensor_free(grads)
+    ret 0
+}
