@@ -424,7 +424,17 @@ let g_lambda_name_lens: &i64 = 0
 let g_top_main_idx = -1
 let g_lam_cur_idx = 0
 let g_dbg_main_lets = 0
-let g_dbg_main_exprs = 0
+let g_iter_exit_bb = -1
+let g_iter_matched = 0
+let g_iter_result = -1
+let g_iter_bb = 0
+let g_iter_a0 = -1
+let g_iter_a1 = -1
+let g_iter_a2 = -1
+let g_iter_a3 = -1
+let g_iter_name_start = 0
+let g_iter_name_len = 0
+let g_force_closure_wrap = 0
 let g_dbg_main_steps = 0
 let g_small_err_loop = 0
 let g_small_err_branch = 0
@@ -5835,6 +5845,11 @@ fn compile_expr_stmt_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, s
     if pos[0] <= pos_before and pos[0] < g_dbg_tok_cnt {
         pos[0] = pos[0] + 1
     }
+    if g_iter_exit_bb != -1 {
+        let exit_bb = g_iter_exit_bb
+        g_iter_exit_bb = -1
+        ret exit_bb
+    }
     ret bb
 }
 
@@ -5844,6 +5859,11 @@ fn compile_expr_stmt2_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &
     codegen_expr_inline(toks, pos, stab, src, jfn, bb)
     if pos[0] <= pos_before and pos[0] < g_dbg_tok_cnt {
         pos[0] = pos[0] + 1
+    }
+    if g_iter_exit_bb != -1 {
+        let exit_bb = g_iter_exit_bb
+        g_iter_exit_bb = -1
+        ret exit_bb
     }
     ret bb
 }
@@ -5965,6 +5985,10 @@ fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
                 }
             }
             let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, cur)
+            if g_iter_exit_bb != -1 {
+                cur = g_iter_exit_bb
+                g_iter_exit_bb = -1
+            }
             let bind_stype = TYPE_I64
             if let_struct_id >= 0 { bind_stype = let_struct_id + 1000 }
             let slot = bind_name(jfn, name_start, name_len, bind_stype)
@@ -6422,6 +6446,22 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
     let t_len = tok_str_len_at(toks, pos[0])
     pos[0] = pos[0] + 1
     if tok_type_at(toks, pos[0]) == TOK_LPAREN {
+        ; Check if it's an iterator builtin before calling codegen_call_inline
+        if t_len >= 3 and t_len <= 6 {
+            let is_iter = 0
+            if t_len == 4 and streq(src, t_start, 4, "each") == 1 { is_iter = 1 }
+            if t_len == 3 and streq(src, t_start, 3, "map") == 1 { is_iter = 1 }
+            if t_len == 6 and streq(src, t_start, 6, "reduce") == 1 { is_iter = 1 }
+            if t_len == 6 and streq(src, t_start, 6, "filter") == 1 { is_iter = 1 }
+            if t_len == 3 and streq(src, t_start, 3, "any") == 1 { is_iter = 1 }
+            if t_len == 3 and streq(src, t_start, 3, "sum") == 1 { is_iter = 1 }
+            if t_len == 5 and streq(src, t_start, 5, "count") == 1 { is_iter = 1 }
+            if is_iter == 1 {
+                g_iter_name_start = t_start
+                g_iter_name_len = t_len
+                ret codegen_iter_call_inline(toks, pos, stab, src, jfn, bb)
+            }
+        }
         ret codegen_call_inline(toks, pos, stab, src, jfn, bb)
     }
     ; Generic call: name<type>(args) → skip <type>, call mangled name
@@ -6811,9 +6851,13 @@ fn codegen_lambda_inline(toks: &Token, pos: &i64, src: &i8, jfn: &JirFunction, b
     fins.str_start = nm_off
     fins.str_len = nm_len
     let fn_id = emit(jfn, bb, &fins)
-    ; If no captures, return fn_addr directly
-    if cap_cnt == 0 { ret fn_id }
-    ; Closure: allocate struct [fn_ptr, cap0, cap1, ...] and return closure pointer
+    ; If no captures and not forced, return fn_addr directly
+    if cap_cnt == 0 and g_force_closure_wrap == 0 { ret fn_id }
+    ; Mark force-wrapped zero-capture lambdas with -1 sentinel
+    if cap_cnt == 0 and g_force_closure_wrap == 1 {
+        g_lambda_starts[64 + li] = -1
+    }
+    ; Wrap in closure object: [fn_ptr, cap0, cap1, ...]
     let sz_id = emit_const(jfn, bb, TYPE_I64, (1 + cap_cnt) * 8)
     let cls_alloc = Instr{}
     cls_alloc.op = OP_ALLOC
@@ -6919,6 +6963,41 @@ fn codegen_call_fn_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     ret emit(jfn, bb, &cf_ins)
 }
 
+fn codegen_iter_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    ; Parse arguments for iterator builtins (2-4 args)
+    ; Force closure wrapping for lambda args so iterator emit functions can use OP_CALL_IND
+    g_force_closure_wrap = 1
+    pos[0] = pos[0] + 1
+    let arg_cnt = 0
+    let arg0 = -1
+    let arg1 = -1
+    let arg2 = -1
+    let arg3 = -1
+    loop tok_type_at(toks, pos[0]) != TOK_RPAREN and pos[0] < g_dbg_tok_cnt {
+        let a = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        if arg_cnt == 0 { arg0 = a }
+        if arg_cnt == 1 { arg1 = a }
+        if arg_cnt == 2 { arg2 = a }
+        if arg_cnt == 3 { arg3 = a }
+        arg_cnt = arg_cnt + 1
+        if tok_type_at(toks, pos[0]) == TOK_COMMA {
+            pos[0] = pos[0] + 1
+        }
+    }
+    g_force_closure_wrap = 0
+    pos[0] = pos[0] + 1
+    g_jfn = jfn
+    g_iter_bb = bb
+    g_iter_a0 = arg0
+    g_iter_a1 = arg1
+    g_iter_a2 = arg2
+    g_iter_a3 = arg3
+    let ns_val = g_iter_name_start
+    let nl_val = g_iter_name_len
+    check_iter_dispatch(src, ns_val, nl_val)
+    ret g_iter_result
+}
+
 fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     if pos[0] <= 0 or pos[0] >= g_dbg_tok_cnt {
         ret emit_const(jfn, bb, TYPE_I64, 0)
@@ -6981,6 +7060,17 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     }
     expect(TOK_RPAREN)
 
+    ; Iterator builtins — dispatch via helper to keep function size small
+    ; Iterator dispatch — return moved outside nested if
+    if name_len >= 3 and name_len <= 6 {
+        g_jfn = jfn
+        g_iter_bb = bb
+        g_iter_a0 = arg0
+        g_iter_a1 = arg1
+        g_iter_a2 = arg2
+        g_iter_a3 = arg3
+        check_iter_dispatch(src, name_start, name_len)
+    }
     ; Type check: verify argument count (skip if either side exceeds 6-arg codegen limit)
     if g_fn_param_cnt_tbl != 0 {
         let tc_fi = resolve_top_fn_index(src, name_start, name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
@@ -7499,6 +7589,779 @@ fn emit_syscall_raw(jfn: &JirFunction, bb: i64, nr: i64, a0: i64, a1: i64, a2: i
     ins.bb_target0 = a2
     ins.operand3   = 3
     ret emit(jfn, bb, &ins)
+}
+
+; --- Iterator builtin helpers ---
+
+fn emit_closure_call_1arg(jfn: &JirFunction, bb: i64, cls_id: i64, arg_id: i64) -> i64 {
+    let ld = Instr{}
+    ld.op = OP_LOAD_MEM
+    ld.operand0 = cls_id
+    ld.itype = TYPE_I64
+    let fn_ptr = emit(jfn, bb, &ld)
+    let cc = Instr{}
+    cc.op = OP_CALL_IND
+    cc.str_start = -1
+    cc.operand0 = fn_ptr
+    cc.operand1 = cls_id
+    cc.operand2 = arg_id
+    cc.operand3 = 3
+    cc.bb_target0 = -1
+    cc.bb_target1 = -1
+    cc.imm = -1
+    ret emit(jfn, bb, &cc)
+}
+
+fn emit_closure_call_2arg(jfn: &JirFunction, bb: i64, cls_id: i64, a0: i64, a1: i64) -> i64 {
+    let ld = Instr{}
+    ld.op = OP_LOAD_MEM
+    ld.operand0 = cls_id
+    ld.itype = TYPE_I64
+    let fn_ptr = emit(jfn, bb, &ld)
+    let cc = Instr{}
+    cc.op = OP_CALL_IND
+    cc.str_start = -1
+    cc.operand0 = fn_ptr
+    cc.operand1 = cls_id
+    cc.operand2 = a0
+    cc.operand3 = 4
+    cc.bb_target0 = a1
+    cc.bb_target1 = -1
+    cc.imm = -1
+    ret emit(jfn, bb, &cc)
+}
+
+fn emit_each_jir(jfn: &JirFunction, bb: i64, arr_id: i64, len_id: i64, cls_id: i64) -> i64 {
+    let idx_slot = alloc_slot(jfn)
+    let arr_slot = alloc_slot(jfn)
+    let len_slot = alloc_slot(jfn)
+    let cls_slot = alloc_slot(jfn)
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st0 = Instr{}
+    st0.op = OP_STORE
+    st0.operand0 = zero
+    st0.operand1 = idx_slot
+    emit(jfn, bb, &st0)
+    let st_arr = Instr{}
+    st_arr.op = OP_STORE
+    st_arr.operand0 = arr_id
+    st_arr.operand1 = arr_slot
+    emit(jfn, bb, &st_arr)
+    let st_len = Instr{}
+    st_len.op = OP_STORE
+    st_len.operand0 = len_id
+    st_len.operand1 = len_slot
+    emit(jfn, bb, &st_len)
+    let st_cls = Instr{}
+    st_cls.op = OP_STORE
+    st_cls.operand0 = cls_id
+    st_cls.operand1 = cls_slot
+    emit(jfn, bb, &st_cls)
+    let head = create_block_live(jfn)
+    let body = create_block_live(jfn)
+    let exit = create_block_live(jfn)
+    emit_jmp(jfn, bb, head)
+    let ld_idx = Instr{}
+    ld_idx.op = OP_LOAD
+    ld_idx.operand0 = idx_slot
+    let idx = emit(jfn, head, &ld_idx)
+    let ld_len = Instr{}
+    ld_len.op = OP_LOAD
+    ld_len.operand0 = len_slot
+    let len_val = emit(jfn, head, &ld_len)
+    let cond = emit_binop(jfn, head, OP_CMP_LT, idx, len_val)
+    emit_br(jfn, head, cond, body, exit)
+    let ld_idx2 = Instr{}
+    ld_idx2.op = OP_LOAD
+    ld_idx2.operand0 = idx_slot
+    let idx2 = emit(jfn, body, &ld_idx2)
+    let ld_arr = Instr{}
+    ld_arr.op = OP_LOAD
+    ld_arr.operand0 = arr_slot
+    let arr_val = emit(jfn, body, &ld_arr)
+    let ld_cls = Instr{}
+    ld_cls.op = OP_LOAD
+    ld_cls.operand0 = cls_slot
+    let cls_val = emit(jfn, body, &ld_cls)
+    let eight = emit_const(jfn, body, TYPE_I64, 8)
+    let off = emit_binop(jfn, body, OP_MUL, idx2, eight)
+    let addr = emit_binop(jfn, body, OP_ADD, arr_val, off)
+    let ld_elem = Instr{}
+    ld_elem.op = OP_LOAD_MEM
+    ld_elem.operand0 = addr
+    ld_elem.itype = TYPE_I64
+    let elem = emit(jfn, body, &ld_elem)
+    emit_closure_call_1arg(jfn, body, cls_val, elem)
+    let one = emit_const(jfn, body, TYPE_I64, 1)
+    let next = emit_binop(jfn, body, OP_ADD, idx2, one)
+    let st1 = Instr{}
+    st1.op = OP_STORE
+    st1.operand0 = next
+    st1.operand1 = idx_slot
+    emit(jfn, body, &st1)
+    emit_jmp(jfn, body, head)
+    g_iter_exit_bb = exit
+    ret emit_const(jfn, exit, TYPE_I64, 0)
+}
+
+fn emit_sum_jir(jfn: &JirFunction, bb: i64, arr_id: i64, len_id: i64) -> i64 {
+    let idx_slot = alloc_slot(jfn)
+    let acc_slot = alloc_slot(jfn)
+    let arr_slot = alloc_slot(jfn)
+    let len_slot = alloc_slot(jfn)
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st0 = Instr{}
+    st0.op = OP_STORE
+    st0.operand0 = zero
+    st0.operand1 = idx_slot
+    emit(jfn, bb, &st0)
+    let st_acc = Instr{}
+    st_acc.op = OP_STORE
+    st_acc.operand0 = zero
+    st_acc.operand1 = acc_slot
+    emit(jfn, bb, &st_acc)
+    let st_arr = Instr{}
+    st_arr.op = OP_STORE
+    st_arr.operand0 = arr_id
+    st_arr.operand1 = arr_slot
+    emit(jfn, bb, &st_arr)
+    let st_len = Instr{}
+    st_len.op = OP_STORE
+    st_len.operand0 = len_id
+    st_len.operand1 = len_slot
+    emit(jfn, bb, &st_len)
+    let head = create_block_live(jfn)
+    let body = create_block_live(jfn)
+    let exit = create_block_live(jfn)
+    emit_jmp(jfn, bb, head)
+    let ld_idx = Instr{}
+    ld_idx.op = OP_LOAD
+    ld_idx.operand0 = idx_slot
+    let idx = emit(jfn, head, &ld_idx)
+    let ld_len = Instr{}
+    ld_len.op = OP_LOAD
+    ld_len.operand0 = len_slot
+    let len_val = emit(jfn, head, &ld_len)
+    let cond = emit_binop(jfn, head, OP_CMP_LT, idx, len_val)
+    emit_br(jfn, head, cond, body, exit)
+    let ld_idx2 = Instr{}
+    ld_idx2.op = OP_LOAD
+    ld_idx2.operand0 = idx_slot
+    let idx2 = emit(jfn, body, &ld_idx2)
+    let ld_arr = Instr{}
+    ld_arr.op = OP_LOAD
+    ld_arr.operand0 = arr_slot
+    let arr_val = emit(jfn, body, &ld_arr)
+    let eight = emit_const(jfn, body, TYPE_I64, 8)
+    let off = emit_binop(jfn, body, OP_MUL, idx2, eight)
+    let addr = emit_binop(jfn, body, OP_ADD, arr_val, off)
+    let ld_elem = Instr{}
+    ld_elem.op = OP_LOAD_MEM
+    ld_elem.operand0 = addr
+    ld_elem.itype = TYPE_I64
+    let elem = emit(jfn, body, &ld_elem)
+    let ld_acc = Instr{}
+    ld_acc.op = OP_LOAD
+    ld_acc.operand0 = acc_slot
+    let acc = emit(jfn, body, &ld_acc)
+    let new_acc = emit_binop(jfn, body, OP_ADD, acc, elem)
+    let st2 = Instr{}
+    st2.op = OP_STORE
+    st2.operand0 = new_acc
+    st2.operand1 = acc_slot
+    emit(jfn, body, &st2)
+    let one = emit_const(jfn, body, TYPE_I64, 1)
+    let next = emit_binop(jfn, body, OP_ADD, idx2, one)
+    let st3 = Instr{}
+    st3.op = OP_STORE
+    st3.operand0 = next
+    st3.operand1 = idx_slot
+    emit(jfn, body, &st3)
+    emit_jmp(jfn, body, head)
+    let ld_result = Instr{}
+    ld_result.op = OP_LOAD
+    ld_result.operand0 = acc_slot
+    g_iter_exit_bb = exit
+    ret emit(jfn, exit, &ld_result)
+}
+
+fn emit_reduce_jir(jfn: &JirFunction, bb: i64, arr_id: i64, len_id: i64, init_id: i64, cls_id: i64) -> i64 {
+    let idx_slot = alloc_slot(jfn)
+    let acc_slot = alloc_slot(jfn)
+    let arr_slot = alloc_slot(jfn)
+    let len_slot = alloc_slot(jfn)
+    let cls_slot = alloc_slot(jfn)
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st0 = Instr{}
+    st0.op = OP_STORE
+    st0.operand0 = zero
+    st0.operand1 = idx_slot
+    emit(jfn, bb, &st0)
+    let st_acc = Instr{}
+    st_acc.op = OP_STORE
+    st_acc.operand0 = init_id
+    st_acc.operand1 = acc_slot
+    emit(jfn, bb, &st_acc)
+    let st_arr = Instr{}
+    st_arr.op = OP_STORE
+    st_arr.operand0 = arr_id
+    st_arr.operand1 = arr_slot
+    emit(jfn, bb, &st_arr)
+    let st_len = Instr{}
+    st_len.op = OP_STORE
+    st_len.operand0 = len_id
+    st_len.operand1 = len_slot
+    emit(jfn, bb, &st_len)
+    let st_cls = Instr{}
+    st_cls.op = OP_STORE
+    st_cls.operand0 = cls_id
+    st_cls.operand1 = cls_slot
+    emit(jfn, bb, &st_cls)
+    let head = create_block_live(jfn)
+    let body = create_block_live(jfn)
+    let exit = create_block_live(jfn)
+    emit_jmp(jfn, bb, head)
+    let ld_idx = Instr{}
+    ld_idx.op = OP_LOAD
+    ld_idx.operand0 = idx_slot
+    let idx = emit(jfn, head, &ld_idx)
+    let ld_len = Instr{}
+    ld_len.op = OP_LOAD
+    ld_len.operand0 = len_slot
+    let len_val = emit(jfn, head, &ld_len)
+    let cond = emit_binop(jfn, head, OP_CMP_LT, idx, len_val)
+    emit_br(jfn, head, cond, body, exit)
+    let ld_idx2 = Instr{}
+    ld_idx2.op = OP_LOAD
+    ld_idx2.operand0 = idx_slot
+    let idx2 = emit(jfn, body, &ld_idx2)
+    let ld_arr = Instr{}
+    ld_arr.op = OP_LOAD
+    ld_arr.operand0 = arr_slot
+    let arr_val = emit(jfn, body, &ld_arr)
+    let ld_cls = Instr{}
+    ld_cls.op = OP_LOAD
+    ld_cls.operand0 = cls_slot
+    let cls_val = emit(jfn, body, &ld_cls)
+    let eight = emit_const(jfn, body, TYPE_I64, 8)
+    let off = emit_binop(jfn, body, OP_MUL, idx2, eight)
+    let addr = emit_binop(jfn, body, OP_ADD, arr_val, off)
+    let ld_elem = Instr{}
+    ld_elem.op = OP_LOAD_MEM
+    ld_elem.operand0 = addr
+    ld_elem.itype = TYPE_I64
+    let elem = emit(jfn, body, &ld_elem)
+    let ld_acc = Instr{}
+    ld_acc.op = OP_LOAD
+    ld_acc.operand0 = acc_slot
+    let acc = emit(jfn, body, &ld_acc)
+    let new_acc = emit_closure_call_2arg(jfn, body, cls_val, acc, elem)
+    let st2 = Instr{}
+    st2.op = OP_STORE
+    st2.operand0 = new_acc
+    st2.operand1 = acc_slot
+    emit(jfn, body, &st2)
+    let one = emit_const(jfn, body, TYPE_I64, 1)
+    let next = emit_binop(jfn, body, OP_ADD, idx2, one)
+    let st3 = Instr{}
+    st3.op = OP_STORE
+    st3.operand0 = next
+    st3.operand1 = idx_slot
+    emit(jfn, body, &st3)
+    emit_jmp(jfn, body, head)
+    let ld_result = Instr{}
+    ld_result.op = OP_LOAD
+    ld_result.operand0 = acc_slot
+    g_iter_exit_bb = exit
+    ret emit(jfn, exit, &ld_result)
+}
+
+fn emit_map_jir(jfn: &JirFunction, bb: i64, arr_id: i64, len_id: i64, cls_id: i64) -> i64 {
+    let eight_pre = emit_const(jfn, bb, TYPE_I64, 8)
+    let alloc_sz = emit_binop(jfn, bb, OP_MUL, len_id, eight_pre)
+    let alloc_ins = Instr{}
+    alloc_ins.op = OP_ALLOC
+    alloc_ins.operand0 = alloc_sz
+    let out_ptr = emit(jfn, bb, &alloc_ins)
+    let idx_slot = alloc_slot(jfn)
+    let arr_slot = alloc_slot(jfn)
+    let len_slot = alloc_slot(jfn)
+    let cls_slot = alloc_slot(jfn)
+    let out_slot = alloc_slot(jfn)
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st0 = Instr{}
+    st0.op = OP_STORE
+    st0.operand0 = zero
+    st0.operand1 = idx_slot
+    emit(jfn, bb, &st0)
+    let st_arr = Instr{}
+    st_arr.op = OP_STORE
+    st_arr.operand0 = arr_id
+    st_arr.operand1 = arr_slot
+    emit(jfn, bb, &st_arr)
+    let st_len = Instr{}
+    st_len.op = OP_STORE
+    st_len.operand0 = len_id
+    st_len.operand1 = len_slot
+    emit(jfn, bb, &st_len)
+    let st_cls = Instr{}
+    st_cls.op = OP_STORE
+    st_cls.operand0 = cls_id
+    st_cls.operand1 = cls_slot
+    emit(jfn, bb, &st_cls)
+    let st_out = Instr{}
+    st_out.op = OP_STORE
+    st_out.operand0 = out_ptr
+    st_out.operand1 = out_slot
+    emit(jfn, bb, &st_out)
+    let head = create_block_live(jfn)
+    let body = create_block_live(jfn)
+    let exit = create_block_live(jfn)
+    emit_jmp(jfn, bb, head)
+    let ld_idx = Instr{}
+    ld_idx.op = OP_LOAD
+    ld_idx.operand0 = idx_slot
+    let idx = emit(jfn, head, &ld_idx)
+    let ld_len = Instr{}
+    ld_len.op = OP_LOAD
+    ld_len.operand0 = len_slot
+    let len_val = emit(jfn, head, &ld_len)
+    let cond = emit_binop(jfn, head, OP_CMP_LT, idx, len_val)
+    emit_br(jfn, head, cond, body, exit)
+    let ld_idx2 = Instr{}
+    ld_idx2.op = OP_LOAD
+    ld_idx2.operand0 = idx_slot
+    let idx2 = emit(jfn, body, &ld_idx2)
+    let ld_arr = Instr{}
+    ld_arr.op = OP_LOAD
+    ld_arr.operand0 = arr_slot
+    let arr_val = emit(jfn, body, &ld_arr)
+    let ld_cls = Instr{}
+    ld_cls.op = OP_LOAD
+    ld_cls.operand0 = cls_slot
+    let cls_val = emit(jfn, body, &ld_cls)
+    let ld_out = Instr{}
+    ld_out.op = OP_LOAD
+    ld_out.operand0 = out_slot
+    let out_val = emit(jfn, body, &ld_out)
+    let eight = emit_const(jfn, body, TYPE_I64, 8)
+    let off = emit_binop(jfn, body, OP_MUL, idx2, eight)
+    let addr = emit_binop(jfn, body, OP_ADD, arr_val, off)
+    let ld_elem = Instr{}
+    ld_elem.op = OP_LOAD_MEM
+    ld_elem.operand0 = addr
+    ld_elem.itype = TYPE_I64
+    let elem = emit(jfn, body, &ld_elem)
+    let result = emit_closure_call_1arg(jfn, body, cls_val, elem)
+    let out_addr = emit_binop(jfn, body, OP_ADD, out_val, off)
+    let st_out2 = Instr{}
+    st_out2.op = OP_STORE_MEM
+    st_out2.itype = TYPE_I64
+    st_out2.operand0 = result
+    st_out2.operand1 = out_addr
+    emit(jfn, body, &st_out2)
+    let one = emit_const(jfn, body, TYPE_I64, 1)
+    let next = emit_binop(jfn, body, OP_ADD, idx2, one)
+    let st1 = Instr{}
+    st1.op = OP_STORE
+    st1.operand0 = next
+    st1.operand1 = idx_slot
+    emit(jfn, body, &st1)
+    emit_jmp(jfn, body, head)
+    let ld_out_exit = Instr{}
+    ld_out_exit.op = OP_LOAD
+    ld_out_exit.operand0 = out_slot
+    g_iter_exit_bb = exit
+    ret emit(jfn, exit, &ld_out_exit)
+}
+
+fn emit_count_jir(jfn: &JirFunction, bb: i64, arr_id: i64, len_id: i64, cls_id: i64) -> i64 {
+    let idx_slot = alloc_slot(jfn)
+    let cnt_slot = alloc_slot(jfn)
+    let arr_slot = alloc_slot(jfn)
+    let len_slot = alloc_slot(jfn)
+    let cls_slot = alloc_slot(jfn)
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st0 = Instr{}
+    st0.op = OP_STORE
+    st0.operand0 = zero
+    st0.operand1 = idx_slot
+    emit(jfn, bb, &st0)
+    let st_cnt = Instr{}
+    st_cnt.op = OP_STORE
+    st_cnt.operand0 = zero
+    st_cnt.operand1 = cnt_slot
+    emit(jfn, bb, &st_cnt)
+    let st_arr = Instr{}
+    st_arr.op = OP_STORE
+    st_arr.operand0 = arr_id
+    st_arr.operand1 = arr_slot
+    emit(jfn, bb, &st_arr)
+    let st_len = Instr{}
+    st_len.op = OP_STORE
+    st_len.operand0 = len_id
+    st_len.operand1 = len_slot
+    emit(jfn, bb, &st_len)
+    let st_cls = Instr{}
+    st_cls.op = OP_STORE
+    st_cls.operand0 = cls_id
+    st_cls.operand1 = cls_slot
+    emit(jfn, bb, &st_cls)
+    let head = create_block_live(jfn)
+    let body = create_block_live(jfn)
+    let exit = create_block_live(jfn)
+    emit_jmp(jfn, bb, head)
+    let ld_idx = Instr{}
+    ld_idx.op = OP_LOAD
+    ld_idx.operand0 = idx_slot
+    let idx = emit(jfn, head, &ld_idx)
+    let ld_len = Instr{}
+    ld_len.op = OP_LOAD
+    ld_len.operand0 = len_slot
+    let len_val = emit(jfn, head, &ld_len)
+    let cond = emit_binop(jfn, head, OP_CMP_LT, idx, len_val)
+    emit_br(jfn, head, cond, body, exit)
+    let ld_idx2 = Instr{}
+    ld_idx2.op = OP_LOAD
+    ld_idx2.operand0 = idx_slot
+    let idx2 = emit(jfn, body, &ld_idx2)
+    let ld_arr = Instr{}
+    ld_arr.op = OP_LOAD
+    ld_arr.operand0 = arr_slot
+    let arr_val = emit(jfn, body, &ld_arr)
+    let ld_cls = Instr{}
+    ld_cls.op = OP_LOAD
+    ld_cls.operand0 = cls_slot
+    let cls_val = emit(jfn, body, &ld_cls)
+    let eight = emit_const(jfn, body, TYPE_I64, 8)
+    let off = emit_binop(jfn, body, OP_MUL, idx2, eight)
+    let addr = emit_binop(jfn, body, OP_ADD, arr_val, off)
+    let ld_elem = Instr{}
+    ld_elem.op = OP_LOAD_MEM
+    ld_elem.operand0 = addr
+    ld_elem.itype = TYPE_I64
+    let elem = emit(jfn, body, &ld_elem)
+    let result = emit_closure_call_1arg(jfn, body, cls_val, elem)
+    let zero_body = emit_const(jfn, body, TYPE_I64, 0)
+    let ne_zero = emit_binop(jfn, body, OP_CMP_NE, result, zero_body)
+    let ld_cnt = Instr{}
+    ld_cnt.op = OP_LOAD
+    ld_cnt.operand0 = cnt_slot
+    let cnt = emit(jfn, body, &ld_cnt)
+    let new_cnt = emit_binop(jfn, body, OP_ADD, cnt, ne_zero)
+    let st2 = Instr{}
+    st2.op = OP_STORE
+    st2.operand0 = new_cnt
+    st2.operand1 = cnt_slot
+    emit(jfn, body, &st2)
+    let one = emit_const(jfn, body, TYPE_I64, 1)
+    let next = emit_binop(jfn, body, OP_ADD, idx2, one)
+    let st3 = Instr{}
+    st3.op = OP_STORE
+    st3.operand0 = next
+    st3.operand1 = idx_slot
+    emit(jfn, body, &st3)
+    emit_jmp(jfn, body, head)
+    let ld_result = Instr{}
+    ld_result.op = OP_LOAD
+    ld_result.operand0 = cnt_slot
+    g_iter_exit_bb = exit
+    ret emit(jfn, exit, &ld_result)
+}
+
+fn emit_any_jir(jfn: &JirFunction, bb: i64, arr_id: i64, len_id: i64, cls_id: i64) -> i64 {
+    let idx_slot = alloc_slot(jfn)
+    let found_slot = alloc_slot(jfn)
+    let arr_slot = alloc_slot(jfn)
+    let len_slot = alloc_slot(jfn)
+    let cls_slot = alloc_slot(jfn)
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st0 = Instr{}
+    st0.op = OP_STORE
+    st0.operand0 = zero
+    st0.operand1 = idx_slot
+    emit(jfn, bb, &st0)
+    let st_f = Instr{}
+    st_f.op = OP_STORE
+    st_f.operand0 = zero
+    st_f.operand1 = found_slot
+    emit(jfn, bb, &st_f)
+    let st_arr = Instr{}
+    st_arr.op = OP_STORE
+    st_arr.operand0 = arr_id
+    st_arr.operand1 = arr_slot
+    emit(jfn, bb, &st_arr)
+    let st_len = Instr{}
+    st_len.op = OP_STORE
+    st_len.operand0 = len_id
+    st_len.operand1 = len_slot
+    emit(jfn, bb, &st_len)
+    let st_cls = Instr{}
+    st_cls.op = OP_STORE
+    st_cls.operand0 = cls_id
+    st_cls.operand1 = cls_slot
+    emit(jfn, bb, &st_cls)
+    let head = create_block_live(jfn)
+    let body = create_block_live(jfn)
+    let exit = create_block_live(jfn)
+    emit_jmp(jfn, bb, head)
+    let ld_idx = Instr{}
+    ld_idx.op = OP_LOAD
+    ld_idx.operand0 = idx_slot
+    let idx = emit(jfn, head, &ld_idx)
+    let ld_len = Instr{}
+    ld_len.op = OP_LOAD
+    ld_len.operand0 = len_slot
+    let len_val = emit(jfn, head, &ld_len)
+    let cond = emit_binop(jfn, head, OP_CMP_LT, idx, len_val)
+    emit_br(jfn, head, cond, body, exit)
+    let ld_idx2 = Instr{}
+    ld_idx2.op = OP_LOAD
+    ld_idx2.operand0 = idx_slot
+    let idx2 = emit(jfn, body, &ld_idx2)
+    let ld_arr = Instr{}
+    ld_arr.op = OP_LOAD
+    ld_arr.operand0 = arr_slot
+    let arr_val = emit(jfn, body, &ld_arr)
+    let ld_cls = Instr{}
+    ld_cls.op = OP_LOAD
+    ld_cls.operand0 = cls_slot
+    let cls_val = emit(jfn, body, &ld_cls)
+    let eight = emit_const(jfn, body, TYPE_I64, 8)
+    let off = emit_binop(jfn, body, OP_MUL, idx2, eight)
+    let addr = emit_binop(jfn, body, OP_ADD, arr_val, off)
+    let ld_elem = Instr{}
+    ld_elem.op = OP_LOAD_MEM
+    ld_elem.operand0 = addr
+    ld_elem.itype = TYPE_I64
+    let elem = emit(jfn, body, &ld_elem)
+    let result = emit_closure_call_1arg(jfn, body, cls_val, elem)
+    let zero_body = emit_const(jfn, body, TYPE_I64, 0)
+    let ne_zero = emit_binop(jfn, body, OP_CMP_NE, result, zero_body)
+    let then_blk = create_block_live(jfn)
+    let cont_blk = create_block_live(jfn)
+    emit_br(jfn, body, ne_zero, then_blk, cont_blk)
+    let one_found = emit_const(jfn, then_blk, TYPE_I64, 1)
+    let st_found = Instr{}
+    st_found.op = OP_STORE
+    st_found.operand0 = one_found
+    st_found.operand1 = found_slot
+    emit(jfn, then_blk, &st_found)
+    emit_jmp(jfn, then_blk, exit)
+    let one = emit_const(jfn, cont_blk, TYPE_I64, 1)
+    let next = emit_binop(jfn, cont_blk, OP_ADD, idx2, one)
+    let st3 = Instr{}
+    st3.op = OP_STORE
+    st3.operand0 = next
+    st3.operand1 = idx_slot
+    emit(jfn, cont_blk, &st3)
+    emit_jmp(jfn, cont_blk, head)
+    let ld_result = Instr{}
+    ld_result.op = OP_LOAD
+    ld_result.operand0 = found_slot
+    g_iter_exit_bb = exit
+    ret emit(jfn, exit, &ld_result)
+}
+
+fn emit_filter_jir(jfn: &JirFunction, bb: i64, arr_id: i64, len_id: i64, cls_id: i64) -> i64 {
+    let one_pre = emit_const(jfn, bb, TYPE_I64, 1)
+    let len_plus = emit_binop(jfn, bb, OP_ADD, len_id, one_pre)
+    let eight_pre = emit_const(jfn, bb, TYPE_I64, 8)
+    let alloc_sz = emit_binop(jfn, bb, OP_MUL, len_plus, eight_pre)
+    let alloc_ins = Instr{}
+    alloc_ins.op = OP_ALLOC
+    alloc_ins.operand0 = alloc_sz
+    let out_raw = emit(jfn, bb, &alloc_ins)
+    let base = emit_binop(jfn, bb, OP_ADD, out_raw, eight_pre)
+    let idx_slot = alloc_slot(jfn)
+    let oi_slot = alloc_slot(jfn)
+    let arr_slot = alloc_slot(jfn)
+    let len_slot = alloc_slot(jfn)
+    let cls_slot = alloc_slot(jfn)
+    let base_slot = alloc_slot(jfn)
+    let out_raw_slot = alloc_slot(jfn)
+    let elem_slot = alloc_slot(jfn)
+    let zero = emit_const(jfn, bb, TYPE_I64, 0)
+    let st0 = Instr{}
+    st0.op = OP_STORE
+    st0.operand0 = zero
+    st0.operand1 = idx_slot
+    emit(jfn, bb, &st0)
+    let st_oi = Instr{}
+    st_oi.op = OP_STORE
+    st_oi.operand0 = zero
+    st_oi.operand1 = oi_slot
+    emit(jfn, bb, &st_oi)
+    let st_arr = Instr{}
+    st_arr.op = OP_STORE
+    st_arr.operand0 = arr_id
+    st_arr.operand1 = arr_slot
+    emit(jfn, bb, &st_arr)
+    let st_len = Instr{}
+    st_len.op = OP_STORE
+    st_len.operand0 = len_id
+    st_len.operand1 = len_slot
+    emit(jfn, bb, &st_len)
+    let st_cls = Instr{}
+    st_cls.op = OP_STORE
+    st_cls.operand0 = cls_id
+    st_cls.operand1 = cls_slot
+    emit(jfn, bb, &st_cls)
+    let st_base = Instr{}
+    st_base.op = OP_STORE
+    st_base.operand0 = base
+    st_base.operand1 = base_slot
+    emit(jfn, bb, &st_base)
+    let st_out_raw = Instr{}
+    st_out_raw.op = OP_STORE
+    st_out_raw.operand0 = out_raw
+    st_out_raw.operand1 = out_raw_slot
+    emit(jfn, bb, &st_out_raw)
+    let head = create_block_live(jfn)
+    let body = create_block_live(jfn)
+    let exit = create_block_live(jfn)
+    emit_jmp(jfn, bb, head)
+    let ld_idx = Instr{}
+    ld_idx.op = OP_LOAD
+    ld_idx.operand0 = idx_slot
+    let idx = emit(jfn, head, &ld_idx)
+    let ld_len = Instr{}
+    ld_len.op = OP_LOAD
+    ld_len.operand0 = len_slot
+    let len_val = emit(jfn, head, &ld_len)
+    let cond = emit_binop(jfn, head, OP_CMP_LT, idx, len_val)
+    emit_br(jfn, head, cond, body, exit)
+    let ld_idx2 = Instr{}
+    ld_idx2.op = OP_LOAD
+    ld_idx2.operand0 = idx_slot
+    let idx2 = emit(jfn, body, &ld_idx2)
+    let ld_arr = Instr{}
+    ld_arr.op = OP_LOAD
+    ld_arr.operand0 = arr_slot
+    let arr_val = emit(jfn, body, &ld_arr)
+    let ld_cls = Instr{}
+    ld_cls.op = OP_LOAD
+    ld_cls.operand0 = cls_slot
+    let cls_val = emit(jfn, body, &ld_cls)
+    let eight = emit_const(jfn, body, TYPE_I64, 8)
+    let off = emit_binop(jfn, body, OP_MUL, idx2, eight)
+    let addr = emit_binop(jfn, body, OP_ADD, arr_val, off)
+    let ld_elem = Instr{}
+    ld_elem.op = OP_LOAD_MEM
+    ld_elem.operand0 = addr
+    ld_elem.itype = TYPE_I64
+    let elem = emit(jfn, body, &ld_elem)
+    let st_elem_slot = Instr{}
+    st_elem_slot.op = OP_STORE
+    st_elem_slot.operand0 = elem
+    st_elem_slot.operand1 = elem_slot
+    emit(jfn, body, &st_elem_slot)
+    let result = emit_closure_call_1arg(jfn, body, cls_val, elem)
+    let zero_body = emit_const(jfn, body, TYPE_I64, 0)
+    let ne_zero = emit_binop(jfn, body, OP_CMP_NE, result, zero_body)
+    let then_blk = create_block_live(jfn)
+    let cont_blk = create_block_live(jfn)
+    emit_br(jfn, body, ne_zero, then_blk, cont_blk)
+    let ld_oi = Instr{}
+    ld_oi.op = OP_LOAD
+    ld_oi.operand0 = oi_slot
+    let oi = emit(jfn, then_blk, &ld_oi)
+    let ld_base = Instr{}
+    ld_base.op = OP_LOAD
+    ld_base.operand0 = base_slot
+    let base_val = emit(jfn, then_blk, &ld_base)
+    let ld_elem2 = Instr{}
+    ld_elem2.op = OP_LOAD
+    ld_elem2.operand0 = elem_slot
+    let elem2 = emit(jfn, then_blk, &ld_elem2)
+    let eight_t = emit_const(jfn, then_blk, TYPE_I64, 8)
+    let oi_off = emit_binop(jfn, then_blk, OP_MUL, oi, eight_t)
+    let out_addr = emit_binop(jfn, then_blk, OP_ADD, base_val, oi_off)
+    let st_elem = Instr{}
+    st_elem.op = OP_STORE_MEM
+    st_elem.itype = TYPE_I64
+    st_elem.operand0 = elem2
+    st_elem.operand1 = out_addr
+    emit(jfn, then_blk, &st_elem)
+    let one_t = emit_const(jfn, then_blk, TYPE_I64, 1)
+    let new_oi = emit_binop(jfn, then_blk, OP_ADD, oi, one_t)
+    let st_oi2 = Instr{}
+    st_oi2.op = OP_STORE
+    st_oi2.operand0 = new_oi
+    st_oi2.operand1 = oi_slot
+    emit(jfn, then_blk, &st_oi2)
+    emit_jmp(jfn, then_blk, cont_blk)
+    let one = emit_const(jfn, cont_blk, TYPE_I64, 1)
+    let next = emit_binop(jfn, cont_blk, OP_ADD, idx2, one)
+    let st3 = Instr{}
+    st3.op = OP_STORE
+    st3.operand0 = next
+    st3.operand1 = idx_slot
+    emit(jfn, cont_blk, &st3)
+    emit_jmp(jfn, cont_blk, head)
+    let ld_final_cnt = Instr{}
+    ld_final_cnt.op = OP_LOAD
+    ld_final_cnt.operand0 = oi_slot
+    let final_cnt = emit(jfn, exit, &ld_final_cnt)
+    let ld_out_raw = Instr{}
+    ld_out_raw.op = OP_LOAD
+    ld_out_raw.operand0 = out_raw_slot
+    let out_raw_val = emit(jfn, exit, &ld_out_raw)
+    let ld_base_exit = Instr{}
+    ld_base_exit.op = OP_LOAD
+    ld_base_exit.operand0 = base_slot
+    let base_exit = emit(jfn, exit, &ld_base_exit)
+    let st_cnt = Instr{}
+    st_cnt.op = OP_STORE_MEM
+    st_cnt.itype = TYPE_I64
+    st_cnt.operand0 = final_cnt
+    st_cnt.operand1 = out_raw_val
+    emit(jfn, exit, &st_cnt)
+    g_iter_exit_bb = exit
+    ret base_exit
+}
+
+; check_iter_dispatch: check if a call is an iterator builtin.
+; Uses globals to avoid large arg counts (jda0 4-arg limit).
+; Caller sets: g_iter_matched=0, then calls this.
+; On match: g_iter_matched=1, g_iter_result=emitted value.
+fn check_iter_dispatch(src: &i8, ns: i64, nl: i64) {
+    g_iter_matched = 0
+    if nl == 4 and streq(src, ns, 4, "each") == 1 {
+        g_iter_result = emit_each_jir(g_jfn, g_iter_bb, g_iter_a0, g_iter_a1, g_iter_a2)
+        g_iter_matched = 1
+        ret ok(0)
+    }
+    if nl == 3 and streq(src, ns, 3, "map") == 1 {
+        g_iter_result = emit_map_jir(g_jfn, g_iter_bb, g_iter_a0, g_iter_a1, g_iter_a2)
+        g_iter_matched = 1
+        ret ok(0)
+    }
+    if nl == 6 and streq(src, ns, 6, "reduce") == 1 {
+        g_iter_result = emit_reduce_jir(g_jfn, g_iter_bb, g_iter_a0, g_iter_a1, g_iter_a2, g_iter_a3)
+        g_iter_matched = 1
+        ret ok(0)
+    }
+    if nl == 6 and streq(src, ns, 6, "filter") == 1 {
+        g_iter_result = emit_filter_jir(g_jfn, g_iter_bb, g_iter_a0, g_iter_a1, g_iter_a2)
+        g_iter_matched = 1
+        ret ok(0)
+    }
+    if nl == 3 and streq(src, ns, 3, "any") == 1 {
+        g_iter_result = emit_any_jir(g_jfn, g_iter_bb, g_iter_a0, g_iter_a1, g_iter_a2)
+        g_iter_matched = 1
+        ret ok(0)
+    }
+    if nl == 3 and streq(src, ns, 3, "sum") == 1 {
+        g_iter_result = emit_sum_jir(g_jfn, g_iter_bb, g_iter_a0, g_iter_a1)
+        g_iter_matched = 1
+        ret ok(0)
+    }
+    if nl == 5 and streq(src, ns, 5, "count") == 1 {
+        g_iter_result = emit_count_jir(g_jfn, g_iter_bb, g_iter_a0, g_iter_a1, g_iter_a2)
+        g_iter_matched = 1
+        ret ok(0)
+    }
 }
 
 fn alloc_slot(jfn: &JirFunction) -> i64 {
@@ -8442,6 +9305,22 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
     let is_call = 0
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LPAREN { is_call = 1 }
     if is_call == 1 {
+        ; Check if it's an iterator builtin
+        if t.str_len >= 3 and t.str_len <= 6 {
+            let is_iter = 0
+            if t.str_len == 4 and streq(g_src_buf_ptr, t.str_start, 4, "each") == 1 { is_iter = 1 }
+            if t.str_len == 3 and streq(g_src_buf_ptr, t.str_start, 3, "map") == 1 { is_iter = 1 }
+            if t.str_len == 6 and streq(g_src_buf_ptr, t.str_start, 6, "reduce") == 1 { is_iter = 1 }
+            if t.str_len == 6 and streq(g_src_buf_ptr, t.str_start, 6, "filter") == 1 { is_iter = 1 }
+            if t.str_len == 3 and streq(g_src_buf_ptr, t.str_start, 3, "any") == 1 { is_iter = 1 }
+            if t.str_len == 3 and streq(g_src_buf_ptr, t.str_start, 3, "sum") == 1 { is_iter = 1 }
+            if t.str_len == 5 and streq(g_src_buf_ptr, t.str_start, 5, "count") == 1 { is_iter = 1 }
+            if is_iter == 1 {
+                g_iter_name_start = t.str_start
+                g_iter_name_len = t.str_len
+                ret codegen_iter_call_inline(g_dbg_toks_init, &g_main_pos, g_stab_ptr, g_src_buf_ptr, g_jfn, bb)
+            }
+        }
         ret live_codegen_call_inline(t, bb)
     }
     ; Generic call: name<type>(args) → resolve to mangled name
@@ -8780,8 +9659,13 @@ fn live_codegen_lambda_inline(bb: i64) -> i64 {
     fins.str_start = nm_off
     fins.str_len = nm_len
     let fn_id = emit(g_jfn, bb, &fins)
-    if cap_cnt == 0 { ret fn_id }
-    ; Closure: allocate struct [fn_ptr, cap0, ...]
+    ; If no captures and not forced, return fn_addr directly
+    if cap_cnt == 0 and g_force_closure_wrap == 0 { ret fn_id }
+    ; Mark force-wrapped zero-capture lambdas with -1 sentinel
+    if cap_cnt == 0 and g_force_closure_wrap == 1 {
+        g_lambda_starts[64 + li] = -1
+    }
+    ; Wrap in closure object: [fn_ptr, cap0, ...]
     let sz_id = emit_const(g_jfn, bb, TYPE_I64, (1 + cap_cnt) * 8)
     let cls_alloc = Instr{}
     cls_alloc.op = OP_ALLOC
@@ -15873,6 +16757,10 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         }
     }
     rhs_id = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+    if g_iter_exit_bb != -1 {
+        cur = g_iter_exit_bb
+        g_iter_exit_bb = -1
+    }
     ; ? operator: unwrap Result, early-return on Err
     let let_cur = cur
     if tok_type_at_raw(toks0, g_main_pos) == TOK_QUESTION {
@@ -16250,6 +17138,10 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
             }
         }
         
+        if g_iter_exit_bb != -1 {
+            cur = g_iter_exit_bb
+            g_iter_exit_bb = -1
+        }
         if keep_going == 1 {
             if g_main_pos <= before_stmt {
                 if g_main_pos < g_dbg_tok_cnt {
@@ -17388,10 +18280,15 @@ fn compile_stashed_lambdas(toks: &Token, src: &i8, src_len: i64) {
 fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx: &LowerCtx) {
     let lam_idx = g_lam_cur_idx
     let cap_cnt = g_lambda_starts[64 + lam_idx]
+    let force_wrapped = 0
+    if cap_cnt == -1 {
+        force_wrapped = 1
+        cap_cnt = 0
+    }
     let cap_base = lam_idx * 8
-    ; If closure, inject hidden first param "__cls"
+    ; Inject hidden first param "__cls" for closures
     let cls_slot = -1
-    if cap_cnt > 0 {
+    if cap_cnt > 0 or force_wrapped == 1 {
         let cls_off = g_runtime_src_len
         poke_byte(src, cls_off, 95)
         poke_byte(src, cls_off + 1, 95)
@@ -18113,7 +19010,6 @@ fn main(argc: i64, argv_ptr: &i64) {
         }
         ci_f = ci_f + 1
     }
-    print("AFTER_LOOP\n")
     let out_fd = syscall(2, out_path, 577, 493)
     if out_fd < 0 { panic("open output failed") }
     g_emit_glob_buf = glob_buf
