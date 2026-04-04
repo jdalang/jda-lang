@@ -10605,6 +10605,21 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_div = 0
     if ins.op == OP_DIV { is_div = 1 }
     if is_div == 1 {
+        ; Spill and evict live values in RAX/RDX before idiv clobbers them
+        let rax_val = ctx.ra.reg2val[0]
+        if rax_val != -1 {
+            if rax_val != ins.operand0 and rax_val != ins.operand1 {
+                ensure_spilled(ctx.ra, out, pos, rax_val)
+                regalloc_free(ctx.ra, rax_val)
+            }
+        }
+        let rdx_val = ctx.ra.reg2val[2]
+        if rdx_val != -1 {
+            if rdx_val != ins.operand0 and rdx_val != ins.operand1 {
+                ensure_spilled(ctx.ra, out, pos, rdx_val)
+                regalloc_free(ctx.ra, rdx_val)
+            }
+        }
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let b = get_or_load(ctx.ra, out, pos, ins.operand1)
         let safe_b = b
