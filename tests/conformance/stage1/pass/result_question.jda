@@ -1,0 +1,29 @@
+fn try_ok() -> i64 {
+    ret Result.Ok(42)
+}
+
+fn try_err() -> i64 {
+    ret Result.Err(1)
+}
+
+fn use_ok() -> i64 {
+    let v = try_ok()?
+    ret Result.Ok(v + 1)
+}
+
+fn use_err() -> i64 {
+    let v = try_err()?
+    ret Result.Ok(v + 1)
+}
+
+fn main() {
+    let r1 = use_ok()
+    let r2 = use_err()
+    let t1 = r1[0]
+    let v1 = r1[1]
+    let t2 = r2[0]
+    let v2 = r2[1]
+    if t1 == 0 and v1 == 43 and t2 == 1 and v2 == 1 {
+        print("ok")
+    }
+}

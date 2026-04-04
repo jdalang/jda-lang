@@ -46,7 +46,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] Argument count checking at call sites ✅
 - [x] Type inference from function return types ✅
 - [x] Enums and pattern matching ✅
-- [ ] `Result<T, E>` and `?` operator
+- [x] `Result<T, E>` and `?` operator ✅
 - [ ] `impl` blocks and methods
 - [ ] Generics (monomorphization)
 - [ ] Compile-Time Reference Counting (CTRC) — automated memory safety, no GC
