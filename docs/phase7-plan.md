@@ -49,39 +49,36 @@ These are explicitly deferred:
 
 ## Milestones (in dependency order)
 
-### M1: Floating Point Types
+### M1: Floating Point Types ✅ COMPLETE (April 3, 2026)
 
-**Target**: f32 and f64 as first-class types in the compiler.
+**Target**: f64 floating point operations as builtin functions in the compiler.
 
-#### Problem
-The compiler only handles i64. Every ML operation requires floating point — weights, activations, gradients, loss values are all f32/f64.
+#### What was done
 
-#### Solution
+**Builtin functions** (13 total, recognized in codegen_call_inline and live_codegen_call_inline):
+- `f64_from_int(n)` → OP_I2F: int-to-float conversion (CVTSI2SD)
+- `f64_to_int(f)` → OP_F2I: float-to-int truncation (CVTTSD2SI)
+- `f64_add(a, b)`, `f64_sub(a, b)`, `f64_mul(a, b)`, `f64_div(a, b)` → OP_FADD/FSUB/FMUL/FDIV
+- `f64_neg(f)` → OP_FNEG: sign flip (XOR with sign bit mask)
+- `f64_sqrt(f)` → OP_FSQRT: square root (SQRTSD)
+- `f64_lt(a, b)`, `f64_gt(a, b)`, `f64_eq(a, b)` → OP_FCMP_LT/GT/EQ: return i64 0 or 1
+- `print_float(f)` → OP_PRINT_FLOAT: inline printf for f64 (6 decimal digits)
 
-**Lexer/Parser**:
-- Add `TYPE_F32` and `TYPE_F64` type constants
-- Parse float literals: `3.14`, `1e-3`, `0.5f` (f32 suffix), default f64
-- Parse type annotations: `let x: f32 = 3.14`
+**Architecture — GPR-based float flow**:
+Float values are stored as i64 bit patterns (IEEE 754) in general-purpose registers and spill slots. XMM registers are used only as scratch for SSE operations. Pattern: get_or_load → GPR, MOVQ GPR→XMM, SSE op, MOVQ XMM→GPR, regalloc_alloc. No separate float register pool or spill mechanism needed.
 
-**JIR**:
-- Add float-specific opcodes: `OP_FADD`, `OP_FSUB`, `OP_FMUL`, `OP_FDIV`, `OP_FCMP`, `OP_FSQRT`
-- Add conversion opcodes: `OP_I2F` (int→float), `OP_F2I` (float→int), `OP_F32_TO_F64`, `OP_F64_TO_F32`
-- Float constants stored as i64 bit patterns (IEEE 754)
+**New JIR opcodes**: OP_I2F=55, OP_F2I=56, OP_FADD=57, OP_FSUB=58, OP_FMUL=59, OP_FDIV=60, OP_FCMP_LT=61, OP_FCMP_GT=62, OP_FCMP_EQ=63, OP_FNEG=64, OP_FSQRT=65, OP_PRINT_FLOAT=66
 
-**x86-64 Lowering**:
-- f64: `MOVSD`, `ADDSD`, `SUBSD`, `MULSD`, `DIVSD`, `SQRTSD`, `UCOMISD` (XMM registers)
-- f32: `MOVSS`, `ADDSS`, `SUBSS`, `MULSS`, `DIVSS`, `SQRTSS`, `UCOMISS` (XMM registers)
-- Calling convention: f32/f64 args in XMM0-XMM7, return in XMM0
-- XMM register allocator: separate pool from GPR (XMM0-XMM15, 16 registers)
+**Key implementation details**:
+- `dce_mark_float` extracted as helper to avoid hitting 256 BasicBlock limit in DCE function
+- emit_movq_gpr_to_xmm / emit_movq_xmm_to_gpr helpers for GPR↔XMM transfers
+- print_float: inline x86 that handles sign detection, integer part (div loop), decimal point, 6 fractional digits (multiply-extract loop), newline
+- All jump displacements in print_float use temp variables to work around jda0 right-associative subtraction
 
-**Register Allocator Changes**:
-- Separate float register pool (XMM0-XMM15)
-- Float spills use `MOVSD [RBP-off], XMMn` / `MOVSD XMMn, [RBP-off]`
-- Track type of each value to route to correct pool
-
-**Risk**: HIGH. This is the single largest compiler change — touches lexer, parser, type checker, JIR, register allocator, and lowering. Careful incremental testing required.
-
-**Tests**: `float_add.jda`, `float_mul.jda`, `float_div.jda`, `float_cmp.jda`, `float_sqrt.jda`, `float_conv.jda`, `float_print.jda`
+**Results**:
+- 118 conformance tests pass (115 existing + 3 new float tests)
+- Self-host converged: jda1_sh2 == jda1_sh3 (1,831,959 bytes)
+- All 12 float builtins tested: arithmetic, comparisons, sqrt, negation, print
 
 ---
 

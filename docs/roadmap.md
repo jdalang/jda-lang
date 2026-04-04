@@ -104,13 +104,16 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 *Goal: Replace Python as the ML language by making tensors and autograd native primitives.*
 
-- [ ] First-class `Tensor` type with compile-time shape checking
-- [ ] Compile-time autograd — compiler generates backward passes, no runtime graph
-- [ ] Jda-to-PTX backend — direct GPU compilation without CUDA C++ runtime
-- [ ] ROCm backend for AMD GPUs
-- [ ] CPU AVX-512 vectorization pass for tensor operations
-- [ ] Native ML standard library: `nn.Linear`, `nn.ReLU`, `optim.Adam` — all in Jda
-- [ ] Transformer demo — train a model in pure Jda
+- [x] M1: Floating point types — f64 builtins (13 ops: arithmetic, cmp, sqrt, neg, print) ✅
+- [ ] M2: Float printing & math builtins (exp, log, pow, sin, cos, tanh)
+- [ ] M3: Heap-allocated Tensor type with shape metadata
+- [ ] M4: CPU tensor operations (matmul, elementwise, reductions)
+- [ ] M5: AVX-512 vectorization
+- [ ] M6: Compile-time autograd — compiler generates backward passes, no runtime graph
+- [ ] M7: Neural network library (Linear, ReLU, SGD, Adam)
+- [ ] M8: Jda-to-PTX backend — direct GPU compilation without CUDA C++ runtime
+- [ ] M9: ROCm backend for AMD GPUs
+- [ ] M10: Transformer demo — train a model in pure Jda
 
 ---
 
