@@ -122,8 +122,6 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 ## Phase 8 — Ecosystem & Tooling
 
-*Goal: Make Jda a production-ready language with developer tooling, cross-platform support, and a package ecosystem.*
-
 ### M1: Built-in Test Framework
 - `jda test` command — discovers and runs test functions (`fn test_*`)
 - Assertion builtins: `assert_eq`, `assert_ne`, `assert_true`, `assert_close` (for floats)
@@ -146,7 +144,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 
 ### M4: Formatter
 - `jda fmt` — canonical formatting for all Jda source files
-- Consistent indentation (4 spaces), brace style, line length
+- Consistent indentation (2 spaces), brace style, line length
 - Idempotent: running twice produces same output
 - `jda fmt --check` for CI enforcement
 
