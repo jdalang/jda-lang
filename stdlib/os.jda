@@ -1,0 +1,218 @@
+; =============================================================================
+; jda::os -- Operating System Interface
+; =============================================================================
+; Environment variables, process management, signals, and system info.
+; Direct Linux syscalls. No libc.
+;
+; Functions:
+;   os_getenv(name, name_len, buf, max) -> value length (-1 if not found)
+;   os_setenv(name, value) -> 0 (note: only in-process via environ)
+;   os_getcwd(buf, max) -> string length
+;   os_chdir(path) -> 0 on success, -1 on error
+;   os_getpid() -> process ID
+;   os_getppid() -> parent process ID
+;   os_getuid() -> user ID
+;   os_exit(code) -> does not return
+;   os_exec(path, argv, envp) -> -1 on error (does not return on success)
+;   os_fork() -> 0 in child, child PID in parent, -1 on error
+;   os_wait(status_ptr) -> child PID
+;   os_kill(pid, sig) -> 0 on success, -1 on error
+;   os_signal(signum, handler) -> previous handler
+;   os_sleep_ms(milliseconds) -> 0 on success
+;   os_hostname(buf, max) -> length
+;   os_uname(buf, max) -> length (writes "Linux <release> <machine>")
+; =============================================================================
+
+;; Get environment variable value.
+;; Scans /proc/self/environ for name=value pairs.
+fn os_getenv(name: &i8, name_len: i64, buf: &i8, max: i64) -> i64 {
+    ; Read /proc/self/environ
+    let envbuf = alloc_pages(4)
+    let fd = syscall(2, "/proc/self/environ", 0, 0)
+    if fd < 0 { ret -1 }
+    let total = syscall(0, fd, envbuf, 16384)
+    syscall(3, fd, 0, 0)
+    if total < 1 { ret -1 }
+
+    ; Scan null-separated entries for name=
+    let pos = 0
+    let envp: &i8 = envbuf
+    loop pos < total {
+        ; Find entry length
+        let start = pos
+        loop pos < total {
+            if envp[pos] == 0 { break }
+            pos = pos + 1
+        }
+        let entry_len = pos - start
+
+        ; Check if entry starts with name=
+        if entry_len > name_len {
+            let namep: &i8 = name
+            let matched = 1
+            let j = 0
+            loop j < name_len {
+                if envp[start + j] != namep[j] { matched = 0 }
+                j = j + 1
+            }
+            if matched == 1 {
+                if envp[start + name_len] == 61 {  ; '='
+                    let val_start = start + name_len + 1
+                    let val_len = entry_len - name_len - 1
+                    if val_len > max { val_len = max }
+                    let bufp: &i8 = buf
+                    let k = 0
+                    loop k < val_len {
+                        bufp[k] = envp[val_start + k]
+                        k = k + 1
+                    }
+                    ret val_len
+                }
+            }
+        }
+        pos = pos + 1  ; skip null terminator
+    }
+    ret -1
+}
+
+;; Get current working directory.
+fn os_getcwd(buf: &i8, max: i64) -> i64 {
+    ; getcwd syscall = 79
+    let r = syscall(79, buf, max, 0)
+    if r < 0 { ret -1 }
+    ; Find length (null-terminated)
+    let p: &i8 = buf
+    let len = 0
+    loop len < max {
+        if p[len] == 0 { ret len }
+        len = len + 1
+    }
+    ret len
+}
+
+;; Change current directory.
+fn os_chdir(path: &i8) -> i64 {
+    ; chdir syscall = 80
+    let r = syscall(80, path, 0, 0)
+    if r < 0 { ret -1 }
+    ret 0
+}
+
+;; Get current process ID.
+fn os_getpid() -> i64 {
+    ; getpid syscall = 39
+    ret syscall(39, 0, 0, 0)
+}
+
+;; Get parent process ID.
+fn os_getppid() -> i64 {
+    ; getppid syscall = 110
+    ret syscall(110, 0, 0, 0)
+}
+
+;; Get user ID.
+fn os_getuid() -> i64 {
+    ; getuid syscall = 102
+    ret syscall(102, 0, 0, 0)
+}
+
+;; Exit the process.
+fn os_exit(code: i64) -> i64 {
+    ; exit_group syscall = 231
+    syscall(231, code, 0, 0)
+    ret 0
+}
+
+;; Fork the current process.
+fn os_fork() -> i64 {
+    ; fork syscall = 57
+    ret syscall(57, 0, 0, 0)
+}
+
+;; Execute a program (replaces current process image).
+fn os_exec(path: &i8, argv: &i64, envp: &i64) -> i64 {
+    ; execve syscall = 59
+    ret syscall(59, path, argv, envp)
+}
+
+;; Wait for child process.
+fn os_wait(status_ptr: &i64) -> i64 {
+    ; wait4 syscall = 61, pid=-1 (any child), options=0, rusage=0
+    ret syscall(61, -1, status_ptr, 0)
+}
+
+;; Send signal to process.
+fn os_kill(pid: i64, sig: i64) -> i64 {
+    ; kill syscall = 62
+    let r = syscall(62, pid, sig, 0)
+    if r < 0 { ret -1 }
+    ret 0
+}
+
+;; Sleep for given milliseconds.
+fn os_sleep_ms(ms: i64) -> i64 {
+    ; nanosleep syscall = 35
+    ; struct timespec { tv_sec, tv_nsec }
+    let ts = alloc_pages(1)
+    let tsp: &i64 = ts
+    tsp[0] = ms / 1000              ; seconds
+    tsp[1] = (ms - (ms / 1000) * 1000) * 1000000  ; nanoseconds
+    ret syscall(35, ts, 0, 0)
+}
+
+;; Get hostname.
+fn os_hostname(buf: &i8, max: i64) -> i64 {
+    ; Read /proc/sys/kernel/hostname
+    let fd = syscall(2, "/proc/sys/kernel/hostname", 0, 0)
+    if fd < 0 { ret -1 }
+    let n = syscall(0, fd, buf, max)
+    syscall(3, fd, 0, 0)
+    ; Strip trailing newline
+    if n > 0 {
+        let p: &i8 = buf
+        if p[n - 1] == 10 { n = n - 1 }
+    }
+    ret n
+}
+
+;; Get system info (uname).
+fn os_uname(buf: &i8, max: i64) -> i64 {
+    ; uname syscall = 63
+    let ubuf = alloc_pages(1)
+    let r = syscall(63, ubuf, 0, 0)
+    if r < 0 { ret -1 }
+    ; struct utsname: sysname[65], nodename[65], release[65], version[65], machine[65]
+    ; Copy sysname + " " + release + " " + machine
+    let p: &i8 = buf
+    let up: &i8 = ubuf
+    let pos = 0
+    ; Copy sysname
+    let j = 0
+    loop j < 64 {
+        if up[j] == 0 { break }
+        if pos < max { p[pos] = up[j] }
+        pos = pos + 1
+        j = j + 1
+    }
+    if pos < max { p[pos] = 32 }  ; space
+    pos = pos + 1
+    ; Copy release (offset 130)
+    j = 0
+    loop j < 64 {
+        if up[130 + j] == 0 { break }
+        if pos < max { p[pos] = up[130 + j] }
+        pos = pos + 1
+        j = j + 1
+    }
+    if pos < max { p[pos] = 32 }
+    pos = pos + 1
+    ; Copy machine (offset 260)
+    j = 0
+    loop j < 64 {
+        if up[260 + j] == 0 { break }
+        if pos < max { p[pos] = up[260 + j] }
+        pos = pos + 1
+        j = j + 1
+    }
+    ret pos
+}

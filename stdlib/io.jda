@@ -1,0 +1,127 @@
+; =============================================================================
+; jda::io -- Buffered I/O and Stream Helpers
+; =============================================================================
+; Buffered reading/writing for stdin, stdout, and file descriptors.
+; Direct Linux syscalls. No libc.
+;
+; Functions:
+;   io_read_stdin(buf, max) -> bytes read
+;   io_write_stdout(data, len) -> bytes written
+;   io_write_stderr(data, len) -> bytes written
+;   io_read_line(fd, buf, max) -> line length (including newline)
+;   io_read_fd(fd, buf, max) -> bytes read
+;   io_write_fd(fd, data, len) -> bytes written
+;   io_flush_fd(fd) -> 0 on success
+;   io_print_i64(val) -> 0 (prints integer to stdout)
+;   io_print_str(s, len) -> bytes written
+;   io_println(s, len) -> bytes written (appends newline)
+; =============================================================================
+
+fn io_read_stdin(buf: &i8, max_bytes: i64) -> i64 {
+    ret syscall(0, 0, buf, max_bytes)
+}
+
+fn io_write_stdout(data: &i8, len: i64) -> i64 {
+    ret syscall(1, 1, data, len)
+}
+
+fn io_write_stderr(data: &i8, len: i64) -> i64 {
+    ret syscall(1, 2, data, len)
+}
+
+fn io_read_line(fd: i64, buf: &i8, max_bytes: i64) -> i64 {
+    ; Read one byte at a time until newline or max
+    let i = 0
+    loop i < max_bytes {
+        let n = syscall(0, fd, buf + i, 1)
+        if n < 1 { ret i }
+        i = i + 1
+        let ch: &i8 = buf + i - 1
+        if ch[0] == 10 { ret i }  ; newline
+    }
+    ret i
+}
+
+fn io_read_fd(fd: i64, buf: &i8, max_bytes: i64) -> i64 {
+    let total = 0
+    let keep = 1
+    loop keep == 1 {
+        let remaining = max_bytes - total
+        if remaining < 1 { keep = 0 }
+        if keep == 1 {
+            let n = syscall(0, fd, buf + total, remaining)
+            if n < 1 {
+                keep = 0
+            } else {
+                total = total + n
+            }
+        }
+    }
+    ret total
+}
+
+fn io_write_fd(fd: i64, data: &i8, len: i64) -> i64 {
+    let total = 0
+    let keep = 1
+    loop keep == 1 {
+        let remaining = len - total
+        if remaining < 1 { keep = 0 }
+        if keep == 1 {
+            let n = syscall(1, fd, data + total, remaining)
+            if n < 1 {
+                keep = 0
+            } else {
+                total = total + n
+            }
+        }
+    }
+    ret total
+}
+
+fn io_flush_fd(fd: i64) -> i64 {
+    ; fsync syscall = 74
+    ret syscall(74, fd, 0, 0)
+}
+
+fn io_print_i64(val: i64) -> i64 {
+    ; Convert integer to decimal string and print
+    let buf = alloc_pages(1)
+    let neg = 0
+    let v = val
+    if v < 0 {
+        neg = 1
+        v = 0 - v
+    }
+    let pos = 20
+    let ptr: &i8 = buf
+    if v == 0 {
+        pos = pos - 1
+        ptr[pos] = 48  ; '0'
+    }
+    loop v > 0 {
+        pos = pos - 1
+        let digit = v - (v / 10) * 10
+        ptr[pos] = 48 + digit
+        v = v / 10
+    }
+    if neg == 1 {
+        pos = pos - 1
+        ptr[pos] = 45  ; '-'
+    }
+    let len = 20 - pos
+    syscall(1, 1, buf + pos, len)
+    ret 0
+}
+
+fn io_print_str(s: &i8, len: i64) -> i64 {
+    ret syscall(1, 1, s, len)
+}
+
+fn io_println(s: &i8, len: i64) -> i64 {
+    let n = syscall(1, 1, s, len)
+    let nl = alloc_pages(1)
+    let nlp: &i8 = nl
+    nlp[0] = 10
+    syscall(1, 1, nl, 1)
+    ret n + 1
+}
