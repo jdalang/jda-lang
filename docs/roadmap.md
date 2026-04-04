@@ -77,7 +77,7 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 *Goal: Close the gap with C -O2. Target: fib35 <5x, sum_loop <3x, self-compile <5s.*
 
 - [x] P1: Right-sized stack frames (524KB→actual usage, fib35: 709x→5.6x) ✅
-- [ ] P2: Eliminate unconditional spilling (lazy spill on eviction)
+- [x] P2: Conditional spilling (skip spill for single-use values, -264KB binary, fib35: 5.4x→5.0x) ✅
 - [x] P3: Selective register save/restore (only save live regs around calls, -60KB binary) ✅
 - [x] P4: Stack probe skip for small frames (<64KB, eliminates probe for all P1-sized frames) ✅
 - [ ] P5: Callee-saved register preference (add R13-R15)
