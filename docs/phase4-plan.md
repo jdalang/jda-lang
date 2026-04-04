@@ -109,43 +109,30 @@
 
 ---
 
-### M5: Peephole Optimization
+### M5: Peephole Optimization ✅
 
-**Why fifth**: After higher-level optimizations are in place, peephole catches the low-hanging x86-64 patterns that the lowering pass generates.
+**Completed**: April 3, 2026
 
-**Tasks**:
-1. **MOV elimination**
-   - `MOV rax, rbx; MOV rbx, rax` → delete second MOV
-   - `MOV rax, rax` → delete (NOP)
-   - `MOV rax, rbx; <op> rax` → `<op> rbx` (if rax dead after)
+**What was done**:
+1. **JIR-level strength reduction** (`peephole(jfn)` pass):
+   - `OP_MUL val, const_power_of_2` → `OP_SHL val, const_log2` (covers 2, 4, 8, ..., 65536)
+   - `OP_DIV val, const_power_of_2` → `OP_SHR val, const_log2`
+   - Helper functions: `log2_of_pow2()` returns log2 for powers of 2, `set_const_imm()` modifies OP_CONST in-place
 
-2. **Strength reduction**
-   - `IMUL rax, 2` → `SHL rax, 1`
-   - `IMUL rax, 4` → `SHL rax, 2`
-   - `IMUL rax, 8` → `SHL rax, 3` (common for array indexing: `idx * 8`)
-   - `DIV by power-of-2` → `SHR`
+2. **x86-level zero-constant optimization** (in `lower_instr_constlike`):
+   - `MOV r64, 0` (10 bytes: REX.W B8+rd imm64) → `XOR r64, r64` (3 bytes: REX.W 33 ModRM)
+   - Saves 7 bytes per zero constant. The compiler has thousands of `let x = 0` patterns.
 
-3. **Address mode fusion**
-   - `MOV rax, [rbx]; ADD rax, 8; MOV rcx, [rax]` → `MOV rcx, [rbx + 8]`
-   - x86-64 supports `[base + disp32]` addressing — use it
+3. **Compare-and-branch optimization** (in `emit_cmp_zero`):
+   - `CMP r, 0` (4 bytes: REX.W 83 /7 00) → `TEST r, r` (3 bytes: REX.W 85 ModRM)
+   - Saves 1 byte per branch condition. Every `if` statement uses this.
 
-4. **Compare-and-branch fusion**
-   - `CMP rax, 0; JE target` → `TEST rax, rax; JE target`
-   - `SUB rax, rbx; JE target` → omit separate CMP (SUB sets flags)
+4. All 82 conformance tests pass (including new `peephole_mul_pow2` and `peephole_div_pow2` tests)
+5. Self-host converged at 2,016,311 bytes
 
-5. **Constant folding in lowering**
-   - `MOV rax, 0` → `XOR rax, rax` (smaller encoding)
-   - `ADD rax, 0` → delete
-   - `IMUL rax, 1` → delete
+**Impact**: Binary size reduced by 23,489 bytes (from 2,039,800 to 2,016,311) — a 1.2% reduction. The XOR-for-zero optimization is the biggest contributor since zero is the most common constant value (variable initialization, loop counters, comparisons). The TEST optimization saves ~1 byte per branch across thousands of branches.
 
-6. **Implementation approach** — post-lowering pass over emitted bytes
-   - Two options: (a) pattern-match on JIR before lowering, or (b) pattern-match on x86 bytes after
-   - Prefer (a) — work at JIR level where patterns are clearer
-   - Add a `peephole()` pass between `dce()` and lowering
-
-**Expected impact**: 5-10% speedup from reduced instruction count. Significant improvement for array-heavy code (struct field access = base + offset * 8).
-
-**Risk**: Low. Peephole patterns are local and easily tested. Each pattern is independent.
+**Deferred**: MOV elimination, address mode fusion, and instruction scheduling. These require tracking x86-level instruction dependencies and register liveness, which is more complex than the current pattern-matching approach.
 
 ---
 
