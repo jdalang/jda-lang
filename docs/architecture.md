@@ -4,17 +4,28 @@ Jda bypasses LLVM and builds its own compiler pipeline entirely in Jda — from 
 
 ## Bootstrap Pipeline
 
-Jda is bootstrapped from assembly with zero external dependencies:
+The default build uses the self-hosted bootstrap compiler — no NASM or assembly tools required:
+
+```
+jda1-bootstrap → jda1 (compiles jda1.jda → 1.77 MB ELF binary)
+         jda1 → jda1_b (self-compiled → 1.77 MB, identical to jda1)
+```
+
+The bootstrap binary (`bootstrap/bin/jda1-bootstrap`) is itself a converged self-hosted compiler. It is checked into git with a SHA-256 checksum.
+
+### Historical Bootstrap (jda0, retired)
+
+The original bootstrap path used hand-written assembly:
 
 ```
 nasm + ld → jda0 (seed compiler, ~147K lines of x86-64 assembly)
-     jda0 → jda1 (stage 1, compiles jda1.jda → 374 KB ELF binary)
-     jda1 → jda1_sh2 (stage 2, self-compiled → 1.77 MB)
-  jda1_sh2 → jda1_sh3 (stage 3 → 1.77 MB)
-  jda1_sh3 → jda1_sh4 (stage 4 → 1.77 MB, identical to stage 3)
+     jda0 → jda1 (stage 1, 374 KB)
+     jda1 → jda1_sh2 (stage 2, 1.77 MB)
+  jda1_sh2 → jda1_sh3 (stage 3, 1.77 MB)
+  jda1_sh3 → jda1_sh4 (stage 4, 1.77 MB, identical to stage 3)
 ```
 
-Stage 3 and stage 4 are byte-identical, proving the compiler is a fixed point.
+jda0 source is preserved in `bootstrap/stage0/` for historical reference. The legacy build can be invoked with `make stage1-from-asm` (requires NASM).
 
 ## Compiler Stages
 
@@ -74,25 +85,42 @@ These patterns exist because jda0 has specific miscompilation bugs:
 
 3. **No `rex_byte()` function calls** — 4-argument function calls are miscompiled by jda0. The REX byte computation is inlined at all 18 call sites.
 
-These workarounds can be removed once jda0 is retired and jda1 becomes the bootstrap compiler.
+These workarounds exist because the code must still compile correctly when built by jda0 (legacy path). Once jda0 is fully retired and the self-hosted bootstrap is the only build path, these can be cleaned up — though they are harmless and the self-hosted compiler handles them correctly.
 
 ## Build System
 
-The `Makefile` in `bootstrap/stage0/` handles assembly and linking:
+The `Makefile` in `bootstrap/stage0/` builds jda1 from the self-hosted bootstrap compiler:
 
 ```bash
-make stage1    # nasm jda0.asm → jda0.o → jda0 → jda1
+make stage1      # jda1-bootstrap compiles jda1.jda → jda1
+make selfhost    # full 4-stage convergence verification
+make test        # compile and run hello.jda
 ```
 
-Self-host stages run in Docker (Linux x86-64 on any host):
+Legacy build from assembly (requires NASM):
+
+```bash
+make stage1-from-asm   # nasm → jda0 → jda1
+```
+
+All builds run in Docker (Linux x86-64 on any host):
 
 ```bash
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
-  -v $(PWD)/bootstrap:/jda -w /jda/stage0 jda-build sh -c \
-  "./jda1 ../stage1/jda1.jda jda1_sh2"
+  -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make stage1
 ```
 
 The large stack ulimit (500 MB) is needed because `JirFunction` is 6.3 MB and the compiler processes 250+ functions.
+
+### Updating the Bootstrap Binary
+
+When `jda1.jda` changes, the bootstrap binary must be updated:
+
+```bash
+make update-bootstrap   # selfhost → verify convergence → copy to bootstrap/bin/
+```
+
+Then commit `bootstrap/bin/jda1-bootstrap` and `bootstrap/bin/CHECKSUMS`.
 
 ## Future Architecture
 
