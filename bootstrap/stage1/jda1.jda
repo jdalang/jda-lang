@@ -246,6 +246,8 @@ struct JirFunction {
     param_slots:i64[16]
     var_owned:  i64[256]
     var_alloc_sz: i64[256]
+    var_linear: i64[256]
+    var_consumed: i64[256]
 }
 
 struct ConstVal {
@@ -302,6 +304,7 @@ let g_struct_name_off: &i64 = 0
 let g_struct_name_len: &i64 = 0
 let g_struct_flat_cnt = 0
 let g_struct_sizes:    &i64 = 0
+let g_struct_is_linear: &i64 = 0
 ; Flat field table (avoids jda0 struct-array-field offset bug in lookup_field_idx_any)
 let g_field_owner:    &i64 = 0
 let g_field_name_off: &i64 = 0
@@ -2897,6 +2900,7 @@ fn init_large_post_lex_state() {
     g_struct_name_off = alloc_pages(1)
     g_struct_name_len = alloc_pages(1)
     g_struct_sizes    = alloc_pages(1)
+    g_struct_is_linear = alloc_pages(1)
     g_struct_flat_cnt = 0
     g_field_owner    = alloc_pages(2)
     g_field_name_off = alloc_pages(2)
@@ -3017,6 +3021,8 @@ fn clear_owned_flags(jfn: &JirFunction) {
     let oi = 0
     loop oi < 256 {
         jfn.var_owned[oi] = 0
+        jfn.var_linear[oi] = 0
+        jfn.var_consumed[oi] = 0
         oi = oi + 1
     }
 }
@@ -3467,9 +3473,18 @@ fn stab_set_struct_tail(stab: &StructTable, sid: i64, fcnt: i64, off: i64, base:
 }
 
 fn parse_struct_decl(toks: &Token, stab: &StructTable, src: &i8) {
+    ; Check for 'linear' prefix
+    let is_linear = 0
+    let ls = tok_str_start_at(toks, g_main_pos)
+    let ll = tok_str_len_at(toks, g_main_pos)
+    if ll == 6 and streq(src, ls, 6, "linear") == 1 {
+        is_linear = 1
+        g_main_pos = g_main_pos + 1
+    }
     ; Check if this is actually a struct declaration
     if tok_type_at_raw(toks, g_main_pos) != TOK_STRUCT {
-        ret
+        if tok_str_len_at(toks, g_main_pos) != 6 { ret }
+        if streq(src, tok_str_start_at(toks, g_main_pos), 6, "struct") != 1 { ret }
     }
     let st_name_start = tok_str_start_at(toks, g_main_pos + 1)
     let st_name_len = tok_str_len_at(toks, g_main_pos + 1)
@@ -3559,6 +3574,7 @@ fn parse_struct_decl(toks: &Token, stab: &StructTable, src: &i8) {
     }
     expect(TOK_RBRACE)
     stab_set_struct_tail(stab, sid, fcnt, off, base)
+    g_struct_is_linear[sid] = is_linear
 }
 
 fn parse_expr_stmt_ident_fast_body(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, save: i64) -> Node {
@@ -6403,6 +6419,11 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ret emit_arena_destroy_jir(jfn, bb, arg0, arg1)
     }
 
+    ; Linear types: consume() marks a linear variable as consumed
+    if name_len == 7 and streq(src, name_start, 7, "consume") == 1 {
+        ret emit_const(jfn, bb, TYPE_I64, 0)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -7653,6 +7674,11 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     }
     if name.str_len == 13 and streq(g_src_buf_ptr, name.str_start, 13, "arena_destroy") == 1 {
         ret emit_arena_destroy_jir(g_jfn, bb, arg0, arg1)
+    }
+
+    ; Linear types: consume() marks a linear variable as consumed
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "consume") == 1 {
+        ret emit_const(g_jfn, bb, TYPE_I64, 0)
     }
 
     let ins = Instr{}
@@ -9668,6 +9694,14 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         jfn.var_owned[vidx] = 1
         jfn.var_alloc_sz[vidx] = ctrc_pages * 4096
     }
+    ; Linear types: mark variable as linear if its struct is linear
+    if bind_stype >= 1000 {
+        let lin_sid = bind_stype - 1000
+        if g_struct_is_linear[lin_sid] == 1 {
+            let vidx2 = jfn.var_cnt - 1
+            jfn.var_linear[vidx2] = 1
+        }
+    }
     if skip_store == 0 {
         if rhs_id == -1 {
             rhs_id = emit_const(jfn, let_cur, TYPE_I64, 0)
@@ -9861,7 +9895,25 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                             emit_jmp(jfn, cur, g_loop_ctrl)
                             keep_going = 0
                         }
-                        if is_break_stmt == 0 {
+                        ; Linear types: consume(var) marks a linear variable as consumed
+                        let is_consume_stmt = 0
+                        if name_len == 7 and streq(src, name_start, 7, "consume") == 1 {
+                            if tok_type_at_raw(toks0, g_main_pos + 1) == TOK_LPAREN {
+                                is_consume_stmt = 1
+                                g_main_pos = g_main_pos + 2
+                                let cv_start = tok_str_start_at(toks0, g_main_pos)
+                                let cv_len = tok_str_len_at(toks0, g_main_pos)
+                                g_main_pos = g_main_pos + 1
+                                if tok_type_at_raw(toks0, g_main_pos) == TOK_RPAREN {
+                                    g_main_pos = g_main_pos + 1
+                                }
+                                let cv_idx = lookup_idx_name(jfn, cv_start, cv_len)
+                                if cv_idx >= 0 {
+                                    jfn.var_consumed[cv_idx] = 1
+                                }
+                            }
+                        }
+                        if is_break_stmt == 0 and is_consume_stmt == 0 {
                         let fs_has_dot = tok_type_at(toks0, g_main_pos + 1) == TOK_DOT
                         let fs_has_eq = tok_type_at(toks0, g_main_pos + 3) == TOK_EQ
                         if fs_has_dot and fs_has_eq {
@@ -9989,6 +10041,14 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                 }
             }
         }
+    }
+    ; Linear types: check all linear vars in this scope are consumed
+    let li = saved_var_cnt
+    loop li < jfn.var_cnt {
+        if jfn.var_linear[li] == 1 and jfn.var_consumed[li] == 0 {
+            report_error("linear variable must be consumed before scope exit")
+        }
+        li = li + 1
     }
     ; CTRC: drop owned vars from this scope at block exit
     ctrc_emit_drops_clear(jfn, cur, saved_var_cnt, jfn.var_cnt)
@@ -11245,6 +11305,8 @@ fn main(argc: i64, argv_ptr: &i64) {
         } else if top_t == TOK_ENUM {
             parse_enum_decl(toks, src_buf)
         } else if top_t == TOK_STRUCT or (top_len == 6 and streq(src_buf, top_start, 6, "struct") == 1) {
+            parse_struct_decl(toks, g_stab_ptr, src_buf)
+        } else if top_len == 6 and streq(src_buf, top_start, 6, "linear") == 1 {
             parse_struct_decl(toks, g_stab_ptr, src_buf)
         } else if top_t == TOK_FN or (top_len == 2 and streq(src_buf, top_start, 2, "fn") == 1) {
             let fn_tok_pos = g_main_pos

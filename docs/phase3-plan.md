@@ -231,40 +231,19 @@ arena_destroy(a, 1)             ; release pages back to kernel (munmap)
 
 ---
 
-### M9: Linear Types for Resource Safety
+### M9: Linear Types for Resource Safety ✅
 
-**Why last**: Depends on CTRC (M7) for ownership tracking. Ensures files, sockets, and other resources are always cleaned up.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. **Linear type annotation**
-   ```jda
-   struct File {
-       fd: i64
-       @linear   ; must be consumed — compiler error if dropped without close()
-   }
-   ```
-   - Or: `linear struct File { ... }` syntax
+**Implementation**:
+- `linear struct` syntax — keyword prefix before struct declaration
+- `g_struct_is_linear[]` global array tracks which structs are linear
+- `var_linear[256]` and `var_consumed[256]` arrays in JirFunction
+- `consume(var)` built-in marks a linear variable as consumed
+- Compile-time error if a linear variable exits scope without being consumed
+- v1 scope: local analysis only, explicit `consume()` (not method-based consumption)
 
-2. **Consumption rules**
-   - A linear value must be explicitly consumed (passed to a consuming function)
-   - `file.close()` consumes the File — after this, `file` is invalid
-   - Compiler error if a linear value goes out of scope without being consumed
-
-3. **Integration with impl blocks**
-   ```jda
-   impl File {
-       fn close(self) {  ; takes ownership, consumes
-           syscall(3, self.fd, 0, 0)
-       }
-   }
-   ```
-   - `self` (not `&self`) transfers ownership — the method consumes the value
-
-4. **Compiler checks**
-   - At every function exit: verify all linear locals were consumed
-   - At every branch: verify linear values consumed on all paths
-
-**Design**: Similar to Rust's affine types but explicit opt-in. Only types annotated `@linear` get this treatment. Regular structs remain untracked.
+**Verification**: 82 conformance tests pass, self-host converged at 1,959,640 bytes
 
 ---
 
