@@ -20,9 +20,10 @@
 *Goal: Make Jda usable by external developers.*
 
 - [ ] CLI interface (`jda build`, `jda run`)
-- [ ] Error diagnostics with line/column reporting
+- [x] Line/column tracking in lexer ✅
+- [ ] Error diagnostics with source context
 - [ ] Linux installer script
-- [x] Retire jda0 — use self-hosted jda1 as the bootstrap compiler
+- [x] Retire jda0 — use self-hosted jda1 as the bootstrap compiler ✅
 - [ ] Minimal standard library: `fs` (file I/O via syscalls), `fmt` (formatting), `time`
 - [ ] Versioning and release process
 
