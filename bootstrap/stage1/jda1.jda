@@ -768,19 +768,39 @@ fn parse_enum_decl(toks: &Token, src: &i8) {
     g_enum_buf[p] = ename_start
     g_enum_buf[p + 1] = ename_len
     let cnt_slot = p + 2
-    p = p + 3
+    let maxf_slot = p + 3
+    p = p + 4
     let tag = 0
+    let max_fields = 0
     loop tok_type_at(toks, g_main_pos) != TOK_RBRACE and tok_type_at(toks, g_main_pos) != TOK_EOF {
         let vstart = tok_str_start_at(toks, g_main_pos)
         let vlen = tok_str_len_at(toks, g_main_pos)
         g_main_pos = g_main_pos + 1
+        let fcnt = 0
+        if tok_type_at(toks, g_main_pos) == TOK_LPAREN {
+            g_main_pos = g_main_pos + 1
+            loop tok_type_at(toks, g_main_pos) != TOK_RPAREN and tok_type_at(toks, g_main_pos) != TOK_EOF {
+                g_main_pos = g_main_pos + 1
+                if tok_type_at(toks, g_main_pos) == TOK_COLON {
+                    g_main_pos = g_main_pos + 2
+                }
+                fcnt = fcnt + 1
+                if tok_type_at(toks, g_main_pos) == TOK_COMMA {
+                    g_main_pos = g_main_pos + 1
+                }
+            }
+            expect(TOK_RPAREN)
+        }
         g_enum_buf[p] = vstart
         g_enum_buf[p + 1] = vlen
         g_enum_buf[p + 2] = tag
-        p = p + 3
+        g_enum_buf[p + 3] = fcnt
+        p = p + 4
+        if fcnt > max_fields { max_fields = fcnt }
         tag = tag + 1
     }
     g_enum_buf[cnt_slot] = tag
+    g_enum_buf[maxf_slot] = max_fields
     g_enum_buf[0] = p
     expect(TOK_RBRACE)
 }
@@ -795,7 +815,7 @@ fn lookup_enum_dot(src: &i8, ename_start: i64, ename_len: i64, vname_start: i64,
         if en_len == ename_len and str_match(src, en_off, ename_start, ename_len) == 1 {
             let j = 0
             loop j < vcnt {
-                let vi = p + 3 + j * 3
+                let vi = p + 4 + j * 4
                 let voff = g_enum_buf[vi]
                 let vln = g_enum_buf[vi + 1]
                 if vln == vname_len and str_match(src, voff, vname_start, vname_len) == 1 {
@@ -805,9 +825,47 @@ fn lookup_enum_dot(src: &i8, ename_start: i64, ename_len: i64, vname_start: i64,
             }
             ret -1
         }
-        p = p + 3 + vcnt * 3
+        p = p + 4 + vcnt * 4
     }
     ret -1
+}
+
+fn lookup_enum_field_cnt(src: &i8, ename_start: i64, ename_len: i64, vname_start: i64, vname_len: i64) -> i64 {
+    let p = 1
+    loop p < g_enum_buf[0] {
+        let en_off = g_enum_buf[p]
+        let en_len = g_enum_buf[p + 1]
+        let vcnt = g_enum_buf[p + 2]
+        if en_len == ename_len and str_match(src, en_off, ename_start, ename_len) == 1 {
+            let j = 0
+            loop j < vcnt {
+                let vi = p + 4 + j * 4
+                let voff = g_enum_buf[vi]
+                let vln = g_enum_buf[vi + 1]
+                if vln == vname_len and str_match(src, voff, vname_start, vname_len) == 1 {
+                    ret g_enum_buf[vi + 3]
+                }
+                j = j + 1
+            }
+            ret 0
+        }
+        p = p + 4 + vcnt * 4
+    }
+    ret 0
+}
+
+fn lookup_enum_max_fields(src: &i8, ename_start: i64, ename_len: i64) -> i64 {
+    let p = 1
+    loop p < g_enum_buf[0] {
+        let en_off = g_enum_buf[p]
+        let en_len = g_enum_buf[p + 1]
+        let vcnt = g_enum_buf[p + 2]
+        if en_len == ename_len and str_match(src, en_off, ename_start, ename_len) == 1 {
+            ret g_enum_buf[p + 3]
+        }
+        p = p + 4 + vcnt * 4
+    }
+    ret 0
 }
 
 ; Scan tokens for generic function declarations: fn name<T>(
@@ -6164,13 +6222,45 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
             pos[0] = pos[0] + 1
             ret emit_const(jfn, bb, TYPE_I64, cval)
         }
-        ; Enum variant: EnumName.Variant → integer tag
+        ; Enum variant: EnumName.Variant or EnumName.Variant(args)
         if tok_type_at(toks, pos[0] + 1) == TOK_DOT and g_enum_buf != 0 {
             let ev_start = tok_str_start_at(toks, pos[0] + 2)
             let ev_len = tok_str_len_at(toks, pos[0] + 2)
             let ev_tag = lookup_enum_dot(src, t_start, t_len, ev_start, ev_len)
             if ev_tag >= 0 {
                 pos[0] = pos[0] + 3
+                if tok_type_at(toks, pos[0]) == TOK_LPAREN {
+                    pos[0] = pos[0] + 1
+                    let ev_mf = lookup_enum_max_fields(src, t_start, t_len)
+                    let ev_sz = emit_const(jfn, bb, TYPE_I64, (1 + ev_mf) * 8)
+                    let ev_alloc = Instr{}
+                    ev_alloc.op = OP_ALLOC
+                    ev_alloc.operand0 = ev_sz
+                    let ev_ptr = emit(jfn, bb, &ev_alloc)
+                    let ev_tag_id = emit_const(jfn, bb, TYPE_I64, ev_tag)
+                    let ev_st = Instr{}
+                    ev_st.op = OP_STORE_MEM
+                    ev_st.itype = TYPE_I64
+                    ev_st.operand0 = ev_tag_id
+                    ev_st.operand1 = ev_ptr
+                    emit(jfn, bb, &ev_st)
+                    let ev_fi = 0
+                    loop tok_type_at(toks, pos[0]) != TOK_RPAREN and tok_type_at(toks, pos[0]) != TOK_EOF {
+                        let ev_arg = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+                        let ev_foff = emit_const(jfn, bb, TYPE_I64, (ev_fi + 1) * 8)
+                        let ev_faddr = emit_binop(jfn, bb, OP_ADD, ev_ptr, ev_foff)
+                        let ev_fst = Instr{}
+                        ev_fst.op = OP_STORE_MEM
+                        ev_fst.itype = TYPE_I64
+                        ev_fst.operand0 = ev_arg
+                        ev_fst.operand1 = ev_faddr
+                        emit(jfn, bb, &ev_fst)
+                        ev_fi = ev_fi + 1
+                        if tok_type_at(toks, pos[0]) == TOK_COMMA { pos[0] = pos[0] + 1 }
+                    }
+                    if tok_type_at(toks, pos[0]) == TOK_RPAREN { pos[0] = pos[0] + 1 }
+                    ret ev_ptr
+                }
                 ret emit_const(jfn, bb, TYPE_I64, ev_tag)
             }
         }
@@ -6424,6 +6514,11 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ret emit_const(jfn, bb, TYPE_I64, 0)
     }
 
+    if name_len == 9 and streq(src, name_start, 9, "print_int") == 1 {
+        emit_print_int(jfn, bb, arg0)
+        ret arg0
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -6457,10 +6552,10 @@ fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     ret emit_syscall_raw(jfn, bb, nr, a0, a1, a2)
 }
 
-fn emit_print_int(jfn: &JirFunction, bb: i64, imm_val: i64) {
+fn emit_print_int(jfn: &JirFunction, bb: i64, val_id: i64) {
     let ins = Instr{}
     ins.op       = OP_PRINT_INT
-    ins.imm      = imm_val
+    ins.operand0 = val_id
     emit(jfn, bb, &ins)
 }
 
@@ -7447,13 +7542,45 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
             }
         }
     }
-    ; Enum variant: EnumName.Variant → integer tag
+    ; Enum variant: EnumName.Variant or EnumName.Variant(args)
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_DOT and g_enum_buf != 0 {
         let ev_start = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos + 1)
         let ev_len = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos + 1)
         let ev_tag = lookup_enum_dot(g_src_buf_ptr, t.str_start, t.str_len, ev_start, ev_len)
         if ev_tag >= 0 {
             g_main_pos = g_main_pos + 2
+            if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LPAREN {
+                g_main_pos = g_main_pos + 1
+                let ev_mf = lookup_enum_max_fields(g_src_buf_ptr, t.str_start, t.str_len)
+                let ev_sz = emit_const(g_jfn, bb, TYPE_I64, (1 + ev_mf) * 8)
+                let ev_alloc = Instr{}
+                ev_alloc.op = OP_ALLOC
+                ev_alloc.operand0 = ev_sz
+                let ev_ptr = emit(g_jfn, bb, &ev_alloc)
+                let ev_tag_id = emit_const(g_jfn, bb, TYPE_I64, ev_tag)
+                let ev_st = Instr{}
+                ev_st.op = OP_STORE_MEM
+                ev_st.itype = TYPE_I64
+                ev_st.operand0 = ev_tag_id
+                ev_st.operand1 = ev_ptr
+                emit(g_jfn, bb, &ev_st)
+                let ev_fi = 0
+                loop tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RPAREN and tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_EOF {
+                    let ev_arg = live_codegen_expr_inline(bb)
+                    let ev_foff = emit_const(g_jfn, bb, TYPE_I64, (ev_fi + 1) * 8)
+                    let ev_faddr = emit_binop(g_jfn, bb, OP_ADD, ev_ptr, ev_foff)
+                    let ev_fst = Instr{}
+                    ev_fst.op = OP_STORE_MEM
+                    ev_fst.itype = TYPE_I64
+                    ev_fst.operand0 = ev_arg
+                    ev_fst.operand1 = ev_faddr
+                    emit(g_jfn, bb, &ev_fst)
+                    ev_fi = ev_fi + 1
+                    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_COMMA { g_main_pos = g_main_pos + 1 }
+                }
+                if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_RPAREN { g_main_pos = g_main_pos + 1 }
+                ret ev_ptr
+            }
             ret emit_const(g_jfn, bb, TYPE_I64, ev_tag)
         }
     }
@@ -7679,6 +7806,11 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     ; Linear types: consume() marks a linear variable as consumed
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "consume") == 1 {
         ret emit_const(g_jfn, bb, TYPE_I64, 0)
+    }
+
+    if name.str_len == 9 and streq(g_src_buf_ptr, name.str_start, 9, "print_int") == 1 {
+        emit_print_int(g_jfn, bb, arg0)
+        ret arg0
     }
 
     let ins = Instr{}
@@ -8785,8 +8917,135 @@ fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
 }
 
 fn lower_print_int(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
-    ; Selfhost bring-up: keep OP_PRINT_INT lowering tiny/stable.
-    ret ok(0)
+    ; Save caller state
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+
+    ; Load value into a register, then move to r12
+    let val_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_mov_rr(out, pos, PHYS_R12, val_r)
+
+    ; sub rsp, 32  (stack buffer for digits + newline)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xEC)
+    emit_byte(out, pos, 32)
+
+    ; lea rcx, [rsp + 31]   (point to end of buffer)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8D)
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 31)
+
+    ; mov byte [rcx], 10   (newline at end)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x01)
+    emit_byte(out, pos, 10)
+
+    ; mov r8, r12   (working copy of value)
+    emit_byte(out, pos, 0x4D)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0xE0)
+
+    ; mov r9, 10    (divisor)
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0xC1)
+    emit_i32_le(out, pos, 10)
+
+    ; === loop top (record position for backward jump) ===
+    let loop_top = pos[0]
+
+    ; xor rdx, rdx
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xD2)
+
+    ; mov rax, r8
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0xC0)
+
+    ; div r9  (rax = quotient, rdx = remainder)
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xF7)
+    emit_byte(out, pos, 0xF1)
+
+    ; add dl, 48   ('0')
+    emit_byte(out, pos, 0x80)
+    emit_byte(out, pos, 0xC2)
+    emit_byte(out, pos, 48)
+
+    ; dec rcx
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC9)
+
+    ; mov [rcx], dl
+    emit_byte(out, pos, 0x88)
+    emit_byte(out, pos, 0x11)
+
+    ; mov r8, rax  (quotient becomes new working value)
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0xC0)
+
+    ; test rax, rax
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x85)
+    emit_byte(out, pos, 0xC0)
+
+    ; jnz loop_top  (backward relative jump)
+    let jnz_off = loop_top - (pos[0] + 2)
+    emit_byte(out, pos, 0x75)
+    emit_byte(out, pos, mod256(jnz_off))
+
+    ; write(1, rcx, rsp+32-rcx)
+    ; mov rax, 0x02000004   (macOS SYS_WRITE) ... but we target Linux
+    ; mov rax, 1   (Linux SYS_WRITE)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0xC0)
+    emit_i32_le(out, pos, 1)
+
+    ; mov rdi, 1   (fd = stdout)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0xC7)
+    emit_i32_le(out, pos, 1)
+
+    ; mov rsi, rcx  (buf ptr)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0xCE)
+
+    ; lea rdx, [rsp + 32]
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8D)
+    emit_byte(out, pos, 0x54)
+    emit_byte(out, pos, 0x24)
+    emit_byte(out, pos, 32)
+
+    ; sub rdx, rcx  (len = end - ptr)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x29)
+    emit_byte(out, pos, 0xCA)
+
+    ; syscall
+    emit_syscall_instr(out, pos)
+
+    ; add rsp, 32  (restore stack)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC4)
+    emit_byte(out, pos, 32)
+
+    ; Restore pool and r12
+    emit_restore_pool(ctx.ra, out, pos)
+    emit_pop_r(out, pos, PHYS_R12)
+
+    consume_use(ctx, ins.operand0)
 }
 
 fn lower_syscall_push_arg(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64, idx: i64) {
@@ -9861,6 +10120,8 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                 if skip_asm_taken == 0 {
                     if t == TOK_IF {
                         cur = live_compile_if(toks0, stab, src, jfn, cur)
+                    } else if t == TOK_MATCH {
+                        cur = live_compile_match(toks0, stab, src, jfn, cur)
                     } else if t == TOK_LOOP {
                         cur = live_compile_loop(toks0, stab, src, jfn, cur)
                     } else if t == TOK_LET {
@@ -10668,6 +10929,67 @@ fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFuncti
         report_error("expected '}' to close loop block")
     }
     emit_jmp(jfn, body_end, start_bb)
+    ret merge_bb
+}
+
+fn live_compile_match(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    g_main_pos = g_main_pos + 1
+    let scrutinee = live_codegen_expr_inline(bb)
+    expect(TOK_LBRACE)
+    let ld_tag = Instr{}
+    ld_tag.op = OP_LOAD_MEM
+    ld_tag.itype = TYPE_I64
+    ld_tag.operand0 = scrutinee
+    let tag_val = emit(jfn, bb, &ld_tag)
+    let merge_bb = create_block_live(jfn)
+    let cur_bb = bb
+    let arm_tag = 0
+    loop tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RBRACE and tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_EOF {
+        g_main_pos = g_main_pos + 1
+        let arm_bb = create_block_live(jfn)
+        let next_bb = create_block_live(jfn)
+        let tag_const = emit_const(jfn, cur_bb, TYPE_I64, arm_tag)
+        let cmp = emit_binop(jfn, cur_bb, OP_CMP_EQ, tag_val, tag_const)
+        emit_br(jfn, cur_bb, cmp, arm_bb, next_bb)
+        let saved_vc = jfn.var_cnt
+        if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LPAREN {
+            g_main_pos = g_main_pos + 1
+            let field_idx = 0
+            loop tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RPAREN and tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_EOF {
+                let bname_s = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos)
+                let bname_l = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos)
+                g_main_pos = g_main_pos + 1
+                let foff = emit_const(jfn, arm_bb, TYPE_I64, (field_idx + 1) * 8)
+                let faddr = emit_binop(jfn, arm_bb, OP_ADD, scrutinee, foff)
+                let fld = Instr{}
+                fld.op = OP_LOAD_MEM
+                fld.itype = TYPE_I64
+                fld.operand0 = faddr
+                let fval = emit(jfn, arm_bb, &fld)
+                let fslot = bind_name(jfn, bname_s, bname_l, TYPE_I64)
+                let fst = Instr{}
+                fst.op = OP_STORE
+                fst.operand0 = fval
+                fst.operand1 = fslot
+                emit(jfn, arm_bb, &fst)
+                field_idx = field_idx + 1
+                if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_COMMA { g_main_pos = g_main_pos + 1 }
+            }
+            expect(TOK_RPAREN)
+        }
+        expect(TOK_EQ)
+        expect(TOK_GT)
+        let body_val = codegen_expr_inline(g_dbg_toks_init, &g_main_pos, stab, src, jfn, arm_bb)
+        let ret_ins = Instr{}
+        ret_ins.op = OP_RET
+        ret_ins.operand0 = body_val
+        emit(jfn, arm_bb, &ret_ins)
+        jfn.var_cnt = saved_vc
+        cur_bb = next_bb
+        arm_tag = arm_tag + 1
+    }
+    expect(TOK_RBRACE)
+    emit_jmp(jfn, cur_bb, merge_bb)
     ret merge_bb
 }
 
