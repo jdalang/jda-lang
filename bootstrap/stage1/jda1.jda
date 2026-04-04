@@ -78,6 +78,13 @@ const TOK_QUESTION= 50
 const TOK_IMPL    = 51
 const TOK_SPAWN   = 52
 
+; Derive trait IDs
+const DERIVE_DEBUG = 1
+const DERIVE_EQ    = 2
+const DERIVE_CLONE = 3
+const DERIVE_HASH  = 4
+const DERIVE_ZERO  = 5
+
 ; AST node types
 const NODE_FN     = 0
 const NODE_LET    = 1
@@ -435,6 +442,11 @@ let g_iter_a3 = -1
 let g_iter_name_start = 0
 let g_iter_name_len = 0
 let g_force_closure_wrap = 0
+let g_derive_trait_id: &i64 = 0
+let g_derive_sname_off: &i64 = 0
+let g_derive_sname_len: &i64 = 0
+let g_derive_struct_tok: &i64 = 0
+let g_derive_cnt = 0
 let g_dbg_main_steps = 0
 let g_small_err_loop = 0
 let g_small_err_branch = 0
@@ -1503,6 +1515,526 @@ fn expand_impl_blocks(tok_cnt: i64) -> i64 {
     }
     ret new_cnt
 }
+
+; --- Derive attribute support ---
+
+fn emit_tok(toks: &Token, out: i64, ty: i64, s: i64, l: i64) -> i64 {
+    tok_set_type(toks, out, ty)
+    tok_set_start(toks, out, s)
+    tok_set_len(toks, out, l)
+    tok_set_imm(toks, out, 0)
+    tok_set_line(toks, out, 0)
+    ret out + 1
+}
+
+fn write_src_bytes(buf: &i8, text: &i8, len: i64) -> i64 {
+    let off = g_runtime_src_len
+    let i = 0
+    loop i < len {
+        poke_byte(buf, off + i, load_i8_at(text, i))
+        i = i + 1
+    }
+    g_runtime_src_len = off + len
+    ret off
+}
+
+fn write_src_cstr(buf: &i8, text: &i8) -> i64 {
+    let off = g_runtime_src_len
+    let i = 0
+    loop load_i8_at(text, i) != 0 {
+        poke_byte(buf, off + i, load_i8_at(text, i))
+        i = i + 1
+    }
+    g_runtime_src_len = off + i
+    ret off
+}
+
+fn derive_write_mangled(src: &i8, sn_off: i64, sn_len: i64, method: &i8, meth_len: i64) -> i64 {
+    let moff = g_runtime_src_len
+    let i = 0
+    loop i < sn_len {
+        poke_byte(src, moff + i, load_i8_at(src, sn_off + i))
+        i = i + 1
+    }
+    poke_byte(src, moff + sn_len, 95)
+    i = 0
+    loop i < meth_len {
+        poke_byte(src, moff + sn_len + 1 + i, load_i8_at(method, i))
+        i = i + 1
+    }
+    let mlen = sn_len + 1 + meth_len
+    ; Write "\nfn Name " for FN_SCAN
+    let woff = moff + mlen
+    poke_byte(src, woff, 10)
+    poke_byte(src, woff + 1, 102)
+    poke_byte(src, woff + 2, 110)
+    poke_byte(src, woff + 3, 32)
+    i = 0
+    loop i < mlen {
+        poke_byte(src, woff + 4 + i, load_i8_at(src, moff + i))
+        i = i + 1
+    }
+    poke_byte(src, woff + 4 + mlen, 32)
+    g_runtime_src_len = woff + 4 + mlen + 1
+    ret moff
+}
+
+fn emit_fn_header(toks: &Token, out: i64, src: &i8, moff: i64, mlen: i64) -> i64 {
+    let fn_off = moff + mlen + 1
+    out = emit_tok(toks, out, TOK_IDENT, fn_off, 2)
+    out = emit_tok(toks, out, TOK_IDENT, moff, mlen)
+    out = emit_tok(toks, out, TOK_LPAREN, 0, 0)
+    ret out
+}
+
+; emit_param_ref inlined — 7-arg functions miscompiled by jda0
+
+fn scan_derive_attrs(tok_cnt: i64) {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    g_derive_cnt = 0
+    let i = 0
+    loop i + 4 < tok_cnt {
+        let t0 = tok_type_at_raw(toks, i)
+        if t0 == TOK_IDENT and tok_str_len_at_raw(toks, i) == 6 {
+            if streq(src, tok_str_start_at_raw(toks, i), 6, "derive") == 1 {
+                if tok_type_at_raw(toks, i + 1) == TOK_LPAREN {
+                    ; Find matching RPAREN
+                    let rp = i + 2
+                    loop rp < tok_cnt {
+                        if tok_type_at_raw(toks, rp) == TOK_RPAREN {
+                            rp = tok_cnt + rp
+                        } else {
+                            rp = rp + 1
+                        }
+                    }
+                    if rp >= tok_cnt {
+                        rp = rp - tok_cnt
+                    }
+                    ; Find struct after RPAREN
+                    let si = rp + 1
+                    let found_struct = 0
+                    if si < tok_cnt {
+                        let st = tok_type_at_raw(toks, si)
+                        if st == TOK_STRUCT { found_struct = 1 }
+                        if st == TOK_IDENT and tok_str_len_at_raw(toks, si) == 6 {
+                            if streq(src, tok_str_start_at_raw(toks, si), 6, "struct") == 1 {
+                                found_struct = 1
+                            }
+                        }
+                    }
+                    if found_struct == 1 {
+                        let sn_off = tok_str_start_at_raw(toks, si + 1)
+                        let sn_len = tok_str_len_at_raw(toks, si + 1)
+                        ; Parse trait names between parens
+                        let ti = i + 2
+                        loop ti < rp {
+                            let tt = tok_type_at_raw(toks, ti)
+                            if tt == TOK_IDENT {
+                                let tn_off = tok_str_start_at_raw(toks, ti)
+                                let tn_len = tok_str_len_at_raw(toks, ti)
+                                let trait_id = 0
+                                if tn_len == 5 and streq(src, tn_off, 5, "Debug") == 1 { trait_id = DERIVE_DEBUG }
+                                if tn_len == 2 and streq(src, tn_off, 2, "Eq") == 1 { trait_id = DERIVE_EQ }
+                                if tn_len == 5 and streq(src, tn_off, 5, "Clone") == 1 { trait_id = DERIVE_CLONE }
+                                if tn_len == 4 and streq(src, tn_off, 4, "Hash") == 1 { trait_id = DERIVE_HASH }
+                                if tn_len == 4 and streq(src, tn_off, 4, "Zero") == 1 { trait_id = DERIVE_ZERO }
+                                if trait_id > 0 and g_derive_cnt < 256 {
+                                    g_derive_trait_id[g_derive_cnt] = trait_id
+                                    g_derive_sname_off[g_derive_cnt] = sn_off
+                                    g_derive_sname_len[g_derive_cnt] = sn_len
+                                    g_derive_struct_tok[g_derive_cnt] = si
+                                    g_derive_cnt = g_derive_cnt + 1
+                                }
+                            }
+                            ti = ti + 1
+                        }
+                        ; Hide derive(...) tokens
+                        let hi = i
+                        loop hi <= rp {
+                            tok_set_type(toks, hi, TOK_EOF)
+                            tok_set_len(toks, hi, 0)
+                            hi = hi + 1
+                        }
+                    }
+                    i = rp + 1
+                } else {
+                    i = i + 1
+                }
+            } else {
+                i = i + 1
+            }
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+; Parse struct fields from token stream. struct_tok points to STRUCT keyword.
+; Calls callback-style: stores field names/lens in temp arrays.
+; Returns field count. Field info stored in g_derive_field_off/len arrays.
+let g_derive_field_off: &i64 = 0
+let g_derive_field_len: &i64 = 0
+
+fn derive_parse_fields(struct_tok: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    ; Find LBRACE after struct Name
+    let si = struct_tok + 2
+    loop tok_type_at_raw(toks, si) != TOK_LBRACE and si < g_dbg_tok_cnt {
+        si = si + 1
+    }
+    si = si + 1
+    ; Parse fields: IDENT COLON TYPE [LBRACK INT RBRACK]
+    let fcnt = 0
+    loop tok_type_at_raw(toks, si) != TOK_RBRACE and si < g_dbg_tok_cnt {
+        let ft = tok_type_at_raw(toks, si)
+        if ft == TOK_IDENT {
+            let foff = tok_str_start_at_raw(toks, si)
+            let flen = tok_str_len_at_raw(toks, si)
+            ; Check next is COLON (confirms this is a field, not something else)
+            if tok_type_at_raw(toks, si + 1) == TOK_COLON {
+                g_derive_field_off[fcnt] = foff
+                g_derive_field_len[fcnt] = flen
+                fcnt = fcnt + 1
+                ; Skip: IDENT COLON TYPE
+                si = si + 3
+                ; Skip optional array syntax [N]
+                if tok_type_at_raw(toks, si) == TOK_LBRACK {
+                    si = si + 1
+                    loop tok_type_at_raw(toks, si) != TOK_RBRACK and si < g_dbg_tok_cnt {
+                        si = si + 1
+                    }
+                    si = si + 1
+                }
+            } else {
+                si = si + 1
+            }
+        } else {
+            si = si + 1
+        }
+    }
+    ret fcnt
+}
+
+fn gen_derive_debug(struct_tok: i64, sn_off: i64, sn_len: i64, out: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let cnt = derive_parse_fields(struct_tok)
+    ; Write mangled name
+    let moff = derive_write_mangled(src, sn_off, sn_len, "debug", 5)
+    let mlen = sn_len + 1 + 5
+    let self_off = write_src_cstr(src, "self")
+    ; fn StructName_debug(self: &StructName) {
+    out = emit_fn_header(toks, out, src, moff, mlen)
+    out = emit_tok(toks, out, TOK_IDENT, self_off, 4)
+    out = emit_tok(toks, out, TOK_COLON, 0, 0)
+    out = emit_tok(toks, out, TOK_AMP, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, sn_off, sn_len)
+    out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+    out = emit_tok(toks, out, TOK_LBRACE, 0, 0)
+    ; print("StructName(")
+    let hdr_off = g_runtime_src_len
+    let hi = 0
+    loop hi < sn_len {
+        poke_byte(src, g_runtime_src_len, load_i8_at(src, sn_off + hi))
+        g_runtime_src_len = g_runtime_src_len + 1
+        hi = hi + 1
+    }
+    poke_byte(src, g_runtime_src_len, 40)
+    g_runtime_src_len = g_runtime_src_len + 1
+    let hdr_len = g_runtime_src_len - hdr_off
+    out = emit_tok(toks, out, TOK_PRINT, 0, 0)
+    out = emit_tok(toks, out, TOK_LPAREN, 0, 0)
+    out = emit_tok(toks, out, TOK_STR, hdr_off, hdr_len)
+    out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+    ; For each field
+    let fi = 0
+    loop fi < cnt {
+        let fn_off = g_derive_field_off[fi]
+        let fn_len = g_derive_field_len[fi]
+        ; print(", ") if not first
+        if fi > 0 {
+            let comma_off = write_src_cstr(src, ", ")
+            out = emit_tok(toks, out, TOK_PRINT, 0, 0)
+            out = emit_tok(toks, out, TOK_LPAREN, 0, 0)
+            out = emit_tok(toks, out, TOK_STR, comma_off, 2)
+            out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+        }
+        ; print("fieldname: ")
+        let label_off = g_runtime_src_len
+        let li = 0
+        loop li < fn_len {
+            poke_byte(src, g_runtime_src_len, load_i8_at(src, fn_off + li))
+            g_runtime_src_len = g_runtime_src_len + 1
+            li = li + 1
+        }
+        poke_byte(src, g_runtime_src_len, 58)
+        g_runtime_src_len = g_runtime_src_len + 1
+        poke_byte(src, g_runtime_src_len, 32)
+        g_runtime_src_len = g_runtime_src_len + 1
+        let label_len = g_runtime_src_len - label_off
+        out = emit_tok(toks, out, TOK_PRINT, 0, 0)
+        out = emit_tok(toks, out, TOK_LPAREN, 0, 0)
+        out = emit_tok(toks, out, TOK_STR, label_off, label_len)
+        out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+        ; let _dN = self.field
+        let tmp_off = g_runtime_src_len
+        poke_byte(src, g_runtime_src_len, 95)
+        g_runtime_src_len = g_runtime_src_len + 1
+        poke_byte(src, g_runtime_src_len, 100)
+        g_runtime_src_len = g_runtime_src_len + 1
+        poke_byte(src, g_runtime_src_len, 48 + fi)
+        g_runtime_src_len = g_runtime_src_len + 1
+        let tmp_len = 3
+        out = emit_tok(toks, out, TOK_LET, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, tmp_off, tmp_len)
+        out = emit_tok(toks, out, TOK_EQ, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, self_off, 4)
+        out = emit_tok(toks, out, TOK_DOT, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, fn_off, fn_len)
+        ; print("{_dN}")
+        let interp_off = g_runtime_src_len
+        poke_byte(src, g_runtime_src_len, 123)
+        g_runtime_src_len = g_runtime_src_len + 1
+        poke_byte(src, g_runtime_src_len, 95)
+        g_runtime_src_len = g_runtime_src_len + 1
+        poke_byte(src, g_runtime_src_len, 100)
+        g_runtime_src_len = g_runtime_src_len + 1
+        poke_byte(src, g_runtime_src_len, 48 + fi)
+        g_runtime_src_len = g_runtime_src_len + 1
+        poke_byte(src, g_runtime_src_len, 125)
+        g_runtime_src_len = g_runtime_src_len + 1
+        let interp_len = 5
+        out = emit_tok(toks, out, TOK_PRINT, 0, 0)
+        out = emit_tok(toks, out, TOK_LPAREN, 0, 0)
+        out = emit_tok(toks, out, TOK_STR, interp_off, interp_len)
+        out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+        fi = fi + 1
+    }
+    ; print(")")
+    let close_off = write_src_cstr(src, ")")
+    out = emit_tok(toks, out, TOK_PRINT, 0, 0)
+    out = emit_tok(toks, out, TOK_LPAREN, 0, 0)
+    out = emit_tok(toks, out, TOK_STR, close_off, 1)
+    out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+    ; }
+    out = emit_tok(toks, out, TOK_RBRACE, 0, 0)
+    ret out
+}
+
+fn gen_derive_eq(struct_tok: i64, sn_off: i64, sn_len: i64, out: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let cnt = derive_parse_fields(struct_tok)
+    let moff = derive_write_mangled(src, sn_off, sn_len, "eq", 2)
+    let mlen = sn_len + 1 + 2
+    let a_off = write_src_cstr(src, "a")
+    let b_off = write_src_cstr(src, "b")
+    ; fn StructName_eq(a: &StructName, b: &StructName) -> i64 {
+    out = emit_fn_header(toks, out, src, moff, mlen)
+    out = emit_tok(toks, out, TOK_IDENT, a_off, 1)
+    out = emit_tok(toks, out, TOK_COLON, 0, 0)
+    out = emit_tok(toks, out, TOK_AMP, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, sn_off, sn_len)
+    out = emit_tok(toks, out, TOK_COMMA, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, b_off, 1)
+    out = emit_tok(toks, out, TOK_COLON, 0, 0)
+    out = emit_tok(toks, out, TOK_AMP, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, sn_off, sn_len)
+    out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+    out = emit_tok(toks, out, TOK_ARROW, 0, 0)
+    out = emit_tok(toks, out, TOK_I64, 0, 0)
+    out = emit_tok(toks, out, TOK_LBRACE, 0, 0)
+    ; For each field: if a.field != b.field { ret 0 }
+    let fi = 0
+    loop fi < cnt {
+        let fn_off = g_derive_field_off[fi]
+        let fn_len = g_derive_field_len[fi]
+        out = emit_tok(toks, out, TOK_IF, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, a_off, 1)
+        out = emit_tok(toks, out, TOK_DOT, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, fn_off, fn_len)
+        out = emit_tok(toks, out, TOK_NEQ, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, b_off, 1)
+        out = emit_tok(toks, out, TOK_DOT, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, fn_off, fn_len)
+        out = emit_tok(toks, out, TOK_LBRACE, 0, 0)
+        out = emit_tok(toks, out, TOK_RET, 0, 0)
+        let zero_off = write_src_cstr(src, "0")
+        tok_set_type(toks, out, TOK_INT)
+        tok_set_start(toks, out, zero_off)
+        tok_set_len(toks, out, 1)
+        tok_set_imm(toks, out, 0)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        out = emit_tok(toks, out, TOK_RBRACE, 0, 0)
+        fi = fi + 1
+    }
+    ; ret 1
+    out = emit_tok(toks, out, TOK_RET, 0, 0)
+    let one_off = write_src_cstr(src, "1")
+    tok_set_type(toks, out, TOK_INT)
+    tok_set_start(toks, out, one_off)
+    tok_set_len(toks, out, 1)
+    tok_set_imm(toks, out, 1)
+    tok_set_line(toks, out, 0)
+    out = out + 1
+    out = emit_tok(toks, out, TOK_RBRACE, 0, 0)
+    ret out
+}
+
+fn gen_derive_clone(struct_tok: i64, sn_off: i64, sn_len: i64, out: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let cnt = derive_parse_fields(struct_tok)
+    let moff = derive_write_mangled(src, sn_off, sn_len, "clone", 5)
+    let mlen = sn_len + 1 + 5
+    let self_off = write_src_cstr(src, "self")
+    let dst_off = write_src_cstr(src, "dst")
+    out = emit_fn_header(toks, out, src, moff, mlen)
+    out = emit_tok(toks, out, TOK_IDENT, self_off, 4)
+    out = emit_tok(toks, out, TOK_COLON, 0, 0)
+    out = emit_tok(toks, out, TOK_AMP, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, sn_off, sn_len)
+    out = emit_tok(toks, out, TOK_COMMA, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, dst_off, 3)
+    out = emit_tok(toks, out, TOK_COLON, 0, 0)
+    out = emit_tok(toks, out, TOK_AMP, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, sn_off, sn_len)
+    out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+    out = emit_tok(toks, out, TOK_LBRACE, 0, 0)
+    let fi = 0
+    loop fi < cnt {
+        let fn_off = g_derive_field_off[fi]
+        let fn_len = g_derive_field_len[fi]
+        out = emit_tok(toks, out, TOK_IDENT, dst_off, 3)
+        out = emit_tok(toks, out, TOK_DOT, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, fn_off, fn_len)
+        out = emit_tok(toks, out, TOK_EQ, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, self_off, 4)
+        out = emit_tok(toks, out, TOK_DOT, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, fn_off, fn_len)
+        fi = fi + 1
+    }
+    out = emit_tok(toks, out, TOK_RBRACE, 0, 0)
+    ret out
+}
+
+fn gen_derive_zero(struct_tok: i64, sn_off: i64, sn_len: i64, out: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let cnt = derive_parse_fields(struct_tok)
+    let moff = derive_write_mangled(src, sn_off, sn_len, "zero", 4)
+    let mlen = sn_len + 1 + 4
+    let self_off = write_src_cstr(src, "self")
+    out = emit_fn_header(toks, out, src, moff, mlen)
+    out = emit_tok(toks, out, TOK_IDENT, self_off, 4)
+    out = emit_tok(toks, out, TOK_COLON, 0, 0)
+    out = emit_tok(toks, out, TOK_AMP, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, sn_off, sn_len)
+    out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+    out = emit_tok(toks, out, TOK_LBRACE, 0, 0)
+    let fi = 0
+    loop fi < cnt {
+        let fn_off = g_derive_field_off[fi]
+        let fn_len = g_derive_field_len[fi]
+        out = emit_tok(toks, out, TOK_IDENT, self_off, 4)
+        out = emit_tok(toks, out, TOK_DOT, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, fn_off, fn_len)
+        out = emit_tok(toks, out, TOK_EQ, 0, 0)
+        let zero_off = write_src_cstr(src, "0")
+        tok_set_type(toks, out, TOK_INT)
+        tok_set_start(toks, out, zero_off)
+        tok_set_len(toks, out, 1)
+        tok_set_imm(toks, out, 0)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        fi = fi + 1
+    }
+    out = emit_tok(toks, out, TOK_RBRACE, 0, 0)
+    ret out
+}
+
+fn gen_derive_hash(struct_tok: i64, sn_off: i64, sn_len: i64, out: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let cnt = derive_parse_fields(struct_tok)
+    let moff = derive_write_mangled(src, sn_off, sn_len, "hash", 4)
+    let mlen = sn_len + 1 + 4
+    let self_off = write_src_cstr(src, "self")
+    out = emit_fn_header(toks, out, src, moff, mlen)
+    out = emit_tok(toks, out, TOK_IDENT, self_off, 4)
+    out = emit_tok(toks, out, TOK_COLON, 0, 0)
+    out = emit_tok(toks, out, TOK_AMP, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, sn_off, sn_len)
+    out = emit_tok(toks, out, TOK_RPAREN, 0, 0)
+    out = emit_tok(toks, out, TOK_ARROW, 0, 0)
+    out = emit_tok(toks, out, TOK_I64, 0, 0)
+    out = emit_tok(toks, out, TOK_LBRACE, 0, 0)
+    ; let h = 2166136261
+    let h_off = write_src_cstr(src, "h")
+    out = emit_tok(toks, out, TOK_LET, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, h_off, 1)
+    out = emit_tok(toks, out, TOK_EQ, 0, 0)
+    let fnv_off = write_src_cstr(src, "2166136261")
+    tok_set_type(toks, out, TOK_INT)
+    tok_set_start(toks, out, fnv_off)
+    tok_set_len(toks, out, 10)
+    tok_set_imm(toks, out, 2166136261)
+    tok_set_line(toks, out, 0)
+    out = out + 1
+    let fi = 0
+    loop fi < cnt {
+        let fn_off = g_derive_field_off[fi]
+        let fn_len = g_derive_field_len[fi]
+        ; h = h * 16777619
+        out = emit_tok(toks, out, TOK_IDENT, h_off, 1)
+        out = emit_tok(toks, out, TOK_EQ, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, h_off, 1)
+        out = emit_tok(toks, out, TOK_STAR, 0, 0)
+        let prime_off = write_src_cstr(src, "16777619")
+        tok_set_type(toks, out, TOK_INT)
+        tok_set_start(toks, out, prime_off)
+        tok_set_len(toks, out, 8)
+        tok_set_imm(toks, out, 16777619)
+        tok_set_line(toks, out, 0)
+        out = out + 1
+        ; h = h + self.field
+        out = emit_tok(toks, out, TOK_IDENT, h_off, 1)
+        out = emit_tok(toks, out, TOK_EQ, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, h_off, 1)
+        out = emit_tok(toks, out, TOK_PLUS, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, self_off, 4)
+        out = emit_tok(toks, out, TOK_DOT, 0, 0)
+        out = emit_tok(toks, out, TOK_IDENT, fn_off, fn_len)
+        fi = fi + 1
+    }
+    out = emit_tok(toks, out, TOK_RET, 0, 0)
+    out = emit_tok(toks, out, TOK_IDENT, h_off, 1)
+    out = emit_tok(toks, out, TOK_RBRACE, 0, 0)
+    ret out
+}
+
+fn expand_derive_toks(tok_cnt: i64) -> i64 {
+    let out = tok_cnt
+    let di = 0
+    loop di < g_derive_cnt {
+        let trait_id = g_derive_trait_id[di]
+        let sn_off = g_derive_sname_off[di]
+        let sn_len = g_derive_sname_len[di]
+        let struct_tok = g_derive_struct_tok[di]
+        if trait_id == DERIVE_DEBUG { out = gen_derive_debug(struct_tok, sn_off, sn_len, out) }
+        if trait_id == DERIVE_EQ { out = gen_derive_eq(struct_tok, sn_off, sn_len, out) }
+        if trait_id == DERIVE_CLONE { out = gen_derive_clone(struct_tok, sn_off, sn_len, out) }
+        if trait_id == DERIVE_HASH { out = gen_derive_hash(struct_tok, sn_off, sn_len, out) }
+        if trait_id == DERIVE_ZERO { out = gen_derive_zero(struct_tok, sn_off, sn_len, out) }
+        di = di + 1
+    }
+    ret out
+}
+
+; --- End derive attribute support ---
 
 fn is_skip_rhs_int_tok(t: i64) -> i64 {
     ret t == 11
@@ -18569,6 +19101,13 @@ fn main(argc: i64, argv_ptr: &i64) {
     ; Enum table (packed flat buffer)
     g_enum_buf = alloc_pages(1)
     g_enum_buf[0] = 1
+    ; Derive tracking arrays
+    g_derive_trait_id = alloc_pages(1)
+    g_derive_sname_off = alloc_pages(1)
+    g_derive_sname_len = alloc_pages(1)
+    g_derive_struct_tok = alloc_pages(1)
+    g_derive_field_off = alloc_pages(1)
+    g_derive_field_len = alloc_pages(1)
     ; Generic function table
     g_genfn_buf = alloc_pages(1)
     g_genfn_buf[0] = 0
@@ -18589,6 +19128,14 @@ fn main(argc: i64, argv_ptr: &i64) {
     if g_genfn_buf[200] > 0 {
         g_dbg_tok_cnt = impl_new_cnt
         g_scan_tok_cnt = impl_new_cnt
+        prepare_top_fn_scan(toks, src_buf, g_runtime_src_len, fn_name_off, fn_name_len)
+    }
+    ; Derive attribute expansion
+    scan_derive_attrs(g_scan_tok_cnt)
+    if g_derive_cnt > 0 {
+        let derive_new_cnt = expand_derive_toks(g_scan_tok_cnt)
+        g_dbg_tok_cnt = derive_new_cnt
+        g_scan_tok_cnt = derive_new_cnt
         prepare_top_fn_scan(toks, src_buf, g_runtime_src_len, fn_name_off, fn_name_len)
     }
     ; Prepare output buffers
