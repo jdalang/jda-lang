@@ -152,6 +152,7 @@ const OP_GADDR    = 30
 const OP_ARGV_BASE= 31
 const OP_ARGC_GET = 32
 const OP_DROP     = 33
+const OP_TAIL_CALL = 34
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -8117,6 +8118,14 @@ fn dce(jfn: &JirFunction) {
                 if o3 >= 5 { if bt1 >= 0 { used[bt1] = 1 } }
                 if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }
             }
+            if op == OP_TAIL_CALL {
+                if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
+                if o3 >= 2 { if o1 >= 0 { used[o1] = 1 } }
+                if o3 >= 3 { if o2 >= 0 { used[o2] = 1 } }
+                if o3 >= 4 { if bt0 >= 0 { used[bt0] = 1 } }
+                if o3 >= 5 { if bt1 >= 0 { used[bt1] = 1 } }
+                if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }
+            }
             if op == OP_RET     { used[id] = 1 }
             if op == OP_BR      { used[id] = 1 }
             if op == OP_JMP     { used[id] = 1 }
@@ -8124,6 +8133,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ALLOC   { used[id] = 1 }
             if op == OP_DROP    { used[id] = 1 }
             if op == OP_CALL    { used[id] = 1 }
+            if op == OP_TAIL_CALL { used[id] = 1 }
             if op == OP_STORE   { used[id] = 1 }
             if op == OP_PRINT_INT { used[id] = 1 }
             if op == OP_ARGV_BASE { used[id] = 1 }
@@ -8143,6 +8153,60 @@ fn dce(jfn: &JirFunction) {
                 instr_set_dead(&jfn.blocks[bi].instrs[ii], 1)
             }
             ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+; ============================================================
+; 7b. TAIL CALL OPTIMIZATION
+; ============================================================
+; Detects self-recursive tail calls: OP_CALL to current function
+; followed by OP_RET returning the call's result.
+; Transforms to OP_TAIL_CALL and marks the OP_RET dead.
+
+fn tail_call_opt(jfn: &JirFunction) {
+    let src = g_src_buf_ptr
+    let fn_ns = g_cur_fn_name_start
+    let fn_nl = g_cur_fn_name_len
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let icnt = jfn.blocks[bi].instr_cnt
+        ; Find last two non-dead instructions in this block
+        let last_ret = -1
+        let last_call = -1
+        let ii = icnt - 1
+        loop ii >= 0 {
+            if jfn.blocks[bi].instrs[ii].dead == 0 {
+                if last_ret == -1 {
+                    last_ret = ii
+                } else {
+                    if last_call == -1 {
+                        last_call = ii
+                    }
+                }
+            }
+            if last_call >= 0 { ii = 0 }
+            ii = ii - 1
+        }
+        if last_call >= 0 {
+            if last_ret >= 0 {
+                let ri = &jfn.blocks[bi].instrs[last_ret]
+                let ci = &jfn.blocks[bi].instrs[last_call]
+                if ri.op == OP_RET {
+                    if ci.op == OP_CALL {
+                        if ri.operand0 == ci.id {
+                            ; Check if call targets current function
+                            if ci.str_len == fn_nl {
+                                if streq(src, ci.str_start, fn_nl, src + fn_ns) == 1 {
+                                    ci.op = OP_TAIL_CALL
+                                    instr_set_dead(ri, 1)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         bi = bi + 1
     }
@@ -9680,6 +9744,55 @@ fn try_inline_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 0
 }
 
+fn lower_tail_call(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos: &i64) -> i64 {
+    if ins.op != OP_TAIL_CALL { ret 0 }
+    ; Load args with push-pop pattern (same as regular call)
+    let vals = i64[6]
+    vals[0] = ins.operand0
+    vals[1] = ins.operand1
+    vals[2] = ins.operand2
+    vals[3] = ins.bb_target0
+    vals[4] = ins.bb_target1
+    vals[5] = ins.imm
+    let push_idx = 0
+    let push_lim = ins.operand3
+    if push_lim > 6 { push_lim = 6 }
+    loop push_idx < push_lim {
+        let r = get_or_load(ctx.ra, out, pos, vals[push_idx])
+        emit_push_r(out, pos, r)
+        push_idx = push_idx + 1
+    }
+    ; Pop in reverse order to calling convention registers
+    let regs = i32[6]
+    regs[0] = PHYS_RDI
+    regs[1] = PHYS_RSI
+    regs[2] = PHYS_RDX
+    regs[3] = PHYS_RCX
+    regs[4] = PHYS_R8
+    regs[5] = PHYS_R9
+    let pop_idx = push_lim - 1
+    loop pop_idx >= 0 {
+        emit_pop_r(out, pos, regs[pop_idx])
+        pop_idx = pop_idx - 1
+    }
+    ; Store args to param slots so BB0 reads fresh values
+    let si = 0
+    loop si < push_lim {
+        emit_store_spill(out, pos, jfn.param_slots[si], regs[si])
+        si = si + 1
+    }
+    ; Consume uses
+    let ci = 0
+    loop ci < push_lim {
+        consume_use(ctx, vals[ci])
+        ci = ci + 1
+    }
+    ; JMP to BB 0 (function entry)
+    lower_branch_fixup(ctx, pos, 0, pos[0] + 1, 0)
+    emit_jmp_rel32(out, pos, 0)
+    ret 1
+}
+
 fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_call = 0
     if ins.op == OP_CALL { is_call = 1 }
@@ -9901,6 +10014,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
 
     if lower_instr_ctrl(ins, ctx, out, pos) == 1 { ret ok(0) }
     if lower_instr_drop(ins, ctx, out, pos) == 1 { ret ok(0) }
+    if lower_tail_call(ins, ctx, jfn, out, pos) == 1 { ret ok(0) }
     if lower_instr_callalloc2(ins, ctx, out, pos) == 1 {
         ensure_spilled(ctx.ra, out, pos, ins.id)
         ret ok(0)
@@ -11161,6 +11275,14 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
         if o3 >= 6 { mark_use(ctx, ins.imm) }
     }
+    if op == OP_TAIL_CALL {
+        if o3 >= 1 { mark_use(ctx, o0) }
+        if o3 >= 2 { mark_use(ctx, o1) }
+        if o3 >= 3 { mark_use(ctx, o2) }
+        if o3 >= 4 { mark_use(ctx, ins.bb_target0) }
+        if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
+        if o3 >= 6 { mark_use(ctx, ins.imm) }
+    }
 }
 
 fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) {
@@ -11898,6 +12020,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 }
                 fold_constants(jfn)
                 dce(jfn)
+                tail_call_opt(jfn)
                 lower_fn(jfn, ctx, code_buf, &code_len, is_main)
                 ; Collect fixups
                 let ci = 0

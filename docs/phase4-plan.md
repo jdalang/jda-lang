@@ -88,31 +88,24 @@
 
 ---
 
-### M4: Tail-Call Optimization
+### M4: Tail-Call Optimization ✅
 
-**Why fourth**: Recursive patterns in the compiler (parser, codegen, lowering all recurse through expression trees) currently grow the stack per call. With 524MB stack ulimit, this works but is wasteful. TCO makes recursion O(1) stack.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. **Detect tail calls** — a CALL immediately followed by RET with the call's result
-   - In JIR: scan for `%r = OP_CALL ...` followed by `OP_RET %r` as the last two instructions in a basic block
-   - Also detect self-recursive tail calls: `fn foo() { ... ret foo() }`
+**What was done**:
+1. Added `OP_TAIL_CALL` opcode (34) for self-recursive tail calls
+2. Added `tail_call_opt(jfn)` JIR pass that detects the pattern: last two non-dead instructions in a basic block are `OP_CALL` (to current function) followed by `OP_RET` (returning the call's result). Transforms `OP_CALL` → `OP_TAIL_CALL` and marks the `OP_RET` dead.
+3. Added `lower_tail_call` in the lowering pass: loads args with push-pop pattern into calling convention registers, stores to param_slots, then emits `JMP` to BB 0 (function entry) via kind=0 fixup
+4. Updated DCE and `lower_fn_mark_uses_instr` to handle `OP_TAIL_CALL`
+5. Wired `tail_call_opt` into the pipeline after `dce`, before `lower_fn`
+6. All 80 conformance tests pass (including new `tail_call_basic` test: `sum_tail(100, 0)` → `5050`)
+7. Self-host converged at 2,039,800 bytes
 
-2. **Transform self-recursive tail calls** into loops
-   - Replace `OP_CALL self` + `OP_RET` with: reassign parameters + `OP_JMP` to function entry block
-   - This avoids the CALL instruction entirely
+**Impact**: Self-recursive functions in tail position no longer grow the stack. Each recursive call reuses the same stack frame via a JMP back to the function entry. The compiler itself has limited tail-recursive patterns, so the binary size change reflects mostly the new code for the optimization pass itself.
 
-3. **General tail calls** — reuse caller's stack frame
-   - Move arguments into parameter positions
-   - Pop saved registers
-   - JMP instead of CALL (no return address pushed)
-   - x86-64: requires careful stack manipulation in lowering
+**Approach**: Self-recursive TCO only — detects calls to the current function by name matching against `g_cur_fn_name_start`/`g_cur_fn_name_len`. General tail calls and mutual tail calls are deferred.
 
-4. **Mutual tail calls** (stretch) — `foo() -> bar() -> foo()` chains
-   - Requires interprocedural analysis — defer to v2 if complex
-
-**Expected impact**: Eliminates stack growth for recursive parsers and tree walkers. Enables purely recursive algorithms without stack overflow risk. Small binary size reduction (JMP < CALL+RET).
-
-**Risk**: Low-medium. Self-recursive TCO is straightforward. General tail calls require careful stack frame management. Start with self-recursive only.
+**Deferred**: General tail calls (to other functions), mutual tail calls (`foo() -> bar() -> foo()`). These require interprocedural analysis and careful stack frame reuse across different function signatures.
 
 ---
 
