@@ -372,7 +372,10 @@ let g_large_mode = 0
 let g_fn_name_off_tbl: &i64 = 0
 let g_fn_name_len_tbl: &i64 = 0
 let g_fn_code_off_tbl: &i64 = 0
+let g_fn_ret_type_tbl: &i64 = 0
+let g_fn_param_cnt_tbl: &i64 = 0
 let g_last_fn_code_off: i64 = 0
+let g_cur_fn_ret_type: i64 = 0
 let g_entry_main_idx: i64 = -1
 let g_main_str_dbg: i64 = 0
 let g_stab_ptr: &StructTable = 0
@@ -5533,6 +5536,17 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     }
     expect(TOK_RPAREN)
 
+    ; Type check: verify argument count (skip if either side exceeds 6-arg codegen limit)
+    if g_fn_param_cnt_tbl != 0 {
+        let tc_fi = resolve_top_fn_index(src, name_start, name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
+        if tc_fi >= 0 and tc_fi < 512 {
+            let expected_cnt = load_i64_at(g_fn_param_cnt_tbl, tc_fi)
+            if expected_cnt > 0 and expected_cnt <= 6 and arg_cnt < expected_cnt {
+                report_error("too few arguments in function call")
+            }
+        }
+    }
+
     if name_len == 11 and streq(src, name_start, 11, "alloc_pages") == 1 {
         let pages_id = arg0
         if pages_id == -1 {
@@ -5561,8 +5575,8 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
 }
 
 fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    expect(toks, TOK_SYSCALL)
-    expect(toks, TOK_LPAREN)
+    expect(TOK_SYSCALL)
+    expect(TOK_LPAREN)
     let nr = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
     let a0 = -1 let a1 = -1 let a2 = -1
     let count = 0
@@ -5575,7 +5589,7 @@ fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         count = count + 1
         if count > 3 { report_error("syscall takes at most 4 arguments") }
     }
-    expect(toks, TOK_RPAREN)
+    expect(TOK_RPAREN)
     ret emit_syscall_raw(jfn, bb, nr, a0, a1, a2)
 }
 
@@ -9938,6 +9952,11 @@ fn main(argc: i64, argv_ptr: &i64) {
     let fn_name_off = alloc_pages(1)
     let fn_name_len = alloc_pages(1)
     let fn_code_off = alloc_pages(2) ; 1024 entries
+    let fn_ret_types = alloc_pages(1)
+    let fn_param_cnts = alloc_pages(1)
+    g_fn_name_off_tbl = fn_name_off
+    g_fn_name_len_tbl = fn_name_len
+    g_fn_param_cnt_tbl = fn_param_cnts
     print("PREP_FN\n")
     prepare_top_fn_scan(toks, src_buf, src_len, fn_name_off, fn_name_len)
     print("PREP_FN_DONE\n")
@@ -10125,13 +10144,13 @@ fn main(argc: i64, argv_ptr: &i64) {
             print("INIT_OK\n")
                 ; Skip 'fn name'
                 g_main_pos = fn_tok_pos + 2
-                expect(toks, TOK_LPAREN)
+                expect(TOK_LPAREN)
                 let more_params = 0
                 if tok_type_at(toks, g_main_pos) != TOK_RPAREN { more_params = 1 }
                 loop more_params == 1 {
                     let p_name_start = tok_str_start_at(toks, g_main_pos)
                     let p_name_len = tok_str_len_at(toks, g_main_pos)
-                    expect(toks, TOK_IDENT)
+                    expect(TOK_IDENT)
                     let p_stype = TYPE_I64
                     if tok_type_at(toks, g_main_pos) == TOK_COLON {
                         g_main_pos = g_main_pos + 1
@@ -10172,8 +10191,22 @@ fn main(argc: i64, argv_ptr: &i64) {
                     if comma_tok == TOK_COMMA { g_main_pos = g_main_pos + 1 }
                     else { more_params = 0 }
                 }
-                expect(toks, TOK_RPAREN)
-                expect(toks, TOK_LBRACE)
+                expect(TOK_RPAREN)
+
+                ; Parse return type (-> type) if present
+                if tok_type_at(toks, g_main_pos) == TOK_ARROW {
+                    g_main_pos = g_main_pos + 1
+                    if tok_type_at(toks, g_main_pos) == TOK_AMP {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    g_main_pos = g_main_pos + 1
+                }
+                ; Store param count
+                if fi >= 0 and fi < 512 {
+                    store_i64_at(fn_param_cnts, fi, jfn.param_cnt)
+                }
+
+                expect(TOK_LBRACE)
 
                 let is_main = 0
                 if cur_name_len == 4 {

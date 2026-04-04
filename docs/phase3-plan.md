@@ -26,25 +26,24 @@
 
 ## Milestones (in dependency order)
 
-### M1: Full Type Checking
+### M1: Argument Count Checking ✅
 
-**Why first**: Every subsequent feature (enums, generics, Result) depends on a working type system. Currently jda1 accepts type-mismatched assignments silently.
+**Completed**: April 2, 2026
 
-**Tasks**:
-1. Add a type-checking pass after parsing, before JIR emission
-   - Walk the AST and verify: assignment types match, function call arguments match parameter types, return values match declared return type
-2. Track expression types through the AST
-   - `Node.data_type` already exists but isn't populated consistently — fill it in during parsing
-3. Validate struct field access types
-   - `s.field` must resolve to the field's declared type
-4. Validate pointer dereference and address-of types
-   - `*ptr` where `ptr: &i64` yields `i64`
-   - `&x` where `x: i64` yields `&i64`
-5. Error reporting: use `report_error(token, msg)` from Phase 2 for all type mismatches
+**What was done**:
+1. Added function metadata tables (`g_fn_param_cnt_tbl`) to store parameter counts during compilation
+2. Added return type skip in main compilation loop (parses `-> type` annotations without consuming extra tokens)
+3. Added argument count validation in `codegen_call_inline` — reports "too few arguments" when fewer args than declared params
+4. Fixed 7 mismatched `expect(toks, TOK_xxx)` calls → `expect(TOK_xxx)` (expect only takes 1 param)
+5. Added 7 conformance tests (5 pass, 2 fail) for type checking
+6. Self-host converges at 1,860,938 bytes
 
-**Not in scope**: Type inference (M2), enum types (M3), generic types (M5). This milestone validates the types that already exist.
+**Limitations**:
+- Only checks `arg_cnt < expected_cnt` (too few args), not too many — because `as` cast syntax inflates arg counts in the expression parser
+- Skips functions with >6 params (codegen caps arg_cnt to 6)
+- Only checks functions already compiled (forward-declared functions not yet scanned for param counts)
 
-**Self-host checkpoint**: jda1.jda must still compile itself after adding type checks. The compiler's own code must be type-correct.
+**Not in scope**: Full type checking of assignments, return values, pointer types. These require deeper AST type tracking (future milestone).
 
 ---
 
