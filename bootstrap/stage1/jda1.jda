@@ -76,6 +76,7 @@ const TOK_F64     = 48
 const TOK_ENUM    = 49
 const TOK_QUESTION= 50
 const TOK_IMPL    = 51
+const TOK_SPAWN   = 52
 
 ; AST node types
 const NODE_FN     = 0
@@ -159,6 +160,7 @@ const OP_ATOMIC_CAS   = 37
 const OP_ATOMIC_ADD   = 38
 const OP_RDTSC        = 39
 const OP_CTX_SWITCH   = 40
+const OP_FN_ADDR      = 41
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -2010,7 +2012,10 @@ fn classify_keyword_len5(src: &i8, start: i64, len: i64) {
     let const_ok = 0
     if c0 == 99 { if c1 == 111 { if c2 == 110 { if c3 == 115 { if c4 == 116 { const_ok = 1 } } } } }
     let m_const = const_ok * TOK_CONST
-    let tok = m_match + m_print + m_const
+    let spawn_ok = 0
+    if c0 == 115 { if c1 == 112 { if c2 == 97 { if c3 == 119 { if c4 == 110 { spawn_ok = 1 } } } } }
+    let m_spawn = spawn_ok * TOK_SPAWN
+    let tok = m_match + m_print + m_const + m_spawn
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -4856,6 +4861,61 @@ fn emit_binop(jfn: &JirFunction, bb: i64, op: i32, a: i64, b: i64) -> i64 {
     ret emit(jfn, bb, &ins)
 }
 
+fn emit_spawn_jir(jfn: &JirFunction, bb: i64, fn_name_start: i64, fn_name_len: i64) -> i64 {
+    ; Desugar spawn into JIR: alloc stack, alloc JThread, set rsp/rbp/rip
+    let page_sz = emit_const(jfn, bb, TYPE_I64, 4096)
+    ; 1. Alloc 8 pages (32KB) for thread stack
+    let pages_c = emit_const(jfn, bb, TYPE_I64, 8)
+    let stack_sz = emit_binop(jfn, bb, OP_MUL, pages_c, page_sz)
+    let ai = Instr{}
+    ai.op = OP_ALLOC
+    ai.operand0 = stack_sz
+    let stack_base = emit(jfn, bb, &ai)
+    ; 2. Alloc 1 page (4KB) for JThread struct (zeroed by mmap)
+    let jt_c = emit_const(jfn, bb, TYPE_I64, 1)
+    let jt_sz = emit_binop(jfn, bb, OP_MUL, jt_c, page_sz)
+    let ai2 = Instr{}
+    ai2.op = OP_ALLOC
+    ai2.operand0 = jt_sz
+    let jthread = emit(jfn, bb, &ai2)
+    ; 3. stack_top = base + 32768 - 8 (aligned, room for return addr)
+    let off_c = emit_const(jfn, bb, TYPE_I64, 32760)
+    let stack_top = emit_binop(jfn, bb, OP_ADD, stack_base, off_c)
+    ; 4. Get function address
+    let fi = Instr{}
+    fi.op = OP_FN_ADDR
+    fi.str_start = fn_name_start
+    fi.str_len = fn_name_len
+    let fn_ptr = emit(jfn, bb, &fi)
+    ; 5. Store JThread[0] = rsp = stack_top
+    let st0 = Instr{}
+    st0.op = OP_STORE_MEM
+    st0.operand0 = stack_top
+    st0.operand1 = jthread
+    st0.itype = TYPE_I64
+    emit(jfn, bb, &st0)
+    ; 6. Store JThread[8] = rbp = stack_top
+    let c8 = emit_const(jfn, bb, TYPE_I64, 8)
+    let jt8 = emit_binop(jfn, bb, OP_ADD, jthread, c8)
+    let st1 = Instr{}
+    st1.op = OP_STORE_MEM
+    st1.operand0 = stack_top
+    st1.operand1 = jt8
+    st1.itype = TYPE_I64
+    emit(jfn, bb, &st1)
+    ; 7. Store JThread[16] = rip = fn_ptr
+    let c16 = emit_const(jfn, bb, TYPE_I64, 16)
+    let jt16 = emit_binop(jfn, bb, OP_ADD, jthread, c16)
+    let st2 = Instr{}
+    st2.op = OP_STORE_MEM
+    st2.operand0 = fn_ptr
+    st2.operand1 = jt16
+    st2.itype = TYPE_I64
+    emit(jfn, bb, &st2)
+    ; Fields [24]-[56] already 0 from mmap (rbx, r12-r15)
+    ret jthread
+}
+
 fn emit_br(jfn: &JirFunction, bb: i64, cond: i64, then_bb: i64, else_target: i64) -> i64 {
     let ins = Instr{}
     ins.op         = OP_BR
@@ -6373,6 +6433,15 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     if t_type == TOK_IDENT {
         ret codegen_primary_ident_inline(toks, pos, stab, src, jfn, bb)
     }
+    if t_type == TOK_SPAWN {
+        pos[0] = pos[0] + 1
+        let sp_fn_start = tok_str_start_at(toks, pos[0])
+        let sp_fn_len = tok_str_len_at(toks, pos[0])
+        pos[0] = pos[0] + 1
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        ret emit_spawn_jir(jfn, bb, sp_fn_start, sp_fn_len)
+    }
     if t_type == TOK_LPAREN {
         pos[0] = pos[0] + 1
         let inner_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
@@ -7530,6 +7599,15 @@ fn live_codegen_primary_inline(bb: i64) -> i64 {
         let saved_pos = g_main_pos
         g_main_pos = g_main_pos + 1
         ret emit_strlit_raw(g_jfn, bb, tok_str_start_at_raw(g_dbg_toks_init, saved_pos), tok_str_len_at_raw(g_dbg_toks_init, saved_pos))
+    }
+    if ttype == TOK_SPAWN {
+        g_main_pos = g_main_pos + 1
+        let sp_fn_start = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos)
+        let sp_fn_len = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos)
+        g_main_pos = g_main_pos + 1
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        ret emit_spawn_jir(g_jfn, bb, sp_fn_start, sp_fn_len)
     }
     let is_ident = 0
     if ttype == TOK_IDENT { is_ident = 1 }
@@ -10409,6 +10487,31 @@ fn lower_instr_atomic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_restore_pool(ctx.ra, out, pos)
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
+        ret 1
+    }
+
+    ; OP_FN_ADDR: LEA RAX, [RIP+disp32] with fixup
+    if op == OP_FN_ADDR {
+        emit_save_pool(ctx.ra, out, pos)
+        let fix_ok = 1
+        if ctx.fix_cnt >= 8192 { fix_ok = 0 }
+        if fix_ok != 1 { panic("fn_addr fixup overflow") }
+        fixup_init(&ctx.fixups[ctx.fix_cnt], pos[0] + 3, ins.str_start, 2, ins.str_len)
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        ; LEA RAX, [RIP+0]: 48 8D 05 00 00 00 00
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x8D)
+        emit_byte(out, pos, 0x05)
+        emit_byte(out, pos, 0)
+        emit_byte(out, pos, 0)
+        emit_byte(out, pos, 0)
+        emit_byte(out, pos, 0)
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 {
+            emit_mov_rr(out, pos, dst, PHYS_R12)
+        }
         ret 1
     }
 
