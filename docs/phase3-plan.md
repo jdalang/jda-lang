@@ -103,7 +103,9 @@
 
 ---
 
-### M5: Generics (Monomorphization)
+### M5: Generics (Monomorphization) ✅
+
+**Status**: Complete. Token-level monomorphization for generic functions with single type parameter (i64, i32, i8). Generic fn declarations are scanned, call sites expanded with mangled names (e.g., `identity<i64>` → `identity_i64`), originals hidden. Self-host converges at 1,904,362 bytes.
 
 **Why fifth**: Enables `Result<T, E>`, generic containers, and reusable code.
 
