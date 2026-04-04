@@ -1,0 +1,17 @@
+fn main() {
+    let arr: &i64 = alloc_pages(1)
+    arr[0] = 10
+    arr[1] = 20
+    arr[2] = 30
+    let acc: &i64 = alloc_pages(1)
+    acc[0] = 0
+    each(arr, 3, fn(x: i64) -> i64 {
+        let old = acc[0]
+        acc[0] = old + x
+        ret 0
+    })
+    let total = acc[0]
+    if total == 60 {
+        print("60")
+    }
+}
