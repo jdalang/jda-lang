@@ -174,11 +174,20 @@ GitHub Actions will automatically build, verify convergence, and publish the rel
 - [x] 4 new conformance tests, 12 integration tests ✅
 - [x] 166 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
-### M5: Documentation Generator
-- `jda doc` — extract doc comments (`;; comment`) and generate HTML
-- Per-function, per-struct, per-module documentation
-- Cross-referenced with source links
-- Static site output (deployable to GitHub Pages)
+### M5: Documentation Generator ✅ COMPLETE
+
+**Delivered (April 4, 2026):**
+- [x] `jda doc` command (`tools/jda-doc.sh`) — extract `;;` doc comments and generate HTML ✅
+- [x] Per-function, per-struct, per-enum, per-const documentation with signatures ✅
+- [x] Multi-line doc comments joined into paragraphs ✅
+- [x] Cross-referenced module index with navigation links ✅
+- [x] Source file:line references on every item ✅
+- [x] Static site output (index.html, module pages, style.css) — deployable to GitHub Pages ✅
+- [x] Dark theme with Catppuccin-inspired color scheme ✅
+- [x] `jda doc --json` for machine-readable output ✅
+- [x] Directory recursive mode for multi-module projects ✅
+- [x] 4 new conformance tests, 12 integration tests ✅
+- [x] 170 total conformance tests, self-host converged at 1,964,161 bytes ✅
 
 ### M6: ARM64 Backend (aarch64-linux)
 - New lowering pass: JIR → AArch64 instructions
