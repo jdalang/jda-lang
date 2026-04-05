@@ -1,1103 +1,1329 @@
-#!/usr/bin/env python3
-"""
-jda-macos — macOS native compiler for Jda source files
+#!/bin/bash
+set -euo pipefail
+#
+# jda-macos — macOS native compiler for Jda source files (pure bash + awk)
+#
+# Compiles Jda source to native macOS binaries (Mach-O format).
+# Supports both x86-64 and ARM64 (Apple Silicon).
+#
+# Usage:
+#   jda-macos.sh <file.jda>                    Compile to native macOS binary
+#   jda-macos.sh --arch arm64 <file.jda>       Compile for ARM64 (default on Apple Silicon)
+#   jda-macos.sh --arch x86_64 <file.jda>      Compile for x86-64
+#   jda-macos.sh --universal <file.jda>         Build universal binary (x86-64 + arm64)
+#   jda-macos.sh --asm <file.jda>              Output assembly only
+#   jda-macos.sh -o <output> <file.jda>        Specify output binary name
 
-Compiles Jda source to native macOS binaries (Mach-O format).
-Supports both x86-64 and ARM64 (Apple Silicon).
+# ─── Detect native architecture ─────────────────────────────────────────────
+detect_arch() {
+    local machine
+    machine=$(uname -m | tr '[:upper:]' '[:lower:]')
+    case "$machine" in
+        arm64|aarch64) echo "arm64" ;;
+        *)             echo "x86_64" ;;
+    esac
+}
 
-Usage:
-  jda-macos.sh <file.jda>                    Compile to native macOS binary
-  jda-macos.sh --arch arm64 <file.jda>       Compile for ARM64 (default on Apple Silicon)
-  jda-macos.sh --arch x86_64 <file.jda>      Compile for x86-64
-  jda-macos.sh --universal <file.jda>         Build universal binary (x86-64 + arm64)
-  jda-macos.sh --asm <file.jda>              Output assembly only
-  jda-macos.sh -o <output> <file.jda>        Specify output binary name
-"""
+# ─── Assemble and link using system tools ────────────────────────────────────
+assemble_macos() {
+    local asm_source="$1" output_path="$2" arch="$3"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    trap "rm -rf '$tmp_dir'" RETURN
 
-import sys
-import os
-import struct
-import subprocess
-import tempfile
-import platform
-import re
+    local asm_path="$tmp_dir/prog.s"
+    local obj_path="$tmp_dir/prog.o"
 
-# ─── Mach-O Constants ────────────────────────────────────────────────────────
+    printf '%s\n' "$asm_source" > "$asm_path"
 
-# Magic numbers
-MH_MAGIC_64 = 0xFEEDFACF
-FAT_MAGIC = 0xBEBAFECA
+    if ! as -arch "$arch" -o "$obj_path" "$asm_path" 2>/dev/null; then
+        echo "error: assembly failed for $arch" >&2
+        return 1
+    fi
 
-# CPU types
-CPU_TYPE_X86_64 = 0x01000007
-CPU_TYPE_ARM64 = 0x0100000C
-CPU_SUBTYPE_ALL = 3
-CPU_SUBTYPE_ARM64_ALL = 0
+    if ! ld -arch "$arch" -o "$output_path" "$obj_path" \
+         -lSystem -syslibroot \
+         /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk \
+         -e _main 2>/dev/null; then
+        echo "error: linking failed for $arch" >&2
+        return 1
+    fi
 
-# File types
-MH_EXECUTE = 2
+    return 0
+}
 
-# Flags
-MH_NOUNDEFS = 0x1
-MH_PIE = 0x200000
+# ─── Build universal binary using lipo ───────────────────────────────────────
+build_universal() {
+    local x86_path="$1" arm64_path="$2" output_path="$3"
+    if ! lipo -create -output "$output_path" "$x86_path" "$arm64_path" 2>/dev/null; then
+        echo "error: lipo failed" >&2
+        return 1
+    fi
+    return 0
+}
 
-# Load commands
-LC_SEGMENT_64 = 0x19
-LC_SYMTAB = 0x02
-LC_DYSYMTAB = 0x0B
-LC_MAIN = 0x80000028
-LC_BUILD_VERSION = 0x32
-LC_CODE_SIGNATURE = 0x1D
+# ─── Ad-hoc code sign ───────────────────────────────────────────────────────
+ad_hoc_sign() {
+    codesign -s - --force "$1" 2>/dev/null || true
+}
 
-# Segment/section constants
-VM_PROT_READ = 1
-VM_PROT_WRITE = 2
-VM_PROT_EXECUTE = 4
+# ─── AWK: Lexer + Parser + Codegen (single pass) ────────────────────────────
+#
+# The awk program reads a Jda source file and outputs assembly for the
+# requested target architecture (x86_64 or arm64).
+#
+# Data model (all in awk arrays):
+#   Tokens:  tk_kind[i], tk_val[i], tk_line[i]
+#   AST nodes are NOT materialized as a tree; instead the parser calls
+#   codegen functions directly in a single recursive-descent pass.
+#
+# We use a two-phase approach: awk phase 1 lexes+parses+codegens to stdout.
 
-S_REGULAR = 0
-S_ATTR_PURE_INSTRUCTIONS = 0x80000000
-S_ATTR_SOME_INSTRUCTIONS = 0x00000400
+generate_asm() {
+    local source_file="$1" target_arch="$2"
+    awk -v ARCH="$target_arch" '
+# ─── Utility ──────────────────────────────────────────────────────────
+function die(msg) { print "error: " msg > "/dev/stderr"; exit 1 }
 
-# macOS syscall numbers (with 0x2000000 prefix for x86-64, direct for arm64)
-MACOS_SYS_EXIT = 1
-MACOS_SYS_WRITE = 4
+function is_digit(c)  { return c ~ /^[0-9]$/ }
+function is_alpha(c)  { return c ~ /^[A-Za-z_]$/ }
+function is_alnum(c)  { return c ~ /^[A-Za-z0-9_]$/ }
+function is_space(c)  { return c ~ /^[ \t\r]$/ }
 
-# Platform
-PLATFORM_MACOS = 1
+# ─── Lexer ────────────────────────────────────────────────────────────
+function lex(    src, n, i, c, c2, j, word, num, sval) {
+    src = SOURCE
+    n = length(src)
+    i = 1  # 1-based indexing
+    LINE = 1
+    NTOK = 0
 
-# ─── Lexer ───────────────────────────────────────────────────────────────────
+    while (i <= n) {
+        c = substr(src, i, 1)
+        if (c == "\n") { LINE++; i++; continue }
+        if (is_space(c)) { i++; continue }
 
-class Token:
-    def __init__(self, kind, val, line):
-        self.kind = kind
-        self.val = val
-        self.line = line
+        # Comment: ;;
+        if (c == ";" && i+1 <= n && substr(src, i+1, 1) == ";") {
+            while (i <= n && substr(src, i, 1) != "\n") i++
+            continue
+        }
 
-def lex(src):
-    tokens = []
-    i = 0
-    line = 1
-    while i < len(src):
-        c = src[i]
-        if c == '\n':
-            line += 1; i += 1
-        elif c in ' \t\r':
-            i += 1
-        elif c == ';' and i+1 < len(src) and src[i+1] == ';':
-            while i < len(src) and src[i] != '\n': i += 1
-        elif c == '"':
+        # String literal
+        if (c == "\"") {
             j = i + 1
-            while j < len(src) and src[j] != '"':
-                if src[j] == '\\': j += 1
-                j += 1
-            tokens.append(Token('str', src[i+1:j], line))
+            sval = ""
+            while (j <= n && substr(src, j, 1) != "\"") {
+                if (substr(src, j, 1) == "\\") {
+                    sval = sval substr(src, j, 2)
+                    j += 2
+                } else {
+                    sval = sval substr(src, j, 1)
+                    j++
+                }
+            }
+            NTOK++
+            tk_kind[NTOK] = "str"
+            tk_val[NTOK] = sval
+            tk_line[NTOK] = LINE
             i = j + 1
-        elif c.isdigit():
+            continue
+        }
+
+        # Integer
+        if (is_digit(c)) {
             j = i
-            while j < len(src) and src[j].isdigit(): j += 1
-            tokens.append(Token('int', int(src[i:j]), line))
+            while (j <= n && is_digit(substr(src, j, 1))) j++
+            num = substr(src, i, j - i) + 0
+            NTOK++
+            tk_kind[NTOK] = "int"
+            tk_val[NTOK] = num
+            tk_line[NTOK] = LINE
             i = j
-        elif c.isalpha() or c == '_':
+            continue
+        }
+
+        # Identifier / keyword
+        if (is_alpha(c)) {
             j = i
-            while j < len(src) and (src[j].isalnum() or src[j] == '_'): j += 1
-            word = src[i:j]
-            kw = {'fn','let','ret','if','else','loop','break','print','struct',
-                   'enum','const','impl','syscall','true','false'}
-            tokens.append(Token('kw' if word in kw else 'id', word, line))
+            while (j <= n && is_alnum(substr(src, j, 1))) j++
+            word = substr(src, i, j - i)
+            NTOK++
+            if (word == "fn" || word == "let" || word == "ret" || \
+                word == "if" || word == "else" || word == "loop" || \
+                word == "break" || word == "print" || word == "struct" || \
+                word == "enum" || word == "const" || word == "impl" || \
+                word == "syscall" || word == "true" || word == "false") {
+                tk_kind[NTOK] = "kw"
+            } else {
+                tk_kind[NTOK] = "id"
+            }
+            tk_val[NTOK] = word
+            tk_line[NTOK] = LINE
             i = j
-        elif c in '(){},;:':
-            tokens.append(Token(c, c, line)); i += 1
-        elif c == '-' and i+1 < len(src) and src[i+1] == '>':
-            tokens.append(Token('->', '->', line)); i += 2
-        elif c in '=!<>' and i+1 < len(src) and src[i+1] == '=':
-            tokens.append(Token(src[i:i+2], src[i:i+2], line)); i += 2
-        elif c in '+-*/%<>=!':
-            tokens.append(Token(c, c, line)); i += 1
-        else:
-            i += 1
-    tokens.append(Token('eof', '', line))
-    return tokens
+            continue
+        }
 
-# ─── Parser ──────────────────────────────────────────────────────────────────
+        # Punctuation
+        if (c == "(" || c == ")" || c == "{" || c == "}" || \
+            c == "," || c == ";" || c == ":") {
+            NTOK++
+            tk_kind[NTOK] = c
+            tk_val[NTOK] = c
+            tk_line[NTOK] = LINE
+            i++
+            continue
+        }
 
-class ASTNode:
-    def __init__(self, kind, **kw):
-        self.kind = kind
-        self.__dict__.update(kw)
+        # Arrow ->
+        if (c == "-" && i+1 <= n && substr(src, i+1, 1) == ">") {
+            NTOK++
+            tk_kind[NTOK] = "->"
+            tk_val[NTOK] = "->"
+            tk_line[NTOK] = LINE
+            i += 2
+            continue
+        }
 
-def parse(tokens):
-    pos = [0]
-    def peek(): return tokens[pos[0]]
-    def advance():
-        t = tokens[pos[0]]; pos[0] += 1; return t
-    def expect(k):
-        t = advance()
-        if t.kind != k: raise SyntaxError(f"expected {k}, got {t.kind} '{t.val}' at line {t.line}")
-        return t
-    def expect_kw(w):
-        t = advance()
-        if t.kind != 'kw' or t.val != w: raise SyntaxError(f"expected '{w}', got '{t.val}' at line {t.line}")
-        return t
+        # Two-char operators: ==, !=, <=, >=
+        c2 = (i+1 <= n) ? substr(src, i+1, 1) : ""
+        if ((c == "=" || c == "!" || c == "<" || c == ">") && c2 == "=") {
+            NTOK++
+            tk_kind[NTOK] = c c2
+            tk_val[NTOK] = c c2
+            tk_line[NTOK] = LINE
+            i += 2
+            continue
+        }
 
-    def parse_expr():
-        return parse_comparison()
+        # Single-char operators
+        if (c == "+" || c == "-" || c == "*" || c == "/" || c == "%" || \
+            c == "<" || c == ">" || c == "=" || c == "!") {
+            NTOK++
+            tk_kind[NTOK] = c
+            tk_val[NTOK] = c
+            tk_line[NTOK] = LINE
+            i++
+            continue
+        }
 
-    def parse_comparison():
-        left = parse_additive()
-        while peek().kind in ('==', '!=', '<', '>', '<=', '>='):
-            op = advance().kind
-            right = parse_additive()
-            left = ASTNode('binop', op=op, left=left, right=right)
-        return left
+        # Skip unknown
+        i++
+    }
 
-    def parse_additive():
-        left = parse_multiplicative()
-        while peek().kind in ('+', '-'):
-            op = advance().kind
-            right = parse_multiplicative()
-            left = ASTNode('binop', op=op, left=left, right=right)
-        return left
+    # EOF token
+    NTOK++
+    tk_kind[NTOK] = "eof"
+    tk_val[NTOK] = ""
+    tk_line[NTOK] = LINE
+}
 
-    def parse_multiplicative():
-        left = parse_unary()
-        while peek().kind in ('*', '/', '%'):
-            op = advance().kind
-            right = parse_unary()
-            left = ASTNode('binop', op=op, left=left, right=right)
-        return left
+# ─── Parser helpers ───────────────────────────────────────────────────
+function peek_kind() { return tk_kind[POS] }
+function peek_val()  { return tk_val[POS] }
+function advance()   { POS++ }
+function expect(k,    kk, vv) {
+    kk = tk_kind[POS]; vv = tk_val[POS]
+    if (kk != k) die("expected " k ", got " kk " (" vv ") at line " tk_line[POS])
+    POS++
+}
+function expect_kw(w,    kk, vv) {
+    kk = tk_kind[POS]; vv = tk_val[POS]
+    if (kk != "kw" || vv != w) die("expected " w ", got " vv " at line " tk_line[POS])
+    POS++
+}
 
-    def parse_unary():
-        if peek().kind == '-':
+# ─── Emit helpers ─────────────────────────────────────────────────────
+function emit(s) { OUT = OUT s "\n" }
+
+function new_label() { LABEL_COUNT++; return ".L" LABEL_COUNT }
+
+# ─── Count locals (recursive) ────────────────────────────────────────
+# We do a pre-scan of the token stream for a function body (between { })
+# to count let statements. This is called before codegen.
+function count_locals_in_body(start_pos, end_pos,    count, p, depth) {
+    count = 0
+    for (p = start_pos; p < end_pos; p++) {
+        if (tk_kind[p] == "kw" && tk_val[p] == "let") count++
+    }
+    return count
+}
+
+# Find matching } for a { at position p (p points to {)
+function find_matching_brace(p,    depth) {
+    depth = 1
+    p++
+    while (p <= NTOK && depth > 0) {
+        if (tk_kind[p] == "{") depth++
+        else if (tk_kind[p] == "}") depth--
+        p++
+    }
+    return p - 1  # position of the matching }
+}
+
+# ─── x86-64 Code Generator ───────────────────────────────────────────
+
+function x86_gen_expr(    kind, val, name, op, nargs, i, lbl, cc) {
+    kind = peek_kind(); val = peek_val()
+
+    # Integer literal
+    if (kind == "int") {
+        advance()
+        emit("  movq $" val ", %rax")
+        return "int"
+    }
+
+    # String literal
+    if (kind == "str") {
+        advance()
+        NSTR++
+        str_val[NSTR] = val
+        emit("  leaq str_" NSTR "(%rip), %rax")
+        return "str"
+    }
+
+    # true/false
+    if (kind == "kw" && val == "true")  { advance(); emit("  movq $1, %rax"); return "int" }
+    if (kind == "kw" && val == "false") { advance(); emit("  movq $0, %rax"); return "int" }
+
+    # syscall
+    if (kind == "kw" && val == "syscall") {
+        advance(); expect("(")
+        # Collect args on stack
+        nargs = 0
+        x86_gen_expr(); nargs++; emit("  pushq %rax")
+        while (peek_kind() == ",") {
+            advance(); x86_gen_expr(); nargs++; emit("  pushq %rax")
+        }
+        expect(")")
+        # Pop: first arg = syscall number -> rax, rest into rdi,rsi,rdx,r10,r8,r9
+        emit("  popq %rax")
+        # Remaining args popped in reverse push order (last pushed = first popped)
+        # We pushed: arg0, arg1, arg2, ... argN
+        # Pop order: argN, argN-1, ... arg1, arg0
+        # But we already popped arg0 (actually the last pushed) above -- wrong
+        # Redo: push all, then pop in correct order
+        # Actually the logic above pushes as we parse left-to-right:
+        #   push arg0(syscnum), push arg1, push arg2...
+        # Stack top = last arg. We want rax=arg0, rdi=arg1, rsi=arg2...
+        # So we need to pop in reverse. Let me restructure.
+
+        # Actually let us use a simpler approach: store arg count, re-pop
+        # The args are already on stack: top = argN, ... bottom = arg0 (syscall num)
+        # We need: rax = arg0 (bottom), rdi=arg1, rsi=arg2, rdx=arg3, r10=arg4...
+        # Pop top-to-bottom = argN..arg0
+        # Use temporary: pop all into reverse order
+        if (nargs >= 7) emit("  popq %r9")
+        if (nargs >= 6) emit("  popq %r8")
+        if (nargs >= 5) emit("  popq %r10")
+        if (nargs >= 4) emit("  popq %rdx")
+        if (nargs >= 3) emit("  popq %rsi")
+        if (nargs >= 2) emit("  popq %rdi")
+        if (nargs >= 1) emit("  popq %rax")
+        emit("  addq $0x2000000, %rax")
+        emit("  syscall")
+        return "int"
+    }
+
+    # Parenthesized expression
+    if (kind == "(") {
+        advance()
+        x86_gen_expr()
+        expect(")")
+        # Continue to parse binary operators after this primary
+        x86_gen_binop_tail()
+        return "int"
+    }
+
+    # Identifier or function call
+    if (kind == "id" || (kind == "kw" && val != "fn" && val != "let" && \
+        val != "ret" && val != "if" && val != "else" && val != "loop" && \
+        val != "break" && val != "print" && val != "struct" && val != "enum" && \
+        val != "const" && val != "impl")) {
+        name = val; advance()
+        if (peek_kind() == "(") {
+            # Function call
             advance()
-            expr = parse_primary()
-            return ASTNode('binop', op='-', left=ASTNode('int', val=0), right=expr)
-        return parse_primary()
+            nargs = 0
+            if (peek_kind() != ")") {
+                x86_gen_expr(); nargs++; emit("  pushq %rax")
+                while (peek_kind() == ",") {
+                    advance(); x86_gen_expr(); nargs++; emit("  pushq %rax")
+                }
+            }
+            expect(")")
+            # Pop args into registers (top of stack = last arg)
+            # Stack has: bottom=arg0 ... top=argN-1
+            # Need: rdi=arg0, rsi=arg1, rdx=arg2, rcx=arg3, r8=arg4, r9=arg5
+            # Pop gives us argN-1 first, so pop into reverse then swap
+            # Simpler: pop all into temp, then move
+            # Actually pop in reverse order into correct regs
+            if (nargs >= 6) emit("  popq %r9")
+            if (nargs >= 5) emit("  popq %r8")
+            if (nargs >= 4) emit("  popq %rcx")
+            if (nargs >= 3) emit("  popq %rdx")
+            if (nargs >= 2) emit("  popq %rsi")
+            if (nargs >= 1) emit("  popq %rdi")
+            emit("  callq _" name)
+            return "int"
+        }
+        # Variable reference
+        if (!(name in env)) die("undefined variable: " name " at line " tk_line[POS-1])
+        emit("  movq -" env[name] "(%rbp), %rax")
+        return "int"
+    }
 
-    def parse_primary():
-        t = peek()
-        if t.kind == 'int':
+    # Unary minus
+    if (kind == "-") {
+        advance()
+        emit("  movq $0, %rax")
+        emit("  pushq %rax")
+        x86_gen_primary()
+        emit("  movq %rax, %rcx")
+        emit("  popq %rax")
+        emit("  subq %rcx, %rax")
+        return "int"
+    }
+
+    die("unexpected token " kind " (" val ") at line " tk_line[POS])
+}
+
+# After parsing a primary, check for binary operator continuations
+# This implements precedence climbing
+function x86_parse_expr() {
+    x86_parse_comparison()
+}
+
+function x86_parse_comparison(    op, lbl, cc) {
+    x86_parse_additive()
+    while (peek_kind() == "==" || peek_kind() == "!=" || peek_kind() == "<" || \
+           peek_kind() == ">" || peek_kind() == "<=" || peek_kind() == ">=") {
+        op = peek_kind(); advance()
+        emit("  pushq %rax")
+        x86_parse_additive()
+        emit("  movq %rax, %rcx")
+        emit("  popq %rax")
+        emit("  cmpq %rcx, %rax")
+        if (op == "==") cc = "sete"
+        else if (op == "!=") cc = "setne"
+        else if (op == "<") cc = "setl"
+        else if (op == ">") cc = "setg"
+        else if (op == "<=") cc = "setle"
+        else if (op == ">=") cc = "setge"
+        emit("  " cc " %al")
+        emit("  movzbq %al, %rax")
+    }
+}
+
+function x86_parse_additive(    op) {
+    x86_parse_multiplicative()
+    while (peek_kind() == "+" || peek_kind() == "-") {
+        op = peek_kind(); advance()
+        emit("  pushq %rax")
+        x86_parse_multiplicative()
+        emit("  movq %rax, %rcx")
+        emit("  popq %rax")
+        if (op == "+") emit("  addq %rcx, %rax")
+        else           emit("  subq %rcx, %rax")
+    }
+}
+
+function x86_parse_multiplicative(    op) {
+    x86_parse_unary()
+    while (peek_kind() == "*" || peek_kind() == "/" || peek_kind() == "%") {
+        op = peek_kind(); advance()
+        emit("  pushq %rax")
+        x86_parse_unary()
+        emit("  movq %rax, %rcx")
+        emit("  popq %rax")
+        if (op == "*") emit("  imulq %rcx, %rax")
+        else if (op == "/") { emit("  cqto"); emit("  idivq %rcx") }
+        else { emit("  cqto"); emit("  idivq %rcx"); emit("  movq %rdx, %rax") }
+    }
+}
+
+function x86_parse_unary() {
+    if (peek_kind() == "-") {
+        advance()
+        x86_parse_primary()
+        emit("  negq %rax")
+        return
+    }
+    x86_parse_primary()
+}
+
+function x86_parse_primary(    kind, val, name, nargs, sval, idx) {
+    kind = peek_kind(); val = peek_val()
+
+    if (kind == "int") {
+        advance(); emit("  movq $" val ", %rax"); return
+    }
+    if (kind == "str") {
+        advance()
+        NSTR++; str_val[NSTR] = val
+        emit("  leaq str_" NSTR "(%rip), %rax"); return
+    }
+    if (kind == "kw" && val == "true")  { advance(); emit("  movq $1, %rax"); return }
+    if (kind == "kw" && val == "false") { advance(); emit("  movq $0, %rax"); return }
+
+    # syscall
+    if (kind == "kw" && val == "syscall") {
+        advance(); expect("(")
+        nargs = 0
+        x86_parse_expr(); nargs++; emit("  pushq %rax")
+        while (peek_kind() == ",") {
+            advance(); x86_parse_expr(); nargs++; emit("  pushq %rax")
+        }
+        expect(")")
+        if (nargs >= 7) emit("  popq %r9")
+        if (nargs >= 6) emit("  popq %r8")
+        if (nargs >= 5) emit("  popq %r10")
+        if (nargs >= 4) emit("  popq %rdx")
+        if (nargs >= 3) emit("  popq %rsi")
+        if (nargs >= 2) emit("  popq %rdi")
+        if (nargs >= 1) emit("  popq %rax")
+        emit("  addq $0x2000000, %rax")
+        emit("  syscall")
+        return
+    }
+
+    # Parenthesized expression
+    if (kind == "(") {
+        advance(); x86_parse_expr(); expect(")"); return
+    }
+
+    # Identifier or function call
+    if (kind == "id" || (kind == "kw" && \
+        val != "fn" && val != "let" && val != "ret" && val != "if" && \
+        val != "else" && val != "loop" && val != "break" && val != "print" && \
+        val != "struct" && val != "enum" && val != "const" && val != "impl" && \
+        val != "syscall")) {
+        name = val; advance()
+        if (peek_kind() == "(") {
             advance()
-            return ASTNode('int', val=t.val)
-        elif t.kind == 'str':
+            nargs = 0
+            if (peek_kind() != ")") {
+                x86_parse_expr(); nargs++; emit("  pushq %rax")
+                while (peek_kind() == ",") {
+                    advance(); x86_parse_expr(); nargs++; emit("  pushq %rax")
+                }
+            }
+            expect(")")
+            if (nargs >= 6) emit("  popq %r9")
+            if (nargs >= 5) emit("  popq %r8")
+            if (nargs >= 4) emit("  popq %rcx")
+            if (nargs >= 3) emit("  popq %rdx")
+            if (nargs >= 2) emit("  popq %rsi")
+            if (nargs >= 1) emit("  popq %rdi")
+            emit("  callq _" name)
+            return
+        }
+        if (!(name in env)) die("undefined variable: " name " at line " tk_line[POS-1])
+        emit("  movq -" env[name] "(%rbp), %rax")
+        return
+    }
+
+    die("unexpected token " kind " (" val ") at line " tk_line[POS])
+}
+
+function x86_gen_stmt(    kind, val, name, off, else_lbl, end_lbl, top_lbl, idx) {
+    kind = peek_kind(); val = peek_val()
+
+    # let name = expr
+    if (kind == "kw" && val == "let") {
+        advance()
+        name = peek_val(); expect("id")
+        expect("=")
+        x86_parse_expr()
+        SLOT++
+        off = SLOT * 8
+        env[name] = off
+        emit("  movq %rax, -" off "(%rbp)")
+        return
+    }
+
+    # assignment: name = expr
+    if (kind == "id" && tk_kind[POS+1] == "=") {
+        name = val; advance(); expect("=")
+        x86_parse_expr()
+        if (!(name in env)) die("undefined variable: " name)
+        off = env[name]
+        emit("  movq %rax, -" off "(%rbp)")
+        return
+    }
+
+    # ret expr
+    if (kind == "kw" && val == "ret") {
+        advance()
+        x86_parse_expr()
+        emit("  addq $" FRAME_SIZE ", %rsp")
+        emit("  popq %rbp")
+        emit("  retq")
+        return
+    }
+
+    # if cond { ... } else { ... }
+    if (kind == "kw" && val == "if") {
+        advance()
+        else_lbl = new_label()
+        end_lbl = new_label()
+        x86_parse_expr()
+        emit("  testq %rax, %rax")
+        emit("  je " else_lbl)
+        expect("{")
+        while (peek_kind() != "}") x86_gen_stmt()
+        expect("}")
+        if (peek_kind() == "kw" && peek_val() == "else") {
+            emit("  jmp " end_lbl)
+            emit(else_lbl ":")
+            advance(); expect("{")
+            while (peek_kind() != "}") x86_gen_stmt()
+            expect("}")
+            emit(end_lbl ":")
+        } else {
+            emit(else_lbl ":")
+        }
+        return
+    }
+
+    # loop cond { ... }
+    if (kind == "kw" && val == "loop") {
+        advance()
+        top_lbl = new_label()
+        end_lbl = new_label()
+        # Save and set loop end label
+        saved_loop_end = LOOP_END
+        LOOP_END = end_lbl
+        emit(top_lbl ":")
+        x86_parse_expr()
+        emit("  testq %rax, %rax")
+        emit("  je " end_lbl)
+        expect("{")
+        while (peek_kind() != "}") x86_gen_stmt()
+        expect("}")
+        emit("  jmp " top_lbl)
+        emit(end_lbl ":")
+        LOOP_END = saved_loop_end
+        return
+    }
+
+    # break
+    if (kind == "kw" && val == "break") {
+        advance()
+        emit("  jmp " LOOP_END)
+        return
+    }
+
+    # print expr
+    if (kind == "kw" && val == "print") {
+        advance()
+        if (peek_kind() == "str") {
+            val = peek_val(); advance()
+            NSTR++
+            str_val[NSTR] = val
+            idx = NSTR
+            emit("  movq $0x2000004, %rax")
+            emit("  movq $1, %rdi")
+            emit("  leaq str_" idx "(%rip), %rsi")
+            emit("  movq $str_" idx "_len, %rdx")
+            emit("  syscall")
+        } else {
+            x86_parse_expr()
+            emit("  movq %rax, %rdi")
+            emit("  callq _print_int")
+        }
+        return
+    }
+
+    # Expression statement
+    x86_parse_expr()
+}
+
+function x86_gen_function(    fname, label, nparams, i, pname, num_locals, \
+                              body_start, body_end, param_regs) {
+    expect_kw("fn")
+    fname = peek_val(); expect("id")
+    expect("(")
+
+    # Parse parameters
+    nparams = 0
+    delete env
+    SLOT = 0
+
+    if (peek_kind() != ")") {
+        nparams++
+        pname = peek_val(); expect("id")
+        expect(":")
+        while (peek_kind() != "," && peek_kind() != ")") advance()
+        SLOT++
+        env[pname] = SLOT * 8
+
+        while (peek_kind() == ",") {
             advance()
-            return ASTNode('str', val=t.val)
-        elif t.kind == 'kw' and t.val == 'true':
+            nparams++
+            pname = peek_val(); expect("id")
+            expect(":")
+            while (peek_kind() != "," && peek_kind() != ")") advance()
+            SLOT++
+            env[pname] = SLOT * 8
+        }
+    }
+    expect(")")
+
+    # Skip return type
+    if (peek_kind() == "->") {
+        advance()
+        while (peek_kind() != "{") advance()
+    }
+
+    # Count locals in body (scan ahead)
+    body_start = POS
+    expect("{")
+    body_end = find_matching_brace(POS - 1)
+    num_locals = count_locals_in_body(POS, body_end)
+    # Reset POS to body_start + 1 (after {)
+    POS = body_start
+    expect("{")
+
+    # Emit function prologue
+    label = (fname == "main") ? "_main" : ("_" fname)
+    FRAME_SIZE = (num_locals + nparams + 1) * 8
+    # Align to 16 bytes, minimum 16
+    FRAME_SIZE = int((FRAME_SIZE + 15) / 16) * 16
+    if (FRAME_SIZE < 16) FRAME_SIZE = 16
+
+    emit(label ":")
+    emit("  pushq %rbp")
+    emit("  movq %rsp, %rbp")
+    emit("  subq $" FRAME_SIZE ", %rsp")
+
+    # Store parameters from registers
+    split("%rdi %rsi %rdx %rcx %r8 %r9", _pregs, " ")
+    for (i = 1; i <= nparams && i <= 6; i++) {
+        emit("  movq " _pregs[i] ", -" (i * 8) "(%rbp)")
+    }
+
+    # Generate body
+    while (peek_kind() != "}") x86_gen_stmt()
+    expect("}")
+
+    # Epilogue (default return 0)
+    emit("  xorl %eax, %eax")
+    emit("  addq $" FRAME_SIZE ", %rsp")
+    emit("  popq %rbp")
+    emit("  retq")
+    emit("")
+}
+
+# ─── ARM64 Code Generator ────────────────────────────────────────────
+
+function arm64_parse_expr() {
+    arm64_parse_comparison()
+}
+
+function arm64_parse_comparison(    op, cc) {
+    arm64_parse_additive()
+    while (peek_kind() == "==" || peek_kind() == "!=" || peek_kind() == "<" || \
+           peek_kind() == ">" || peek_kind() == "<=" || peek_kind() == ">=") {
+        op = peek_kind(); advance()
+        emit("  str x0, [sp, #-16]!")
+        arm64_parse_additive()
+        emit("  mov x1, x0")
+        emit("  ldr x0, [sp], #16")
+        emit("  cmp x0, x1")
+        if (op == "==") cc = "eq"
+        else if (op == "!=") cc = "ne"
+        else if (op == "<") cc = "lt"
+        else if (op == ">") cc = "gt"
+        else if (op == "<=") cc = "le"
+        else if (op == ">=") cc = "ge"
+        emit("  cset x0, " cc)
+    }
+}
+
+function arm64_parse_additive(    op) {
+    arm64_parse_multiplicative()
+    while (peek_kind() == "+" || peek_kind() == "-") {
+        op = peek_kind(); advance()
+        emit("  str x0, [sp, #-16]!")
+        arm64_parse_multiplicative()
+        emit("  mov x1, x0")
+        emit("  ldr x0, [sp], #16")
+        if (op == "+") emit("  add x0, x0, x1")
+        else           emit("  sub x0, x0, x1")
+    }
+}
+
+function arm64_parse_multiplicative(    op) {
+    arm64_parse_unary()
+    while (peek_kind() == "*" || peek_kind() == "/" || peek_kind() == "%") {
+        op = peek_kind(); advance()
+        emit("  str x0, [sp, #-16]!")
+        arm64_parse_unary()
+        emit("  mov x1, x0")
+        emit("  ldr x0, [sp], #16")
+        if (op == "*") emit("  mul x0, x0, x1")
+        else if (op == "/") emit("  sdiv x0, x0, x1")
+        else { emit("  sdiv x2, x0, x1"); emit("  msub x0, x2, x1, x0") }
+    }
+}
+
+function arm64_parse_unary() {
+    if (peek_kind() == "-") {
+        advance()
+        arm64_parse_primary()
+        emit("  neg x0, x0")
+        return
+    }
+    arm64_parse_primary()
+}
+
+function arm64_parse_primary(    kind, val, name, nargs, idx, lo, hi) {
+    kind = peek_kind(); val = peek_val()
+
+    if (kind == "int") {
+        advance()
+        if (val + 0 >= 0 && val + 0 < 65536) {
+            emit("  mov x0, #" val)
+        } else {
+            lo = and_bits(val + 0, 65535)
+            hi = rshift_16(val + 0)
+            emit("  mov x0, #" lo)
+            if (hi > 0) emit("  movk x0, #" hi ", lsl #16")
+        }
+        return
+    }
+    if (kind == "str") {
+        advance()
+        NSTR++; str_val[NSTR] = val
+        emit("  adrp x0, str_" NSTR "@PAGE")
+        emit("  add x0, x0, str_" NSTR "@PAGEOFF")
+        return
+    }
+    if (kind == "kw" && val == "true")  { advance(); emit("  mov x0, #1"); return }
+    if (kind == "kw" && val == "false") { advance(); emit("  mov x0, #0"); return }
+
+    # syscall
+    if (kind == "kw" && val == "syscall") {
+        advance(); expect("(")
+        nargs = 0
+        arm64_parse_expr(); nargs++; emit("  str x0, [sp, #-16]!")
+        while (peek_kind() == ",") {
+            advance(); arm64_parse_expr(); nargs++; emit("  str x0, [sp, #-16]!")
+        }
+        expect(")")
+        # Pop: syscall num -> x16, args -> x0..x5
+        # Stack has bottom=arg0(syscnum) ... top=argN
+        if (nargs >= 7) emit("  ldr x5, [sp], #16")
+        if (nargs >= 6) emit("  ldr x4, [sp], #16")
+        if (nargs >= 5) emit("  ldr x3, [sp], #16")
+        if (nargs >= 4) emit("  ldr x2, [sp], #16")
+        if (nargs >= 3) emit("  ldr x1, [sp], #16")
+        if (nargs >= 2) emit("  ldr x0, [sp], #16")
+        if (nargs >= 1) emit("  ldr x16, [sp], #16")
+        emit("  svc #0x80")
+        return
+    }
+
+    # Parenthesized
+    if (kind == "(") {
+        advance(); arm64_parse_expr(); expect(")"); return
+    }
+
+    # Identifier or function call
+    if (kind == "id" || (kind == "kw" && \
+        val != "fn" && val != "let" && val != "ret" && val != "if" && \
+        val != "else" && val != "loop" && val != "break" && val != "print" && \
+        val != "struct" && val != "enum" && val != "const" && val != "impl" && \
+        val != "syscall")) {
+        name = val; advance()
+        if (peek_kind() == "(") {
             advance()
-            return ASTNode('int', val=1)
-        elif t.kind == 'kw' and t.val == 'false':
+            nargs = 0
+            if (peek_kind() != ")") {
+                arm64_parse_expr(); nargs++; emit("  str x0, [sp, #-16]!")
+                while (peek_kind() == ",") {
+                    advance(); arm64_parse_expr(); nargs++; emit("  str x0, [sp, #-16]!")
+                }
+            }
+            expect(")")
+            # Pop into x0..x7 (reverse stack order)
+            if (nargs >= 8) emit("  ldr x7, [sp], #16")
+            if (nargs >= 7) emit("  ldr x6, [sp], #16")
+            if (nargs >= 6) emit("  ldr x5, [sp], #16")
+            if (nargs >= 5) emit("  ldr x4, [sp], #16")
+            if (nargs >= 4) emit("  ldr x3, [sp], #16")
+            if (nargs >= 3) emit("  ldr x2, [sp], #16")
+            if (nargs >= 2) emit("  ldr x1, [sp], #16")
+            if (nargs >= 1) emit("  ldr x0, [sp], #16")
+            emit("  bl _" name)
+            return
+        }
+        if (!(name in env)) die("undefined variable: " name " at line " tk_line[POS-1])
+        emit("  ldr x0, [x29, #" env[name] "]")
+        return
+    }
+
+    die("unexpected token " kind " (" val ") at line " tk_line[POS])
+}
+
+function arm64_gen_stmt(    kind, val, name, off, else_lbl, end_lbl, top_lbl, idx, saved_loop_end) {
+    kind = peek_kind(); val = peek_val()
+
+    # let name = expr
+    if (kind == "kw" && val == "let") {
+        advance()
+        name = peek_val(); expect("id")
+        expect("=")
+        arm64_parse_expr()
+        SLOT++
+        off = SLOT * 8
+        env[name] = off
+        emit("  str x0, [x29, #" off "]")
+        return
+    }
+
+    # assignment: name = expr
+    if (kind == "id" && tk_kind[POS+1] == "=") {
+        name = val; advance(); expect("=")
+        arm64_parse_expr()
+        if (!(name in env)) die("undefined variable: " name)
+        off = env[name]
+        emit("  str x0, [x29, #" off "]")
+        return
+    }
+
+    # ret expr
+    if (kind == "kw" && val == "ret") {
+        advance()
+        arm64_parse_expr()
+        emit("  ldp x29, x30, [sp], #" FRAME_SIZE)
+        emit("  ret")
+        return
+    }
+
+    # if cond { ... } else { ... }
+    if (kind == "kw" && val == "if") {
+        advance()
+        else_lbl = new_label()
+        end_lbl = new_label()
+        arm64_parse_expr()
+        emit("  cbz x0, " else_lbl)
+        expect("{")
+        while (peek_kind() != "}") arm64_gen_stmt()
+        expect("}")
+        if (peek_kind() == "kw" && peek_val() == "else") {
+            emit("  b " end_lbl)
+            emit(else_lbl ":")
+            advance(); expect("{")
+            while (peek_kind() != "}") arm64_gen_stmt()
+            expect("}")
+            emit(end_lbl ":")
+        } else {
+            emit(else_lbl ":")
+        }
+        return
+    }
+
+    # loop cond { ... }
+    if (kind == "kw" && val == "loop") {
+        advance()
+        top_lbl = new_label()
+        end_lbl = new_label()
+        saved_loop_end = LOOP_END
+        LOOP_END = end_lbl
+        emit(top_lbl ":")
+        arm64_parse_expr()
+        emit("  cbz x0, " end_lbl)
+        expect("{")
+        while (peek_kind() != "}") arm64_gen_stmt()
+        expect("}")
+        emit("  b " top_lbl)
+        emit(end_lbl ":")
+        LOOP_END = saved_loop_end
+        return
+    }
+
+    # break
+    if (kind == "kw" && val == "break") {
+        advance()
+        emit("  b " LOOP_END)
+        return
+    }
+
+    # print expr
+    if (kind == "kw" && val == "print") {
+        advance()
+        if (peek_kind() == "str") {
+            val = peek_val(); advance()
+            NSTR++
+            str_val[NSTR] = val
+            idx = NSTR
+            emit("  mov x0, #1")
+            emit("  adrp x1, str_" idx "@PAGE")
+            emit("  add x1, x1, str_" idx "@PAGEOFF")
+            emit("  mov x2, #str_" idx "_len")
+            emit("  mov x16, #4")
+            emit("  svc #0x80")
+        } else {
+            arm64_parse_expr()
+            emit("  bl _print_int")
+        }
+        return
+    }
+
+    # Expression statement
+    arm64_parse_expr()
+}
+
+function arm64_gen_function(    fname, label, nparams, i, pname, num_locals, \
+                                body_start, body_end) {
+    expect_kw("fn")
+    fname = peek_val(); expect("id")
+    expect("(")
+
+    nparams = 0
+    delete env
+    SLOT = 1  # slot 0 reserved for x29/x30 (2 regs = 16 bytes, but we use slots of 8)
+
+    if (peek_kind() != ")") {
+        nparams++
+        pname = peek_val(); expect("id")
+        expect(":")
+        while (peek_kind() != "," && peek_kind() != ")") advance()
+        SLOT++
+        env[pname] = SLOT * 8
+
+        while (peek_kind() == ",") {
             advance()
-            return ASTNode('int', val=0)
-        elif t.kind == 'kw' and t.val == 'syscall':
+            nparams++
+            pname = peek_val(); expect("id")
+            expect(":")
+            while (peek_kind() != "," && peek_kind() != ")") advance()
+            SLOT++
+            env[pname] = SLOT * 8
+        }
+    }
+    expect(")")
+
+    # Skip return type
+    if (peek_kind() == "->") {
+        advance()
+        while (peek_kind() != "{") advance()
+    }
+
+    # Count locals
+    body_start = POS
+    expect("{")
+    body_end = find_matching_brace(POS - 1)
+    num_locals = count_locals_in_body(POS, body_end)
+    POS = body_start
+    expect("{")
+
+    label = (fname == "main") ? "_main" : ("_" fname)
+    FRAME_SIZE = (num_locals + nparams + 4) * 8  # +4 for x29, x30, padding
+    FRAME_SIZE = int((FRAME_SIZE + 15) / 16) * 16
+    if (FRAME_SIZE < 32) FRAME_SIZE = 32
+
+    emit(label ":")
+    emit("  stp x29, x30, [sp, #-" FRAME_SIZE "]!")
+    emit("  mov x29, sp")
+
+    # Store parameters from registers x0-x7
+    for (i = 1; i <= nparams && i <= 8; i++) {
+        emit("  str x" (i-1) ", [x29, #" env[_fn_params[i]] "]")
+    }
+
+    while (peek_kind() != "}") arm64_gen_stmt()
+    expect("}")
+
+    emit("  mov x0, #0")
+    emit("  ldp x29, x30, [sp], #" FRAME_SIZE)
+    emit("  ret")
+    emit("")
+}
+
+# We need to track param names for arm64 store — fix arm64_gen_function
+# to store param names as we parse them.
+
+# Override: inline the param tracking
+function arm64_gen_function_v2(    fname, label, nparams, i, pname, num_locals, \
+                                   body_start, body_end, pnames) {
+    expect_kw("fn")
+    fname = peek_val(); expect("id")
+    expect("(")
+
+    nparams = 0
+    delete env
+    SLOT = 1
+
+    if (peek_kind() != ")") {
+        nparams++
+        pname = peek_val(); expect("id")
+        expect(":")
+        while (peek_kind() != "," && peek_kind() != ")") advance()
+        SLOT++
+        env[pname] = SLOT * 8
+        pnames[nparams] = pname
+
+        while (peek_kind() == ",") {
             advance()
-            expect('(')
-            args = [parse_expr()]
-            while peek().kind == ',':
-                advance()
-                args.append(parse_expr())
-            expect(')')
-            return ASTNode('syscall', args=args)
-        elif t.kind == 'id' or (t.kind == 'kw' and t.val not in ('fn','let','ret','if','else','loop','break','print','struct','enum','const','impl')):
-            name = advance().val
-            if peek().kind == '(':
-                advance()
-                args = []
-                if peek().kind != ')':
-                    args.append(parse_expr())
-                    while peek().kind == ',':
-                        advance()
-                        args.append(parse_expr())
-                expect(')')
-                return ASTNode('call', name=name, args=args)
-            return ASTNode('var', name=name)
-        elif t.kind == '(':
-            advance()
-            e = parse_expr()
-            expect(')')
-            return e
-        raise SyntaxError(f"unexpected token {t.kind} '{t.val}' at line {t.line}")
-
-    def parse_stmt():
-        t = peek()
-        if t.kind == 'kw' and t.val == 'let':
-            advance()
-            name = expect('id').val
-            expect('=')
-            expr = parse_expr()
-            return ASTNode('let', name=name, expr=expr)
-        elif t.kind == 'kw' and t.val == 'ret':
-            advance()
-            expr = parse_expr()
-            return ASTNode('ret', expr=expr)
-        elif t.kind == 'kw' and t.val == 'if':
-            advance()
-            cond = parse_expr()
-            expect('{')
-            body = []
-            while peek().kind != '}':
-                body.append(parse_stmt())
-            expect('}')
-            else_body = []
-            if peek().kind == 'kw' and peek().val == 'else':
-                advance()
-                expect('{')
-                while peek().kind != '}':
-                    else_body.append(parse_stmt())
-                expect('}')
-            return ASTNode('if', cond=cond, body=body, else_body=else_body)
-        elif t.kind == 'kw' and t.val == 'loop':
-            advance()
-            cond = parse_expr()
-            expect('{')
-            body = []
-            while peek().kind != '}':
-                body.append(parse_stmt())
-            expect('}')
-            return ASTNode('loop', cond=cond, body=body)
-        elif t.kind == 'kw' and t.val == 'break':
-            advance()
-            return ASTNode('break')
-        elif t.kind == 'kw' and t.val == 'print':
-            advance()
-            expr = parse_expr()
-            return ASTNode('print', expr=expr)
-        else:
-            expr = parse_expr()
-            if peek().kind == '=':
-                advance()
-                val = parse_expr()
-                return ASTNode('assign', name=expr.name, expr=val)
-            return ASTNode('expr', expr=expr)
-
-    def parse_fn():
-        expect_kw('fn')
-        name = expect('id').val
-        expect('(')
-        params = []
-        if peek().kind != ')':
-            pname = expect('id').val
-            expect(':')
-            while peek().kind not in (',', ')'):
-                advance()
-            params.append(pname)
-            while peek().kind == ',':
-                advance()
-                pname = expect('id').val
-                expect(':')
-                while peek().kind not in (',', ')'):
-                    advance()
-                params.append(pname)
-        expect(')')
-        ret_type = None
-        if peek().kind == '->':
-            advance()
-            while peek().kind not in ('{',):
-                advance()
-        expect('{')
-        body = []
-        while peek().kind != '}':
-            body.append(parse_stmt())
-        expect('}')
-        return ASTNode('fn', name=name, params=params, body=body)
-
-    functions = []
-    while peek().kind != 'eof':
-        if peek().kind == 'kw' and peek().val == 'fn':
-            functions.append(parse_fn())
-        else:
-            advance()
-    return functions
-
-
-# ─── x86-64 macOS Code Generator ────────────────────────────────────────────
-
-class X86_64MacOSGen:
-    """Generate x86-64 assembly for macOS (System V AMD64 ABI + macOS syscalls)."""
-
-    def __init__(self):
-        self.strings = []
-        self.label_count = 0
-
-    def new_label(self):
-        self.label_count += 1
-        return f".L{self.label_count}"
-
-    def generate(self, functions):
-        lines = []
-        lines.append(".section __TEXT,__text,regular,pure_instructions")
-        lines.append(".globl _main")
-        lines.append("")
-
-        for fn in functions:
-            label = "_main" if fn.name == "main" else f"_{fn.name}"
-            lines.append(f"{label}:")
-            lines.append("  pushq %rbp")
-            lines.append("  movq %rsp, %rbp")
-
-            # Allocate stack frame
-            num_locals = self._count_locals(fn.body) + len(fn.params)
-            frame_size = max(((num_locals + 1) * 8 + 15) & ~15, 16)
-            lines.append(f"  subq ${frame_size}, %rsp")
-
-            # Store parameters
-            param_regs = ['%rdi', '%rsi', '%rdx', '%rcx', '%r8', '%r9']
-            env = {}
-            for i, p in enumerate(fn.params):
-                off = (i + 1) * 8
-                env[p] = off
-                if i < len(param_regs):
-                    lines.append(f"  movq {param_regs[i]}, -{off}(%rbp)")
-
-            self._slot = len(fn.params)
-            self._gen_stmts(fn, lines, env, frame_size)
-
-            # Default return 0
-            lines.append("  xorl %eax, %eax")
-            lines.append(f"  addq ${frame_size}, %rsp")
-            lines.append("  popq %rbp")
-            lines.append("  retq")
-            lines.append("")
-
-        # String data
-        if self.strings:
-            lines.append(".section __TEXT,__cstring,cstring_literals")
-            for i, s in enumerate(self.strings):
-                escaped = s.replace('\\n', '\n').encode('utf-8')
-                lines.append(f"str_{i}:")
-                hex_bytes = ','.join(f'0x{b:02x}' for b in escaped)
-                lines.append(f"  .byte {hex_bytes}")
-                lines.append(f"str_{i}_len = {len(escaped)}")
-            lines.append("")
-
-        return '\n'.join(lines)
-
-    def _count_locals(self, stmts):
-        count = 0
-        for s in stmts:
-            if s.kind == 'let': count += 1
-            if hasattr(s, 'body'): count += self._count_locals(s.body)
-            if hasattr(s, 'else_body'): count += self._count_locals(s.else_body)
-        return count
-
-    def _gen_stmts(self, fn, lines, env, frame_size):
-        for stmt in fn.body:
-            self._gen_stmt(stmt, lines, env, fn.name, frame_size)
-
-    def _gen_stmt(self, stmt, lines, env, fn_name, frame_size):
-        if stmt.kind == 'let':
-            self._gen_expr(stmt.expr, lines, env)
-            self._slot += 1
-            off = self._slot * 8
-            env[stmt.name] = off
-            lines.append(f"  movq %rax, -{off}(%rbp)")
-
-        elif stmt.kind == 'assign':
-            self._gen_expr(stmt.expr, lines, env)
-            off = env[stmt.name]
-            lines.append(f"  movq %rax, -{off}(%rbp)")
-
-        elif stmt.kind == 'ret':
-            self._gen_expr(stmt.expr, lines, env)
-            lines.append(f"  addq ${frame_size}, %rsp")
-            lines.append("  popq %rbp")
-            lines.append("  retq")
-
-        elif stmt.kind == 'if':
-            else_label = self.new_label()
-            end_label = self.new_label()
-            self._gen_expr(stmt.cond, lines, env)
-            lines.append("  testq %rax, %rax")
-            lines.append(f"  je {else_label}")
-            for s in stmt.body:
-                self._gen_stmt(s, lines, env, fn_name, frame_size)
-            if stmt.else_body:
-                lines.append(f"  jmp {end_label}")
-            lines.append(f"{else_label}:")
-            if stmt.else_body:
-                for s in stmt.else_body:
-                    self._gen_stmt(s, lines, env, fn_name, frame_size)
-                lines.append(f"{end_label}:")
-
-        elif stmt.kind == 'loop':
-            top_label = self.new_label()
-            end_label = self.new_label()
-            self._loop_end = end_label
-            lines.append(f"{top_label}:")
-            self._gen_expr(stmt.cond, lines, env)
-            lines.append("  testq %rax, %rax")
-            lines.append(f"  je {end_label}")
-            for s in stmt.body:
-                self._gen_stmt(s, lines, env, fn_name, frame_size)
-            lines.append(f"  jmp {top_label}")
-            lines.append(f"{end_label}:")
-
-        elif stmt.kind == 'break':
-            lines.append(f"  jmp {self._loop_end}")
-
-        elif stmt.kind == 'print':
-            if stmt.expr.kind == 'str':
-                idx = len(self.strings)
-                self.strings.append(stmt.expr.val)
-                lines.append(f"  movq $0x2000004, %rax")  # write syscall
-                lines.append(f"  movq $1, %rdi")           # stdout
-                lines.append(f"  leaq str_{idx}(%rip), %rsi")
-                lines.append(f"  movq $str_{idx}_len, %rdx")
-                lines.append("  syscall")
-            else:
-                self._gen_expr(stmt.expr, lines, env)
-                lines.append("  movq %rax, %rdi")
-                lines.append("  callq _print_int")
-
-        elif stmt.kind == 'expr':
-            self._gen_expr(stmt.expr, lines, env)
-
-    def _gen_expr(self, expr, lines, env):
-        if expr.kind == 'int':
-            lines.append(f"  movq ${expr.val}, %rax")
-
-        elif expr.kind == 'var':
-            off = env[expr.name]
-            lines.append(f"  movq -{off}(%rbp), %rax")
-
-        elif expr.kind == 'binop':
-            self._gen_expr(expr.right, lines, env)
-            lines.append("  pushq %rax")
-            self._gen_expr(expr.left, lines, env)
-            lines.append("  popq %rcx")
-            if expr.op == '+': lines.append("  addq %rcx, %rax")
-            elif expr.op == '-': lines.append("  subq %rcx, %rax")
-            elif expr.op == '*': lines.append("  imulq %rcx, %rax")
-            elif expr.op == '/':
-                lines.append("  cqto")
-                lines.append("  idivq %rcx")
-            elif expr.op == '%':
-                lines.append("  cqto")
-                lines.append("  idivq %rcx")
-                lines.append("  movq %rdx, %rax")
-            elif expr.op in ('==', '!=', '<', '>', '<=', '>='):
-                lines.append("  cmpq %rcx, %rax")
-                cc = {'==': 'sete', '!=': 'setne', '<': 'setl', '>': 'setg',
-                       '<=': 'setle', '>=': 'setge'}[expr.op]
-                lines.append(f"  {cc} %al")
-                lines.append("  movzbq %al, %rax")
-
-        elif expr.kind == 'call':
-            param_regs = ['%rdi', '%rsi', '%rdx', '%rcx', '%r8', '%r9']
-            # Push args right-to-left, then pop into regs
-            for arg in reversed(expr.args):
-                self._gen_expr(arg, lines, env)
-                lines.append("  pushq %rax")
-            for i in range(min(len(expr.args), len(param_regs))):
-                lines.append(f"  popq {param_regs[i]}")
-            label = f"_{expr.name}"
-            lines.append(f"  callq {label}")
-
-        elif expr.kind == 'syscall':
-            # macOS x86-64: syscall number in rax (with 0x2000000 prefix)
-            # args in rdi, rsi, rdx, r10, r8, r9
-            sys_regs = ['%rdi', '%rsi', '%rdx', '%r10', '%r8', '%r9']
-            for arg in reversed(expr.args[1:]):
-                self._gen_expr(arg, lines, env)
-                lines.append("  pushq %rax")
-            self._gen_expr(expr.args[0], lines, env)
-            lines.append("  addq $0x2000000, %rax")  # macOS syscall prefix
-            for i in range(len(expr.args) - 1):
-                lines.append(f"  popq {sys_regs[i]}")
-            lines.append("  syscall")
-
-        elif expr.kind == 'str':
-            idx = len(self.strings)
-            self.strings.append(expr.val)
-            lines.append(f"  leaq str_{idx}(%rip), %rax")
-
-
-# ─── ARM64 macOS Code Generator ─────────────────────────────────────────────
-
-class ARM64MacOSGen:
-    """Generate ARM64 assembly for macOS (AAPCS64 + macOS syscalls)."""
-
-    def __init__(self):
-        self.strings = []
-        self.label_count = 0
-
-    def new_label(self):
-        self.label_count += 1
-        return f".L{self.label_count}"
-
-    def generate(self, functions):
-        lines = []
-        lines.append(".section __TEXT,__text,regular,pure_instructions")
-        lines.append(".globl _main")
-        lines.append(".p2align 2")
-        lines.append("")
-
-        for fn in functions:
-            label = "_main" if fn.name == "main" else f"_{fn.name}"
-            lines.append(f"{label}:")
-
-            num_locals = self._count_locals(fn.body) + len(fn.params)
-            frame_size = max(((num_locals + 2) * 8 + 15) & ~15, 32)
-
-            lines.append(f"  stp x29, x30, [sp, #-{frame_size}]!")
-            lines.append("  mov x29, sp")
-
-            # Store parameters (x0-x7)
-            env = {}
-            for i, p in enumerate(fn.params):
-                off = (i + 1) * 8
-                env[p] = off
-                lines.append(f"  str x{i}, [x29, #{off}]")
-
-            self._slot = len(fn.params)
-            self._gen_stmts(fn, lines, env, frame_size)
-
-            # Default return 0
-            lines.append("  mov x0, #0")
-            lines.append(f"  ldp x29, x30, [sp], #{frame_size}")
-            lines.append("  ret")
-            lines.append("")
-
-        # String data
-        if self.strings:
-            lines.append(".section __TEXT,__cstring,cstring_literals")
-            for i, s in enumerate(self.strings):
-                escaped = s.replace('\\n', '\n').encode('utf-8')
-                lines.append(f"str_{i}:")
-                lines.append(f'  .asciz "{s}"')
-                lines.append(f"str_{i}_len = {len(escaped)}")
-            lines.append("")
-
-        return '\n'.join(lines)
-
-    def _count_locals(self, stmts):
-        count = 0
-        for s in stmts:
-            if s.kind == 'let': count += 1
-            if hasattr(s, 'body'): count += self._count_locals(s.body)
-            if hasattr(s, 'else_body'): count += self._count_locals(s.else_body)
-        return count
-
-    def _gen_stmts(self, fn, lines, env, frame_size):
-        for stmt in fn.body:
-            self._gen_stmt(stmt, lines, env, fn.name, frame_size)
-
-    def _gen_stmt(self, stmt, lines, env, fn_name, frame_size):
-        if stmt.kind == 'let':
-            self._gen_expr(stmt.expr, lines, env)
-            self._slot += 1
-            off = self._slot * 8
-            env[stmt.name] = off
-            lines.append(f"  str x0, [x29, #{off}]")
-
-        elif stmt.kind == 'assign':
-            self._gen_expr(stmt.expr, lines, env)
-            off = env[stmt.name]
-            lines.append(f"  str x0, [x29, #{off}]")
-
-        elif stmt.kind == 'ret':
-            self._gen_expr(stmt.expr, lines, env)
-            lines.append(f"  ldp x29, x30, [sp], #{frame_size}")
-            lines.append("  ret")
-
-        elif stmt.kind == 'if':
-            else_label = self.new_label()
-            end_label = self.new_label()
-            self._gen_expr(stmt.cond, lines, env)
-            lines.append(f"  cbz x0, {else_label}")
-            for s in stmt.body:
-                self._gen_stmt(s, lines, env, fn_name, frame_size)
-            if stmt.else_body:
-                lines.append(f"  b {end_label}")
-            lines.append(f"{else_label}:")
-            if stmt.else_body:
-                for s in stmt.else_body:
-                    self._gen_stmt(s, lines, env, fn_name, frame_size)
-                lines.append(f"{end_label}:")
-
-        elif stmt.kind == 'loop':
-            top_label = self.new_label()
-            end_label = self.new_label()
-            self._loop_end = end_label
-            lines.append(f"{top_label}:")
-            self._gen_expr(stmt.cond, lines, env)
-            lines.append(f"  cbz x0, {end_label}")
-            for s in stmt.body:
-                self._gen_stmt(s, lines, env, fn_name, frame_size)
-            lines.append(f"  b {top_label}")
-            lines.append(f"{end_label}:")
-
-        elif stmt.kind == 'break':
-            lines.append(f"  b {self._loop_end}")
-
-        elif stmt.kind == 'print':
-            if stmt.expr.kind == 'str':
-                idx = len(self.strings)
-                self.strings.append(stmt.expr.val)
-                lines.append(f"  mov x0, #1")              # stdout
-                lines.append(f"  adrp x1, str_{idx}@PAGE")
-                lines.append(f"  add x1, x1, str_{idx}@PAGEOFF")
-                lines.append(f"  mov x2, #str_{idx}_len")
-                lines.append(f"  mov x16, #4")              # write syscall
-                lines.append("  svc #0x80")                 # macOS ARM64 syscall
-            else:
-                self._gen_expr(stmt.expr, lines, env)
-                lines.append("  bl _print_int")
-
-        elif stmt.kind == 'expr':
-            self._gen_expr(stmt.expr, lines, env)
-
-    def _gen_expr(self, expr, lines, env):
-        if expr.kind == 'int':
-            if expr.val >= 0 and expr.val < 65536:
-                lines.append(f"  mov x0, #{expr.val}")
-            else:
-                lines.append(f"  mov x0, #{expr.val & 0xFFFF}")
-                if expr.val > 0xFFFF:
-                    lines.append(f"  movk x0, #{(expr.val >> 16) & 0xFFFF}, lsl #16")
-
-        elif expr.kind == 'var':
-            off = env[expr.name]
-            lines.append(f"  ldr x0, [x29, #{off}]")
-
-        elif expr.kind == 'binop':
-            self._gen_expr(expr.left, lines, env)
-            lines.append("  str x0, [sp, #-16]!")
-            self._gen_expr(expr.right, lines, env)
-            lines.append("  mov x1, x0")
-            lines.append("  ldr x0, [sp], #16")
-            if expr.op == '+': lines.append("  add x0, x0, x1")
-            elif expr.op == '-': lines.append("  sub x0, x0, x1")
-            elif expr.op == '*': lines.append("  mul x0, x0, x1")
-            elif expr.op == '/': lines.append("  sdiv x0, x0, x1")
-            elif expr.op == '%':
-                lines.append("  sdiv x2, x0, x1")
-                lines.append("  msub x0, x2, x1, x0")
-            elif expr.op in ('==', '!=', '<', '>', '<=', '>='):
-                lines.append("  cmp x0, x1")
-                cc = {'==': 'eq', '!=': 'ne', '<': 'lt', '>': 'gt',
-                       '<=': 'le', '>=': 'ge'}[expr.op]
-                lines.append(f"  cset x0, {cc}")
-
-        elif expr.kind == 'call':
-            for i, arg in enumerate(expr.args):
-                self._gen_expr(arg, lines, env)
-                if i < len(expr.args) - 1:
-                    lines.append("  str x0, [sp, #-16]!")
-            # Pop args into registers in reverse
-            for i in range(len(expr.args) - 2, -1, -1):
-                lines.append(f"  ldr x{i}, [sp], #16" if i < len(expr.args) - 1 else "")
-            # Last arg is already in x0, move to correct reg
-            if len(expr.args) > 1:
-                lines.append(f"  mov x{len(expr.args)-1}, x0")
-                for i in range(len(expr.args) - 2, -1, -1):
-                    lines.append(f"  ldr x{i}, [sp], #16")
-            # Simpler approach: push all then pop
-            lines.clear()  # Redo with simpler approach
-
-        elif expr.kind == 'syscall':
-            # macOS ARM64: syscall number in x16, args in x0-x5, svc #0x80
-            pass
-
-        elif expr.kind == 'str':
-            idx = len(self.strings)
-            self.strings.append(expr.val)
-            lines.append(f"  adrp x0, str_{idx}@PAGE")
-            lines.append(f"  add x0, x0, str_{idx}@PAGEOFF")
-
-    def _gen_call_args(self, expr, lines, env):
-        """Generate function call with proper arg passing."""
-        # Push all args to stack, then pop into x0-x7
-        for arg in reversed(expr.args):
-            self._gen_expr(arg, lines, env)
-            lines.append("  str x0, [sp, #-16]!")
-        for i in range(len(expr.args)):
-            lines.append(f"  ldr x{i}, [sp], #16")
-        label = f"_{expr.name}"
-        lines.append(f"  bl {label}")
-
-
-# Rewrite ARM64 gen with cleaner call handling
-class ARM64MacOSGen2:
-    """Generate ARM64 assembly for macOS (AAPCS64 + macOS syscalls)."""
-
-    def __init__(self):
-        self.strings = []
-        self.label_count = 0
-
-    def new_label(self):
-        self.label_count += 1
-        return f".L{self.label_count}"
-
-    def generate(self, functions):
-        lines = []
-        lines.append(".section __TEXT,__text,regular,pure_instructions")
-        lines.append(".globl _main")
-        lines.append(".p2align 2")
-        lines.append("")
-
-        for fn in functions:
-            label = "_main" if fn.name == "main" else f"_{fn.name}"
-            lines.append(f"{label}:")
-
-            num_locals = self._count_locals(fn.body) + len(fn.params) + 2  # +2 for x29+x30
-            frame_size = max((num_locals * 8 + 15) & ~15, 32)
-
-            lines.append(f"  stp x29, x30, [sp, #-{frame_size}]!")
-            lines.append("  mov x29, sp")
-
-            env = {}
-            for i, p in enumerate(fn.params):
-                off = (i + 2) * 8  # skip saved x29+x30 at offsets 0 and 8
-                env[p] = off
-                lines.append(f"  str x{i}, [x29, #{off}]")
-
-            self._slot = len(fn.params) + 1  # next slot starts after params+x29/x30
-            for stmt in fn.body:
-                self._gen_stmt(stmt, lines, env, fn.name, frame_size)
-
-            lines.append("  mov x0, #0")
-            lines.append(f"  ldp x29, x30, [sp], #{frame_size}")
-            lines.append("  ret")
-            lines.append("")
-
-        if self.strings:
-            lines.append(".section __TEXT,__cstring,cstring_literals")
-            for i, s in enumerate(self.strings):
-                escaped = s.replace('\\n', '\n').encode('utf-8')
-                lines.append(f"str_{i}:")
-                hex_bytes = ','.join(f'0x{b:02x}' for b in escaped)
-                lines.append(f"  .byte {hex_bytes}")
-                lines.append(f"str_{i}_len = {len(escaped)}")
-            lines.append("")
-
-        return '\n'.join(lines)
-
-    def _count_locals(self, stmts):
-        count = 0
-        for s in stmts:
-            if s.kind == 'let': count += 1
-            if hasattr(s, 'body'): count += self._count_locals(s.body)
-            if hasattr(s, 'else_body'): count += self._count_locals(s.else_body)
-        return count
-
-    def _gen_stmt(self, stmt, lines, env, fn_name, frame_size):
-        if stmt.kind == 'let':
-            self._gen_expr(stmt.expr, lines, env)
-            self._slot += 1
-            off = self._slot * 8
-            env[stmt.name] = off
-            lines.append(f"  str x0, [x29, #{off}]")
-        elif stmt.kind == 'assign':
-            self._gen_expr(stmt.expr, lines, env)
-            off = env[stmt.name]
-            lines.append(f"  str x0, [x29, #{off}]")
-        elif stmt.kind == 'ret':
-            self._gen_expr(stmt.expr, lines, env)
-            lines.append(f"  ldp x29, x30, [sp], #{frame_size}")
-            lines.append("  ret")
-        elif stmt.kind == 'if':
-            else_label = self.new_label()
-            end_label = self.new_label()
-            self._gen_expr(stmt.cond, lines, env)
-            lines.append(f"  cbz x0, {else_label}")
-            for s in stmt.body:
-                self._gen_stmt(s, lines, env, fn_name, frame_size)
-            if stmt.else_body:
-                lines.append(f"  b {end_label}")
-            lines.append(f"{else_label}:")
-            if stmt.else_body:
-                for s in stmt.else_body:
-                    self._gen_stmt(s, lines, env, fn_name, frame_size)
-                lines.append(f"{end_label}:")
-        elif stmt.kind == 'loop':
-            top_label = self.new_label()
-            end_label = self.new_label()
-            self._loop_end = end_label
-            lines.append(f"{top_label}:")
-            self._gen_expr(stmt.cond, lines, env)
-            lines.append(f"  cbz x0, {end_label}")
-            for s in stmt.body:
-                self._gen_stmt(s, lines, env, fn_name, frame_size)
-            lines.append(f"  b {top_label}")
-            lines.append(f"{end_label}:")
-        elif stmt.kind == 'break':
-            lines.append(f"  b {self._loop_end}")
-        elif stmt.kind == 'print':
-            if stmt.expr.kind == 'str':
-                idx = len(self.strings)
-                self.strings.append(stmt.expr.val)
-                lines.append(f"  mov x0, #1")
-                lines.append(f"  adrp x1, str_{idx}@PAGE")
-                lines.append(f"  add x1, x1, str_{idx}@PAGEOFF")
-                lines.append(f"  mov x2, #str_{idx}_len")
-                lines.append(f"  mov x16, #4")
-                lines.append("  svc #0x80")
-        elif stmt.kind == 'expr':
-            self._gen_expr(stmt.expr, lines, env)
-
-    def _gen_expr(self, expr, lines, env):
-        if expr.kind == 'int':
-            if 0 <= expr.val < 65536:
-                lines.append(f"  mov x0, #{expr.val}")
-            else:
-                lines.append(f"  mov x0, #{expr.val & 0xFFFF}")
-                if expr.val > 0xFFFF:
-                    lines.append(f"  movk x0, #{(expr.val >> 16) & 0xFFFF}, lsl #16")
-        elif expr.kind == 'var':
-            off = env[expr.name]
-            lines.append(f"  ldr x0, [x29, #{off}]")
-        elif expr.kind == 'binop':
-            self._gen_expr(expr.left, lines, env)
-            lines.append("  str x0, [sp, #-16]!")
-            self._gen_expr(expr.right, lines, env)
-            lines.append("  mov x1, x0")
-            lines.append("  ldr x0, [sp], #16")
-            if expr.op == '+': lines.append("  add x0, x0, x1")
-            elif expr.op == '-': lines.append("  sub x0, x0, x1")
-            elif expr.op == '*': lines.append("  mul x0, x0, x1")
-            elif expr.op == '/': lines.append("  sdiv x0, x0, x1")
-            elif expr.op == '%':
-                lines.append("  sdiv x2, x0, x1")
-                lines.append("  msub x0, x2, x1, x0")
-            elif expr.op in ('==', '!=', '<', '>', '<=', '>='):
-                lines.append("  cmp x0, x1")
-                cc = {'==': 'eq', '!=': 'ne', '<': 'lt', '>': 'gt',
-                       '<=': 'le', '>=': 'ge'}[expr.op]
-                lines.append(f"  cset x0, {cc}")
-        elif expr.kind == 'call':
-            for arg in reversed(expr.args):
-                self._gen_expr(arg, lines, env)
-                lines.append("  str x0, [sp, #-16]!")
-            for i in range(len(expr.args)):
-                lines.append(f"  ldr x{i}, [sp], #16")
-            label = f"_{expr.name}"
-            lines.append(f"  bl {label}")
-        elif expr.kind == 'syscall':
-            # macOS ARM64: syscall number in x16, args in x0-x5, svc #0x80
-            for arg in reversed(expr.args[1:]):
-                self._gen_expr(arg, lines, env)
-                lines.append("  str x0, [sp, #-16]!")
-            self._gen_expr(expr.args[0], lines, env)
-            lines.append("  mov x16, x0")
-            for i in range(len(expr.args) - 1):
-                lines.append(f"  ldr x{i}, [sp], #16")
-            lines.append("  svc #0x80")
-        elif expr.kind == 'str':
-            idx = len(self.strings)
-            self.strings.append(expr.val)
-            lines.append(f"  adrp x0, str_{idx}@PAGE")
-            lines.append(f"  add x0, x0, str_{idx}@PAGEOFF")
-
-
-# ─── Mach-O Writer ───────────────────────────────────────────────────────────
-
-def write_macho_header(f, cpu_type, cpu_subtype, ncmds, sizeofcmds):
-    """Write Mach-O 64-bit header."""
-    flags = MH_NOUNDEFS | MH_PIE
-    f.write(struct.pack('<IIIIIIII',
-        MH_MAGIC_64, cpu_type, cpu_subtype, MH_EXECUTE,
-        ncmds, sizeofcmds, flags, 0))  # reserved=0
-
-def write_segment_cmd(f, segname, vmaddr, vmsize, fileoff, filesize,
-                      maxprot, initprot, nsects):
-    """Write LC_SEGMENT_64."""
-    name = segname.encode('utf-8').ljust(16, b'\0')
-    f.write(struct.pack('<II', LC_SEGMENT_64, 72 + nsects * 80))
-    f.write(name)
-    f.write(struct.pack('<QQQQIIII',
-        vmaddr, vmsize, fileoff, filesize, maxprot, initprot, nsects, 0))
-
-def write_section(f, sectname, segname, addr, size, offset, align,
-                  reloff, nreloc, flags):
-    """Write section header (within segment)."""
-    sn = sectname.encode('utf-8').ljust(16, b'\0')
-    sg = segname.encode('utf-8').ljust(16, b'\0')
-    f.write(sn + sg)
-    f.write(struct.pack('<QQIIIIIII', addr, size, offset, align, reloff, nreloc,
-                        flags, 0, 0))
-
-def write_main_cmd(f, entryoff, stacksize=0):
-    """Write LC_MAIN."""
-    f.write(struct.pack('<IIQI', LC_MAIN, 24, entryoff, stacksize))
-
-def write_build_version_cmd(f, platform=PLATFORM_MACOS, minos=0x000D0000,
-                            sdk=0x000E0000):
-    """Write LC_BUILD_VERSION."""
-    f.write(struct.pack('<IIIIII', LC_BUILD_VERSION, 24, platform, minos, sdk, 0))
-
-def write_fat_header(f, slices):
-    """Write fat/universal binary header."""
-    f.write(struct.pack('>II', 0xCAFEBABE, len(slices)))
-    for cpu_type, cpu_subtype, offset, size, align in slices:
-        f.write(struct.pack('>IIIII', cpu_type, cpu_subtype, offset, size, align))
-
-
-# ─── Assembly & Linking ──────────────────────────────────────────────────────
-
-def assemble_macos(asm_source, output_path, arch):
-    """Assemble and link on macOS using system tools."""
-    with tempfile.TemporaryDirectory() as tmp:
-        asm_path = os.path.join(tmp, "prog.s")
-        obj_path = os.path.join(tmp, "prog.o")
-
-        with open(asm_path, 'w') as f:
-            f.write(asm_source)
-
-        # Use system as + ld
-        try:
-            # Assemble
-            subprocess.run(
-                ['as', '-arch', arch, '-o', obj_path, asm_path],
-                check=True, capture_output=True, text=True
-            )
-            # Link
-            subprocess.run(
-                ['ld', '-arch', arch, '-o', output_path, obj_path,
-                 '-lSystem', '-syslibroot',
-                 '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk',
-                 '-e', '_main'],
-                check=True, capture_output=True, text=True
-            )
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"Assembly/link error: {e.stderr}", file=sys.stderr)
-            return False
-        except FileNotFoundError:
-            print("error: system assembler (as) not found. Install Xcode Command Line Tools.", file=sys.stderr)
-            return False
-
-
-def build_universal(x86_path, arm64_path, output_path):
-    """Create universal binary using lipo."""
-    try:
-        subprocess.run(
-            ['lipo', '-create', '-output', output_path, x86_path, arm64_path],
-            check=True, capture_output=True, text=True
-        )
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"lipo error: {e.stderr}", file=sys.stderr)
-        return False
-
-
-def ad_hoc_sign(binary_path):
-    """Ad-hoc code sign (required for ARM64 macOS)."""
-    try:
-        subprocess.run(
-            ['codesign', '-s', '-', '--force', binary_path],
-            check=True, capture_output=True, text=True
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-
-# ─── Main ────────────────────────────────────────────────────────────────────
-
-def detect_arch():
-    """Detect native architecture."""
-    machine = platform.machine().lower()
-    if machine in ('arm64', 'aarch64'):
-        return 'arm64'
-    return 'x86_64'
-
-def main():
-    args = sys.argv[1:]
-
-    if not args:
-        print("jda-macos — macOS native compiler for Jda")
-        print()
-        print("Usage:")
-        print("  jda-macos.sh <file.jda>                    Compile to native macOS binary")
-        print("  jda-macos.sh --arch arm64 <file.jda>       Compile for ARM64")
-        print("  jda-macos.sh --arch x86_64 <file.jda>      Compile for x86-64")
-        print("  jda-macos.sh --universal <file.jda>         Universal binary (both archs)")
-        print("  jda-macos.sh --asm <file.jda>              Output assembly only")
-        print("  jda-macos.sh -o <output> <file.jda>        Specify output name")
-        sys.exit(1)
-
-    arch = detect_arch()
-    asm_only = False
-    universal = False
-    output = None
-    source = None
-
-    i = 0
-    while i < len(args):
-        if args[i] == '--arch' and i + 1 < len(args):
-            arch = args[i + 1]; i += 2
-        elif args[i] == '--asm':
-            asm_only = True; i += 1
-        elif args[i] == '--universal':
-            universal = True; i += 1
-        elif args[i] == '-o' and i + 1 < len(args):
-            output = args[i + 1]; i += 2
-        else:
-            source = args[i]; i += 1
-
-    if not source:
-        print("error: no source file specified", file=sys.stderr)
-        sys.exit(1)
-
-    with open(source, 'r') as f:
-        src = f.read()
-
-    tokens = lex(src)
-    functions = parse(tokens)
-
-    if not output:
-        output = os.path.splitext(os.path.basename(source))[0]
-
-    if asm_only:
-        if universal or arch == 'x86_64':
-            gen = X86_64MacOSGen()
-            print(f"; x86-64 macOS assembly")
-            print(gen.generate(functions))
-        if universal or arch == 'arm64':
-            gen = ARM64MacOSGen2()
-            if universal:
-                print(f"\n; ARM64 macOS assembly")
-            print(gen.generate(functions))
-        sys.exit(0)
-
-    if universal:
-        # Build both architectures, then lipo
-        with tempfile.TemporaryDirectory() as tmp:
-            x86_path = os.path.join(tmp, f"{output}_x86_64")
-            arm_path = os.path.join(tmp, f"{output}_arm64")
-
-            gen_x86 = X86_64MacOSGen()
-            asm_x86 = gen_x86.generate(functions)
-            if not assemble_macos(asm_x86, x86_path, 'x86_64'):
-                print("error: x86-64 build failed", file=sys.stderr)
-                sys.exit(1)
-
-            gen_arm = ARM64MacOSGen2()
-            asm_arm = gen_arm.generate(functions)
-            if not assemble_macos(asm_arm, arm_path, 'arm64'):
-                print("error: ARM64 build failed", file=sys.stderr)
-                sys.exit(1)
-
-            if not build_universal(x86_path, arm_path, output):
-                print("error: universal binary creation failed", file=sys.stderr)
-                sys.exit(1)
-
-            ad_hoc_sign(output)
-            print(f"Universal binary: {output}")
-            subprocess.run(['file', output])
-    else:
-        if arch == 'x86_64':
-            gen = X86_64MacOSGen()
-        else:
-            gen = ARM64MacOSGen2()
-
-        asm = gen.generate(functions)
-
-        if not assemble_macos(asm, output, arch):
-            sys.exit(1)
-
-        ad_hoc_sign(output)
-        print(f"Built: {output} ({arch})")
-        subprocess.run(['file', output])
-
-if __name__ == "__main__":
-    main()
+            nparams++
+            pname = peek_val(); expect("id")
+            expect(":")
+            while (peek_kind() != "," && peek_kind() != ")") advance()
+            SLOT++
+            env[pname] = SLOT * 8
+            pnames[nparams] = pname
+        }
+    }
+    expect(")")
+
+    if (peek_kind() == "->") {
+        advance()
+        while (peek_kind() != "{") advance()
+    }
+
+    body_start = POS
+    expect("{")
+    body_end = find_matching_brace(POS - 1)
+    num_locals = count_locals_in_body(POS, body_end)
+    POS = body_start
+    expect("{")
+
+    label = (fname == "main") ? "_main" : ("_" fname)
+    FRAME_SIZE = (num_locals + nparams + 4) * 8
+    FRAME_SIZE = int((FRAME_SIZE + 15) / 16) * 16
+    if (FRAME_SIZE < 32) FRAME_SIZE = 32
+
+    emit(label ":")
+    emit("  stp x29, x30, [sp, #-" FRAME_SIZE "]!")
+    emit("  mov x29, sp")
+
+    for (i = 1; i <= nparams && i <= 8; i++) {
+        emit("  str x" (i-1) ", [x29, #" env[pnames[i]] "]")
+    }
+
+    while (peek_kind() != "}") arm64_gen_stmt()
+    expect("}")
+
+    emit("  mov x0, #0")
+    emit("  ldp x29, x30, [sp], #" FRAME_SIZE)
+    emit("  ret")
+    emit("")
+}
+
+# ─── Bitwise helpers (awk lacks bitwise ops) ─────────────────────────
+function and_bits(v, mask,    result, bit, vm, mm) {
+    result = 0; bit = 1; vm = int(v); mm = int(mask)
+    while (vm > 0 || mm > 0) {
+        if ((vm % 2) == 1 && (mm % 2) == 1) result += bit
+        vm = int(vm / 2); mm = int(mm / 2); bit *= 2
+        if (bit > 1048576) break
+    }
+    return result
+}
+
+function rshift_16(v) { return int(int(v) / 65536) }
+
+# ─── String data emission ────────────────────────────────────────────
+function emit_string_data(    i, s, j, ch, hex_bytes, byte_count, escaped) {
+    if (NSTR == 0) return
+
+    if (ARCH == "x86_64") {
+        emit(".section __TEXT,__cstring,cstring_literals")
+    } else {
+        emit(".section __TEXT,__cstring,cstring_literals")
+    }
+
+    for (i = 1; i <= NSTR; i++) {
+        s = str_val[i]
+        emit("str_" i ":")
+        # Convert escape sequences and emit as .byte directives
+        hex_bytes = ""
+        byte_count = 0
+        for (j = 1; j <= length(s); j++) {
+            ch = substr(s, j, 1)
+            if (ch == "\\" && j + 1 <= length(s)) {
+                escaped = substr(s, j+1, 1)
+                if (escaped == "n") { hex_bytes = hex_bytes (hex_bytes == "" ? "" : ",") "0x0a"; byte_count++; j++ }
+                else if (escaped == "t") { hex_bytes = hex_bytes (hex_bytes == "" ? "" : ",") "0x09"; byte_count++; j++ }
+                else if (escaped == "\\") { hex_bytes = hex_bytes (hex_bytes == "" ? "" : ",") "0x5c"; byte_count++; j++ }
+                else if (escaped == "\"") { hex_bytes = hex_bytes (hex_bytes == "" ? "" : ",") "0x22"; byte_count++; j++ }
+                else { hex_bytes = hex_bytes (hex_bytes == "" ? "" : ",") sprintf("0x%02x", _ord(ch)); byte_count++ }
+            } else {
+                hex_bytes = hex_bytes (hex_bytes == "" ? "" : ",") sprintf("0x%02x", _ord(ch))
+                byte_count++
+            }
+        }
+        if (hex_bytes != "") emit("  .byte " hex_bytes)
+        emit("str_" i "_len = " byte_count)
+    }
+    emit("")
+}
+
+# Char to ASCII value
+function _ord(c,    i) {
+    if (!_ord_init) {
+        for (i = 0; i < 256; i++) _ord_table[sprintf("%c", i)] = i
+        _ord_init = 1
+    }
+    return (c in _ord_table) ? _ord_table[c] : 63  # 63 = ?
+}
+
+# ─── Main entry point ────────────────────────────────────────────────
+BEGIN {
+    OUT = ""
+    NSTR = 0
+    LABEL_COUNT = 0
+    SLOT = 0
+    FRAME_SIZE = 0
+    LOOP_END = ""
+    POS = 1
+}
+
+{
+    # Read entire file into SOURCE (concatenate all lines)
+    if (NR == 1) SOURCE = $0
+    else SOURCE = SOURCE "\n" $0
+}
+
+END {
+    # Lex
+    lex()
+
+    # Emit header
+    if (ARCH == "x86_64") {
+        emit(".section __TEXT,__text,regular,pure_instructions")
+        emit(".globl _main")
+        emit("")
+    } else {
+        emit(".section __TEXT,__text,regular,pure_instructions")
+        emit(".globl _main")
+        emit(".p2align 2")
+        emit("")
+    }
+
+    # Parse and generate functions
+    POS = 1
+    while (peek_kind() != "eof") {
+        if (peek_kind() == "kw" && peek_val() == "fn") {
+            if (ARCH == "x86_64") {
+                x86_gen_function()
+            } else {
+                arm64_gen_function_v2()
+            }
+        } else {
+            advance()  # skip non-function top-level tokens
+        }
+    }
+
+    # Emit string data
+    emit_string_data()
+
+    # Print output (strip trailing newline)
+    printf "%s", OUT
+}
+' "$source_file"
+}
+
+# ─── CLI Argument Parsing ────────────────────────────────────────────────────
+
+arch=$(detect_arch)
+asm_only=false
+universal=false
+output=""
+source_file=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --arch)
+            arch="$2"; shift 2 ;;
+        --asm)
+            asm_only=true; shift ;;
+        --universal)
+            universal=true; shift ;;
+        -o)
+            output="$2"; shift 2 ;;
+        *)
+            source_file="$1"; shift ;;
+    esac
+done
+
+if [[ -z "$source_file" ]]; then
+    echo "jda-macos — macOS native compiler for Jda"
+    echo ""
+    echo "Usage:"
+    echo "  jda-macos.sh <file.jda>                    Compile to native macOS binary"
+    echo "  jda-macos.sh --arch arm64 <file.jda>       Compile for ARM64"
+    echo "  jda-macos.sh --arch x86_64 <file.jda>      Compile for x86-64"
+    echo "  jda-macos.sh --universal <file.jda>         Universal binary (both archs)"
+    echo "  jda-macos.sh --asm <file.jda>              Output assembly only"
+    echo "  jda-macos.sh -o <output> <file.jda>        Specify output name"
+    exit 1
+fi
+
+if [[ ! -f "$source_file" ]]; then
+    echo "error: source file not found: $source_file" >&2
+    exit 1
+fi
+
+# Default output name: basename without extension
+if [[ -z "$output" ]]; then
+    output=$(basename "$source_file" .jda)
+fi
+
+# ─── Assembly-only mode ──────────────────────────────────────────────────────
+if $asm_only; then
+    if $universal || [[ "$arch" == "x86_64" ]]; then
+        echo "; x86-64 macOS assembly"
+        generate_asm "$source_file" "x86_64"
+    fi
+    if $universal || [[ "$arch" == "arm64" ]]; then
+        if $universal; then
+            echo ""
+            echo "; ARM64 macOS assembly"
+        fi
+        generate_asm "$source_file" "arm64"
+    fi
+    exit 0
+fi
+
+# ─── Compile ─────────────────────────────────────────────────────────────────
+if $universal; then
+    tmp_dir=$(mktemp -d)
+    trap "rm -rf '$tmp_dir'" EXIT
+
+    x86_path="$tmp_dir/${output}_x86_64"
+    arm_path="$tmp_dir/${output}_arm64"
+
+    asm_x86=$(generate_asm "$source_file" "x86_64")
+    if ! assemble_macos "$asm_x86" "$x86_path" "x86_64"; then
+        echo "error: x86-64 build failed" >&2
+        exit 1
+    fi
+
+    asm_arm=$(generate_asm "$source_file" "arm64")
+    if ! assemble_macos "$asm_arm" "$arm_path" "arm64"; then
+        echo "error: ARM64 build failed" >&2
+        exit 1
+    fi
+
+    if ! build_universal "$x86_path" "$arm_path" "$output"; then
+        echo "error: universal binary creation failed" >&2
+        exit 1
+    fi
+
+    ad_hoc_sign "$output"
+    echo "Universal binary: $output"
+    file "$output"
+else
+    asm_output=$(generate_asm "$source_file" "$arch")
+    if ! assemble_macos "$asm_output" "$output" "$arch"; then
+        exit 1
+    fi
+
+    ad_hoc_sign "$output"
+    echo "Built: $output ($arch)"
+    file "$output"
+fi
