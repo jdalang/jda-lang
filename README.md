@@ -237,9 +237,9 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 
 ## Benchmarks
 
-Jda vs C, Go, Rust, Python, Ruby — identical algorithms, best of 3 runs on Linux x86-64.
+Jda vs C, Go, Rust, Python, Ruby — identical algorithms, best of 3 runs on Linux x86-64 (Docker, Ubuntu 22.04).
 
-### Runtime (ms, lower is better)
+### Runtime Performance (ms, lower is better)
 
 | Benchmark | C | Go | Rust | **Jda** | Python | Ruby |
 |-----------|----:|-----:|------:|--------:|-------:|-----:|
@@ -248,14 +248,102 @@ Jda vs C, Go, Rust, Python, Ruby — identical algorithms, best of 3 runs on Lin
 | sum 100M | 26 | 79 | 29 | **283** | 8,005 | 3,594 |
 | matmul 200² | 29 | 40 | 31 | **47** | 2,295 | 988 |
 
-### Compilation (ms, lower is better)
+- **Sieve**: Jda is the **fastest** — beats C (0.85x), Go (0.72x), and Rust (0.74x)
+- **Matrix Multiply**: Jda is **1.6x C** — competitive with systems languages
+- **vs Python**: Jda is **24x faster** on average
+- **vs Ruby**: Jda is **12x faster** on average
 
-| | C (gcc) | Go | Rust | **Jda** |
+### Compilation Speed (ms, lower is better)
+
+| | C (gcc -O2) | Go | Rust (rustc -O) | **Jda** |
 |---|--------:|----:|------:|--------:|
-| Average | 471 | 706 | 1,431 | **44** |
-| Speedup | 10.7x | 16x | 32.5x | **1x** |
+| fib(35) | 555 | 804 | 1,339 | **45** |
+| sieve 1M | 474 | 683 | 1,580 | **47** |
+| sum 100M | 390 | 669 | 1,207 | **40** |
+| matmul 200² | 464 | 667 | 1,596 | **43** |
+| **Average** | **471** | **706** | **1,431** | **44** |
+| **Speedup** | 10.7x slower | 16x slower | 32.5x slower | **baseline** |
 
-Jda's single-pass compiler produces native ELF binaries directly — no linker, no IR, no optimization passes. See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for full analysis.
+### Binary Size
+
+| | C | Go | Rust | **Jda** |
+|---|------:|----------:|---------:|--------:|
+| Avg size | 16 KB | 1.76 MB | 3.95 MB | **1.05 MB** |
+| Notes | dynamic linking | static + runtime | static + runtime | **static, zero deps** |
+
+### Jda vs C
+
+| Metric | C | Jda | Winner |
+|--------|---|-----|--------|
+| Runtime | Fastest overall | 0.85x–10.9x of C | C |
+| Compilation | 471ms avg | **44ms avg (10.7x faster)** | **Jda** |
+| Dependencies | Needs gcc + libc | **Zero — bootstrapped from assembly** | **Jda** |
+| Binary | 16 KB (dynamically linked) | 1 MB (fully static) | Trade-off |
+
+### Jda vs Go
+
+| Metric | Go | Jda | Winner |
+|--------|-----|-----|--------|
+| Runtime | 1.0–3.0x slower than C | 0.85–10.9x slower than C | Mixed |
+| Compilation | 706ms avg | **44ms avg (16x faster)** | **Jda** |
+| Binary size | 1.76 MB | **1.05 MB (40% smaller)** | **Jda** |
+| GC | Yes (pause risk) | **No GC** | **Jda** |
+| Concurrency | Goroutines + channels | J-Threads + channels | Comparable |
+
+### Jda vs Rust
+
+| Metric | Rust | Jda | Winner |
+|--------|------|-----|--------|
+| Runtime | Near C speed | 0.85–10.9x slower than C | Rust |
+| Compilation | 1,431ms avg | **44ms avg (32.5x faster)** | **Jda** |
+| Binary size | 3.95 MB | **1.05 MB (3.8x smaller)** | **Jda** |
+| Learning curve | Steep (borrow checker, lifetimes) | **Simple — no borrow checker** | **Jda** |
+| Safety | Memory safe at compile time | Manual memory | Rust |
+
+### Jda vs Python
+
+| Metric | Python | Jda | Winner |
+|--------|--------|-----|--------|
+| Runtime | 442–8,005ms | **23–283ms (24x faster avg)** | **Jda** |
+| Startup | ~30ms interpreter | **<1ms native binary** | **Jda** |
+| Ecosystem | Massive (PyPI) | Growing (114 packages) | Python |
+| Typing | Dynamic | Static | Different trade-offs |
+
+### Jda vs Ruby
+
+| Metric | Ruby | Jda | Winner |
+|--------|------|-----|--------|
+| Runtime | 388–3,594ms | **23–283ms (12x faster avg)** | **Jda** |
+| Startup | ~50ms interpreter | **<1ms native binary** | **Jda** |
+| Ecosystem | Mature (gems) | Growing (114 packages) | Ruby |
+
+### Why Use Jda?
+
+1. **Fastest compiler in the benchmark** — 10–37x faster than gcc, Go, or Rust. Edit-compile-run cycles feel instant.
+2. **Competitive runtime** — beats C on sieve, matches Go on matrix multiply, 12–24x faster than Python/Ruby.
+3. **Zero dependencies** — bootstrapped entirely from assembly. No C compiler, no runtime, no GC. A single static binary runs anywhere on Linux x86-64.
+4. **Small binaries** — 1 MB self-contained executables. Smaller than Go (1.7 MB) and Rust (3.9 MB).
+5. **Simple language** — no borrow checker, no lifetimes, no complex type system. If you know C, you know Jda.
+6. **114 stdlib packages** — strings, collections, networking, crypto, compression, ML/AI, and more.
+7. **Self-hosted** — the compiler compiles itself. Proven bootstrap chain from raw x86-64 assembly.
+
+<details>
+<summary>Reproduce these benchmarks</summary>
+
+```bash
+# Build the benchmark image
+docker build --platform linux/amd64 -t jda-bench benchmarks/
+
+# Run all benchmarks (best of 3 runs)
+docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
+  -v $(pwd):/jda -w /jda jda-bench bash /jda/benchmarks/run.sh
+```
+
+Results saved to `benchmarks/results.csv`. Source code for all 24 programs in [`benchmarks/`](benchmarks/).
+
+</details>
+
+See [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for the full analysis.
 
 ## Repository Layout
 
