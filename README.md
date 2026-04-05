@@ -283,19 +283,19 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 
 | Benchmark | C | Jda | Rust | Go | Python | Ruby |
 |-----------|----:|--------:|------:|-----:|-------:|-----:|
-| sieve 1M | 28 | **24** | 32 | 34 | 435 | 409 |
-| matmul 200x200 | 30 | 39 | 33 | 41 | 2,297 | 997 |
-| sum 100M | 58 | **49** | 30 | 81 | 8,109 | 3,610 |
-| fib(35) | 40 | 148 | 64 | 127 | 2,824 | 1,315 |
+| sieve 1M | 28 | **23** | 31 | 31 | 424 | 387 |
+| matmul 200x200 | 29 | 39 | 32 | 40 | 2,344 | 986 |
+| sum 100M | 57 | **48** | 29 | 79 | 8,059 | 3,650 |
+| fib(35) | 40 | 147 | 63 | 127 | 2,831 | 1,295 |
 
 ### Compile Time (ms)
 
 | Benchmark | C (gcc -O2) | Jda | Rust (rustc -O) | Go |
 |-----------|--------:|--------:|------:|----:|
-| sieve 1M | 478 | **42** | 1,545 | 295 |
-| matmul 200x200 | 476 | **42** | 1,589 | 302 |
-| sum 100M | 433 | **40** | 1,199 | 308 |
-| fib(35) | 497 | **42** | 1,256 | 313 |
+| sieve 1M | 491 | **44** | 1,647 | 663 |
+| matmul 200x200 | 484 | **42** | 1,625 | 667 |
+| sum 100M | 414 | **39** | 1,231 | 652 |
+| fib(35) | 568 | **46** | 1,666 | 847 |
 
 ### Binary Size
 
@@ -308,8 +308,8 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 
 | | vs C | vs Rust | vs Go | vs Python | vs Ruby |
 |---|---|---|---|---|---|
-| **Runtime** | **Jda wins 2 of 4** | Mixed | **Jda wins 3 of 4** | **Jda 53x faster** | **Jda 24x faster** |
-| **Compile** | **Jda 11x faster** | **Jda 33x faster** | **Jda 7x faster** | — | — |
+| **Runtime** | **Jda wins 2 of 4** | Jda wins 1 of 4 | **Jda wins 3 of 4** | **Jda 66x faster** | **Jda 32x faster** |
+| **Compile** | **Jda 11x faster** | **Jda 36x faster** | **Jda 16x faster** | — | — |
 | **Binary** | C 65x smaller (dynamic) | **Jda 3.8x smaller** | **Jda 40% smaller** | — | — |
 | **GC** | Neither | Neither | **Jda: no GC** | — | — |
 | **Deps** | gcc + libc | Rust toolchain | Go toolchain | CPython | CRuby |
