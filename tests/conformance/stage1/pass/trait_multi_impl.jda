@@ -1,0 +1,37 @@
+; Test: same trait implemented by two different structs
+
+trait Valuable {
+    fn value(&self) -> i64
+}
+
+struct Coin {
+    v: i64
+}
+
+struct Bill {
+    v: i64
+}
+
+impl Valuable for Coin {
+    fn value(&self) -> i64 {
+        ret self.v
+    }
+}
+
+impl Valuable for Bill {
+    fn value(&self) -> i64 {
+        ret self.v
+    }
+}
+
+fn main() -> i64 {
+    let c = Coin{}
+    c.v = 25
+    let b = Bill{}
+    b.v = 500
+    let cv = c.value()
+    let bv = b.value()
+    if cv == 25 { print "coin ok\n" }
+    if bv == 500 { print "bill ok\n" }
+    ret 0
+}
