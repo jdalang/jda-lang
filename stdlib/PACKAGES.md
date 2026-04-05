@@ -57,3 +57,26 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | uri | URI/URL parsing — scheme, host, port, path, query, percent-encode/decode |
 | uuid | UUID v4 generation — random UUIDs |
 | vec | Dynamic arrays — push, pop, get, set, grow, contains, remove |
+| bignum | Arbitrary precision integers — add, sub, mul, div, compare, string conversion |
+| complex | Complex number arithmetic — add, sub, mul, div, abs, conjugate |
+| dns | DNS resolver — hostname lookup, /etc/resolv.conf parsing, UDP query |
+| digest | Message digests — MD5, SHA-512 (extends crypto's SHA-256/SHA-1) |
+| encoding | Character encoding — UTF-8 validation, char count, ASCII ops, Latin-1 |
+| erb | Template engine — variable substitution, HTML escaping |
+| fileutils | High-level file utilities — mkdir_p, rm_rf, cp, mv, touch, chmod |
+| marshal | Binary serialization — dump/load i64, strings, arrays, maps (TLV format) |
+| mutex | Mutex and condition variable — futex-based lock/unlock, condvar wait/signal |
+| open3 | Child process I/O capture — popen, capture2, capture3, piped stdin/stdout |
+| optparse | Rich CLI option parser — short/long flags, required args, help generation |
+| pack | Binary pack/unpack — i8/i16/i32/i64 LE/BE, strings, raw bytes |
+| pathname | Path manipulation — dirname, extname, normalize, is_absolute, join |
+| range | Range type — inclusive/exclusive, step, contains, each, sum |
+| rational | Rational number arithmetic — add, sub, mul, div, simplify via GCD |
+| securerandom | Cryptographic random — getrandom(2), hex, base64, UUID v4 |
+| signal | Signal handling — sig_action, ignore, default, raise, block/unblock |
+| stringio | In-memory string I/O — read, write, seek, getline, putc/getc |
+| stringscanner | Stateful string scanner — scan, check, skip, rest, eos, matched |
+| tls | TLS 1.2 client — TCP connect, ClientHello, record layer |
+| weakref | Weak references — deref, alive check, release, registry with sweep |
+| yaml | YAML parser/emitter — key:value, lists, comments, quoted strings |
+| zlib | Compression — CRC-32, Adler-32, deflate/inflate (stored blocks) |

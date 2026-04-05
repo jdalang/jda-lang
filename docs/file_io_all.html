@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>file_io_all — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>file_io_all</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bignum.html">bignum</a> | <a href="bitops.html">bitops</a> | <a href="complex.html">complex</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <a href="crypto.html">crypto</a> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="digest.html">digest</a> | <a href="dns.html">dns</a> | <a href="encoding.html">encoding</a> | <a href="erb.html">erb</a> | <a href="file_io.html">file_io</a> | <strong>file_io_all</strong> | <a href="fileutils.html">fileutils</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <a href="hashmap.html">hashmap</a> | <a href="heap.html">heap</a> | <a href="http.html">http</a> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="marshal.html">marshal</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <a href="mutex.html">mutex</a> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="open3.html">open3</a> | <a href="optparse.html">optparse</a> | <a href="os.html">os</a> | <a href="pack.html">pack</a> | <a href="pathname.html">pathname</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <a href="process.html">process</a> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="range.html">range</a> | <a href="rational.html">rational</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="securerandom.html">securerandom</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <a href="signal.html">signal</a> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <a href="stringio.html">stringio</a> | <a href="stringscanner.html">stringscanner</a> | <a href="tcp.html">tcp</a> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <a href="tensor_slice.html">tensor_slice</a> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="tls.html">tls</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="weakref.html">weakref</a> | <a href="ws.html">ws</a> | <a href="yaml.html">yaml</a> | <a href="zlib.html">zlib</a></div>
+<ul class="toc"><li><span class="badge fn">fn</span><a href="#_fs_open_read">_fs_open_read</a></li><li><span class="badge fn">fn</span><a href="#_fs_open_write">_fs_open_write</a></li><li><span class="badge fn">fn</span><a href="#_fs_open_append">_fs_open_append</a></li><li><span class="badge fn">fn</span><a href="#_fs_close">_fs_close</a></li><li><span class="badge fn">fn</span><a href="#_fs_write">_fs_write</a></li><li><span class="badge fn">fn</span><a href="#_fs_read">_fs_read</a></li><li><span class="badge fn">fn</span><a href="#_fs_access">_fs_access</a></li><li><span class="badge fn">fn</span><a href="#_fs_unlink_raw">_fs_unlink_raw</a></li><li><span class="badge fn">fn</span><a href="#_fs_mkdir_raw">_fs_mkdir_raw</a></li><li><span class="badge fn">fn</span><a href="#_fs_stat">_fs_stat</a></li><li><span class="badge fn">fn</span><a href="#_fs_rename_raw">_fs_rename_raw</a></li><li><span class="badge fn">fn</span><a href="#fs_read_file">fs_read_file</a></li><li><span class="badge fn">fn</span><a href="#fs_write_file">fs_write_file</a></li><li><span class="badge fn">fn</span><a href="#fs_append_file">fs_append_file</a></li><li><span class="badge fn">fn</span><a href="#fs_exists">fs_exists</a></li><li><span class="badge fn">fn</span><a href="#fs_unlink">fs_unlink</a></li><li><span class="badge fn">fn</span><a href="#fs_mkdir">fs_mkdir</a></li><li><span class="badge fn">fn</span><a href="#fs_file_size">fs_file_size</a></li><li><span class="badge fn">fn</span><a href="#fs_slurp">fs_slurp</a></li><li><span class="badge fn">fn</span><a href="#fs_write_str">fs_write_str</a></li><li><span class="badge fn">fn</span><a href="#fs_append_str">fs_append_str</a></li><li><span class="badge fn">fn</span><a href="#buf_count_lines">buf_count_lines</a></li><li><span class="badge fn">fn</span><a href="#buf_line_start">buf_line_start</a></li><li><span class="badge fn">fn</span><a href="#buf_line_len">buf_line_len</a></li><li><span class="badge fn">fn</span><a href="#fs_copy">fs_copy</a></li><li><span class="badge fn">fn</span><a href="#fs_rename">fs_rename</a></li><li><span class="badge fn">fn</span><a href="#fs_tmpname">fs_tmpname</a></li><li><span class="badge fn">fn</span><a href="#cstr_length">cstr_length</a></li><li><span class="badge fn">fn</span><a href="#path_join">path_join</a></li><li><span class="badge fn">fn</span><a href="#path_basename">path_basename</a></li><li><span class="badge fn">fn</span><a href="#path_ext">path_ext</a></li><li><span class="badge fn">fn</span><a href="#buf_eq">buf_eq</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="_fs_open_read">
+  <span class="source-link">file_io_all.jda:22</span><span class="badge fn">fn</span><h3>_fs_open_read</h3>
+  <code class="sig">fn _fs_open_read(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_open_write">
+  <span class="source-link">file_io_all.jda:26</span><span class="badge fn">fn</span><h3>_fs_open_write</h3>
+  <code class="sig">fn _fs_open_write(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_open_append">
+  <span class="source-link">file_io_all.jda:31</span><span class="badge fn">fn</span><h3>_fs_open_append</h3>
+  <code class="sig">fn _fs_open_append(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_close">
+  <span class="source-link">file_io_all.jda:36</span><span class="badge fn">fn</span><h3>_fs_close</h3>
+  <code class="sig">fn _fs_close(fd: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_write">
+  <span class="source-link">file_io_all.jda:40</span><span class="badge fn">fn</span><h3>_fs_write</h3>
+  <code class="sig">fn _fs_write(fd: i64, data: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_read">
+  <span class="source-link">file_io_all.jda:44</span><span class="badge fn">fn</span><h3>_fs_read</h3>
+  <code class="sig">fn _fs_read(fd: i64, buf: &amp;i8, max: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_access">
+  <span class="source-link">file_io_all.jda:48</span><span class="badge fn">fn</span><h3>_fs_access</h3>
+  <code class="sig">fn _fs_access(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_unlink_raw">
+  <span class="source-link">file_io_all.jda:52</span><span class="badge fn">fn</span><h3>_fs_unlink_raw</h3>
+  <code class="sig">fn _fs_unlink_raw(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_mkdir_raw">
+  <span class="source-link">file_io_all.jda:56</span><span class="badge fn">fn</span><h3>_fs_mkdir_raw</h3>
+  <code class="sig">fn _fs_mkdir_raw(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_stat">
+  <span class="source-link">file_io_all.jda:61</span><span class="badge fn">fn</span><h3>_fs_stat</h3>
+  <code class="sig">fn _fs_stat(path: &amp;i8, statbuf: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="_fs_rename_raw">
+  <span class="source-link">file_io_all.jda:65</span><span class="badge fn">fn</span><h3>_fs_rename_raw</h3>
+  <code class="sig">fn _fs_rename_raw(src: &amp;i8, dst: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_read_file">
+  <span class="source-link">file_io_all.jda:71</span><span class="badge fn">fn</span><h3>fs_read_file</h3>
+  <code class="sig">fn fs_read_file(path: &amp;i8, buf: &amp;i8, max_bytes: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_write_file">
+  <span class="source-link">file_io_all.jda:92</span><span class="badge fn">fn</span><h3>fs_write_file</h3>
+  <code class="sig">fn fs_write_file(path: &amp;i8, data: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_append_file">
+  <span class="source-link">file_io_all.jda:100</span><span class="badge fn">fn</span><h3>fs_append_file</h3>
+  <code class="sig">fn fs_append_file(path: &amp;i8, data: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_exists">
+  <span class="source-link">file_io_all.jda:108</span><span class="badge fn">fn</span><h3>fs_exists</h3>
+  <code class="sig">fn fs_exists(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_unlink">
+  <span class="source-link">file_io_all.jda:114</span><span class="badge fn">fn</span><h3>fs_unlink</h3>
+  <code class="sig">fn fs_unlink(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_mkdir">
+  <span class="source-link">file_io_all.jda:120</span><span class="badge fn">fn</span><h3>fs_mkdir</h3>
+  <code class="sig">fn fs_mkdir(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_file_size">
+  <span class="source-link">file_io_all.jda:126</span><span class="badge fn">fn</span><h3>fs_file_size</h3>
+  <code class="sig">fn fs_file_size(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_slurp">
+  <span class="source-link">file_io_all.jda:172</span><span class="badge fn">fn</span><h3>fs_slurp</h3>
+  <code class="sig">fn fs_slurp(path: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_write_str">
+  <span class="source-link">file_io_all.jda:187</span><span class="badge fn">fn</span><h3>fs_write_str</h3>
+  <code class="sig">fn fs_write_str(path: &amp;i8, data: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_append_str">
+  <span class="source-link">file_io_all.jda:193</span><span class="badge fn">fn</span><h3>fs_append_str</h3>
+  <code class="sig">fn fs_append_str(path: &amp;i8, data: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="buf_count_lines">
+  <span class="source-link">file_io_all.jda:199</span><span class="badge fn">fn</span><h3>buf_count_lines</h3>
+  <code class="sig">fn buf_count_lines(buf: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="buf_line_start">
+  <span class="source-link">file_io_all.jda:218</span><span class="badge fn">fn</span><h3>buf_line_start</h3>
+  <code class="sig">fn buf_line_start(buf: &amp;i8, len: i64, line_idx: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="buf_line_len">
+  <span class="source-link">file_io_all.jda:230</span><span class="badge fn">fn</span><h3>buf_line_len</h3>
+  <code class="sig">fn buf_line_len(buf: &amp;i8, total_len: i64, start: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_copy">
+  <span class="source-link">file_io_all.jda:241</span><span class="badge fn">fn</span><h3>fs_copy</h3>
+  <code class="sig">fn fs_copy(src: &amp;i8, dst: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_rename">
+  <span class="source-link">file_io_all.jda:255</span><span class="badge fn">fn</span><h3>fs_rename</h3>
+  <code class="sig">fn fs_rename(src: &amp;i8, dst: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="fs_tmpname">
+  <span class="source-link">file_io_all.jda:265</span><span class="badge fn">fn</span><h3>fs_tmpname</h3>
+  <code class="sig">fn fs_tmpname(out: &amp;i8, suffix: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="cstr_length">
+  <span class="source-link">file_io_all.jda:308</span><span class="badge fn">fn</span><h3>cstr_length</h3>
+  <code class="sig">fn cstr_length(s: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="path_join">
+  <span class="source-link">file_io_all.jda:318</span><span class="badge fn">fn</span><h3>path_join</h3>
+  <code class="sig">fn path_join(dir: &amp;i8, dir_len: i64, name: &amp;i8, name_len: i64, out: &amp;i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="path_basename">
+  <span class="source-link">file_io_all.jda:346</span><span class="badge fn">fn</span><h3>path_basename</h3>
+  <code class="sig">fn path_basename(path: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="path_ext">
+  <span class="source-link">file_io_all.jda:359</span><span class="badge fn">fn</span><h3>path_ext</h3>
+  <code class="sig">fn path_ext(path: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="buf_eq">
+  <span class="source-link">file_io_all.jda:372</span><span class="badge fn">fn</span><h3>buf_eq</h3>
+  <code class="sig">fn buf_eq(a: &amp;i8, b: &amp;i8, n: i64) -&gt; i64</code>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>

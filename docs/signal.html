@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>signal — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>signal</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bignum.html">bignum</a> | <a href="bitops.html">bitops</a> | <a href="complex.html">complex</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <a href="crypto.html">crypto</a> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="digest.html">digest</a> | <a href="dns.html">dns</a> | <a href="encoding.html">encoding</a> | <a href="erb.html">erb</a> | <a href="file_io.html">file_io</a> | <a href="file_io_all.html">file_io_all</a> | <a href="fileutils.html">fileutils</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <a href="hashmap.html">hashmap</a> | <a href="heap.html">heap</a> | <a href="http.html">http</a> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="marshal.html">marshal</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <a href="mutex.html">mutex</a> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="open3.html">open3</a> | <a href="optparse.html">optparse</a> | <a href="os.html">os</a> | <a href="pack.html">pack</a> | <a href="pathname.html">pathname</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <a href="process.html">process</a> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="range.html">range</a> | <a href="rational.html">rational</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="securerandom.html">securerandom</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <strong>signal</strong> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <a href="stringio.html">stringio</a> | <a href="stringscanner.html">stringscanner</a> | <a href="tcp.html">tcp</a> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <a href="tensor_slice.html">tensor_slice</a> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="tls.html">tls</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="weakref.html">weakref</a> | <a href="ws.html">ws</a> | <a href="yaml.html">yaml</a> | <a href="zlib.html">zlib</a></div>
+<ul class="toc"><li><span class="badge const">const</span><a href="#SIG_HUP">SIG_HUP</a></li><li><span class="badge const">const</span><a href="#SIG_INT">SIG_INT</a></li><li><span class="badge const">const</span><a href="#SIG_QUIT">SIG_QUIT</a></li><li><span class="badge const">const</span><a href="#SIG_ILL">SIG_ILL</a></li><li><span class="badge const">const</span><a href="#SIG_TRAP">SIG_TRAP</a></li><li><span class="badge const">const</span><a href="#SIG_ABRT">SIG_ABRT</a></li><li><span class="badge const">const</span><a href="#SIG_BUS">SIG_BUS</a></li><li><span class="badge const">const</span><a href="#SIG_FPE">SIG_FPE</a></li><li><span class="badge const">const</span><a href="#SIG_KILL">SIG_KILL</a></li><li><span class="badge const">const</span><a href="#SIG_USR1">SIG_USR1</a></li><li><span class="badge const">const</span><a href="#SIG_SEGV">SIG_SEGV</a></li><li><span class="badge const">const</span><a href="#SIG_USR2">SIG_USR2</a></li><li><span class="badge const">const</span><a href="#SIG_PIPE">SIG_PIPE</a></li><li><span class="badge const">const</span><a href="#SIG_ALRM">SIG_ALRM</a></li><li><span class="badge const">const</span><a href="#SIG_TERM">SIG_TERM</a></li><li><span class="badge const">const</span><a href="#SIG_CHLD">SIG_CHLD</a></li><li><span class="badge const">const</span><a href="#SIG_CONT">SIG_CONT</a></li><li><span class="badge const">const</span><a href="#SIG_STOP">SIG_STOP</a></li><li><span class="badge const">const</span><a href="#SIG_TSTP">SIG_TSTP</a></li><li><span class="badge const">const</span><a href="#SIG_WINCH">SIG_WINCH</a></li><li><span class="badge const">const</span><a href="#SIG_DFL_VAL">SIG_DFL_VAL</a></li><li><span class="badge const">const</span><a href="#SIG_IGN_VAL">SIG_IGN_VAL</a></li><li><span class="badge const">const</span><a href="#SA_RESTORER">SA_RESTORER</a></li><li><span class="badge fn">fn</span><a href="#_sig_rt_sigaction">_sig_rt_sigaction</a></li><li><span class="badge fn">fn</span><a href="#_sig_getpid">_sig_getpid</a></li><li><span class="badge fn">fn</span><a href="#_sig_kill_raw">_sig_kill_raw</a></li><li><span class="badge fn">fn</span><a href="#_sig_rt_sigprocmask">_sig_rt_sigprocmask</a></li><li><span class="badge fn">fn</span><a href="#_sig_rt_sigpending">_sig_rt_sigpending</a></li><li><span class="badge fn">fn</span><a href="#sig_action">sig_action</a></li><li><span class="badge fn">fn</span><a href="#sig_ignore">sig_ignore</a></li><li><span class="badge fn">fn</span><a href="#sig_default">sig_default</a></li><li><span class="badge fn">fn</span><a href="#sig_raise">sig_raise</a></li><li><span class="badge fn">fn</span><a href="#sig_kill">sig_kill</a></li><li><span class="badge fn">fn</span><a href="#sig_block">sig_block</a></li><li><span class="badge fn">fn</span><a href="#sig_unblock">sig_unblock</a></li><li><span class="badge fn">fn</span><a href="#sig_pending">sig_pending</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="_sig_rt_sigaction">
+  <span class="source-link">signal.jda:49</span><span class="badge fn">fn</span><h3>_sig_rt_sigaction</h3>
+  <code class="sig">fn _sig_rt_sigaction(sig: i64, act: &amp;i64, old: &amp;i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="_sig_getpid">
+  <span class="source-link">signal.jda:54</span><span class="badge fn">fn</span><h3>_sig_getpid</h3>
+  <code class="sig">fn _sig_getpid() -&gt; i64</code>
+</div>
+<div class="item fn" id="_sig_kill_raw">
+  <span class="source-link">signal.jda:58</span><span class="badge fn">fn</span><h3>_sig_kill_raw</h3>
+  <code class="sig">fn _sig_kill_raw(pid: i64, sig: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="_sig_rt_sigprocmask">
+  <span class="source-link">signal.jda:62</span><span class="badge fn">fn</span><h3>_sig_rt_sigprocmask</h3>
+  <code class="sig">fn _sig_rt_sigprocmask(how: i64, set: &amp;i64, old: &amp;i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="_sig_rt_sigpending">
+  <span class="source-link">signal.jda:66</span><span class="badge fn">fn</span><h3>_sig_rt_sigpending</h3>
+  <code class="sig">fn _sig_rt_sigpending(set: &amp;i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="sig_action">
+  <span class="source-link">signal.jda:72</span><span class="badge fn">fn</span><h3>sig_action</h3>
+  <code class="sig">fn sig_action(signum: i64, handler: i64) -&gt; i64</code><div class="doc"><p>Set signal handler. handler = function pointer. Returns 0 on success, -1 on error.</p></div>
+</div>
+<div class="item fn" id="sig_ignore">
+  <span class="source-link">signal.jda:84</span><span class="badge fn">fn</span><h3>sig_ignore</h3>
+  <code class="sig">fn sig_ignore(signum: i64) -&gt; i64</code><div class="doc"><p>Ignore a signal.</p></div>
+</div>
+<div class="item fn" id="sig_default">
+  <span class="source-link">signal.jda:94</span><span class="badge fn">fn</span><h3>sig_default</h3>
+  <code class="sig">fn sig_default(signum: i64) -&gt; i64</code><div class="doc"><p>Restore default signal handler.</p></div>
+</div>
+<div class="item fn" id="sig_raise">
+  <span class="source-link">signal.jda:104</span><span class="badge fn">fn</span><h3>sig_raise</h3>
+  <code class="sig">fn sig_raise(signum: i64) -&gt; i64</code><div class="doc"><p>Send signal to self.</p></div>
+</div>
+<div class="item fn" id="sig_kill">
+  <span class="source-link">signal.jda:110</span><span class="badge fn">fn</span><h3>sig_kill</h3>
+  <code class="sig">fn sig_kill(pid: i64, signum: i64) -&gt; i64</code><div class="doc"><p>Send signal to another process.</p></div>
+</div>
+<div class="item fn" id="sig_block">
+  <span class="source-link">signal.jda:115</span><span class="badge fn">fn</span><h3>sig_block</h3>
+  <code class="sig">fn sig_block(signum: i64) -&gt; i64</code><div class="doc"><p>Block a signal. how=0 (SIG_BLOCK).</p></div>
+</div>
+<div class="item fn" id="sig_unblock">
+  <span class="source-link">signal.jda:127</span><span class="badge fn">fn</span><h3>sig_unblock</h3>
+  <code class="sig">fn sig_unblock(signum: i64) -&gt; i64</code><div class="doc"><p>Unblock a signal. how=1 (SIG_UNBLOCK).</p></div>
+</div>
+<div class="item fn" id="sig_pending">
+  <span class="source-link">signal.jda:138</span><span class="badge fn">fn</span><h3>sig_pending</h3>
+  <code class="sig">fn sig_pending() -&gt; i64</code><div class="doc"><p>Check if any signals are pending. Returns bitmask.</p></div>
+</div>
+<h2>Constants</h2>
+<div class="item const" id="SIG_HUP">
+  <span class="source-link">signal.jda:19</span><span class="badge const">const</span><h3>SIG_HUP</h3>
+  <code class="sig">const SIG_HUP    =  1</code>
+</div>
+<div class="item const" id="SIG_INT">
+  <span class="source-link">signal.jda:20</span><span class="badge const">const</span><h3>SIG_INT</h3>
+  <code class="sig">const SIG_INT    =  2</code>
+</div>
+<div class="item const" id="SIG_QUIT">
+  <span class="source-link">signal.jda:21</span><span class="badge const">const</span><h3>SIG_QUIT</h3>
+  <code class="sig">const SIG_QUIT   =  3</code>
+</div>
+<div class="item const" id="SIG_ILL">
+  <span class="source-link">signal.jda:22</span><span class="badge const">const</span><h3>SIG_ILL</h3>
+  <code class="sig">const SIG_ILL    =  4</code>
+</div>
+<div class="item const" id="SIG_TRAP">
+  <span class="source-link">signal.jda:23</span><span class="badge const">const</span><h3>SIG_TRAP</h3>
+  <code class="sig">const SIG_TRAP   =  5</code>
+</div>
+<div class="item const" id="SIG_ABRT">
+  <span class="source-link">signal.jda:24</span><span class="badge const">const</span><h3>SIG_ABRT</h3>
+  <code class="sig">const SIG_ABRT   =  6</code>
+</div>
+<div class="item const" id="SIG_BUS">
+  <span class="source-link">signal.jda:25</span><span class="badge const">const</span><h3>SIG_BUS</h3>
+  <code class="sig">const SIG_BUS    =  7</code>
+</div>
+<div class="item const" id="SIG_FPE">
+  <span class="source-link">signal.jda:26</span><span class="badge const">const</span><h3>SIG_FPE</h3>
+  <code class="sig">const SIG_FPE    =  8</code>
+</div>
+<div class="item const" id="SIG_KILL">
+  <span class="source-link">signal.jda:27</span><span class="badge const">const</span><h3>SIG_KILL</h3>
+  <code class="sig">const SIG_KILL   =  9</code>
+</div>
+<div class="item const" id="SIG_USR1">
+  <span class="source-link">signal.jda:28</span><span class="badge const">const</span><h3>SIG_USR1</h3>
+  <code class="sig">const SIG_USR1   = 10</code>
+</div>
+<div class="item const" id="SIG_SEGV">
+  <span class="source-link">signal.jda:29</span><span class="badge const">const</span><h3>SIG_SEGV</h3>
+  <code class="sig">const SIG_SEGV   = 11</code>
+</div>
+<div class="item const" id="SIG_USR2">
+  <span class="source-link">signal.jda:30</span><span class="badge const">const</span><h3>SIG_USR2</h3>
+  <code class="sig">const SIG_USR2   = 12</code>
+</div>
+<div class="item const" id="SIG_PIPE">
+  <span class="source-link">signal.jda:31</span><span class="badge const">const</span><h3>SIG_PIPE</h3>
+  <code class="sig">const SIG_PIPE   = 13</code>
+</div>
+<div class="item const" id="SIG_ALRM">
+  <span class="source-link">signal.jda:32</span><span class="badge const">const</span><h3>SIG_ALRM</h3>
+  <code class="sig">const SIG_ALRM   = 14</code>
+</div>
+<div class="item const" id="SIG_TERM">
+  <span class="source-link">signal.jda:33</span><span class="badge const">const</span><h3>SIG_TERM</h3>
+  <code class="sig">const SIG_TERM   = 15</code>
+</div>
+<div class="item const" id="SIG_CHLD">
+  <span class="source-link">signal.jda:34</span><span class="badge const">const</span><h3>SIG_CHLD</h3>
+  <code class="sig">const SIG_CHLD   = 17</code>
+</div>
+<div class="item const" id="SIG_CONT">
+  <span class="source-link">signal.jda:35</span><span class="badge const">const</span><h3>SIG_CONT</h3>
+  <code class="sig">const SIG_CONT   = 18</code>
+</div>
+<div class="item const" id="SIG_STOP">
+  <span class="source-link">signal.jda:36</span><span class="badge const">const</span><h3>SIG_STOP</h3>
+  <code class="sig">const SIG_STOP   = 19</code>
+</div>
+<div class="item const" id="SIG_TSTP">
+  <span class="source-link">signal.jda:37</span><span class="badge const">const</span><h3>SIG_TSTP</h3>
+  <code class="sig">const SIG_TSTP   = 20</code>
+</div>
+<div class="item const" id="SIG_WINCH">
+  <span class="source-link">signal.jda:38</span><span class="badge const">const</span><h3>SIG_WINCH</h3>
+  <code class="sig">const SIG_WINCH  = 28</code>
+</div>
+<div class="item const" id="SIG_DFL_VAL">
+  <span class="source-link">signal.jda:41</span><span class="badge const">const</span><h3>SIG_DFL_VAL</h3>
+  <code class="sig">const SIG_DFL_VAL = 0</code>
+</div>
+<div class="item const" id="SIG_IGN_VAL">
+  <span class="source-link">signal.jda:42</span><span class="badge const">const</span><h3>SIG_IGN_VAL</h3>
+  <code class="sig">const SIG_IGN_VAL = 1</code>
+</div>
+<div class="item const" id="SA_RESTORER">
+  <span class="source-link">signal.jda:45</span><span class="badge const">const</span><h3>SA_RESTORER</h3>
+  <code class="sig">const SA_RESTORER = 67108864</code>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>

@@ -1,0 +1,131 @@
+; =============================================================================
+; jda::mutex -- Mutex and Condition Variable
+; =============================================================================
+; Futex-based mutual exclusion and condition variable synchronization.
+; Uses Linux futex(2) syscall for efficient blocking.
+;
+; Memory layout per Mutex (&i64):
+;   [0] state    (0=unlocked, 1=locked-uncontended, 2=locked-contended)
+;
+; Memory layout per CondVar (&i64):
+;   [0] seq      (sequence counter)
+;
+; Functions:
+;   mutex_new()                  -> &i64  create mutex
+;   mutex_lock(m)                         blocking lock
+;   mutex_unlock(m)                       unlock
+;   mutex_trylock(m)             -> i64   non-blocking try, 1=acquired
+;   condvar_new()                -> &i64  create condition variable
+;   condvar_wait(cv, m)                   wait (releases mutex, re-acquires on wake)
+;   condvar_signal(cv)                    wake one waiter
+;   condvar_broadcast(cv)                 wake all waiters
+;   spinlock_new()               -> &i64  create spinlock
+;   spinlock_lock(sl)                     busy-wait lock
+;   spinlock_unlock(sl)                   unlock
+; =============================================================================
+
+const FUTEX_WAIT = 0
+const FUTEX_WAKE = 1
+
+;; Internal: futex syscall wrapper.
+fn _mtx_futex_wait(addr: &i64, expected: i64) -> i64 {
+    ret syscall(202, addr, FUTEX_WAIT, expected)
+}
+
+fn _mtx_futex_wake(addr: &i64, count: i64) -> i64 {
+    ret syscall(202, addr, FUTEX_WAKE, count)
+}
+
+;; Create new mutex (unlocked).
+fn mutex_new() -> &i64 {
+    let m: &i64 = alloc_pages(1)
+    m[0] = 0
+    ret m
+}
+
+;; Lock mutex. Blocks if already locked.
+fn mutex_lock(m: &i64) {
+    ; Fast path: try to grab unlocked mutex
+    if m[0] == 0 {
+        m[0] = 1
+        ret
+    }
+    ; Slow path: set contended and wait
+    m[0] = 2
+    let done = 0
+    loop done == 0 {
+        _mtx_futex_wait(m, 2)
+        ; Try to acquire after wake
+        if m[0] == 0 {
+            m[0] = 2
+            done = 1
+        }
+    }
+}
+
+;; Unlock mutex.
+fn mutex_unlock(m: &i64) {
+    let old = m[0]
+    m[0] = 0
+    if old == 2 {
+        ; Was contended — wake one waiter
+        _mtx_futex_wake(m, 1)
+    }
+}
+
+;; Non-blocking try-lock. Returns 1 if acquired, 0 if not.
+fn mutex_trylock(m: &i64) -> i64 {
+    if m[0] == 0 {
+        m[0] = 1
+        ret 1
+    }
+    ret 0
+}
+
+;; Create condition variable.
+fn condvar_new() -> &i64 {
+    let cv: &i64 = alloc_pages(1)
+    cv[0] = 0
+    ret cv
+}
+
+;; Wait on condition variable. Must hold mutex m.
+;; Releases mutex, waits, re-acquires mutex on return.
+fn condvar_wait(cv: &i64, m: &i64) {
+    let seq = cv[0]
+    mutex_unlock(m)
+    _mtx_futex_wait(cv, seq)
+    mutex_lock(m)
+}
+
+;; Wake one waiter.
+fn condvar_signal(cv: &i64) {
+    cv[0] = cv[0] + 1
+    _mtx_futex_wake(cv, 1)
+}
+
+;; Wake all waiters.
+fn condvar_broadcast(cv: &i64) {
+    cv[0] = cv[0] + 1
+    _mtx_futex_wake(cv, 2147483647)  ; INT_MAX
+}
+
+;; Create simple spinlock.
+fn spinlock_new() -> &i64 {
+    let sl: &i64 = alloc_pages(1)
+    sl[0] = 0
+    ret sl
+}
+
+;; Spinlock: busy-wait until acquired.
+fn spinlock_lock(sl: &i64) {
+    loop sl[0] != 0 {
+        ; spin
+    }
+    sl[0] = 1
+}
+
+;; Spinlock: release.
+fn spinlock_unlock(sl: &i64) {
+    sl[0] = 0
+}

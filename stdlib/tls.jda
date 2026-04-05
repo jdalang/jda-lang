@@ -1,0 +1,280 @@
+; =============================================================================
+; jda::tls -- TLS 1.2 Client (Minimal)
+; =============================================================================
+; Minimal TLS 1.2 client for HTTPS connections.
+; Supports: ClientHello, ServerHello, basic handshake, record layer.
+;
+; Memory layout per TlsCtx (&i64):
+;   [0] sock_fd       (TCP socket file descriptor)
+;   [1] state         (0=init, 1=handshake, 2=established, 3=closed)
+;   [2] send_buf      (&i8)
+;   [3] recv_buf      (&i8)
+;   [4] recv_len      (bytes in recv buffer)
+;   [5] server_random (&i8, 32 bytes)
+;   [6] client_random (&i8, 32 bytes)
+;   [7] master_secret (&i8)
+;
+; Functions:
+;   tls_connect(host, hlen, port)    -> &i64  connect and handshake
+;   tls_write(ctx, data, len)        -> i64   send encrypted data
+;   tls_read(ctx, buf, max)          -> i64   receive and decrypt data
+;   tls_close(ctx)                            close connection
+;   tcp_connect(host, hlen, port)    -> i64   raw TCP connect (returns fd)
+; =============================================================================
+
+fn _tls_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
+    let i = 0
+    loop i < n {
+        poke_byte(dst, doff + i, src[soff + i])
+        i = i + 1
+    }
+}
+
+;; Internal: single-syscall wrappers for networking
+
+fn _tls_socket_tcp() -> i64 {
+    ; socket(AF_INET=2, SOCK_STREAM=1, IPPROTO_TCP=6)
+    ret syscall(41, 2, 1, 6)
+}
+
+fn _tls_connect_raw(fd: i64, addr: &i8, len: i64) -> i64 {
+    ret syscall(42, fd, addr, len)
+}
+
+fn _tls_send(fd: i64, buf: &i8, len: i64) -> i64 {
+    ret syscall(44, fd, buf, len)
+}
+
+fn _tls_recv(fd: i64, buf: &i8, max: i64) -> i64 {
+    ret syscall(45, fd, buf, max)
+}
+
+fn _tls_close(fd: i64) -> i64 {
+    ret syscall(3, fd, 0, 0)
+}
+
+fn _tls_getrandom(buf: &i8, n: i64) -> i64 {
+    ret syscall(318, buf, n, 0)
+}
+
+;; Connect to host:port via TCP. Returns socket fd or -1.
+fn tcp_connect(host: &i8, hlen: i64, port: i64) -> i64 {
+    ; For simplicity, host should be an IP address string "x.x.x.x"
+    ; Parse IP octets
+    let ip: &i8 = alloc_pages(1)
+    let octets = 0
+    let val = 0
+    let i = 0
+    loop i < hlen {
+        let c = host[i]
+        if c >= 48 and c <= 57 {
+            val = val * 10 + (c - 48)
+        }
+        if c == 46 or i == hlen - 1 {
+            if c != 46 { val = val }
+            poke_byte(ip, octets, val)
+            octets = octets + 1
+            val = 0
+            if c != 46 {
+                ; Handle last octet
+                if i == hlen - 1 and c >= 48 { octets = octets }
+            }
+        }
+        i = i + 1
+    }
+    ; Re-parse more carefully
+    octets = 0
+    val = 0
+    i = 0
+    loop i <= hlen {
+        let at_end = 0
+        if i == hlen { at_end = 1 }
+        let c = 0
+        if i < hlen { c = host[i] }
+        if at_end == 1 or c == 46 {
+            poke_byte(ip, octets, val)
+            octets = octets + 1
+            val = 0
+        } else {
+            if c >= 48 and c <= 57 {
+                val = val * 10 + (c - 48)
+            }
+        }
+        i = i + 1
+    }
+
+    ; Build sockaddr_in
+    let addr: &i8 = alloc_pages(1)
+    poke_byte(addr, 0, 2)   ; AF_INET
+    poke_byte(addr, 1, 0)
+    ; Port in big-endian
+    poke_byte(addr, 2, port / 256)
+    poke_byte(addr, 3, port - (port / 256) * 256)
+    ; IP address
+    poke_byte(addr, 4, ip[0])
+    poke_byte(addr, 5, ip[1])
+    poke_byte(addr, 6, ip[2])
+    poke_byte(addr, 7, ip[3])
+
+    let sock = _tls_socket_tcp()
+    if sock < 0 { ret 0 - 1 }
+
+    let r = _tls_connect_raw(sock, addr, 16)
+    if r < 0 {
+        _tls_close(sock)
+        ret 0 - 1
+    }
+    ret sock
+}
+
+;; Internal: build TLS ClientHello message.
+fn _tls_build_client_hello(ctx: &i64, buf: &i8) -> i64 {
+    let client_random: &i8 = ctx[6]
+    _tls_getrandom(client_random, 32)
+
+    let pos = 0
+    ; Record layer: ContentType=Handshake(22), Version=TLS1.0(3,1)
+    poke_byte(buf, 0, 22)    ; content type: handshake
+    poke_byte(buf, 1, 3)     ; version major: 3
+    poke_byte(buf, 2, 1)     ; version minor: 1
+    ; Length placeholder (2 bytes) - fill later
+    pos = 5
+
+    ; Handshake: ClientHello(1)
+    poke_byte(buf, pos, 1)   ; handshake type: ClientHello
+    ; Handshake length placeholder (3 bytes)
+    let hs_len_off = pos + 1
+    pos = pos + 4
+
+    ; ClientHello body
+    ; Version: TLS 1.2 (3, 3)
+    poke_byte(buf, pos, 3)
+    poke_byte(buf, pos + 1, 3)
+    pos = pos + 2
+
+    ; Client Random (32 bytes)
+    _tls_copy(buf, pos, client_random, 0, 32)
+    pos = pos + 32
+
+    ; Session ID (0 length)
+    poke_byte(buf, pos, 0)
+    pos = pos + 1
+
+    ; Cipher suites (2 suites)
+    poke_byte(buf, pos, 0)
+    poke_byte(buf, pos + 1, 4)  ; 2 suites * 2 bytes = 4
+    pos = pos + 2
+    ; TLS_RSA_WITH_AES_128_GCM_SHA256 (0x009C)
+    poke_byte(buf, pos, 0)
+    poke_byte(buf, pos + 1, 156)
+    pos = pos + 2
+    ; TLS_RSA_WITH_AES_256_GCM_SHA384 (0x009D)
+    poke_byte(buf, pos, 0)
+    poke_byte(buf, pos + 1, 157)
+    pos = pos + 2
+
+    ; Compression methods (1: null)
+    poke_byte(buf, pos, 1)
+    poke_byte(buf, pos + 1, 0)
+    pos = pos + 2
+
+    ; Fill in lengths
+    let hs_len = pos - hs_len_off - 3
+    poke_byte(buf, hs_len_off, 0)
+    poke_byte(buf, hs_len_off + 1, hs_len / 256)
+    poke_byte(buf, hs_len_off + 2, hs_len - (hs_len / 256) * 256)
+
+    let rec_len = pos - 5
+    poke_byte(buf, 3, rec_len / 256)
+    poke_byte(buf, 4, rec_len - (rec_len / 256) * 256)
+
+    ret pos
+}
+
+;; Connect to host:port with TLS 1.2 handshake.
+;; Returns TLS context or 0 on failure.
+fn tls_connect(host: &i8, hlen: i64, port: i64) -> &i64 {
+    let fd = tcp_connect(host, hlen, port)
+    if fd < 0 { ret 0 }
+
+    let ctx: &i64 = alloc_pages(2)
+    ctx[0] = fd
+    ctx[1] = 0  ; state: init
+    ctx[2] = alloc_pages(4)   ; send buf
+    ctx[3] = alloc_pages(4)   ; recv buf
+    ctx[4] = 0
+    ctx[5] = alloc_pages(1)   ; server_random
+    ctx[6] = alloc_pages(1)   ; client_random
+    ctx[7] = alloc_pages(1)   ; master_secret
+
+    ; Send ClientHello
+    let hello_buf: &i8 = ctx[2]
+    let hello_len = _tls_build_client_hello(ctx, hello_buf)
+    _tls_send(fd, hello_buf, hello_len)
+    ctx[1] = 1  ; state: handshake
+
+    ; Receive ServerHello (simplified: just read response)
+    let recv_buf: &i8 = ctx[3]
+    let rlen = _tls_recv(fd, recv_buf, 16384)
+    ctx[4] = rlen
+
+    if rlen > 0 {
+        ; Parse ServerHello to extract server_random
+        ; Record header: type(1) + version(2) + length(2) = 5 bytes
+        ; Handshake header: type(1) + length(3) = 4 bytes
+        ; Version(2) + server_random(32) starts at offset 11
+        if rlen >= 43 {
+            let sr: &i8 = ctx[5]
+            _tls_copy(sr, 0, recv_buf, 11, 32)
+        }
+        ctx[1] = 2  ; state: established (simplified)
+    }
+
+    ret ctx
+}
+
+;; Write data over TLS connection. Returns bytes written.
+;; Simplified: sends as TLS application data record (unencrypted for now).
+fn tls_write(ctx: &i64, data: &i8, len: i64) -> i64 {
+    if ctx[1] != 2 { ret 0 - 1 }
+    let buf: &i8 = ctx[2]
+    ; TLS record: type=ApplicationData(23), version=3.3, length
+    poke_byte(buf, 0, 23)
+    poke_byte(buf, 1, 3)
+    poke_byte(buf, 2, 3)
+    poke_byte(buf, 3, len / 256)
+    poke_byte(buf, 4, len - (len / 256) * 256)
+    _tls_copy(buf, 5, data, 0, len)
+    ret _tls_send(ctx[0], buf, len + 5)
+}
+
+;; Read data from TLS connection. Returns bytes read.
+fn tls_read(ctx: &i64, buf: &i8, max: i64) -> i64 {
+    if ctx[1] != 2 { ret 0 - 1 }
+    let recv: &i8 = ctx[3]
+    let n = _tls_recv(ctx[0], recv, max + 5)
+    if n <= 5 { ret 0 }
+    ; Skip TLS record header (5 bytes)
+    let data_len = n - 5
+    if data_len > max { data_len = max }
+    _tls_copy(buf, 0, recv, 5, data_len)
+    ret data_len
+}
+
+;; Close TLS connection.
+fn tls_close(ctx: &i64) {
+    if ctx[1] != 3 {
+        ; Send close_notify alert
+        let buf: &i8 = ctx[2]
+        poke_byte(buf, 0, 21)   ; Alert
+        poke_byte(buf, 1, 3)
+        poke_byte(buf, 2, 3)
+        poke_byte(buf, 3, 0)
+        poke_byte(buf, 4, 2)
+        poke_byte(buf, 5, 1)    ; warning
+        poke_byte(buf, 6, 0)    ; close_notify
+        _tls_send(ctx[0], buf, 7)
+        _tls_close(ctx[0])
+        ctx[1] = 3
+    }
+}

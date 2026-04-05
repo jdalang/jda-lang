@@ -1,6 +1,6 @@
 # Jda Standard Library API Reference
 
-Documentation for all 64 stdlib packages.
+Documentation for all 87 stdlib packages.
 
 | Package | Description |
 |---------|-------------|
@@ -9,7 +9,9 @@ Documentation for all 64 stdlib packages.
 | [avx512_ops](avx512_ops.md) |  |
 | [base64](base64.md) | Base64 Encoding/Decoding |
 | [benchmark](benchmark.md) | In-Language Micro-Benchmarking |
+| [bignum](bignum.md) | Arbitrary Precision Integers |
 | [bitops](bitops.md) | Bit Manipulation Utilities |
+| [complex](complex.md) | Complex Number Arithmetic |
 | [comprehension_all](comprehension_all.md) | Dynamic Array (Vec<i64>) |
 | [comprehension](comprehension.md) | List/Dict Comprehensions |
 | [context](context.md) |  |
@@ -18,8 +20,13 @@ Documentation for all 64 stdlib packages.
 | [csv](csv.md) | CSV Reader/Writer |
 | [dataclass](dataclass.md) | Data Class Utilities |
 | [decorator](decorator.md) | Decorator / Higher-Order Function Patterns |
+| [digest](digest.md) | Message Digest Algorithms |
+| [dns](dns.md) | DNS Resolver |
+| [encoding](encoding.md) | Character Encoding Utilities |
+| [erb](erb.md) | Template Engine |
 | [file_io_all](file_io_all.md) | Minimal File I/O |
 | [file_io](file_io.md) | High-Level File I/O Helpers |
+| [fileutils](fileutils.md) | High-Level File Utilities |
 | [find](find.md) | Recursive Directory Traversal |
 | [fmt](fmt.md) | Minimal String Formatting |
 | [fs](fs.md) | Minimal File I/O |
@@ -30,44 +37,60 @@ Documentation for all 64 stdlib packages.
 | [iter](iter.md) | Chainable Iterator Adapters |
 | [json](json.md) | ; jda::json — Zero-Copy JSON Parser & Serialiser |
 | [log](log.md) | Structured Logging |
+| [marshal](marshal.md) | Binary Serialization |
 | [math](math.md) | Integer Math, Random Numbers, and Constants |
 | [matrix](matrix.md) | Integer Matrix Operations |
 | [data](data.md) | ; jda::ml::data — DataLoader & Dataset Primitives |
 | [metrics](metrics.md) | ; jda::ml::metrics — Model Evaluation Metrics |
 | [nn](nn.md) | ; jda::ml::nn — Native Neural Network Standard Library |
+| [mutex](mutex.md) | Mutex and Condition Variable |
 | [http](http.md) | ; jda::net::http — HTTP/1.1 Parser & Response Writer |
 | [tcp](tcp.md) | ; jda::net::tcp — TCP Socket API |
 | [udp](udp.md) | ; jda::net::udp — UDP Socket API |
 | [ws](ws.md) | ; jda::net::ws — WebSocket Protocol (RFC 6455) |
 | [nn](nn.md) |  |
 | [observer](observer.md) | Publish/Subscribe Event Pattern |
+| [open3](open3.md) | Capture Child Process I/O |
+| [optparse](optparse.md) | Rich CLI Option Parser |
 | [os](os.md) | Operating System Interface |
+| [pack](pack.md) | Binary Pack/Unpack |
+| [pathname](pathname.md) | Path Manipulation Utilities |
 | [plot](plot.md) | Terminal & SVG Visualization |
 | [pp](pp.md) | Pretty Printer |
 | [prelude](prelude.md) | Standard Library Prelude |
 | [process](process.md) | ; jda::process — Process management |
 | [ptx](ptx.md) |  |
 | [queue](queue.md) | Queue, Stack, and Priority Queue |
+| [range](range.md) | Range Type |
+| [rational](rational.md) | Rational Number Arithmetic |
 | [regex](regex.md) | Regular Expression Matching |
 | [ring](ring.md) | Ring Buffer (Circular Buffer) |
 | [rocm](rocm.md) |  |
+| [securerandom](securerandom.md) | Cryptographic Random Number Generation |
 | [select](select.md) |  |
 | [set](set.md) | Hash Set (Set<i64>) |
 | [shell](shell.md) | Shell Word Splitting and Escaping |
+| [signal](signal.md) | Signal Handling |
 | [sort](sort.md) | Sorting Algorithms for Vec |
 | [string](string.md) | String Type |
+| [stringio](stringio.md) | In-Memory String I/O |
+| [stringscanner](stringscanner.md) | Stateful String Scanner |
 | [tempfile](tempfile.md) | Temporary Files and Directories |
 | [tensor_ops](tensor_ops.md) |  |
 | [tensor_slice](tensor_slice.md) |  |
 | [testing](testing.md) | Test Framework and Assertions |
 | [time](time.md) | Clocks & Sleep |
 | [timeout](timeout.md) | Deadline and Timeout Utilities |
+| [tls](tls.md) | TLS 1.2 Client (Minimal) |
 | [transformer](transformer.md) |  |
 | [tsort](tsort.md) | Topological Sort |
 | [tuple](tuple.md) | Tuples / Multiple Return Values |
 | [uri](uri.md) | URI/URL Parsing and Encoding |
 | [uuid](uuid.md) | UUID Generation |
 | [vec](vec.md) | Dynamic Array (Vec<i64>) |
+| [weakref](weakref.md) | Weak References |
+| [yaml](yaml.md) | YAML Parser/Emitter (Subset) |
+| [zlib](zlib.md) | Compression (CRC-32, Deflate/Inflate) |
 
 ---
 

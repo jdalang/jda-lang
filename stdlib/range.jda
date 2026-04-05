@@ -1,0 +1,178 @@
+; =============================================================================
+; jda::range -- Range Type
+; =============================================================================
+; Integer ranges with iteration support. Inclusive or exclusive end.
+;
+; Memory layout per Range (&i64):
+;   [0] start
+;   [1] end_val     (exclusive by default)
+;   [2] step        (default 1)
+;   [3] inclusive    (0=exclusive, 1=inclusive)
+;
+; Functions:
+;   range_new(start, end_val)        -> &i64  create exclusive range [start, end)
+;   range_inclusive(start, end_val)   -> &i64  create inclusive range [start, end]
+;   range_step(start, end_val, step) -> &i64  range with custom step
+;   range_contains(r, val)           -> i64   1 if val in range
+;   range_size(r)                    -> i64   number of elements
+;   range_each(r, buf)               -> i64   fill buffer, return count
+;   range_to_vec(r)                  -> &i64  return vec of values
+;   range_sum(r)                     -> i64   sum of all elements
+;   range_first(r)                   -> i64   first element
+;   range_last(r)                    -> i64   last element
+; =============================================================================
+
+;; Create exclusive range [start, end).
+fn range_new(start: i64, end_val: i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = start
+    r[1] = end_val
+    r[2] = 1
+    r[3] = 0
+    ret r
+}
+
+;; Create inclusive range [start, end].
+fn range_inclusive(start: i64, end_val: i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = start
+    r[1] = end_val
+    r[2] = 1
+    r[3] = 1
+    ret r
+}
+
+;; Create range with custom step.
+fn range_step(start: i64, end_val: i64, step: i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = start
+    r[1] = end_val
+    r[2] = step
+    r[3] = 0
+    ret r
+}
+
+;; Check if value is in range.
+fn range_contains(r: &i64, val: i64) -> i64 {
+    let start = r[0]
+    let end_val = r[1]
+    let step = r[2]
+    let inclusive = r[3]
+
+    if step > 0 {
+        if val < start { ret 0 }
+        if inclusive == 1 {
+            if val > end_val { ret 0 }
+        } else {
+            if val >= end_val { ret 0 }
+        }
+    } else {
+        if val > start { ret 0 }
+        if inclusive == 1 {
+            if val < end_val { ret 0 }
+        } else {
+            if val <= end_val { ret 0 }
+        }
+    }
+
+    ; Check if val is on a step boundary
+    let diff = val - start
+    if diff < 0 { diff = 0 - diff }
+    let abs_step = step
+    if abs_step < 0 { abs_step = 0 - abs_step }
+    let remainder = diff - (diff / abs_step) * abs_step
+    if remainder != 0 { ret 0 }
+    ret 1
+}
+
+;; Number of elements in range.
+fn range_size(r: &i64) -> i64 {
+    let start = r[0]
+    let end_val = r[1]
+    let step = r[2]
+    let inclusive = r[3]
+
+    let diff = end_val - start
+    if step < 0 { diff = start - end_val }
+    if diff < 0 { ret 0 }
+
+    let abs_step = step
+    if abs_step < 0 { abs_step = 0 - abs_step }
+    let count = diff / abs_step
+    if inclusive == 1 { count = count + 1 }
+    ret count
+}
+
+;; Fill buffer with range values. Returns count.
+fn range_each(r: &i64, buf: &i64) -> i64 {
+    let start = r[0]
+    let end_val = r[1]
+    let step = r[2]
+    let inclusive = r[3]
+    let i = 0
+    let val = start
+
+    if step > 0 {
+        loop val < end_val or (inclusive == 1 and val == end_val) {
+            buf[i] = val
+            i = i + 1
+            val = val + step
+        }
+    } else {
+        loop val > end_val or (inclusive == 1 and val == end_val) {
+            buf[i] = val
+            i = i + 1
+            val = val + step
+        }
+    }
+    ret i
+}
+
+;; Create vec from range values. Returns vec pointer (&i64).
+fn range_to_vec(r: &i64) -> &i64 {
+    let n = range_size(r)
+    let pages = n * 8 / 4096 + 1
+    let v: &i64 = alloc_pages(pages + 1)
+    ; vec header: [0]=len, [1]=cap, [2]=data_ptr
+    let data: &i64 = alloc_pages(pages)
+    v[0] = n
+    v[1] = pages * 512
+    v[2] = data
+    range_each(r, data)
+    ret v
+}
+
+;; Sum all elements in range.
+fn range_sum(r: &i64) -> i64 {
+    let start = r[0]
+    let end_val = r[1]
+    let step = r[2]
+    let inclusive = r[3]
+    let sum = 0
+    let val = start
+
+    if step > 0 {
+        loop val < end_val or (inclusive == 1 and val == end_val) {
+            sum = sum + val
+            val = val + step
+        }
+    } else {
+        loop val > end_val or (inclusive == 1 and val == end_val) {
+            sum = sum + val
+            val = val + step
+        }
+    }
+    ret sum
+}
+
+;; First element of range.
+fn range_first(r: &i64) -> i64 {
+    ret r[0]
+}
+
+;; Last element of range.
+fn range_last(r: &i64) -> i64 {
+    let n = range_size(r)
+    if n == 0 { ret r[0] }
+    ret r[0] + (n - 1) * r[2]
+}

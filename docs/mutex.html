@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mutex — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>mutex</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bignum.html">bignum</a> | <a href="bitops.html">bitops</a> | <a href="complex.html">complex</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <a href="crypto.html">crypto</a> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="digest.html">digest</a> | <a href="dns.html">dns</a> | <a href="encoding.html">encoding</a> | <a href="erb.html">erb</a> | <a href="file_io.html">file_io</a> | <a href="file_io_all.html">file_io_all</a> | <a href="fileutils.html">fileutils</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <a href="hashmap.html">hashmap</a> | <a href="heap.html">heap</a> | <a href="http.html">http</a> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="marshal.html">marshal</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <strong>mutex</strong> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="open3.html">open3</a> | <a href="optparse.html">optparse</a> | <a href="os.html">os</a> | <a href="pack.html">pack</a> | <a href="pathname.html">pathname</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <a href="process.html">process</a> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="range.html">range</a> | <a href="rational.html">rational</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="securerandom.html">securerandom</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <a href="signal.html">signal</a> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <a href="stringio.html">stringio</a> | <a href="stringscanner.html">stringscanner</a> | <a href="tcp.html">tcp</a> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <a href="tensor_slice.html">tensor_slice</a> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="tls.html">tls</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="weakref.html">weakref</a> | <a href="ws.html">ws</a> | <a href="yaml.html">yaml</a> | <a href="zlib.html">zlib</a></div>
+<ul class="toc"><li><span class="badge const">const</span><a href="#FUTEX_WAIT">FUTEX_WAIT</a></li><li><span class="badge const">const</span><a href="#FUTEX_WAKE">FUTEX_WAKE</a></li><li><span class="badge fn">fn</span><a href="#_mtx_futex_wait">_mtx_futex_wait</a></li><li><span class="badge fn">fn</span><a href="#_mtx_futex_wake">_mtx_futex_wake</a></li><li><span class="badge fn">fn</span><a href="#mutex_new">mutex_new</a></li><li><span class="badge fn">fn</span><a href="#mutex_lock">mutex_lock</a></li><li><span class="badge fn">fn</span><a href="#mutex_unlock">mutex_unlock</a></li><li><span class="badge fn">fn</span><a href="#mutex_trylock">mutex_trylock</a></li><li><span class="badge fn">fn</span><a href="#condvar_new">condvar_new</a></li><li><span class="badge fn">fn</span><a href="#condvar_wait">condvar_wait</a></li><li><span class="badge fn">fn</span><a href="#condvar_signal">condvar_signal</a></li><li><span class="badge fn">fn</span><a href="#condvar_broadcast">condvar_broadcast</a></li><li><span class="badge fn">fn</span><a href="#spinlock_new">spinlock_new</a></li><li><span class="badge fn">fn</span><a href="#spinlock_lock">spinlock_lock</a></li><li><span class="badge fn">fn</span><a href="#spinlock_unlock">spinlock_unlock</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="_mtx_futex_wait">
+  <span class="source-link">mutex.jda:31</span><span class="badge fn">fn</span><h3>_mtx_futex_wait</h3>
+  <code class="sig">fn _mtx_futex_wait(addr: &amp;i64, expected: i64) -&gt; i64</code><div class="doc"><p>Internal: futex syscall wrapper.</p></div>
+</div>
+<div class="item fn" id="_mtx_futex_wake">
+  <span class="source-link">mutex.jda:35</span><span class="badge fn">fn</span><h3>_mtx_futex_wake</h3>
+  <code class="sig">fn _mtx_futex_wake(addr: &amp;i64, count: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="mutex_new">
+  <span class="source-link">mutex.jda:40</span><span class="badge fn">fn</span><h3>mutex_new</h3>
+  <code class="sig">fn mutex_new() -&gt; &amp;i64</code><div class="doc"><p>Create new mutex (unlocked).</p></div>
+</div>
+<div class="item fn" id="mutex_lock">
+  <span class="source-link">mutex.jda:47</span><span class="badge fn">fn</span><h3>mutex_lock</h3>
+  <code class="sig">fn mutex_lock(m: &amp;i64)</code><div class="doc"><p>Lock mutex. Blocks if already locked.</p></div>
+</div>
+<div class="item fn" id="mutex_unlock">
+  <span class="source-link">mutex.jda:67</span><span class="badge fn">fn</span><h3>mutex_unlock</h3>
+  <code class="sig">fn mutex_unlock(m: &amp;i64)</code><div class="doc"><p>Unlock mutex.</p></div>
+</div>
+<div class="item fn" id="mutex_trylock">
+  <span class="source-link">mutex.jda:77</span><span class="badge fn">fn</span><h3>mutex_trylock</h3>
+  <code class="sig">fn mutex_trylock(m: &amp;i64) -&gt; i64</code><div class="doc"><p>Non-blocking try-lock. Returns 1 if acquired, 0 if not.</p></div>
+</div>
+<div class="item fn" id="condvar_new">
+  <span class="source-link">mutex.jda:86</span><span class="badge fn">fn</span><h3>condvar_new</h3>
+  <code class="sig">fn condvar_new() -&gt; &amp;i64</code><div class="doc"><p>Create condition variable.</p></div>
+</div>
+<div class="item fn" id="condvar_wait">
+  <span class="source-link">mutex.jda:94</span><span class="badge fn">fn</span><h3>condvar_wait</h3>
+  <code class="sig">fn condvar_wait(cv: &amp;i64, m: &amp;i64)</code><div class="doc"><p>Wait on condition variable. Must hold mutex m. Releases mutex, waits, re-acquires mutex on return.</p></div>
+</div>
+<div class="item fn" id="condvar_signal">
+  <span class="source-link">mutex.jda:102</span><span class="badge fn">fn</span><h3>condvar_signal</h3>
+  <code class="sig">fn condvar_signal(cv: &amp;i64)</code><div class="doc"><p>Wake one waiter.</p></div>
+</div>
+<div class="item fn" id="condvar_broadcast">
+  <span class="source-link">mutex.jda:108</span><span class="badge fn">fn</span><h3>condvar_broadcast</h3>
+  <code class="sig">fn condvar_broadcast(cv: &amp;i64)</code><div class="doc"><p>Wake all waiters.</p></div>
+</div>
+<div class="item fn" id="spinlock_new">
+  <span class="source-link">mutex.jda:114</span><span class="badge fn">fn</span><h3>spinlock_new</h3>
+  <code class="sig">fn spinlock_new() -&gt; &amp;i64</code><div class="doc"><p>Create simple spinlock.</p></div>
+</div>
+<div class="item fn" id="spinlock_lock">
+  <span class="source-link">mutex.jda:121</span><span class="badge fn">fn</span><h3>spinlock_lock</h3>
+  <code class="sig">fn spinlock_lock(sl: &amp;i64)</code><div class="doc"><p>Spinlock: busy-wait until acquired.</p></div>
+</div>
+<div class="item fn" id="spinlock_unlock">
+  <span class="source-link">mutex.jda:129</span><span class="badge fn">fn</span><h3>spinlock_unlock</h3>
+  <code class="sig">fn spinlock_unlock(sl: &amp;i64)</code><div class="doc"><p>Spinlock: release.</p></div>
+</div>
+<h2>Constants</h2>
+<div class="item const" id="FUTEX_WAIT">
+  <span class="source-link">mutex.jda:27</span><span class="badge const">const</span><h3>FUTEX_WAIT</h3>
+  <code class="sig">const FUTEX_WAIT = 0</code>
+</div>
+<div class="item const" id="FUTEX_WAKE">
+  <span class="source-link">mutex.jda:28</span><span class="badge const">const</span><h3>FUTEX_WAKE</h3>
+  <code class="sig">const FUTEX_WAKE = 1</code>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>

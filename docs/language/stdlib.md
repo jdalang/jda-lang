@@ -1,6 +1,6 @@
 # Jda Standard Library
 
-Jda ships with 53 stdlib packages covering data structures, algorithms, I/O, networking, crypto, testing, and more.
+Jda ships with 76 stdlib packages covering data structures, algorithms, I/O, networking, crypto, testing, and more.
 
 ## Using the Standard Library
 
