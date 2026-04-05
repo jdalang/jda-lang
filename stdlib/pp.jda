@@ -1,0 +1,241 @@
+; =============================================================================
+; jda::pp -- Pretty Printer
+; =============================================================================
+; Formatted output of data structures with indentation. Useful for debugging.
+; All output goes to stdout.
+;
+; Functions:
+;   pp_int(val)                    print integer
+;   pp_str(s, len)                 print string with quotes
+;   pp_hex(val)                    print integer as hex
+;   pp_bin(val)                    print integer as binary
+;   pp_vec(v)                      pretty-print a vec
+;   pp_vec_named(name, nlen, v)    print "name = [...]"
+;   pp_mat(m)                      pretty-print a matrix
+;   pp_bytes(data, len)            hex dump of bytes
+;   pp_indent(level)               print indentation
+;   pp_nl()                        print newline
+;   pp_sep()                       print separator ", "
+;   pp_label(name, nlen)           print "name: "
+;   pp_kv_int(key, klen, val)      print "key = value"
+;   pp_kv_hex(key, klen, val)      print "key = 0xvalue"
+; =============================================================================
+
+;; Print newline.
+fn pp_nl() { print("\n") }
+
+;; Print separator.
+fn pp_sep() { print(", ") }
+
+;; Print indentation (2 spaces per level).
+fn pp_indent(level: i64) {
+    let i = 0
+    loop i < level {
+        print("  ")
+        i = i + 1
+    }
+}
+
+;; Internal: print integer to stdout using write buf.
+fn pp_print_int(val: i64) {
+    let buf: &i8 = alloc_pages(1)
+    let v = val
+    if v < 0 {
+        print("-")
+        v = 0 - v
+    }
+    if v == 0 {
+        print("0")
+        ret
+    }
+    let pos = 0
+    let tmp = v
+    loop tmp > 0 {
+        let d = tmp - (tmp / 10) * 10
+        poke_byte(buf, pos, d + 48)
+        pos = pos + 1
+        tmp = tmp / 10
+    }
+    ; Reverse
+    let lo = 0
+    let hi = pos - 1
+    loop lo < hi {
+        let a = load_i8_at(buf, lo)
+        let b = load_i8_at(buf, hi)
+        poke_byte(buf, lo, b)
+        poke_byte(buf, hi, a)
+        lo = lo + 1
+        hi = hi - 1
+    }
+    syscall(1, 1, buf, pos)
+}
+
+;; Print an integer.
+fn pp_int(val: i64) {
+    pp_print_int(val)
+}
+
+;; Print a string with double quotes.
+fn pp_str(s: &i8, len: i64) {
+    print("\"")
+    syscall(1, 1, s, len)
+    print("\"")
+}
+
+;; Print integer as hex.
+fn pp_hex(val: i64) {
+    let buf: &i8 = alloc_pages(1)
+    print("0x")
+    let v = val
+    if v < 0 { v = 0 - v }
+    if v == 0 {
+        print("0")
+        ret
+    }
+    let pos = 0
+    let tmp = v
+    loop tmp > 0 {
+        let nibble = tmp - (tmp / 16) * 16
+        if nibble < 10 {
+            poke_byte(buf, pos, nibble + 48)
+        } else {
+            poke_byte(buf, pos, nibble - 10 + 97)
+        }
+        pos = pos + 1
+        tmp = tmp / 16
+    }
+    let lo = 0
+    let hi = pos - 1
+    loop lo < hi {
+        let a = load_i8_at(buf, lo)
+        let b = load_i8_at(buf, hi)
+        poke_byte(buf, lo, b)
+        poke_byte(buf, hi, a)
+        lo = lo + 1
+        hi = hi - 1
+    }
+    syscall(1, 1, buf, pos)
+}
+
+;; Print integer as binary.
+fn pp_bin(val: i64) {
+    let buf: &i8 = alloc_pages(1)
+    print("0b")
+    let v = val
+    if v < 0 { v = 0 - v }
+    if v == 0 {
+        print("0")
+        ret
+    }
+    let pos = 0
+    let tmp = v
+    loop tmp > 0 {
+        let bit = tmp - (tmp / 2) * 2
+        poke_byte(buf, pos, bit + 48)
+        pos = pos + 1
+        tmp = tmp / 2
+    }
+    let lo = 0
+    let hi = pos - 1
+    loop lo < hi {
+        let a = load_i8_at(buf, lo)
+        let b = load_i8_at(buf, hi)
+        poke_byte(buf, lo, b)
+        poke_byte(buf, hi, a)
+        lo = lo + 1
+        hi = hi - 1
+    }
+    syscall(1, 1, buf, pos)
+}
+
+;; Pretty-print a vec: [1, 2, 3]
+fn pp_vec(v: &i64) {
+    let len = v[0]
+    let data: &i64 = v[2]
+    print("[")
+    let i = 0
+    loop i < len {
+        if i > 0 { pp_sep() }
+        pp_print_int(data[i])
+        i = i + 1
+    }
+    print("]")
+}
+
+;; Pretty-print a named vec: name = [1, 2, 3]
+fn pp_vec_named(name: &i8, nlen: i64, v: &i64) {
+    syscall(1, 1, name, nlen)
+    print(" = ")
+    pp_vec(v)
+    pp_nl()
+}
+
+;; Pretty-print a matrix with alignment.
+fn pp_mat(m: &i64) {
+    let rows = m[0]
+    let cols = m[1]
+    let data: &i64 = m[2]
+    print("[")
+    let r = 0
+    loop r < rows {
+        if r > 0 { print(" ") }
+        print("[")
+        let c = 0
+        loop c < cols {
+            if c > 0 { pp_sep() }
+            let val = data[r * cols + c]
+            pp_print_int(val)
+            c = c + 1
+        }
+        print("]")
+        if r + 1 < rows { pp_nl() }
+        r = r + 1
+    }
+    print("]\n")
+}
+
+;; Hex dump of raw bytes (16 per line).
+fn pp_bytes(data: &i8, len: i64) {
+    let buf: &i8 = alloc_pages(1)
+    let i = 0
+    loop i < len {
+        if i > 0 {
+            let mod16 = i - (i / 16) * 16
+            if mod16 == 0 {
+                pp_nl()
+            } else {
+                print(" ")
+            }
+        }
+        let b = load_i8_at(data, i)
+        let hi = b / 16
+        let lo = b - hi * 16
+        if hi < 10 { poke_byte(buf, 0, hi + 48) } else { poke_byte(buf, 0, hi - 10 + 97) }
+        if lo < 10 { poke_byte(buf, 1, lo + 48) } else { poke_byte(buf, 1, lo - 10 + 97) }
+        syscall(1, 1, buf, 2)
+        i = i + 1
+    }
+    pp_nl()
+}
+
+;; Print a label: "name: "
+fn pp_label(name: &i8, nlen: i64) {
+    syscall(1, 1, name, nlen)
+    print(": ")
+}
+
+;; Print "key = value\n"
+fn pp_kv_int(key: &i8, klen: i64, val: i64) {
+    syscall(1, 1, key, klen)
+    print(" = ")
+    pp_print_int(val)
+    pp_nl()
+}
+
+;; Print "key = 0xvalue\n"
+fn pp_kv_hex(key: &i8, klen: i64, val: i64) {
+    syscall(1, 1, key, klen)
+    print(" = ")
+    pp_hex(val)
+    pp_nl()
+}

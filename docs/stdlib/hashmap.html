@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hashmap — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>hashmap</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bitops.html">bitops</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <a href="crypto.html">crypto</a> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="file_io.html">file_io</a> | <a href="file_io_all.html">file_io_all</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <strong>hashmap</strong> | <a href="heap.html">heap</a> | <a href="http.html">http</a> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="os.html">os</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <a href="process.html">process</a> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <a href="tcp.html">tcp</a> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <a href="tensor_slice.html">tensor_slice</a> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="ws.html">ws</a></div>
+<ul class="toc"><li><span class="badge fn">fn</span><a href="#hash_i64">hash_i64</a></li><li><span class="badge fn">fn</span><a href="#str_hash">str_hash</a></li><li><span class="badge fn">fn</span><a href="#map_round_pow2">map_round_pow2</a></li><li><span class="badge fn">fn</span><a href="#map_pages_for">map_pages_for</a></li><li><span class="badge fn">fn</span><a href="#map_new">map_new</a></li><li><span class="badge fn">fn</span><a href="#map_len">map_len</a></li><li><span class="badge fn">fn</span><a href="#map_find_slot">map_find_slot</a></li><li><span class="badge fn">fn</span><a href="#map_rehash">map_rehash</a></li><li><span class="badge fn">fn</span><a href="#map_put">map_put</a></li><li><span class="badge fn">fn</span><a href="#map_get">map_get</a></li><li><span class="badge fn">fn</span><a href="#map_has">map_has</a></li><li><span class="badge fn">fn</span><a href="#map_del">map_del</a></li><li><span class="badge fn">fn</span><a href="#map_puts">map_puts</a></li><li><span class="badge fn">fn</span><a href="#map_gets">map_gets</a></li><li><span class="badge fn">fn</span><a href="#map_hass">map_hass</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="hash_i64">
+  <span class="source-link">hashmap.jda:28</span><span class="badge fn">fn</span><h3>hash_i64</h3>
+  <code class="sig">fn hash_i64(key: i64) -&gt; i64</code><div class="doc"><p>Hash an i64 key (Knuth multiplicative hash).</p></div>
+</div>
+<div class="item fn" id="str_hash">
+  <span class="source-link">hashmap.jda:33</span><span class="badge fn">fn</span><h3>str_hash</h3>
+  <code class="sig">fn str_hash(s: &amp;i8, len: i64) -&gt; i64</code><div class="doc"><p>Hash a byte buffer (djb2).</p></div>
+</div>
+<div class="item fn" id="map_round_pow2">
+  <span class="source-link">hashmap.jda:46</span><span class="badge fn">fn</span><h3>map_round_pow2</h3>
+  <code class="sig">fn map_round_pow2(n: i64) -&gt; i64</code><div class="doc"><p>Round up to next power of 2. Minimum 16.</p></div>
+</div>
+<div class="item fn" id="map_pages_for">
+  <span class="source-link">hashmap.jda:55</span><span class="badge fn">fn</span><h3>map_pages_for</h3>
+  <code class="sig">fn map_pages_for(n: i64) -&gt; i64</code><div class="doc"><p>Pages needed for n i64 elements (8 bytes each, 4096 per page).</p></div>
+</div>
+<div class="item fn" id="map_new">
+  <span class="source-link">hashmap.jda:65</span><span class="badge fn">fn</span><h3>map_new</h3>
+  <code class="sig">fn map_new(cap: i64) -&gt; &amp;i64</code><div class="doc"><p>Create a new hash map with given capacity.</p></div>
+</div>
+<div class="item fn" id="map_len">
+  <span class="source-link">hashmap.jda:82</span><span class="badge fn">fn</span><h3>map_len</h3>
+  <code class="sig">fn map_len(m: &amp;i64) -&gt; i64</code><div class="doc"><p>Get number of entries.</p></div>
+</div>
+<div class="item fn" id="map_find_slot">
+  <span class="source-link">hashmap.jda:89</span><span class="badge fn">fn</span><h3>map_find_slot</h3>
+  <code class="sig">fn map_find_slot(m: &amp;i64, key: i64) -&gt; i64</code><div class="doc"><p>Internal: find slot for key. Returns index. If key is found (state=1, keys match), returns that index. If key is not found, returns the first empty or tombstone slot.</p></div>
+</div>
+<div class="item fn" id="map_rehash">
+  <span class="source-link">hashmap.jda:121</span><span class="badge fn">fn</span><h3>map_rehash</h3>
+  <code class="sig">fn map_rehash(m: &amp;i64)</code><div class="doc"><p>Internal: rehash to double capacity.</p></div>
+</div>
+<div class="item fn" id="map_put">
+  <span class="source-link">hashmap.jda:147</span><span class="badge fn">fn</span><h3>map_put</h3>
+  <code class="sig">fn map_put(m: &amp;i64, key: i64, val: i64)</code><div class="doc"><p>Insert or update a key-value pair.</p></div>
+</div>
+<div class="item fn" id="map_get">
+  <span class="source-link">hashmap.jda:170</span><span class="badge fn">fn</span><h3>map_get</h3>
+  <code class="sig">fn map_get(m: &amp;i64, key: i64) -&gt; i64</code><div class="doc"><p>Get value for key. Returns 0 if not found.</p></div>
+</div>
+<div class="item fn" id="map_has">
+  <span class="source-link">hashmap.jda:184</span><span class="badge fn">fn</span><h3>map_has</h3>
+  <code class="sig">fn map_has(m: &amp;i64, key: i64) -&gt; i64</code><div class="doc"><p>Check if key exists. Returns 1 or 0.</p></div>
+</div>
+<div class="item fn" id="map_del">
+  <span class="source-link">hashmap.jda:195</span><span class="badge fn">fn</span><h3>map_del</h3>
+  <code class="sig">fn map_del(m: &amp;i64, key: i64) -&gt; i64</code><div class="doc"><p>Delete key. Returns 1 if found and deleted, 0 if not found.</p></div>
+</div>
+<div class="item fn" id="map_puts">
+  <span class="source-link">hashmap.jda:210</span><span class="badge fn">fn</span><h3>map_puts</h3>
+  <code class="sig">fn map_puts(m: &amp;i64, key: &amp;i8, klen: i64, val: i64)</code><div class="doc"><p>String-keyed insert: hash string, use hash as key.</p></div>
+</div>
+<div class="item fn" id="map_gets">
+  <span class="source-link">hashmap.jda:216</span><span class="badge fn">fn</span><h3>map_gets</h3>
+  <code class="sig">fn map_gets(m: &amp;i64, key: &amp;i8, klen: i64) -&gt; i64</code><div class="doc"><p>String-keyed lookup.</p></div>
+</div>
+<div class="item fn" id="map_hass">
+  <span class="source-link">hashmap.jda:222</span><span class="badge fn">fn</span><h3>map_hass</h3>
+  <code class="sig">fn map_hass(m: &amp;i64, key: &amp;i8, klen: i64) -&gt; i64</code><div class="doc"><p>String-keyed existence check.</p></div>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>
