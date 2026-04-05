@@ -1,0 +1,13 @@
+; Parent cancel propagates to child
+fn main() {
+    let bg = ctx_background()
+    let parent = ctx_with_cancel(bg)
+    let child = ctx_with_cancel(parent)
+    ; Child not done yet
+    let d1 = ctx_done(child)
+    print_int(d1)
+    ; Cancel parent — child should become done
+    ctx_cancel(parent)
+    let d2 = ctx_done(child)
+    print_int(d2)
+}
