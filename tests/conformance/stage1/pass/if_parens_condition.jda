@@ -1,0 +1,50 @@
+fn check(arr: &i64, idx: i64) -> i64 {
+    ret arr[idx]
+}
+
+fn main() {
+    let mem = alloc_pages(1)
+    mem[0] = 42
+    mem[1] = 0
+
+    // Bug #13: if (expr) != 0 — parser used to treat (expr) as full condition
+    if (check(mem, 0)) != 0 {
+        print("a")
+    }
+    if (check(mem, 1)) != 0 {
+        print("X")
+    }
+
+    // Parens with arithmetic
+    let x = 3
+    let y = 4
+    if (x + y) > 5 {
+        print("b")
+    }
+    if (x + y) == 7 {
+        print("c")
+    }
+    if (x + y) != 8 {
+        print("d")
+    }
+
+    // Double parens
+    if ((x)) != 0 {
+        print("e")
+    }
+
+    // Parens in loop condition
+    let i = 0
+    loop (i) < 3 {
+        i = i + 1
+    }
+    print("{i}")
+
+    // Parens with logical ops
+    let z = 1
+    if (z) == 1 {
+        print("f")
+    }
+
+    ret 0
+}
