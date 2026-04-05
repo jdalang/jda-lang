@@ -1,0 +1,120 @@
+fn main() -> i64 {
+    ; --- Test reshape 2D -> 1D ---
+    let m = tensor_new2(2, 3)
+    let fv = f64_from_int(1)
+    tensor_set(m, 0, fv)
+    fv = f64_from_int(2)
+    tensor_set(m, 1, fv)
+    fv = f64_from_int(3)
+    tensor_set(m, 2, fv)
+    fv = f64_from_int(4)
+    tensor_set(m, 3, fv)
+    fv = f64_from_int(5)
+    tensor_set(m, 4, fv)
+    fv = f64_from_int(6)
+    tensor_set(m, 5, fv)
+
+    let flat = tensor_reshape_1d(m, 6)
+    let v0 = f64_to_int(tensor_get(flat, 0))
+    let v5 = f64_to_int(tensor_get(flat, 5))
+    if v0 == 1 and v5 == 6 {
+        print "reshape1d ok"
+    }
+    tensor_free(flat)
+
+    ; --- Test reshape 1D -> 2D ---
+    let t = tensor_new1(6)
+    let i = 0
+    loop i < 6 {
+        let val = f64_from_int(i + 1)
+        tensor_set(t, i, val)
+        i = i + 1
+    }
+    let m2 = tensor_reshape_2d(t, 3, 2)
+    let a = f64_to_int(tensor_get(m2, 0))
+    let b = f64_to_int(tensor_get(m2, 3))
+    let c = f64_to_int(tensor_get(m2, 5))
+    if a == 1 and b == 4 and c == 6 {
+        print "reshape2d ok"
+    }
+    tensor_free(t)
+    tensor_free(m2)
+
+    ; --- Test sum along axis ---
+    ; m = [[1,2,3],[4,5,6]]
+    let s0 = tensor_sum_axis0(m, 2, 3)
+    let r0 = f64_to_int(tensor_get(s0, 0))
+    let r1 = f64_to_int(tensor_get(s0, 1))
+    let r2 = f64_to_int(tensor_get(s0, 2))
+    if r0 == 5 and r1 == 7 and r2 == 9 {
+        print "sum_axis0 ok"
+    }
+    tensor_free(s0)
+
+    let s1 = tensor_sum_axis1(m, 2, 3)
+    let c0 = f64_to_int(tensor_get(s1, 0))
+    let c1 = f64_to_int(tensor_get(s1, 1))
+    if c0 == 6 and c1 == 15 {
+        print "sum_axis1 ok"
+    }
+    tensor_free(s1)
+    tensor_free(m)
+
+    ; --- Test concat ---
+    let x = tensor_new1(2)
+    let y = tensor_new1(3)
+    fv = f64_from_int(1)
+    tensor_set(x, 0, fv)
+    fv = f64_from_int(2)
+    tensor_set(x, 1, fv)
+    fv = f64_from_int(10)
+    tensor_set(y, 0, fv)
+    fv = f64_from_int(20)
+    tensor_set(y, 1, fv)
+    fv = f64_from_int(30)
+    tensor_set(y, 2, fv)
+    let cat = tensor_concat1d(x, y)
+    let len = tensor_len(cat)
+    let p0 = f64_to_int(tensor_get(cat, 0))
+    let p1 = f64_to_int(tensor_get(cat, 1))
+    let p2 = f64_to_int(tensor_get(cat, 2))
+    let p4 = f64_to_int(tensor_get(cat, 4))
+    if len == 5 and p0 == 1 and p1 == 2 and p2 == 10 and p4 == 30 {
+        print "concat ok"
+    }
+    tensor_free(x)
+    tensor_free(y)
+    tensor_free(cat)
+
+    ; --- Test arange ---
+    let fstart = f64_from_int(0)
+    let fstop = f64_from_int(5)
+    let fstep = f64_from_int(1)
+    let ar = tensor_arange(fstart, fstop, fstep)
+    let alen = tensor_len(ar)
+    let a0 = f64_to_int(tensor_get(ar, 0))
+    let a4 = f64_to_int(tensor_get(ar, 4))
+    if alen == 5 and a0 == 0 and a4 == 4 {
+        print "arange ok"
+    }
+    tensor_free(ar)
+
+    ; --- Test copy ---
+    let orig = tensor_new1(3)
+    fv = f64_from_int(7)
+    tensor_set(orig, 0, fv)
+    fv = f64_from_int(8)
+    tensor_set(orig, 1, fv)
+    fv = f64_from_int(9)
+    tensor_set(orig, 2, fv)
+    let cp = tensor_copy_1d(orig)
+    let d0 = f64_to_int(tensor_get(cp, 0))
+    let d2 = f64_to_int(tensor_get(cp, 2))
+    if d0 == 7 and d2 == 9 {
+        print "copy ok"
+    }
+    tensor_free(orig)
+    tensor_free(cp)
+
+    ret 0
+}
