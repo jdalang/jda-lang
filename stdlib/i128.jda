@@ -1,0 +1,396 @@
+; =============================================================================
+; jda::i128 -- 128-bit Integer Arithmetic
+; =============================================================================
+; Fixed-width 128-bit integers stored as two i64 words: [lo, hi].
+; lo = bits 0..63 (unsigned interpretation), hi = bits 64..127.
+; Sign is determined by bit 63 of hi (two's complement).
+;
+; Functions:
+;   i128_new(lo, hi)          -> &i64  create from lo/hi pair
+;   i128_from_i64(val)        -> &i64  create from i64 (sign-extends)
+;   i128_lo(a)                -> i64   low 64 bits
+;   i128_hi(a)                -> i64   high 64 bits
+;   i128_add(a, b)            -> &i64  addition
+;   i128_sub(a, b)            -> &i64  subtraction
+;   i128_neg(a)               -> &i64  negate
+;   i128_mul(a, b)            -> &i64  multiplication (lower 128 bits)
+;   i128_cmp(a, b)            -> i64   -1, 0, 1
+;   i128_eq(a, b)             -> i64   1 if equal
+;   i128_is_zero(a)           -> i64   1 if zero
+;   i128_is_neg(a)            -> i64   1 if negative
+;   i128_and(a, b)            -> &i64  bitwise AND
+;   i128_or(a, b)             -> &i64  bitwise OR
+;   i128_xor(a, b)            -> &i64  bitwise XOR
+;   i128_shl(a, n)            -> &i64  left shift by n bits
+;   i128_shr(a, n)            -> &i64  logical right shift by n bits
+;   i128_to_str(a, out)       -> i64   decimal string, returns length
+;   i128_to_i64(a)            -> i64   truncate to i64 (lo word)
+; =============================================================================
+
+fn i128_new(lo: i64, hi: i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = lo
+    r[1] = hi
+    ret r
+}
+
+fn i128_from_i64(val: i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = val
+    ; Sign-extend: if val < 0, hi = -1 (all ones), else 0
+    let hi = 0
+    if val < 0 { hi = 0 - 1 }
+    r[1] = hi
+    ret r
+}
+
+fn i128_lo(a: &i64) -> i64 {
+    ret a[0]
+}
+
+fn i128_hi(a: &i64) -> i64 {
+    ret a[1]
+}
+
+fn i128_is_zero(a: &i64) -> i64 {
+    if a[0] == 0 {
+        if a[1] == 0 { ret 1 }
+    }
+    ret 0
+}
+
+fn i128_is_neg(a: &i64) -> i64 {
+    if a[1] < 0 { ret 1 }
+    ret 0
+}
+
+fn i128_eq(a: &i64, b: &i64) -> i64 {
+    if a[0] == b[0] {
+        if a[1] == b[1] { ret 1 }
+    }
+    ret 0
+}
+
+; Unsigned less-than for i64 (treating both as unsigned 64-bit values).
+; Uses sign-based case analysis since Jda has no XOR operator.
+fn _u64_lt(a: i64, b: i64) -> i64 {
+    ; Case 1: both non-negative (bit 63 = 0) — signed < is same as unsigned <
+    if a >= 0 {
+        if b >= 0 {
+            if a < b { ret 1 }
+            ret 0
+        }
+        ; a >= 0, b < 0 → b has bit 63 set → b is larger unsigned
+        ret 1
+    }
+    ; a < 0 (bit 63 set)
+    if b >= 0 {
+        ; a has bit 63, b doesn't → a is larger unsigned
+        ret 0
+    }
+    ; Both negative (both have bit 63 set) — signed < is same as unsigned <
+    if a < b { ret 1 }
+    ret 0
+}
+
+; Add two i128 values. Detects carry from lo addition using unsigned comparison.
+fn i128_add(a: &i64, b: &i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    let a_lo = a[0]
+    let b_lo = b[0]
+    let sum_lo = a_lo + b_lo
+    ; Carry detection: if sum_lo < a_lo (unsigned), there was a carry
+    let carry = _u64_lt(sum_lo, a_lo)
+    let sum_hi = a[1] + b[1] + carry
+    r[0] = sum_lo
+    r[1] = sum_hi
+    ret r
+}
+
+; Subtract: a - b = a + (~b + 1) = a + neg(b)
+fn i128_sub(a: &i64, b: &i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    ; Negate b: ~b + 1
+    let not_lo = ~b[0]
+    let not_hi = ~b[1]
+    ; Add 1 to not_lo
+    let neg_lo = not_lo + 1
+    let carry1 = 0
+    if neg_lo == 0 {
+        if not_lo != 0 - 1 { carry1 = 0 }
+    }
+    ; carry1 if not_lo was all 1s (0xFFFF...FFFF) and +1 overflowed
+    if not_lo == 0 - 1 { carry1 = 1 }
+    let neg_hi = not_hi + carry1
+    ; Now add a + neg(b)
+    let sum_lo = a[0] + neg_lo
+    let carry2 = _u64_lt(sum_lo, a[0])
+    let sum_hi = a[1] + neg_hi + carry2
+    r[0] = sum_lo
+    r[1] = sum_hi
+    ret r
+}
+
+; Negate: -a = ~a + 1
+fn i128_neg(a: &i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    let not_lo = ~a[0]
+    let neg_lo = not_lo + 1
+    let carry = 0
+    if not_lo == 0 - 1 { carry = 1 }
+    let neg_hi = ~a[1] + carry
+    r[0] = neg_lo
+    r[1] = neg_hi
+    ret r
+}
+
+; Compare two i128 values. Returns -1, 0, or 1.
+fn i128_cmp(a: &i64, b: &i64) -> i64 {
+    let a_hi = a[1]
+    let b_hi = b[1]
+    ; Compare high words (signed)
+    if a_hi < b_hi { ret 0 - 1 }
+    if a_hi > b_hi { ret 1 }
+    ; High words equal, compare low words (unsigned)
+    let a_lo = a[0]
+    let b_lo = b[0]
+    let a_lt_b = _u64_lt(a_lo, b_lo)
+    let b_lt_a = _u64_lt(b_lo, a_lo)
+    if a_lt_b == 1 { ret 0 - 1 }
+    if b_lt_a == 1 { ret 1 }
+    ret 0
+}
+
+; Bitwise AND
+fn i128_and(a: &i64, b: &i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = a[0] & b[0]
+    r[1] = a[1] & b[1]
+    ret r
+}
+
+; Bitwise OR
+fn i128_or(a: &i64, b: &i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = a[0] | b[0]
+    r[1] = a[1] | b[1]
+    ret r
+}
+
+; Bitwise XOR: a ^ b = (a | b) & ~(a & b)
+fn _xor64(a: i64, b: i64) -> i64 {
+    ret (a | b) & ~(a & b)
+}
+
+fn i128_xor(a: &i64, b: &i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = _xor64(a[0], b[0])
+    r[1] = _xor64(a[1], b[1])
+    ret r
+}
+
+; Left shift by n bits (0 <= n < 128)
+fn i128_shl(a: &i64, n: i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    if n >= 128 {
+        r[0] = 0
+        r[1] = 0
+        ret r
+    }
+    if n >= 64 {
+        r[0] = 0
+        r[1] = a[0] << (n - 64)
+        ret r
+    }
+    if n == 0 {
+        r[0] = a[0]
+        r[1] = a[1]
+        ret r
+    }
+    ; 0 < n < 64
+    r[0] = a[0] << n
+    ; hi = (a_hi << n) | (a_lo >> (64-n))
+    let complement = 64 - n
+    let lo_overflow = a[0] >> complement
+    r[1] = (a[1] << n) | lo_overflow
+    ret r
+}
+
+; Logical right shift by n bits (0 <= n < 128)
+fn i128_shr(a: &i64, n: i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    if n >= 128 {
+        r[0] = 0
+        r[1] = 0
+        ret r
+    }
+    if n >= 64 {
+        r[0] = a[1] >> (n - 64)
+        r[1] = 0
+        ret r
+    }
+    if n == 0 {
+        r[0] = a[0]
+        r[1] = a[1]
+        ret r
+    }
+    ; 0 < n < 64
+    let complement = 64 - n
+    let hi_underflow = a[1] << complement
+    r[0] = (a[0] >> n) | hi_underflow
+    r[1] = a[1] >> n
+    ret r
+}
+
+; Multiply two i128 values (returns lower 128 bits of the result).
+; Uses the identity: (a_hi*2^64 + a_lo) * (b_hi*2^64 + b_lo)
+;   = a_lo*b_lo + (a_lo*b_hi + a_hi*b_lo)*2^64  (truncated to 128 bits)
+;
+; For a_lo*b_lo we need 128-bit result from two 64-bit unsigned values.
+; Split each into 32-bit halves and use grade-school multiplication.
+fn _mul_u64_lo(a: i64, b: i64) -> i64 {
+    ; Just the hardware multiply — gives the low 64 bits
+    ret a * b
+}
+
+fn _mul_u64_hi(a: i64, b: i64) -> i64 {
+    ; Get high 64 bits of a*b using 32-bit half multiplication
+    ; a = a_hi*2^32 + a_lo, b = b_hi*2^32 + b_lo
+    let mask32 = 4294967295
+    let a_lo = a & mask32
+    let a_hi = (a >> 32) & mask32
+    let b_lo = b & mask32
+    let b_hi = (b >> 32) & mask32
+
+    ; p0 = a_lo * b_lo (fits in 64 bits)
+    let p0 = a_lo * b_lo
+    ; p1 = a_lo * b_hi
+    let p1 = a_lo * b_hi
+    ; p2 = a_hi * b_lo
+    let p2 = a_hi * b_lo
+    ; p3 = a_hi * b_hi
+    let p3 = a_hi * b_hi
+
+    ; mid = (p0 >> 32) + (p1 & mask32) + (p2 & mask32)
+    let p0_hi = (p0 >> 32) & mask32
+    let p1_lo = p1 & mask32
+    let p2_lo = p2 & mask32
+    let mid = p0_hi + p1_lo + p2_lo
+
+    ; result_hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32)
+    let p1_hi = (p1 >> 32) & mask32
+    let p2_hi = (p2 >> 32) & mask32
+    let mid_hi = (mid >> 32) & mask32
+    let result = p3 + p1_hi + p2_hi + mid_hi
+    ret result
+}
+
+fn i128_mul(a: &i64, b: &i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    let a_lo = a[0]
+    let b_lo = b[0]
+    let a_hi = a[1]
+    let b_hi = b[1]
+
+    ; lo*lo
+    let lo_lo = _mul_u64_lo(a_lo, b_lo)
+    let lo_hi = _mul_u64_hi(a_lo, b_lo)
+
+    ; Cross terms (only need low 64 bits of each, shifted to hi)
+    let cross1 = a_lo * b_hi
+    let cross2 = a_hi * b_lo
+
+    let result_hi = lo_hi + cross1 + cross2
+    r[0] = lo_lo
+    r[1] = result_hi
+    ret r
+}
+
+; Convert i128 to decimal string. Returns length written.
+; For negative numbers, outputs '-' then the absolute value.
+; Writes digits into out[] in reverse, then reverses in-place (no temp buffer).
+fn i128_to_str(a: &i64, out: &i8) -> i64 {
+    let lo = a[0]
+    let hi = a[1]
+    let pos = 0
+
+    ; Handle zero
+    if lo == 0 {
+        if hi == 0 {
+            poke_byte(out, 0, 48)
+            ret 1
+        }
+    }
+
+    ; Handle negative: output '-' and negate
+    let neg = i128_is_neg(a)
+    let work_lo = lo
+    let work_hi = hi
+    let sign_pos = 0
+    if neg == 1 {
+        sign_pos = 1
+        pos = 1
+        ; Negate: ~a + 1
+        let not_lo = ~lo
+        work_lo = not_lo + 1
+        let carry = 0
+        if not_lo == 0 - 1 { carry = 1 }
+        work_hi = ~hi + carry
+    }
+
+    ; Extract decimal digits by repeated division by 10
+    ; Write digits directly into out[pos..] (will be reversed later)
+    let dstart = pos
+    let running = 1
+    if work_lo == 0 {
+        if work_hi == 0 { running = 0 }
+    }
+    loop running == 1 {
+        ; Divide 128-bit (work_hi:work_lo) by 10
+        let q_hi = work_hi / 10
+        let r_hi = work_hi - q_hi * 10
+
+        ; r_hi * 2^64 / 10:
+        ; 2^64 / 10 = 1844674407370955161 remainder 6
+        let q_from_rem = r_hi * 1844674407370955161
+        let extra = r_hi * 6
+        let adjusted_lo = work_lo + extra
+        let carry2 = _u64_lt(adjusted_lo, work_lo)
+        let q_lo = adjusted_lo / 10 + q_from_rem + carry2 * 1844674407370955161
+
+        ; Remainder: adjusted_lo mod 10
+        let digit = adjusted_lo - (adjusted_lo / 10) * 10
+
+        poke_byte(out, pos, 48 + digit)
+        pos = pos + 1
+        work_lo = q_lo
+        work_hi = q_hi
+
+        if work_lo == 0 {
+            if work_hi == 0 { running = 0 }
+        }
+    }
+
+    ; Now write '-' sign if needed (before the digits)
+    if sign_pos == 1 {
+        poke_byte(out, 0, 45)
+    }
+
+    ; Reverse the digit portion in-place: out[dstart..pos-1]
+    let left = dstart
+    let right = pos - 1
+    loop left < right {
+        let tmp_ch = out[left]
+        let tmp_ch2 = out[right]
+        poke_byte(out, left, tmp_ch2)
+        poke_byte(out, right, tmp_ch)
+        left = left + 1
+        right = right - 1
+    }
+    ret pos
+}
+
+; Truncate to i64 (return low word)
+fn i128_to_i64(a: &i64) -> i64 {
+    ret a[0]
+}
