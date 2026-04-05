@@ -65,7 +65,14 @@ case "$CMD" in
         exec "$JDA1" build "$@"
         ;;
     run)
-        exec "$JDA1" run "$@"
+        # Compile to temp binary via build, execute it, clean up
+        TMPBIN="/tmp/jda_run_$$"
+        "$JDA1" build "$@" -o "$TMPBIN"
+        chmod +x "$TMPBIN"
+        "$TMPBIN"
+        RC=$?
+        rm -f "$TMPBIN"
+        exit $RC
         ;;
     repl)
         exec "$JDA1" repl "$@"
