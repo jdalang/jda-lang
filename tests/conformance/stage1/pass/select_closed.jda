@@ -1,0 +1,17 @@
+; Select when all channels are closed returns -1
+fn main() {
+    let ch_a = chan_new(4)
+    let ch_b = chan_new(4)
+    chan_close(ch_a)
+    chan_close(ch_b)
+
+    let chs = alloc_pages(1)
+    chs[0] = ch_a
+    chs[1] = ch_b
+
+    let val = chan_select(chs, 2)
+    let neg1 = 0 - 1
+    if val == neg1 {
+        print("closed")
+    }
+}
