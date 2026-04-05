@@ -1,0 +1,11 @@
+; Test: unsafe fn allows syscall without block
+
+unsafe fn write_out(msg: &i8, len: i64) -> i64 {
+    let r = syscall(1, 1, msg, len)
+    ret 0
+}
+
+fn main() -> i64 {
+    write_out("unsafe fn ok\n", 13)
+    ret 0
+}
