@@ -1,0 +1,63 @@
+; Test Slice — dynamic array views
+
+fn main() {
+    ; Create backing array
+    let data: &i64 = alloc_pages(1)
+    data[0] = 10
+    data[1] = 20
+    data[2] = 30
+    data[3] = 40
+    data[4] = 50
+
+    ; slice_from — view entire array
+    let s = slice_from(data, 5)
+    let slen = slice_len(s)
+    print("{slen}\n")
+
+    ; slice_get
+    let v0 = slice_get(s, 0)
+    let v4 = slice_get(s, 4)
+    print("{v0}\n")
+    print("{v4}\n")
+
+    ; slice_first / slice_last
+    let f = slice_first(s)
+    let l = slice_last(s)
+    print("{f}\n")
+    print("{l}\n")
+
+    ; slice_sub — sub-slice [1, 4)
+    let sub = slice_sub(s, 1, 4)
+    slice_println(sub)
+    let sublen = slice_len(sub)
+    print("{sublen}\n")
+
+    ; slice_contains / slice_index_of
+    let has30 = slice_contains(s, 30)
+    let has99 = slice_contains(s, 99)
+    print("{has30}\n")
+    print("{has99}\n")
+
+    let idx = slice_index_of(s, 30)
+    print("{idx}\n")
+
+    ; slice_sum
+    let total = slice_sum(s)
+    print("{total}\n")
+
+    ; slice_eq
+    let s2 = slice_from(data, 5)
+    let eq1 = slice_eq(s, s2)
+    print("{eq1}\n")
+
+    ; slice_set mutates backing array
+    slice_set(sub, 0, 999)
+    let check = data[1]
+    print("{check}\n")
+
+    ; slice_print full view
+    let s3 = slice_from(data, 5)
+    slice_println(s3)
+
+    print("ok\n")
+}

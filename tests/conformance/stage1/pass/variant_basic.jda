@@ -1,0 +1,49 @@
+; Test Variant — sum types / tagged unions
+
+; Define shape tags
+const CIRCLE = 1
+const RECT = 2
+const POINT = 3
+
+fn main() {
+    ; var1 — Circle with radius
+    let circle = var1(CIRCLE, 5)
+    let tag = var_tag(circle)
+    print("{tag}\n")
+    let radius = var_field(circle, 0)
+    print("{radius}\n")
+
+    ; var2 — Rect with width, height
+    let rect = var2(RECT, 10, 20)
+    let w = var_field(rect, 0)
+    let h = var_field(rect, 1)
+    print("{w}\n")
+    print("{h}\n")
+
+    ; var0 — Point with no payload
+    let pt = var0(POINT)
+    let is_pt = var_is(pt, POINT)
+    let is_ci = var_is(pt, CIRCLE)
+    print("{is_pt}\n")
+    print("{is_ci}\n")
+
+    ; var_set_field
+    var_set_field(circle, 0, 10)
+    let r2 = var_field(circle, 0)
+    print("{r2}\n")
+
+    ; var_eq
+    let a = var1(CIRCLE, 10)
+    let eq1 = var_eq(circle, a)
+    print("{eq1}\n")
+    let b = var1(CIRCLE, 99)
+    let eq2 = var_eq(circle, b)
+    print("{eq2}\n")
+
+    ; var_print
+    var_println(circle, 1)
+    var_println(rect, 2)
+    var_println(pt, 0)
+
+    print("ok\n")
+}
