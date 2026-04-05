@@ -241,38 +241,38 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 
 ### Runtime (ms)
 
-| Benchmark | C | Go | Rust | Jda | Python | Ruby |
-|-----------|----:|-----:|------:|--------:|-------:|-----:|
-| fib(35) | 40 | 127 | 64 | 148 | 2,824 | 1,315 |
-| sieve 1M | 28 | 34 | 32 | **24** | 435 | 409 |
-| sum 100M | 58 | 81 | 30 | **49** | 8,109 | 3,610 |
-| matmul 200x200 | 30 | 41 | 33 | 39 | 2,297 | 997 |
+| Benchmark | C | Jda | Rust | Go | Python | Ruby |
+|-----------|----:|--------:|------:|-----:|-------:|-----:|
+| sieve 1M | 28 | **24** | 32 | 34 | 435 | 409 |
+| matmul 200x200 | 30 | 39 | 33 | 41 | 2,297 | 997 |
+| sum 100M | 58 | **49** | 30 | 81 | 8,109 | 3,610 |
+| fib(35) | 40 | 148 | 64 | 127 | 2,824 | 1,315 |
 
 ### Compile Time (ms)
 
-| Benchmark | C (gcc -O2) | Go | Rust (rustc -O) | Jda |
-|-----------|--------:|----:|------:|--------:|
-| fib(35) | 497 | 313 | 1,256 | **42** |
-| sieve 1M | 478 | 295 | 1,545 | **42** |
-| sum 100M | 433 | 308 | 1,199 | **40** |
-| matmul 200x200 | 476 | 302 | 1,589 | **42** |
+| Benchmark | C (gcc -O2) | Jda | Rust (rustc -O) | Go |
+|-----------|--------:|--------:|------:|----:|
+| sieve 1M | 478 | **42** | 1,545 | 295 |
+| matmul 200x200 | 476 | **42** | 1,589 | 302 |
+| sum 100M | 433 | **40** | 1,199 | 308 |
+| fib(35) | 497 | **42** | 1,256 | 313 |
 
 ### Binary Size
 
-| | C | Go | Rust | Jda |
-|---|------:|----------:|---------:|--------:|
-| Size | 16 KB | 1.76 MB | 3.95 MB | 1.05 MB |
+| | C | Jda | Rust | Go |
+|---|------:|--------:|---------:|----------:|
+| Size | 16 KB | 1.05 MB | 3.95 MB | 1.76 MB |
 | Linking | dynamic | static | static | static |
 
 ### Head-to-Head
 
-| | vs C | vs Go | vs Rust | vs Python | vs Ruby |
+| | vs C | vs Rust | vs Go | vs Python | vs Ruby |
 |---|---|---|---|---|---|
-| **Runtime** | **Jda wins 2 of 4** | **Jda wins 3 of 4** | Mixed | **Jda 53x faster** | **Jda 24x faster** |
-| **Compile** | **Jda 11x faster** | **Jda 7x faster** | **Jda 33x faster** | — | — |
-| **Binary** | C 65x smaller (dynamic) | **Jda 40% smaller** | **Jda 3.8x smaller** | — | — |
-| **GC** | Neither | **Jda: no GC** | Neither | — | — |
-| **Deps** | gcc + libc | Go toolchain | Rust toolchain | CPython | CRuby |
+| **Runtime** | **Jda wins 2 of 4** | Mixed | **Jda wins 3 of 4** | **Jda 53x faster** | **Jda 24x faster** |
+| **Compile** | **Jda 11x faster** | **Jda 33x faster** | **Jda 7x faster** | — | — |
+| **Binary** | C 65x smaller (dynamic) | **Jda 3.8x smaller** | **Jda 40% smaller** | — | — |
+| **GC** | Neither | Neither | **Jda: no GC** | — | — |
+| **Deps** | gcc + libc | Rust toolchain | Go toolchain | CPython | CRuby |
 
 Jda: **zero external dependencies** — bootstrapped from assembly, single static binary.
 
