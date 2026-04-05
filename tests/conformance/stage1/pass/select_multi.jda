@@ -1,0 +1,21 @@
+; Select twice from 3 channels with different data
+fn main() {
+    let ch_a = chan_new(4)
+    let ch_b = chan_new(4)
+    let ch_c = chan_new(4)
+    chan_send(ch_a, 10)
+    chan_send(ch_c, 20)
+
+    let chs = alloc_pages(1)
+    chs[0] = ch_a
+    chs[1] = ch_b
+    chs[2] = ch_c
+
+    ; First select: should get 10 from ch_a (index 0)
+    let v1 = chan_select(chs, 3)
+    print_int(v1)
+
+    ; Second select: ch_a is now empty, ch_c has 20
+    let v2 = chan_select(chs, 3)
+    print_int(v2)
+}
