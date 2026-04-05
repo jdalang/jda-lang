@@ -1,0 +1,27 @@
+; Test: trait default method overridden
+
+trait Greetable {
+    fn greet(&self) -> i64 {
+        print "hello\n"
+        ret 1
+    }
+}
+
+struct Robot {
+    id: i64
+}
+
+impl Greetable for Robot {
+    fn greet(&self) -> i64 {
+        print "beep\n"
+        ret 2
+    }
+}
+
+fn main() -> i64 {
+    let r = Robot{}
+    r.id = 7
+    let v = r.greet()
+    if v == 2 { print "override ok\n" }
+    ret 0
+}
