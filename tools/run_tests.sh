@@ -121,8 +121,19 @@ if [ -d "$FAIL_DIR" ]; then
         test_name=$(basename "$test_file" .jda)
         bin_out="$TMP_DIR/$test_name"
 
+        # Check for ; ARGS: directive in test file
+        extra_args=""
+        args_line=$(grep '^; ARGS:' "$test_file" 2>/dev/null | head -1 || true)
+        if [ -n "$args_line" ]; then
+            extra_args=$(echo "$args_line" | sed 's/^; ARGS: *//')
+        fi
+
         # Compile — should fail
-        compile_out=$("$JDA" "$test_file" "$bin_out" 2>&1) || true
+        if [ -n "$extra_args" ]; then
+            compile_out=$("$JDA" build $extra_args "$test_file" -o "$bin_out" 2>&1) || true
+        else
+            compile_out=$("$JDA" "$test_file" "$bin_out" 2>&1) || true
+        fi
         if [ ! -f "$bin_out" ]; then
             PASS=$((PASS + 1))
             echo "  PASS  $test_name (compile failed as expected)"
