@@ -1,0 +1,64 @@
+; Test f64 operator overloading: +, -, *, / on f64 typed variables
+
+fn main() -> i64 {
+    let a: f64 = f64_from_int(10)
+    let b: f64 = f64_from_int(3)
+
+    ; Test addition
+    let c: f64 = a + b
+    let ci = f64_to_int(c)
+    if ci == 13 { print "add ok\n" }
+
+    ; Test subtraction
+    let d: f64 = a - b
+    let di = f64_to_int(d)
+    if di == 7 { print "sub ok\n" }
+
+    ; Test multiplication
+    let e: f64 = a * b
+    let ei = f64_to_int(e)
+    if ei == 30 { print "mul ok\n" }
+
+    ; Test division
+    let twenty: f64 = f64_from_int(20)
+    let four: f64 = f64_from_int(4)
+    let f: f64 = twenty / four
+    let fi = f64_to_int(f)
+    if fi == 5 { print "div ok\n" }
+
+    ; Test comparison: less than
+    let lt_r = a < b
+    if lt_r == 0 { print "lt ok\n" }
+
+    ; Test comparison: greater than
+    let gt_r = a > b
+    if gt_r == 1 { print "gt ok\n" }
+
+    ; Test comparison: equality
+    let same: f64 = f64_from_int(10)
+    let eq_r = a == same
+    if eq_r == 1 { print "eq ok\n" }
+
+    ; Test unary negation
+    let neg: f64 = -a
+    let neg_i = f64_to_int(neg)
+    if neg_i == -10 { print "neg ok\n" }
+
+    ; Test chained: f64_from_int result + variable
+    let x: f64 = f64_from_int(5)
+    let y: f64 = f64_from_int(7)
+    let z: f64 = x + y
+    let zi = f64_to_int(z)
+    if zi == 12 { print "chain ok\n" }
+
+    ; Test mixed with mul: a * b + c pattern
+    let two: f64 = f64_from_int(2)
+    let three: f64 = f64_from_int(3)
+    let five: f64 = f64_from_int(5)
+    let r1: f64 = two * three
+    let r2: f64 = r1 + five
+    let r2i = f64_to_int(r2)
+    if r2i == 11 { print "expr ok\n" }
+
+    ret 0
+}
