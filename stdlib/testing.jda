@@ -1,0 +1,166 @@
+; =============================================================================
+; jda::testing -- Test Framework and Assertions
+; =============================================================================
+; Lightweight test runner with assertion functions. Tests are functions
+; prefixed with "test_". Call test_run_all() from main to execute.
+;
+; Globals track pass/fail counts. Assertion failures print details to stderr
+; and increment failure count but do NOT abort (run all tests).
+;
+; Functions:
+;   test_begin(name, len)          start a named test
+;   test_end()                     finish current test
+;   assert_eq(a, b)                assert a == b
+;   assert_ne(a, b)                assert a != b
+;   assert_true(val)               assert val != 0
+;   assert_false(val)              assert val == 0
+;   assert_gt(a, b)                assert a > b
+;   assert_lt(a, b)                assert a < b
+;   assert_ge(a, b)                assert a >= b
+;   assert_le(a, b)                assert a <= b
+;   test_summary()         -> i64  print results, return failure count
+; =============================================================================
+
+let g_test_pass = 0
+let g_test_fail = 0
+let g_test_assertions = 0
+let g_test_cur_fail = 0
+
+;; Internal: write to stderr.
+fn test_stderr(msg: &i8, len: i64) {
+    syscall(1, 2, msg, len)
+}
+
+;; Internal: write integer to stderr.
+fn test_stderr_int(val: i64) {
+    let buf: &i8 = alloc_pages(1)
+    let v = val
+    if v < 0 {
+        poke_byte(buf, 0, 45)
+        test_stderr(buf, 1)
+        v = 0 - v
+    }
+    if v == 0 {
+        poke_byte(buf, 0, 48)
+        test_stderr(buf, 1)
+        ret
+    }
+    let pos = 0
+    let tmp = v
+    loop tmp > 0 {
+        let d = tmp - (tmp / 10) * 10
+        poke_byte(buf, pos, d + 48)
+        pos = pos + 1
+        tmp = tmp / 10
+    }
+    let lo = 0
+    let hi = pos - 1
+    loop lo < hi {
+        let a = load_i8_at(buf, lo)
+        let b = load_i8_at(buf, hi)
+        poke_byte(buf, lo, b)
+        poke_byte(buf, hi, a)
+        lo = lo + 1
+        hi = hi - 1
+    }
+    test_stderr(buf, pos)
+}
+
+;; Begin a named test.
+fn test_begin(name: &i8, len: i64) {
+    g_test_cur_fail = 0
+    test_stderr("  test ", 7)
+    test_stderr(name, len)
+    test_stderr(" ... ", 5)
+}
+
+;; End current test.
+fn test_end() {
+    if g_test_cur_fail == 0 {
+        test_stderr("ok\n", 3)
+        g_test_pass = g_test_pass + 1
+    } else {
+        test_stderr("FAILED\n", 7)
+        g_test_fail = g_test_fail + 1
+    }
+}
+
+;; Internal: report assertion failure.
+fn test_assert_fail(op: &i8, oplen: i64, a: i64, b: i64) {
+    g_test_cur_fail = g_test_cur_fail + 1
+    test_stderr("\n    ASSERTION FAILED: ", 22)
+    test_stderr_int(a)
+    test_stderr(" ", 1)
+    test_stderr(op, oplen)
+    test_stderr(" ", 1)
+    test_stderr_int(b)
+    test_stderr("\n", 1)
+}
+
+;; Assert a == b.
+fn assert_eq(a: i64, b: i64) {
+    g_test_assertions = g_test_assertions + 1
+    if a != b { test_assert_fail("==", 2, a, b) }
+}
+
+;; Assert a != b.
+fn assert_ne(a: i64, b: i64) {
+    g_test_assertions = g_test_assertions + 1
+    if a == b { test_assert_fail("!=", 2, a, b) }
+}
+
+;; Assert val is truthy (non-zero).
+fn assert_true(val: i64) {
+    g_test_assertions = g_test_assertions + 1
+    if val == 0 { test_assert_fail("!= 0", 4, val, 0) }
+}
+
+;; Assert val is falsy (zero).
+fn assert_false(val: i64) {
+    g_test_assertions = g_test_assertions + 1
+    if val != 0 { test_assert_fail("== 0", 4, val, 0) }
+}
+
+;; Assert a > b.
+fn assert_gt(a: i64, b: i64) {
+    g_test_assertions = g_test_assertions + 1
+    if a <= b { test_assert_fail(">", 1, a, b) }
+}
+
+;; Assert a < b.
+fn assert_lt(a: i64, b: i64) {
+    g_test_assertions = g_test_assertions + 1
+    if a >= b { test_assert_fail("<", 1, a, b) }
+}
+
+;; Assert a >= b.
+fn assert_ge(a: i64, b: i64) {
+    g_test_assertions = g_test_assertions + 1
+    if a < b { test_assert_fail(">=", 2, a, b) }
+}
+
+;; Assert a <= b.
+fn assert_le(a: i64, b: i64) {
+    g_test_assertions = g_test_assertions + 1
+    if a > b { test_assert_fail("<=", 2, a, b) }
+}
+
+;; Print test summary. Returns number of failures.
+fn test_summary() -> i64 {
+    test_stderr("\n", 1)
+    let total = g_test_pass + g_test_fail
+    test_stderr("test result: ", 13)
+    if g_test_fail == 0 {
+        test_stderr("ok", 2)
+    } else {
+        test_stderr("FAILED", 6)
+    }
+    test_stderr(". ", 2)
+    test_stderr_int(g_test_pass)
+    test_stderr(" passed, ", 9)
+    test_stderr_int(g_test_fail)
+    test_stderr(" failed, ", 9)
+    test_stderr_int(g_test_assertions)
+    test_stderr(" assertions\n", 12)
+    ret g_test_fail
+}

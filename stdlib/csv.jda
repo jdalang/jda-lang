@@ -1,0 +1,201 @@
+; =============================================================================
+; jda::csv -- CSV Reader/Writer
+; =============================================================================
+; Simple CSV parsing and generation. Handles quoted fields with embedded
+; commas and newlines. Delimiter is configurable.
+;
+; Memory layout per CsvRow (&i64):
+;   [0] field_count
+;   [1] field_offsets  (&i64 — byte offsets into source)
+;   [2] field_lengths  (&i64 — byte lengths of each field)
+;   [3] source_ptr     (&i8 — source bytes)
+;
+; Functions:
+;   csv_parse_row(src, len)            -> &i64  parse one CSV row
+;   csv_field_count(row)               -> i64   number of fields
+;   csv_field(row, idx, dst)           -> i64   copy field to dst, return length
+;   csv_field_int(row, idx)            -> i64   parse field as integer
+;   csv_parse_all(src, len)            -> &i64  parse all rows (vec of CsvRow)
+;   csv_row_count(rows)                -> i64   number of rows
+;   csv_get_row(rows, idx)             -> &i64  get row at index
+;   csv_write_row(fields, lengths, count, dst) -> i64  write CSV row, return len
+; =============================================================================
+
+;; Parse a single CSV row from src. Returns CsvRow.
+fn csv_parse_row(src: &i8, len: i64) -> &i64 {
+    let row: &i64 = alloc_pages(1)
+    let offsets: &i64 = alloc_pages(1)  ; up to 512 fields
+    let lengths: &i64 = alloc_pages(1)
+    row[0] = 0
+    row[1] = offsets
+    row[2] = lengths
+    row[3] = src
+    let fi = 0      ; field index
+    let pos = 0     ; current position in src
+    let field_start = 0
+    loop pos <= len {
+        let ch = 0
+        if pos < len { ch = load_i8_at(src, pos) }
+        ; End of field: comma, newline, or end of input
+        let is_end = 0
+        if pos == len { is_end = 1 }
+        if ch == 44 { is_end = 1 }   ; ','
+        if ch == 10 { is_end = 1 }   ; '\n'
+        if ch == 13 { is_end = 1 }   ; '\r'
+        if ch == 34 {  ; '"' — quoted field
+            pos = pos + 1
+            field_start = pos
+            let in_quote = 1
+            loop in_quote == 1 and pos < len {
+                let qch = load_i8_at(src, pos)
+                if qch == 34 {  ; closing quote
+                    ; Check for escaped quote ""
+                    if pos + 1 < len {
+                        let next = load_i8_at(src, pos + 1)
+                        if next == 34 {
+                            pos = pos + 2  ; skip escaped quote
+                        } else {
+                            in_quote = 0
+                        }
+                    } else {
+                        in_quote = 0
+                    }
+                }
+                if in_quote == 1 { pos = pos + 1 }
+            }
+            let flen = pos - field_start
+            offsets[fi] = field_start
+            lengths[fi] = flen
+            fi = fi + 1
+            pos = pos + 1  ; skip closing quote
+            if pos < len and load_i8_at(src, pos) == 44 { pos = pos + 1 }
+        } else {
+            if is_end == 1 {
+                let flen = pos - field_start
+                offsets[fi] = field_start
+                lengths[fi] = flen
+                fi = fi + 1
+                pos = pos + 1
+                field_start = pos
+            } else {
+                pos = pos + 1
+            }
+        }
+    }
+    row[0] = fi
+    ret row
+}
+
+;; Number of fields in a row.
+fn csv_field_count(row: &i64) -> i64 {
+    ret row[0]
+}
+
+;; Copy field at index to dst. Returns length of field.
+fn csv_field(row: &i64, idx: i64, dst: &i8) -> i64 {
+    let offsets: &i64 = row[1]
+    let lengths: &i64 = row[2]
+    let src: &i8 = row[3]
+    let off = offsets[idx]
+    let flen = lengths[idx]
+    let i = 0
+    loop i < flen {
+        let ch = load_i8_at(src, off + i)
+        poke_byte(dst, i, ch)
+        i = i + 1
+    }
+    ret flen
+}
+
+;; Parse field at index as integer.
+fn csv_field_int(row: &i64, idx: i64) -> i64 {
+    let offsets: &i64 = row[1]
+    let lengths: &i64 = row[2]
+    let src: &i8 = row[3]
+    let off = offsets[idx]
+    let flen = lengths[idx]
+    let result = 0
+    let neg = 0
+    let i = 0
+    if flen > 0 and load_i8_at(src, off) == 45 { neg = 1 i = 1 }
+    loop i < flen {
+        let ch = load_i8_at(src, off + i)
+        if ch >= 48 and ch <= 57 {
+            result = result * 10 + ch - 48
+        }
+        i = i + 1
+    }
+    if neg == 1 { result = 0 - result }
+    ret result
+}
+
+;; Parse all rows from CSV data. Returns vec of CsvRow pointers.
+fn csv_parse_all(src: &i8, len: i64) -> &i64 {
+    let rows = vec_new(16)
+    let pos = 0
+    loop pos < len {
+        ; Find end of line
+        let line_start = pos
+        loop pos < len {
+            let ch = load_i8_at(src, pos)
+            if ch == 10 { pos = pos + 1 ret rows }
+            if ch == 10 or ch == 13 {
+                let line_len = pos - line_start
+                if line_len > 0 {
+                    let row = csv_parse_row(src + line_start, line_len)
+                    vec_push(rows, row)
+                }
+                pos = pos + 1
+                ; Skip \r\n
+                if pos < len and load_i8_at(src, pos) == 10 { pos = pos + 1 }
+                line_start = pos
+            } else {
+                pos = pos + 1
+            }
+        }
+        ; Handle last line without newline
+        let last_len = pos - line_start
+        if last_len > 0 {
+            let row = csv_parse_row(src + line_start, last_len)
+            vec_push(rows, row)
+        }
+    }
+    ret rows
+}
+
+;; Number of rows.
+fn csv_row_count(rows: &i64) -> i64 {
+    ret vec_len(rows)
+}
+
+;; Get row at index.
+fn csv_get_row(rows: &i64, idx: i64) -> &i64 {
+    let ptr = vec_get(rows, idx)
+    let row: &i64 = ptr
+    ret row
+}
+
+;; Write a CSV row. fields is array of &i8, lengths is array of i64.
+;; Returns bytes written to dst.
+fn csv_write_row(fields: &i64, lengths: &i64, count: i64, dst: &i8) -> i64 {
+    let pos = 0
+    let i = 0
+    loop i < count {
+        if i > 0 {
+            poke_byte(dst, pos, 44)  ; ','
+            pos = pos + 1
+        }
+        let f: &i8 = fields[i]
+        let flen = lengths[i]
+        let j = 0
+        loop j < flen {
+            poke_byte(dst, pos, load_i8_at(f, j))
+            pos = pos + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    poke_byte(dst, pos, 10)  ; '\n'
+    pos = pos + 1
+    ret pos
+}
