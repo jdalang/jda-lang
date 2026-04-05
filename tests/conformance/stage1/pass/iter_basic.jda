@@ -1,0 +1,141 @@
+; Test: chainable iterator adapters from stdlib/iter.jda
+
+fn main() -> i64 {
+    let data: &i64 = alloc_pages(1)
+    data[0] = 1
+    data[1] = 2
+    data[2] = 3
+    data[3] = 4
+    data[4] = 5
+
+    let out: &i64 = alloc_pages(1)
+
+    ; --- Test 1: basic collect (identity) ---
+    iter_from(data, 5)
+    let n = iter_collect(out)
+    let v0 = out[0]
+    let v4 = out[4]
+    if n == 5 and v0 == 1 and v4 == 5 { print "collect ok\n" }
+
+    ; --- Test 2: map (double each) ---
+    let d = 0
+    let double = fn(x: i64) -> i64 { ret x * 2 + d }
+    iter_from(data, 5)
+    iter_map(double)
+    let n2 = iter_collect(out)
+    let m0 = out[0]
+    let m2 = out[2]
+    let m4 = out[4]
+    if n2 == 5 and m0 == 2 and m2 == 6 and m4 == 10 { print "map ok\n" }
+
+    ; --- Test 3: filter (keep > 2) ---
+    let thresh = 2
+    let gt2 = fn(x: i64) -> i64 {
+        if x > thresh { ret 1 }
+        ret 0
+    }
+    iter_from(data, 5)
+    iter_filter(gt2)
+    let n3 = iter_collect(out)
+    let f0 = out[0]
+    let f1 = out[1]
+    let f2 = out[2]
+    if n3 == 3 and f0 == 3 and f1 == 4 and f2 == 5 { print "filter ok\n" }
+
+    ; --- Test 4: map + filter chain ---
+    iter_from(data, 5)
+    iter_map(double)
+    iter_filter(gt2)
+    let n4 = iter_collect(out)
+    ; doubled: 2,4,6,8,10 -> filter >2 -> 4,6,8,10 (4 elements)
+    let c0 = out[0]
+    if n4 == 4 and c0 == 4 { print "chain ok\n" }
+
+    ; --- Test 5: iter_sum ---
+    iter_from(data, 5)
+    let s = iter_sum()
+    ; 1+2+3+4+5 = 15
+    if s == 15 { print "sum ok\n" }
+
+    ; --- Test 6: iter_count ---
+    iter_from(data, 5)
+    iter_filter(gt2)
+    let c = iter_count()
+    if c == 3 { print "count ok\n" }
+
+    ; --- Test 7: iter_min ---
+    iter_from(data, 5)
+    let mn = iter_min()
+    if mn == 1 { print "min ok\n" }
+
+    ; --- Test 8: iter_max ---
+    iter_from(data, 5)
+    let mx = iter_max()
+    if mx == 5 { print "max ok\n" }
+
+    ; --- Test 9: iter_take ---
+    iter_from(data, 5)
+    iter_take(3)
+    let n9 = iter_collect(out)
+    let t2 = out[2]
+    if n9 == 3 and t2 == 3 { print "take ok\n" }
+
+    ; --- Test 10: iter_skip ---
+    iter_from(data, 5)
+    iter_skip(2)
+    let n10 = iter_collect(out)
+    let sk0 = out[0]
+    if n10 == 3 and sk0 == 3 { print "skip ok\n" }
+
+    ; --- Test 11: iter_any ---
+    let z = 0
+    let is5 = fn(x: i64) -> i64 {
+        if x == 5 { ret 1 }
+        ret z
+    }
+    iter_from(data, 5)
+    let a1 = iter_any(is5)
+    if a1 == 1 { print "any ok\n" }
+
+    ; --- Test 12: iter_all ---
+    let one = 1
+    let pos = fn(x: i64) -> i64 {
+        if x > 0 { ret one }
+        ret 0
+    }
+    iter_from(data, 5)
+    let a2 = iter_all(pos)
+    if a2 == 1 { print "all ok\n" }
+
+    ; --- Test 13: iter_find ---
+    iter_from(data, 5)
+    let found = iter_find(gt2)
+    if found == 3 { print "find ok\n" }
+
+    ; --- Test 14: iter_fold ---
+    let zero = 0
+    let add = fn(acc: i64, x: i64) -> i64 { ret acc + x + zero }
+    iter_from(data, 5)
+    let r = iter_fold(0, add)
+    if r == 15 { print "fold ok\n" }
+
+    ; --- Test 15: iter_foreach ---
+    iter_from(data, 5)
+    iter_take(3)
+    let fe = iter_foreach(double)
+    if fe == 3 { print "foreach ok\n" }
+
+    ; --- Test 16: iter_chain ---
+    let data2: &i64 = alloc_pages(1)
+    data2[0] = 10
+    data2[1] = 20
+    iter_from(data, 3)
+    iter_chain(data2, 2)
+    let nc = iter_collect(out)
+    let ch0 = out[0]
+    let ch3 = out[3]
+    let ch4 = out[4]
+    if nc == 5 and ch0 == 1 and ch3 == 10 and ch4 == 20 { print "iter_chain ok\n" }
+
+    ret 0
+}
