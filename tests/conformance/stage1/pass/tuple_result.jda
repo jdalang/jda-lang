@@ -1,0 +1,19 @@
+fn safe_div(a: i64, b: i64) -> &i64 {
+    if b == 0 { ret result_err(1) }
+    let q = a / b
+    ret result_ok(q)
+}
+
+fn main() {
+    let r1 = safe_div(10, 2)
+    let ok1 = is_ok(r1)
+    print("{ok1}")
+    let v = unwrap(r1)
+    print("{v}")
+
+    let r2 = safe_div(10, 0)
+    let ok2 = is_err(r2)
+    print("{ok2}")
+    let ec = err_code(r2)
+    print("{ec}")
+}
