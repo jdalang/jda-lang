@@ -1,0 +1,55 @@
+fn main() -> i64 {
+    ; Build HTML: "<b>hi</b>"
+    let html: &i8 = alloc_pages(1)
+    let p = 0
+    poke_byte(html, p, 60) p = p + 1   ; <
+    poke_byte(html, p, 98) p = p + 1   ; b
+    poke_byte(html, p, 62) p = p + 1   ; >
+    poke_byte(html, p, 104) p = p + 1  ; h
+    poke_byte(html, p, 105) p = p + 1  ; i
+    poke_byte(html, p, 60) p = p + 1   ; <
+    poke_byte(html, p, 47) p = p + 1   ; /
+    poke_byte(html, p, 98) p = p + 1   ; b
+    poke_byte(html, p, 62) p = p + 1   ; >
+    let hlen = p
+
+    let h = html_parse(html, hlen)
+    let cnt = html_event_count(h)
+    print("{cnt}\n")
+
+    ; Event 0: open tag "b"
+    let t0 = html_event_type(h, 0)
+    print("{t0}\n")
+
+    let out: &i8 = alloc_pages(1)
+    let n0 = html_event_tag(h, 0, out)
+    syscall(1, 1, out, n0)
+    print("\n")
+
+    ; Event 1: text "hi"
+    let t1 = html_event_type(h, 1)
+    print("{t1}\n")
+    let n1 = html_event_text(h, 1, out)
+    syscall(1, 1, out, n1)
+    print("\n")
+
+    ; Event 2: close tag "b"
+    let t2 = html_event_type(h, 2)
+    print("{t2}\n")
+
+    ; Test strip_tags on "<b>hi</b>"
+    let sn = html_strip_tags(html, hlen, out)
+    syscall(1, 1, out, sn)
+    print("\n")
+
+    ; Test escape: "a<b" -> "a&lt;b"
+    let esc_in: &i8 = alloc_pages(1)
+    poke_byte(esc_in, 0, 97)  ; a
+    poke_byte(esc_in, 1, 60)  ; <
+    poke_byte(esc_in, 2, 98)  ; b
+    let en = html_escape(esc_in, 3, out)
+    syscall(1, 1, out, en)
+    print("\n")
+
+    ret 0
+}

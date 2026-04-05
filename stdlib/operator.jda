@@ -1,0 +1,122 @@
+; =============================================================================
+; jda::operator -- Operators as Functions
+; =============================================================================
+; Each arithmetic, comparison, and bitwise operator as a callable function.
+; Useful for passing operators to higher-order functions (map, fold, etc.).
+;
+; Functions:
+;   op_add(a, b) op_sub(a, b) op_mul(a, b) op_div(a, b) op_mod(a, b)
+;   op_neg(a) op_abs(a) op_min(a, b) op_max(a, b)
+;   op_eq(a, b) op_ne(a, b) op_lt(a, b) op_le(a, b) op_gt(a, b) op_ge(a, b)
+;   op_and(a, b) op_or(a, b) op_xor(a, b) op_not(a) op_shl(a, b) op_shr(a, b)
+; =============================================================================
+
+;; Addition.
+fn op_add(a: i64, b: i64) -> i64 { ret a + b }
+
+;; Subtraction.
+fn op_sub(a: i64, b: i64) -> i64 { ret a - b }
+
+;; Multiplication.
+fn op_mul(a: i64, b: i64) -> i64 { ret a * b }
+
+;; Division (integer). Returns 0 if b is 0.
+fn op_div(a: i64, b: i64) -> i64 {
+    if b == 0 { ret 0 }
+    ret a / b
+}
+
+;; Modulo. Returns 0 if b is 0.
+fn op_mod(a: i64, b: i64) -> i64 {
+    if b == 0 { ret 0 }
+    ret a % b
+}
+
+;; Negation.
+fn op_neg(a: i64) -> i64 { ret 0 - a }
+
+;; Absolute value.
+fn op_abs(a: i64) -> i64 {
+    if a < 0 { ret 0 - a }
+    ret a
+}
+
+;; Minimum.
+fn op_min(a: i64, b: i64) -> i64 {
+    if a < b { ret a }
+    ret b
+}
+
+;; Maximum.
+fn op_max(a: i64, b: i64) -> i64 {
+    if a > b { ret a }
+    ret b
+}
+
+;; Equality: 1 if a == b, 0 otherwise.
+fn op_eq(a: i64, b: i64) -> i64 {
+    if a == b { ret 1 }
+    ret 0
+}
+
+;; Not equal: 1 if a != b, 0 otherwise.
+fn op_ne(a: i64, b: i64) -> i64 {
+    if a != b { ret 1 }
+    ret 0
+}
+
+;; Less than: 1 if a < b.
+fn op_lt(a: i64, b: i64) -> i64 {
+    if a < b { ret 1 }
+    ret 0
+}
+
+;; Less than or equal: 1 if a <= b.
+fn op_le(a: i64, b: i64) -> i64 {
+    if a <= b { ret 1 }
+    ret 0
+}
+
+;; Greater than: 1 if a > b.
+fn op_gt(a: i64, b: i64) -> i64 {
+    if a > b { ret 1 }
+    ret 0
+}
+
+;; Greater than or equal: 1 if a >= b.
+fn op_ge(a: i64, b: i64) -> i64 {
+    if a >= b { ret 1 }
+    ret 0
+}
+
+;; Bitwise AND.
+fn op_and(a: i64, b: i64) -> i64 { ret a & b }
+
+;; Bitwise OR.
+fn op_or(a: i64, b: i64) -> i64 { ret a | b }
+
+;; Bitwise XOR.
+fn op_xor(a: i64, b: i64) -> i64 { ret a ^ b }
+
+;; Bitwise NOT.
+fn op_not(a: i64) -> i64 { ret ~a }
+
+;; Left shift.
+fn op_shl(a: i64, b: i64) -> i64 { ret a << b }
+
+;; Right shift.
+fn op_shr(a: i64, b: i64) -> i64 { ret a >> b }
+
+;; Clamp value to range [lo, hi].
+fn op_clamp(val: i64, lo: i64, hi: i64) -> i64 {
+    if val < lo { ret lo }
+    if val > hi { ret hi }
+    ret val
+}
+
+;; Sign: -1, 0, or 1.
+fn op_sign(a: i64) -> i64 {
+    if a < 0 { ret -1 }
+    if a > 0 { ret 1 }
+    ret 0
+}

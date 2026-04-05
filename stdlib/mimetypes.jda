@@ -1,0 +1,124 @@
+; =============================================================================
+; jda::mimetypes -- File Extension to MIME Type Mapping
+; =============================================================================
+; Map file extensions to MIME types and back.
+;
+; Functions:
+;   mime_type(ext, elen, out, max)     -> i64  extension -> MIME type
+;   mime_guess(path, plen, out, max)   -> i64  guess from filename
+;   mime_is_text(ext, elen)            -> i64  1 if text/* type
+; =============================================================================
+
+;; Internal byte reader.
+fn _mime_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: copy literal to output.
+fn _mime_copy(dst: &i8, src: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        poke_byte(dst, i, src[i])
+        i = i + 1
+    }
+    ret len
+}
+
+;; Internal: compare strings.
+fn _mime_eq(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        if a[i] != b[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Get MIME type for file extension (without dot). Returns length, -1 if unknown.
+fn mime_type(ext: &i8, elen: i64, out: &i8, max: i64) -> i64 {
+    if _mime_eq(ext, elen, "html", 4) == 1 { ret _mime_copy(out, "text/html", 9) }
+    if _mime_eq(ext, elen, "htm", 3) == 1 { ret _mime_copy(out, "text/html", 9) }
+    if _mime_eq(ext, elen, "css", 3) == 1 { ret _mime_copy(out, "text/css", 8) }
+    if _mime_eq(ext, elen, "js", 2) == 1 { ret _mime_copy(out, "application/javascript", 22) }
+    if _mime_eq(ext, elen, "json", 4) == 1 { ret _mime_copy(out, "application/json", 16) }
+    if _mime_eq(ext, elen, "xml", 3) == 1 { ret _mime_copy(out, "application/xml", 15) }
+    if _mime_eq(ext, elen, "txt", 3) == 1 { ret _mime_copy(out, "text/plain", 10) }
+    if _mime_eq(ext, elen, "csv", 3) == 1 { ret _mime_copy(out, "text/csv", 8) }
+    if _mime_eq(ext, elen, "md", 2) == 1 { ret _mime_copy(out, "text/markdown", 13) }
+    if _mime_eq(ext, elen, "png", 3) == 1 { ret _mime_copy(out, "image/png", 9) }
+    if _mime_eq(ext, elen, "jpg", 3) == 1 { ret _mime_copy(out, "image/jpeg", 10) }
+    if _mime_eq(ext, elen, "jpeg", 4) == 1 { ret _mime_copy(out, "image/jpeg", 10) }
+    if _mime_eq(ext, elen, "gif", 3) == 1 { ret _mime_copy(out, "image/gif", 9) }
+    if _mime_eq(ext, elen, "svg", 3) == 1 { ret _mime_copy(out, "image/svg+xml", 13) }
+    if _mime_eq(ext, elen, "ico", 3) == 1 { ret _mime_copy(out, "image/x-icon", 12) }
+    if _mime_eq(ext, elen, "webp", 4) == 1 { ret _mime_copy(out, "image/webp", 10) }
+    if _mime_eq(ext, elen, "pdf", 3) == 1 { ret _mime_copy(out, "application/pdf", 15) }
+    if _mime_eq(ext, elen, "zip", 3) == 1 { ret _mime_copy(out, "application/zip", 15) }
+    if _mime_eq(ext, elen, "gz", 2) == 1 { ret _mime_copy(out, "application/gzip", 16) }
+    if _mime_eq(ext, elen, "tar", 3) == 1 { ret _mime_copy(out, "application/x-tar", 17) }
+    if _mime_eq(ext, elen, "mp3", 3) == 1 { ret _mime_copy(out, "audio/mpeg", 10) }
+    if _mime_eq(ext, elen, "mp4", 3) == 1 { ret _mime_copy(out, "video/mp4", 9) }
+    if _mime_eq(ext, elen, "wav", 3) == 1 { ret _mime_copy(out, "audio/wav", 9) }
+    if _mime_eq(ext, elen, "wasm", 4) == 1 { ret _mime_copy(out, "application/wasm", 16) }
+    if _mime_eq(ext, elen, "yaml", 4) == 1 { ret _mime_copy(out, "text/yaml", 9) }
+    if _mime_eq(ext, elen, "yml", 3) == 1 { ret _mime_copy(out, "text/yaml", 9) }
+    if _mime_eq(ext, elen, "toml", 4) == 1 { ret _mime_copy(out, "application/toml", 16) }
+    if _mime_eq(ext, elen, "sh", 2) == 1 { ret _mime_copy(out, "application/x-sh", 16) }
+    if _mime_eq(ext, elen, "jda", 3) == 1 { ret _mime_copy(out, "text/x-jda", 10) }
+    if _mime_eq(ext, elen, "c", 1) == 1 { ret _mime_copy(out, "text/x-c", 8) }
+    if _mime_eq(ext, elen, "h", 1) == 1 { ret _mime_copy(out, "text/x-c", 8) }
+    if _mime_eq(ext, elen, "py", 2) == 1 { ret _mime_copy(out, "text/x-python", 13) }
+    if _mime_eq(ext, elen, "rs", 2) == 1 { ret _mime_copy(out, "text/x-rust", 11) }
+    if _mime_eq(ext, elen, "go", 2) == 1 { ret _mime_copy(out, "text/x-go", 9) }
+    ret -1
+}
+
+;; Guess MIME type from filename/path. Extracts extension after last dot.
+fn mime_guess(path: &i8, plen: i64, out: &i8, max: i64) -> i64 {
+    ; Find last dot
+    let dot_pos = -1
+    let i = plen - 1
+    loop i >= 0 {
+        let b = _mime_byte_at(path, i)
+        if b == 46 {
+            dot_pos = i
+            i = 0
+        }
+        i = i - 1
+    }
+    if dot_pos < 0 { ret -1 }
+    let ext_start = dot_pos + 1
+    let ext_len = plen - ext_start
+    if ext_len <= 0 { ret -1 }
+    ; Copy extension to temp buffer
+    let tmp: &i8 = alloc_pages(1)
+    let j = 0
+    loop j < ext_len {
+        let b = _mime_byte_at(path, ext_start + j)
+        ; Convert to lowercase
+        if b >= 65 {
+            if b <= 90 { b = b + 32 }
+        }
+        poke_byte(tmp, j, b)
+        j = j + 1
+    }
+    ret mime_type(tmp, ext_len, out, max)
+}
+
+;; Check if extension maps to a text/* type.
+fn mime_is_text(ext: &i8, elen: i64) -> i64 {
+    if _mime_eq(ext, elen, "html", 4) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "htm", 3) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "css", 3) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "txt", 3) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "csv", 3) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "md", 2) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "jda", 3) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "yaml", 4) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "yml", 3) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "c", 1) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "h", 1) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "py", 2) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "rs", 2) == 1 { ret 1 }
+    if _mime_eq(ext, elen, "go", 2) == 1 { ret 1 }
+    ret 0
+}

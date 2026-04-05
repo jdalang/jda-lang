@@ -1,0 +1,184 @@
+; =============================================================================
+; jda::glob -- Glob Pattern Matching (fnmatch-style)
+; =============================================================================
+; Supports: * (any sequence), ? (any one char), [abc] (char class),
+;           [!abc] (negated class), literal chars.
+;
+; Functions:
+;   glob_match(pattern, plen, str, slen)  -> i64  1 if matches
+;   glob_has_magic(pattern, plen)         -> i64  1 if has wildcards
+;   glob_escape(str, slen, out)           -> i64  escaped length
+; =============================================================================
+
+;; Internal byte reader.
+fn _glob_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: match character class [abc] or [!abc].
+;; Returns packed value: matched + new_position * 2.
+;; Caller decodes: matched = result % 2, new_pos = result / 2.
+fn _glob_match_class(pat: &i8, ppos: i64, plen: i64, ch: i64) -> i64 {
+    let p = ppos  ; points right after '['
+    let negate = 0
+    if p < plen {
+        let fc = _glob_byte_at(pat, p)
+        if fc == 33 {
+            negate = 1
+            p = p + 1
+        }
+    }
+    let found = 0
+    let running = 1
+    loop p < plen and running == 1 {
+        let c = _glob_byte_at(pat, p)
+        if c == 93 {
+            ; ']' - end of class
+            running = 0
+        } else {
+            if c == ch { found = 1 }
+            p = p + 1
+        }
+    }
+    ; p now at ']' or end
+    if p < plen { p = p + 1 }  ; skip ']'
+    let matched = found
+    if negate == 1 {
+        if found == 1 { matched = 0 } else { matched = 1 }
+    }
+    ret matched + p * 2
+}
+
+;; Internal recursive match with bounded depth.
+;; pi=pattern index, si=string index.
+fn _glob_do_match(pat: &i8, plen: i64, str: &i8, slen: i64, pi: i64, si: i64) -> i64 {
+    let running = 1
+    let result = 0
+    loop running == 1 {
+        if pi == plen {
+            if si == slen { result = 1 }
+            running = 0
+        }
+        if running == 1 {
+            let pc = _glob_byte_at(pat, pi)
+            if pc == 42 {
+                ; '*' - try matching zero or more chars
+                ; Advance past consecutive *
+                let np = pi
+                loop np < plen {
+                    let nc = _glob_byte_at(pat, np)
+                    if nc == 42 { np = np + 1 } else { np = plen }
+                }
+                ; np now past all *s; but we need actual position
+                np = pi + 1
+                loop np < plen {
+                    let nc = _glob_byte_at(pat, np)
+                    if nc == 42 { np = np + 1 } else { np = plen }
+                }
+                ; Reset: just skip one *
+                let star_pi = pi + 1
+                ; If rest of pattern is empty, match
+                if star_pi == plen {
+                    result = 1
+                    running = 0
+                }
+                if running == 1 {
+                    ; Try each starting position in str
+                    let try_si = si
+                    let found_star = 0
+                    loop try_si <= slen and found_star == 0 {
+                        let sub = _glob_do_match(pat, plen, str, slen, star_pi, try_si)
+                        if sub == 1 {
+                            found_star = 1
+                            result = 1
+                        }
+                        try_si = try_si + 1
+                    }
+                    running = 0
+                }
+            } else {
+                if si == slen {
+                    ; Pattern not empty but string is empty
+                    result = 0
+                    running = 0
+                }
+            }
+        }
+        if running == 1 {
+            let pc = _glob_byte_at(pat, pi)
+            let sc = _glob_byte_at(str, si)
+            if pc == 63 {
+                ; '?' - match any single char
+                pi = pi + 1
+                si = si + 1
+            } else {
+                if pc == 91 {
+                    ; '[' - char class
+                    let packed = _glob_match_class(pat, pi + 1, plen, sc)
+                    let cm = packed % 2
+                    let cp = packed / 2
+                    if cm == 1 {
+                        pi = cp
+                        si = si + 1
+                    } else {
+                        result = 0
+                        running = 0
+                    }
+                } else {
+                    ; Literal match
+                    if pc == sc {
+                        pi = pi + 1
+                        si = si + 1
+                    } else {
+                        result = 0
+                        running = 0
+                    }
+                }
+            }
+        }
+    }
+    ret result
+}
+
+;; Match a glob pattern against a string. Returns 1 if matches, 0 otherwise.
+fn glob_match(pattern: &i8, plen: i64, str: &i8, slen: i64) -> i64 {
+    ret _glob_do_match(pattern, plen, str, slen, 0, 0)
+}
+
+;; Check if pattern contains wildcard characters (*, ?, [).
+fn glob_has_magic(pattern: &i8, plen: i64) -> i64 {
+    let i = 0
+    loop i < plen {
+        let ch = _glob_byte_at(pattern, i)
+        if ch == 42 { ret 1 }  ; *
+        if ch == 63 { ret 1 }  ; ?
+        if ch == 91 { ret 1 }  ; [
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Escape special glob characters in str. Wraps each *, ?, [, ] in [x].
+;; Returns escaped length.
+fn glob_escape(str: &i8, slen: i64, out: &i8) -> i64 {
+    let oi = 0
+    let i = 0
+    loop i < slen {
+        let ch = _glob_byte_at(str, i)
+        let is_special = 0
+        if ch == 42 { is_special = 1 }
+        if ch == 63 { is_special = 1 }
+        if ch == 91 { is_special = 1 }
+        if ch == 93 { is_special = 1 }
+        if is_special == 1 {
+            ; Wrap in [x]
+            poke_byte(out, oi, 91)      ; [
+            poke_byte(out, oi + 1, ch)
+            poke_byte(out, oi + 2, 93)  ; ]
+            oi = oi + 3
+        } else {
+            poke_byte(out, oi, ch)
+            oi = oi + 1
+        }
+        i = i + 1
+    }
+    ret oi
+}

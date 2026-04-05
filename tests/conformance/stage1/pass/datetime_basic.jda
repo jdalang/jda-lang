@@ -1,0 +1,37 @@
+fn main() -> i64 {
+    let out: &i8 = alloc_pages(1)
+
+    ; Test dt_date for 2026-04-07
+    let days = dt_date(2026, 4, 7)
+
+    ; Extract components
+    let y = dt_year(days)
+    let m = dt_month(days)
+    let d = dt_day(days)
+    print("{y}\n")
+    print("{m}\n")
+    print("{d}\n")
+
+    ; Leap year
+    let leap = dt_is_leap(2024)
+    print("{leap}\n")
+    let noleap = dt_is_leap(2023)
+    print("{noleap}\n")
+
+    ; Days in month
+    let feb = dt_days_in_month(2024, 2)
+    print("{feb}\n")
+
+    ; Format a known timestamp: 2026-01-01 00:00:00 UTC
+    ; 2026-01-01 is 56 years * 365 + 14 leap days = 20454 days (approx)
+    ; Let's just test format of epoch
+    let n = dt_format(0, out, 256)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; dt_diff
+    let diff = dt_diff(100, 30)
+    print("{diff}\n")
+
+    ret 0
+}

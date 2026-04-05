@@ -1,0 +1,264 @@
+; =============================================================================
+; jda::gzip -- Gzip Format (Stored Blocks Only)
+; =============================================================================
+; Minimal gzip implementation using stored (uncompressed) blocks.
+; Writes valid gzip files that any decompressor can read.
+; Implements CRC-32 for integrity checking.
+;
+; Functions:
+;   gzip_compress(in, in_len, out)    -> i64  wrap in gzip format, return len
+;   gzip_decompress(in, in_len, out)  -> i64  strip gzip envelope, return len
+;   gzip_is_gzip(buf, len)           -> i64  1 if starts with 0x1f 0x8b
+;   gzip_orig_size(buf, len)         -> i64  original size from trailer
+;   gzip_crc32(buf, len)             -> i64  compute CRC-32
+; =============================================================================
+
+;; Internal byte reader.
+fn _gz_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; CRC-32 table (precomputed for polynomial 0xEDB88320).
+;; We compute it on-the-fly per byte.
+fn _gz_crc32_byte(crc: i64, byte_val: i64) -> i64 {
+    let c = crc
+    ; XOR in the byte
+    ; c = c XOR byte_val — use bitwise xor via arithmetic
+    ; We need XOR. Implement via: a XOR b = (a + b) - 2*(a AND b)
+    ; For AND, we iterate bits.
+    let xval = 0
+    let bit = 0
+    let aa = c
+    let bb = byte_val
+    loop bit < 32 {
+        let a_bit = aa - (aa / 2) * 2
+        let b_bit = bb - (bb / 2) * 2
+        let x_bit = a_bit + b_bit
+        let tmp = x_bit - (x_bit / 2) * 2
+        let shift = 1
+        let si = 0
+        loop si < bit { shift = shift * 2 si = si + 1 }
+        xval = xval + tmp * shift
+        aa = aa / 2
+        bb = bb / 2
+        bit = bit + 1
+    }
+    c = xval
+
+    ; Process 8 bits
+    let bi = 0
+    loop bi < 8 {
+        let low_bit = c - (c / 2) * 2
+        if low_bit == 1 {
+            c = c / 2
+            ; XOR with 0xEDB88320
+            let poly = 3988292384
+            let xr = 0
+            let b2 = 0
+            let ac = c
+            let pc = poly
+            loop b2 < 32 {
+                let ab = ac - (ac / 2) * 2
+                let pb = pc - (pc / 2) * 2
+                let xb = ab + pb
+                let tmp2 = xb - (xb / 2) * 2
+                let sh = 1
+                let s2 = 0
+                loop s2 < b2 { sh = sh * 2 s2 = s2 + 1 }
+                xr = xr + tmp2 * sh
+                ac = ac / 2
+                pc = pc / 2
+                b2 = b2 + 1
+            }
+            c = xr
+        } else {
+            c = c / 2
+        }
+        bi = bi + 1
+    }
+    ret c
+}
+
+;; Compute CRC-32 of buffer.
+fn gzip_crc32(buf: &i8, len: i64) -> i64 {
+    let crc = 4294967295  ; 0xFFFFFFFF
+    let i = 0
+    loop i < len {
+        let b = _gz_byte_at(buf, i)
+        if b < 0 { b = b + 256 }
+        crc = _gz_crc32_byte(crc, b)
+        i = i + 1
+    }
+    ; Final XOR
+    let result = 0
+    let bit = 0
+    let ac = crc
+    let fc = 4294967295
+    loop bit < 32 {
+        let ab = ac - (ac / 2) * 2
+        let fb = fc - (fc / 2) * 2
+        let xb = ab + fb
+        let tmp = xb - (xb / 2) * 2
+        let sh = 1
+        let si = 0
+        loop si < bit { sh = sh * 2 si = si + 1 }
+        result = result + tmp * sh
+        ac = ac / 2
+        fc = fc / 2
+        bit = bit + 1
+    }
+    ret result
+}
+
+;; Internal: write little-endian 16-bit value.
+fn _gz_write16(out: &i8, pos: i64, val: i64) -> i64 {
+    let lo = val - (val / 256) * 256
+    let hi = (val / 256) - (val / 65536) * 256
+    poke_byte(out, pos, lo)
+    poke_byte(out, pos + 1, hi)
+    ret pos + 2
+}
+
+;; Internal: write little-endian 32-bit value.
+fn _gz_write32(out: &i8, pos: i64, val: i64) -> i64 {
+    let b0 = val - (val / 256) * 256
+    let v1 = val / 256
+    let b1 = v1 - (v1 / 256) * 256
+    let v2 = val / 65536
+    let b2 = v2 - (v2 / 256) * 256
+    let v3 = val / 16777216
+    let b3 = v3 - (v3 / 256) * 256
+    poke_byte(out, pos, b0)
+    poke_byte(out, pos + 1, b1)
+    poke_byte(out, pos + 2, b2)
+    poke_byte(out, pos + 3, b3)
+    ret pos + 4
+}
+
+;; Internal: read little-endian 32-bit value.
+fn _gz_read32(buf: &i8, pos: i64) -> i64 {
+    let b0 = _gz_byte_at(buf, pos)
+    let b1 = _gz_byte_at(buf, pos + 1)
+    let b2 = _gz_byte_at(buf, pos + 2)
+    let b3 = _gz_byte_at(buf, pos + 3)
+    if b0 < 0 { b0 = b0 + 256 }
+    if b1 < 0 { b1 = b1 + 256 }
+    if b2 < 0 { b2 = b2 + 256 }
+    if b3 < 0 { b3 = b3 + 256 }
+    ret b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
+}
+
+;; Compress data with gzip stored-block format. Returns output length.
+fn gzip_compress(input: &i8, in_len: i64, out: &i8) -> i64 {
+    let pos = 0
+    ; Gzip header (10 bytes)
+    poke_byte(out, pos, 31)   ; 0x1f
+    pos = pos + 1
+    poke_byte(out, pos, 139)  ; 0x8b
+    pos = pos + 1
+    poke_byte(out, pos, 8)    ; CM = deflate
+    pos = pos + 1
+    poke_byte(out, pos, 0)    ; FLG = 0
+    pos = pos + 1
+    ; MTIME (4 bytes = 0)
+    poke_byte(out, pos, 0)
+    poke_byte(out, pos + 1, 0)
+    poke_byte(out, pos + 2, 0)
+    poke_byte(out, pos + 3, 0)
+    pos = pos + 4
+    poke_byte(out, pos, 0)    ; XFL
+    pos = pos + 1
+    poke_byte(out, pos, 255)  ; OS = unknown
+    pos = pos + 1
+
+    ; Deflate stored block: BFINAL=1, BTYPE=00
+    poke_byte(out, pos, 1)
+    pos = pos + 1
+
+    ; LEN (16-bit little-endian)
+    pos = _gz_write16(out, pos, in_len)
+    ; NLEN (one's complement of LEN)
+    let nlen = 65535 - in_len
+    pos = _gz_write16(out, pos, nlen)
+
+    ; Copy data
+    let i = 0
+    loop i < in_len {
+        let b = _gz_byte_at(input, i)
+        poke_byte(out, pos, b)
+        pos = pos + 1
+        i = i + 1
+    }
+
+    ; CRC-32
+    let crc = gzip_crc32(input, in_len)
+    pos = _gz_write32(out, pos, crc)
+
+    ; ISIZE (original size mod 2^32)
+    pos = _gz_write32(out, pos, in_len)
+
+    ret pos
+}
+
+;; Check if buffer starts with gzip magic bytes.
+fn gzip_is_gzip(buf: &i8, len: i64) -> i64 {
+    if len < 2 { ret 0 }
+    let b0 = _gz_byte_at(buf, 0)
+    let b1 = _gz_byte_at(buf, 1)
+    if b0 < 0 { b0 = b0 + 256 }
+    if b1 < 0 { b1 = b1 + 256 }
+    if b0 == 31 and b1 == 139 { ret 1 }
+    ret 0
+}
+
+;; Read original size from gzip trailer (last 4 bytes).
+fn gzip_orig_size(buf: &i8, len: i64) -> i64 {
+    if len < 8 { ret 0 }
+    let off = len - 4
+    ret _gz_read32(buf, off)
+}
+
+;; Decompress gzip stored-block data. Returns output length.
+fn gzip_decompress(input: &i8, in_len: i64, out: &i8) -> i64 {
+    if in_len < 18 { ret 0 }
+    ; Verify magic
+    let is_gz = gzip_is_gzip(input, in_len)
+    if is_gz == 0 { ret 0 }
+
+    ; Skip 10-byte header
+    let pos = 10
+
+    ; Read FLG from byte 3
+    let flg = _gz_byte_at(input, 3)
+    if flg < 0 { flg = flg + 256 }
+
+    ; Skip FEXTRA if set (bit 2)
+    let has_extra = flg / 4
+    let tmp_he = has_extra - (has_extra / 2) * 2
+    if tmp_he == 1 {
+        let xlen_lo = _gz_byte_at(input, pos)
+        let xlen_hi = _gz_byte_at(input, pos + 1)
+        if xlen_lo < 0 { xlen_lo = xlen_lo + 256 }
+        if xlen_hi < 0 { xlen_hi = xlen_hi + 256 }
+        let xlen = xlen_lo + xlen_hi * 256
+        pos = pos + 2 + xlen
+    }
+
+    ; Read stored block header: BFINAL+BTYPE byte
+    pos = pos + 1
+    ; LEN
+    let len_lo = _gz_byte_at(input, pos)
+    let len_hi = _gz_byte_at(input, pos + 1)
+    if len_lo < 0 { len_lo = len_lo + 256 }
+    if len_hi < 0 { len_hi = len_hi + 256 }
+    let data_len = len_lo + len_hi * 256
+    pos = pos + 4  ; skip LEN + NLEN
+
+    ; Copy data
+    let i = 0
+    loop i < data_len {
+        let b = _gz_byte_at(input, pos)
+        poke_byte(out, i, b)
+        pos = pos + 1
+        i = i + 1
+    }
+    ret data_len
+}
