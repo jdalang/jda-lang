@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
 """
-jda-race — Runtime race detector for Jda concurrent programs
+jda-race — Runtime data race detector for Jda concurrent programs
 
-Detects data races on global variables accessed by multiple J-Threads
-without proper synchronization (channels or atomics).
+Detects data races: two threads access the same memory concurrently,
+at least one is a write, and there is no synchronization between them.
 
-How it works:
-  1. Parses Jda source to find global variables and function boundaries
-  2. Instruments global variable reads/writes with race_track_read/race_track_write
-  3. Instruments spawn calls to assign thread IDs
-  4. Prepends a race detection runtime that logs accesses per thread
-  5. At exit, reports conflicting unsynchronized accesses
+Synchronization points that establish happens-before:
+  - chan_send / chan_recv (channel operations)
+  - atomic_store / atomic_load / atomic_cmpxchg / atomic_fetch_add
+  - ctx_switch (cooperative yield — thread boundary)
+
+Algorithm (epoch-based, simplified Lamport clocks):
+  Each thread has a logical clock (epoch). Synchronization ops advance it.
+  Each tracked variable stores the last-write epoch+tid and last-read epoch+tid.
+  A race is: access from thread T at epoch E, but variable was last written by
+  thread T' at epoch E', and there's no happens-before edge from E' to E.
+
+  Simplified for cooperative J-Threads: since threads don't truly run in parallel
+  (cooperative scheduling), we track "sync epochs" — every channel op or atomic
+  bumps the epoch. Accesses to the same variable from different threads without
+  an intervening sync on EITHER thread is a race.
 
 Usage:
   jda-race.sh <file.jda>                   Run with race detection
   jda-race.sh --include <lib> <file.jda>   Include stdlib before instrumentation
   jda-race.sh --dry-run <file.jda>         Print instrumented source, don't run
-
-Race conditions detected:
-  - Global variable written by one thread, read by another (no channel sync)
-  - Global variable written by two different threads (no atomic)
-  - Unsynchronized shared pointer dereferences
 """
 
 import sys
@@ -33,29 +37,43 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 JDA = os.environ.get("JDA", os.path.join(PROJECT_ROOT, "bootstrap", "stage0", "jda1"))
 
-# Race detection runtime — prepended to instrumented source
-# Uses a fixed-size log of (thread_id, address_hash, is_write) entries
-# At exit, scans for conflicting accesses from different threads
+# Race detection runtime
+# Each variable tracked by a shadow entry: [last_write_tid, last_write_epoch,
+#   last_read_tid, last_read_epoch]
+# Each thread has a current epoch. Channel/atomic ops bump it (sync point).
+# Race = access from different thread without intervening sync.
 RACE_RUNTIME = r"""
-; === Race Detection Runtime ===
-let g_race_log: &i64 = 0
-let g_race_log_len: i64 = 0
-let g_race_log_cap: i64 = 0
+; === Race Detection Runtime (happens-before) ===
+
+; Shadow memory: per-variable tracking
+; Layout per slot (4 i64s): [last_wr_tid, last_wr_epoch, last_rd_tid, last_rd_epoch]
+let g_race_shadow: &i64 = 0
+let g_race_shadow_cap: i64 = 0
+
+; Per-thread state
 let g_race_tid: i64 = 0
+let g_race_epoch: i64 = 0
 let g_race_next_tid: i64 = 1
-let g_race_count: i64 = 0
 let g_race_enabled: i64 = 0
-let g_race_msgbuf: &i8 = 0
+let g_race_found: i64 = 0
+
+; Sync epoch tracking: when a thread does a sync op, record (tid, epoch)
+; Other threads that sync AFTER this can consider prior accesses as "before"
+let g_race_sync_log: &i64 = 0
+let g_race_sync_len: i64 = 0
+let g_race_sync_cap: i64 = 0
 
 fn race_init() {
-    g_race_log = alloc_pages(256)
-    g_race_msgbuf = alloc_pages(1)
-    g_race_log_cap = 87380
-    g_race_log_len = 0
+    g_race_shadow = alloc_pages(64)
+    g_race_shadow_cap = 8192
+    g_race_sync_log = alloc_pages(16)
+    g_race_sync_cap = 16384
+    g_race_sync_len = 0
     g_race_tid = 0
+    g_race_epoch = 1
     g_race_next_tid = 1
-    g_race_count = 0
     g_race_enabled = 1
+    g_race_found = 0
 }
 
 fn race_set_tid(tid: i64) {
@@ -68,97 +86,163 @@ fn race_new_tid() -> i64 {
     ret tid
 }
 
-fn race_track(addr_hash: i64, is_write: i64) {
-    if g_race_enabled == 0 { ret }
-    if g_race_log_len >= g_race_log_cap { ret }
-    let base = g_race_log_len * 3
-    g_race_log[base] = g_race_tid
-    g_race_log[base + 1] = addr_hash
-    g_race_log[base + 2] = is_write
-    g_race_log_len = g_race_log_len + 1
+fn race_bump_epoch() {
+    g_race_epoch = g_race_epoch + 1
 }
 
-fn race_track_read(addr_hash: i64) {
-    race_track(addr_hash, 0)
+; Record a synchronization event: current thread synced at current epoch.
+; This means any future access on ANY thread that also syncs can see
+; all prior writes from this thread.
+fn race_sync() {
+    if g_race_enabled == 0 { ret }
+    race_bump_epoch()
+    if g_race_sync_len < g_race_sync_cap {
+        let sbase = g_race_sync_len * 2
+        g_race_sync_log[sbase] = g_race_tid
+        let sbase1 = sbase + 1
+        g_race_sync_log[sbase1] = g_race_epoch
+        g_race_sync_len = g_race_sync_len + 1
+    }
+}
+
+; Check if there's a happens-before edge from (src_tid, src_epoch) to current thread.
+; Returns 1 if synced (no race), 0 if no sync path (potential race).
+; In cooperative scheduling: a sync happened if current thread did a sync op
+; AFTER the source thread's access epoch.
+fn race_has_hb(src_tid: i64, src_epoch: i64) -> i64 {
+    if src_tid == g_race_tid { ret 1 }
+    ; Check if there's any sync event from src_tid at or after src_epoch,
+    ; followed by a sync on the current thread.
+    let src_synced_at: i64 = 0
+    let i = 0
+    loop i < g_race_sync_len {
+        let idx = i * 2
+        let idx1 = idx + 1
+        let st = g_race_sync_log[idx]
+        let se = g_race_sync_log[idx1]
+        if st == src_tid and se >= src_epoch {
+            src_synced_at = se
+        }
+        i = i + 1
+    }
+    if src_synced_at == 0 { ret 0 }
+    ; Check if current thread synced after src's sync
+    let cur_synced = 0
+    let j = 0
+    loop j < g_race_sync_len {
+        let jdx = j * 2
+        let jdx1 = jdx + 1
+        let st = g_race_sync_log[jdx]
+        let se = g_race_sync_log[jdx1]
+        if st == g_race_tid and se > src_synced_at {
+            cur_synced = 1
+        }
+        j = j + 1
+    }
+    ret cur_synced
+}
+
+; Map variable hash to shadow slot index (0..cap-1)
+fn race_slot(addr_hash: i64) -> i64 {
+    let s = addr_hash
+    if s < 0 { s = 0 - s }
+    let q = s / g_race_shadow_cap
+    let r = q * g_race_shadow_cap
+    let slot = s - r
+    ret slot
+}
+
+fn race_report(addr_hash: i64, cur_is_write: i64, other_tid: i64, other_is_write: i64) {
+    g_race_found = g_race_found + 1
+    print("==================")
+    print("WARNING: DATA RACE")
+    print("==================")
+    if cur_is_write == 1 {
+        print("Write by current thread (tid=")
+    } else {
+        print("Read by current thread (tid=")
+    }
+    print_int(g_race_tid)
+    print(")")
+    if other_is_write == 1 {
+        print("Previous write by thread tid=")
+    } else {
+        print("Previous read by thread tid=")
+    }
+    print_int(other_tid)
+    print("No synchronization between accesses")
+    print("------------------")
 }
 
 fn race_track_write(addr_hash: i64) {
-    race_track(addr_hash, 1)
+    if g_race_enabled == 0 { ret }
+    let slot = race_slot(addr_hash)
+    let base = slot * 4
+    let prev_wr_tid = g_race_shadow[base]
+    let prev_wr_epoch = g_race_shadow[base + 1]
+    let prev_rd_tid = g_race_shadow[base + 2]
+    let prev_rd_epoch = g_race_shadow[base + 3]
+
+    ; Check write-write race: different thread wrote, no happens-before
+    if prev_wr_epoch > 0 and prev_wr_tid != g_race_tid {
+        let hb = race_has_hb(prev_wr_tid, prev_wr_epoch)
+        if hb == 0 {
+            race_report(addr_hash, 1, prev_wr_tid, 1)
+        }
+    }
+
+    ; Check read-write race: different thread read, no happens-before
+    if prev_rd_epoch > 0 and prev_rd_tid != g_race_tid {
+        let hb = race_has_hb(prev_rd_tid, prev_rd_epoch)
+        if hb == 0 {
+            race_report(addr_hash, 1, prev_rd_tid, 0)
+        }
+    }
+
+    ; Update shadow: record this write
+    g_race_shadow[base] = g_race_tid
+    g_race_shadow[base + 1] = g_race_epoch
 }
 
-fn race_stderr(msg: &i8, len: i64) {
-    syscall(1, 2, msg, len)
-}
+fn race_track_read(addr_hash: i64) {
+    if g_race_enabled == 0 { ret }
+    let slot = race_slot(addr_hash)
+    let base = slot * 4
+    let prev_wr_tid = g_race_shadow[base]
+    let prev_wr_epoch = g_race_shadow[base + 1]
 
-fn race_stderr_int(n: i64) {
-    let buf = g_race_msgbuf
-    let neg = 0
-    if n < 0 {
-        neg = 1
-        n = 0 - n
+    ; Check write-read race: different thread wrote, no happens-before
+    if prev_wr_epoch > 0 and prev_wr_tid != g_race_tid {
+        let hb = race_has_hb(prev_wr_tid, prev_wr_epoch)
+        if hb == 0 {
+            race_report(addr_hash, 0, prev_wr_tid, 1)
+        }
     }
-    let i = 20
-    if n == 0 {
-        i = i - 1
-        poke_byte(buf, i, 48)
-    }
-    loop n > 0 {
-        i = i - 1
-        let d = n - (n / 10 * 10)
-        poke_byte(buf, i, 48 + d)
-        n = n / 10
-    }
-    if neg == 1 {
-        i = i - 1
-        poke_byte(buf, i, 45)
-    }
-    let len = 20 - i
-    let ptr = buf + i
-    syscall(1, 2, ptr, len)
+
+    ; Update shadow: record this read
+    g_race_shadow[base + 2] = g_race_tid
+    g_race_shadow[base + 3] = g_race_epoch
 }
 
 fn race_check() {
     if g_race_enabled == 0 { ret }
     g_race_enabled = 0
-    let races = 0
-    let i = 0
-    loop i < g_race_log_len {
-        let ti = g_race_log[i * 3]
-        let ai = g_race_log[i * 3 + 1]
-        let wi = g_race_log[i * 3 + 2]
-        let j = i + 1
-        loop j < g_race_log_len {
-            let tj = g_race_log[j * 3]
-            let aj = g_race_log[j * 3 + 1]
-            let wj = g_race_log[j * 3 + 2]
-            if ai == aj {
-                if ti != tj {
-                    ; Same address, different threads
-                    if wi == 1 or wj == 1 {
-                        ; At least one is a write — DATA RACE
-                        races = races + 1
-                        ; Skip further inner-loop checks for this i
-                        j = g_race_log_len
-                    }
-                }
-            }
-            j = j + 1
-        }
-        i = i + 1
-    }
-    if races > 0 {
-        print("WARNING: DATA RACE")
-        print("Found ")
-        print_int(races)
-        print(" data race(s)")
+    if g_race_found > 0 {
+        print("Found data race(s)")
         syscall(60, 66, 0, 0)
     }
 }
 """
 
 
+SCHED_GLOBALS = {
+    'g_queue', 'g_head', 'g_tail', 'g_current', 'g_main_ctx',
+}
+
+
 def find_globals(source):
-    """Find global let declarations (file-scope, before first fn)."""
+    """Find global let declarations (file-scope, before first fn).
+    Excludes scheduler-internal globals and race runtime globals."""
     globals_set = set()
     in_function = False
     for line in source.split('\n'):
@@ -166,39 +250,45 @@ def find_globals(source):
         if stripped.startswith('fn '):
             in_function = True
         if not in_function:
-            # Global let declaration
-            m = re.match(r'^let\s+(g_\w+|[a-z_]\w*)\s*[=:]', stripped)
+            m = re.match(r'^let\s+(g_\w+)\s*[=:]', stripped)
             if m:
                 name = m.group(1)
-                # Only track g_ prefixed globals (convention for shared state)
-                if name.startswith('g_'):
+                if not name.startswith('g_race_') and name not in SCHED_GLOBALS:
                     globals_set.add(name)
     return globals_set
 
 
 def hash_name(name):
-    """Simple string hash for variable name → address hash."""
+    """Simple string hash for variable name -> address hash."""
     h = 5381
     for c in name:
         h = ((h * 33) + ord(c)) & 0x7FFFFFFFFFFFFFFF
     return h
 
 
-def instrument_source(source, globals_set, include_source=""):
-    """Instrument global variable accesses with race tracking calls."""
+# Channel and atomic builtins that count as synchronization
+SYNC_BUILTINS = {
+    'chan_send', 'chan_recv', 'chan_close',
+    'atomic_load', 'atomic_store', 'atomic_cmpxchg', 'atomic_fetch_add',
+}
+
+
+def instrument_source(source, globals_set):
+    """Instrument global accesses and sync points."""
     if not globals_set:
         return source
 
-    # Build hash map of global names
     name_hashes = {name: hash_name(name) for name in globals_set}
 
     lines = source.split('\n')
     instrumented = []
     in_function = False
-    fn_depth = 0
-    skip_race_fns = {'race_init', 'race_set_tid', 'race_new_tid', 'race_track',
-                     'race_track_read', 'race_track_write', 'race_check',
-                     'race_print_i64'}
+    skip_race_fns = {
+        'race_init', 'race_set_tid', 'race_new_tid', 'race_track',
+        'race_track_read', 'race_track_write', 'race_check',
+        'race_report', 'race_sync', 'race_bump_epoch', 'race_has_hb',
+        'race_slot', 'race_stderr', 'race_stderr_int',
+    }
     in_race_fn = False
 
     for line in lines:
@@ -217,15 +307,28 @@ def instrument_source(source, globals_set, include_source=""):
             instrumented.append(line)
             continue
 
+        # Skip comments
+        if stripped.startswith(';'):
+            instrumented.append(line)
+            continue
+
         # Don't instrument global declarations
         if re.match(r'^let\s+g_', stripped):
             instrumented.append(line)
             continue
 
+        indent_m = re.match(r'^(\s*)', line)
+        indent = indent_m.group(1) if indent_m else ""
+
+        # Instrument synchronization builtins (channel/atomic ops)
+        for builtin in SYNC_BUILTINS:
+            if builtin + '(' in stripped:
+                instrumented.append(f"{indent}race_sync()")
+                break
+
         # Check for global variable writes: g_var = expr
         write_m = re.match(r'^(\s*)(g_\w+)\s*=\s', line)
         if write_m and write_m.group(2) in globals_set:
-            indent = write_m.group(1)
             gname = write_m.group(2)
             h = name_hashes[gname]
             instrumented.append(f"{indent}race_track_write({h})")
@@ -233,27 +336,15 @@ def instrument_source(source, globals_set, include_source=""):
             continue
 
         # Check for global variable reads in expressions
-        # Insert race_track_read before lines that reference globals (but aren't writes)
-        has_read = False
         read_globals = []
         for gname in globals_set:
-            # Check if this global appears in the line (in an expression context)
-            # Avoid matching in comments or string literals
-            if stripped.startswith(';'):
-                break
-            # Simple pattern: global name appears as a word boundary
             if re.search(r'\b' + re.escape(gname) + r'\b', stripped):
-                # Make sure it's not a write (already handled above)
                 if not re.match(r'^\s*' + re.escape(gname) + r'\s*=\s', line):
                     read_globals.append(gname)
-                    has_read = True
 
-        if has_read:
-            indent_m = re.match(r'^(\s*)', line)
-            indent = indent_m.group(1) if indent_m else ""
-            for gname in read_globals:
-                h = name_hashes[gname]
-                instrumented.append(f"{indent}race_track_read({h})")
+        for gname in read_globals:
+            h = name_hashes[gname]
+            instrumented.append(f"{indent}race_track_read({h})")
 
         instrumented.append(line)
 
@@ -270,18 +361,16 @@ def inject_race_init(source):
     for i, line in enumerate(lines):
         stripped = line.strip()
 
-        # Find main function
         if re.match(r'^fn\s+main\s*\(', stripped):
             in_main = True
             main_found = True
             result.append(line)
             continue
 
-        # Inject race_init() after main's opening brace
-        if in_main and not main_found is False:
-            if '{' in stripped or result[-1].rstrip().endswith('{'):
+        if in_main and main_found:
+            if '{' in stripped or (result and result[-1].rstrip().endswith('{')):
                 result.append("    race_init()")
-                in_main = False  # Only inject once
+                in_main = False
 
         # Inject race_check() before syscall(60, ...) exits
         if 'syscall(60,' in stripped:
@@ -295,30 +384,36 @@ def inject_race_init(source):
 
 
 def inject_spawn_tid(source):
-    """Instrument spawn calls to assign thread IDs."""
+    """Instrument ctx_switch to bump TID at context switch points.
+
+    ctx_switch is NOT synchronization — only channels/atomics are.
+    We bump TID so accesses before/after ctx_switch are seen as different threads.
+    """
     lines = source.split('\n')
     result = []
+    # Skip scheduler-internal functions that use ctx_switch
+    sched_fns = {'__thread_done', 'sched_yield'}
+    current_fn = None
+    ctx_counter = 0
 
     for line in lines:
         stripped = line.strip()
 
-        # Before spawn, save current tid and assign new one
-        if 'spawn ' in stripped and not stripped.startswith(';'):
-            indent_m = re.match(r'^(\s*)', line)
-            indent = indent_m.group(1) if indent_m else ""
-            # After the spawn line, we need to note that the spawned fn
-            # will run with a new tid. We insert tid tracking around ctx_switch.
-            result.append(line)
-            continue
+        fn_m = re.match(r'^fn\s+(\w+)', stripped)
+        if fn_m:
+            current_fn = fn_m.group(1)
 
-        # Instrument ctx_switch — the point where thread context actually changes
-        if 'ctx_switch(' in stripped and not stripped.startswith(';'):
+        # Only instrument ctx_switch in non-scheduler user functions
+        if ('ctx_switch(' in stripped and not stripped.startswith(';')
+                and current_fn not in sched_fns):
             indent_m = re.match(r'^(\s*)', line)
             indent = indent_m.group(1) if indent_m else ""
-            result.append(f"{indent}let _saved_tid = g_race_tid")
+            vname = f"_rtid{ctx_counter}"
+            ctx_counter += 1
+            result.append(f"{indent}let {vname} = g_race_tid")
             result.append(f"{indent}race_set_tid(race_new_tid())")
             result.append(line)
-            result.append(f"{indent}race_set_tid(_saved_tid)")
+            result.append(f"{indent}race_set_tid({vname})")
             continue
 
         result.append(line)
@@ -354,24 +449,20 @@ def main():
         print("usage: jda-race.sh [--include <lib>] <file.jda>", file=sys.stderr)
         sys.exit(1)
 
-    # Read source
     with open(files[0], 'r') as f:
         source = f.read()
 
-    # Read include file if specified
     include_source = ""
     if include_path:
         with open(include_path, 'r') as f:
             include_source = f.read()
 
-    # Find globals to track
     full_source = include_source + "\n" + source if include_source else source
     globals_set = find_globals(full_source)
 
     if not globals_set:
         print("jda-race: no g_* global variables found to track", file=sys.stderr)
         print("Race detector tracks variables with g_ prefix (e.g., let g_counter = 0)", file=sys.stderr)
-        # Still run the program normally
         if not dry_run:
             with tempfile.NamedTemporaryFile(suffix='.jda', mode='w', delete=False) as f:
                 f.write(full_source)
@@ -394,12 +485,10 @@ def main():
 
     print(f"jda-race: tracking {len(globals_set)} global(s): {', '.join(sorted(globals_set))}", file=sys.stderr)
 
-    # Build instrumented source
     instrumented = RACE_RUNTIME + "\n"
     if include_source:
         instrumented += include_source + "\n"
 
-    # Instrument the user source
     user_instrumented = instrument_source(source, globals_set)
     user_instrumented = inject_spawn_tid(user_instrumented)
     user_instrumented = inject_race_init(user_instrumented)
@@ -409,14 +498,12 @@ def main():
         print(instrumented)
         sys.exit(0)
 
-    # Write instrumented source to temp file
     with tempfile.NamedTemporaryFile(suffix='.jda', mode='w', delete=False) as f:
         f.write(instrumented)
         src_path = f.name
 
     bin_path = src_path.replace('.jda', '')
     try:
-        # Compile
         result = subprocess.run([JDA, src_path, bin_path],
                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         if result.returncode != 0:
@@ -427,7 +514,6 @@ def main():
             sys.exit(1)
         os.chmod(bin_path, 0o755)
 
-        # Run
         result = subprocess.run([bin_path])
         sys.exit(result.returncode)
     finally:
