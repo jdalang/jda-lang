@@ -1,0 +1,194 @@
+; =============================================================================
+; jda::decorator -- Decorator / Higher-Order Function Patterns
+; =============================================================================
+; Python-style decorator patterns implemented via closures.
+;
+; Python equivalent mapping:
+;   @functools.lru_cache   -> memoize pattern (manual cache via vec)
+;   @retry(n)              -> retry_call(f, arg, max_attempts)
+;   functools.reduce       -> fold(f, arr, len, init)
+;   map(f, lst)            -> map_arr(f, arr, len, out)
+;   filter(f, lst)         -> filter_arr(f, arr, len, out) -> count
+;   functools.partial      -> bind1 pattern (closure capturing first arg)
+;   compose(f, g)          -> compose pattern (closure chaining)
+;
+; Decorator creation:
+;   In Jda, decorators are closures that wrap other closures.
+;   Create them inline:
+;     let f = my_func
+;     let decorated = fn(x: i64) -> i64 {
+;         ; ... pre-processing ...
+;         let result = call_closure(f, x)
+;         ; ... post-processing ...
+;         ret result
+;     }
+;
+; All functions use i64 for values and closure pointers.
+; Zero compiler changes.
+; =============================================================================
+
+; --- Apply: call a closure with one argument ---
+; Convenience wrapper for call_closure.
+fn apply1(f: i64, x: i64) -> i64 {
+    ret call_closure(f, x)
+}
+
+; --- Apply: call a closure with two arguments ---
+fn apply2(f: i64, x: i64, y: i64) -> i64 {
+    ret call_closure(f, x, y)
+}
+
+; --- Fold / Reduce over an array ---
+; Like Python: functools.reduce(f, iterable, initializer)
+; f is a 2-arg closure: fn(acc, elem) -> new_acc
+; arr is a pointer to i64 array, len is element count.
+fn fold(f: i64, arr: &i64, len: i64, init: i64) -> i64 {
+    let acc = init
+    let i = 0
+    loop i < len {
+        acc = call_closure(f, acc, arr[i])
+        i = i + 1
+    }
+    ret acc
+}
+
+; --- Map over an array ---
+; Like Python: list(map(f, lst))
+; f is a 1-arg closure: fn(elem) -> new_elem
+; Writes results to out array. Returns len.
+fn map_arr(f: i64, arr: &i64, len: i64, out: &i64) -> i64 {
+    let i = 0
+    loop i < len {
+        out[i] = call_closure(f, arr[i])
+        i = i + 1
+    }
+    ret len
+}
+
+; --- Filter an array ---
+; Like Python: list(filter(f, lst))
+; f is a 1-arg predicate closure: fn(elem) -> 0 or 1
+; Writes matching elements to out array. Returns count.
+fn filter_arr(f: i64, arr: &i64, len: i64, out: &i64) -> i64 {
+    let count = 0
+    let i = 0
+    loop i < len {
+        let keep = call_closure(f, arr[i])
+        if keep != 0 {
+            out[count] = arr[i]
+            count = count + 1
+        }
+        i = i + 1
+    }
+    ret count
+}
+
+; --- For-each over an array ---
+; Like Python: for x in lst: f(x)
+; f is a 1-arg closure called for side effects.
+fn for_each(f: i64, arr: &i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        call_closure(f, arr[i])
+        i = i + 1
+    }
+    ret len
+}
+
+; --- Find first matching element ---
+; Returns index of first element where f(elem) != 0, or -1 if none.
+fn find_idx(f: i64, arr: &i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let found = call_closure(f, arr[i])
+        if found != 0 { ret i }
+        i = i + 1
+    }
+    ret -1
+}
+
+; --- All: check if predicate holds for all elements ---
+; Like Python: all(f(x) for x in lst)
+fn all_of(f: i64, arr: &i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ok = call_closure(f, arr[i])
+        if ok == 0 { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+; --- Any: check if predicate holds for any element ---
+; Like Python: any(f(x) for x in lst)
+fn any_of(f: i64, arr: &i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ok = call_closure(f, arr[i])
+        if ok != 0 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+; --- Count: count elements matching predicate ---
+; Like Python: sum(1 for x in lst if f(x))
+fn count_of(f: i64, arr: &i64, len: i64) -> i64 {
+    let count = 0
+    let i = 0
+    loop i < len {
+        let ok = call_closure(f, arr[i])
+        if ok != 0 { count = count + 1 }
+        i = i + 1
+    }
+    ret count
+}
+
+; --- Retry: call function up to max times until it returns >= 0 ---
+; Like Python: @retry(max_attempts)
+; f is a 1-arg closure. Returns f's result on success, -1 if all fail.
+fn retry_call(f: i64, arg: i64, max_attempts: i64) -> i64 {
+    let i = 0
+    loop i < max_attempts {
+        let r = call_closure(f, arg)
+        if r >= 0 { ret r }
+        i = i + 1
+    }
+    ret -1
+}
+
+; --- Pipeline: apply array of closures in sequence ---
+; Like Python: functools.reduce(lambda v, f: f(v), fns, initial)
+; fns is array of closure pointers, nfns is count.
+fn pipeline(fns: &i64, nfns: i64, initial: i64) -> i64 {
+    let val = initial
+    let i = 0
+    loop i < nfns {
+        val = call_closure(fns[i], val)
+        i = i + 1
+    }
+    ret val
+}
+
+; --- Tabulate: fill array with f(0), f(1), ..., f(n-1) ---
+; Like Python: [f(i) for i in range(n)]
+fn tabulate(f: i64, out: &i64, n: i64) -> i64 {
+    let i = 0
+    loop i < n {
+        out[i] = call_closure(f, i)
+        i = i + 1
+    }
+    ret n
+}
+
+; --- Zip-with: combine two arrays element-wise ---
+; Like Python: [f(a, b) for a, b in zip(xs, ys)]
+; f is a 2-arg closure.
+fn zip_with(f: i64, xs: &i64, ys: &i64, len: i64, out: &i64) -> i64 {
+    let i = 0
+    loop i < len {
+        out[i] = call_closure(f, xs[i], ys[i])
+        i = i + 1
+    }
+    ret len
+}

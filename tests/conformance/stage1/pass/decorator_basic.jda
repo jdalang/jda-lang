@@ -1,0 +1,62 @@
+; Test decorator patterns — inline closure wrapping
+fn main() -> i64 {
+    ; === Compose: @compose(inc) on double ===
+    let d = 0
+    let double = fn(x: i64) -> i64 { ret x * 2 + d }
+    let inc = fn(x: i64) -> i64 { ret x + 1 + d }
+    let f1 = double
+    let g1 = inc
+    let composed = fn(x: i64) -> i64 {
+        let tmp = call_closure(f1, x)
+        ret call_closure(g1, tmp)
+    }
+    let r1 = call_closure(composed, 5)
+    if r1 == 11 { print "compose ok" }
+
+    ; === Negate: @negate on double ===
+    let f2 = double
+    let negated = fn(x: i64) -> i64 {
+        let tmp = call_closure(f2, x)
+        ret 0 - tmp
+    }
+    let r2 = call_closure(negated, 3)
+    if r2 == -6 { print "negate ok" }
+
+    ; === Offset: @add_offset(100) on double ===
+    let f3 = double
+    let offset = 100
+    let with_offset = fn(x: i64) -> i64 {
+        let tmp = call_closure(f3, x)
+        ret tmp + offset
+    }
+    let r3 = call_closure(with_offset, 4)
+    if r3 == 108 { print "offset ok" }
+
+    ; === Clamp: @clamp(0, 15) on double ===
+    let f4 = double
+    let lo = 0
+    let hi = 15
+    let clamped = fn(x: i64) -> i64 {
+        let tmp = call_closure(f4, x)
+        if tmp > hi { ret hi }
+        if tmp < lo { ret lo }
+        ret tmp
+    }
+    let r4 = call_closure(clamped, 10)
+    if r4 == 15 { print "clamp ok" }
+
+    ; === Default: @default_on_neg(42) on sub10 ===
+    let d5 = 0
+    let sub10 = fn(x: i64) -> i64 { ret x - 10 + d5 }
+    let f5 = sub10
+    let defval = 42
+    let safe = fn(x: i64) -> i64 {
+        let tmp = call_closure(f5, x)
+        if tmp < 0 { ret defval }
+        ret tmp
+    }
+    let r5 = call_closure(safe, 3)
+    if r5 == 42 { print "default ok" }
+
+    ret 0
+}
