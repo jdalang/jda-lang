@@ -25,7 +25,7 @@
 - **Beats C on 2 of 4 benchmarks** — faster than gcc -O2 on sieve and sum loop
 - **24–53x faster than Python/Ruby** — compiled performance with scripting-speed iteration
 - **114 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, and more
-- **345 conformance tests** — all passing
+- **361 conformance tests** — all passing
 - **Cross-platform** — native on Linux, Docker-based on macOS/Windows
 - **Built-in concurrency** — goroutine-style green threads with channels
 - **ML primitives** — tensors, autograd, neural networks, AVX-512 acceleration
@@ -154,7 +154,7 @@ docker build --platform linux/amd64 -t jda-build docker/
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make stage1
 
-# Run the test suite (345 tests)
+# Run the test suite (361 tests)
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda jda-build bash tools/run_tests.sh
 
@@ -349,7 +349,7 @@ bootstrap/
   stage1/          jda1 compiler source (jda1.jda — self-hosted)
 stdlib/            114 standard library packages
 tools/             CLI tools (jda, jdavm, jda-doc, jda-test, jda-pkg, etc.)
-tests/             345 conformance tests (pass + fail)
+tests/             361 conformance tests (pass + fail)
 benchmarks/        Performance benchmarks (Jda vs C/Go/Rust/Python/Ruby)
 examples/          Example programs
 installers/        Native installers (.deb, .rpm, .pkg, .exe)
