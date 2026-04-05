@@ -1,0 +1,159 @@
+; =============================================================================
+; jda::enum -- Enumeration Type with Named Constants
+; =============================================================================
+; Runtime enumeration: define named integer constants and look up by name/value.
+; Stored as parallel arrays of names and values.
+;
+; Functions:
+;   enum_new(name, nlen)               -> &i64 create enum type
+;   enum_add(e, name, nlen, val)       -> i64  add variant
+;   enum_by_name(e, name, nlen)        -> i64  lookup value by name (-1 if missing)
+;   enum_by_val(e, val, out)           -> i64  lookup name by value, return length
+;   enum_count(e)                      -> i64  number of variants
+;   enum_has(e, name, nlen)            -> i64  1 if variant exists
+;   enum_name_at(e, idx, out)          -> i64  name at index, return length
+;   enum_val_at(e, idx)                -> i64  value at index
+; =============================================================================
+
+;; Internal byte reader.
+fn _enum_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: compare two strings.
+fn _enum_streq(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        if a[i] != b[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Internal: copy bytes.
+fn _enum_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
+    let i = 0
+    loop i < n {
+        poke_byte(dst, doff + i, src[soff + i])
+        i = i + 1
+    }
+}
+
+;; Create a new enum type. name/nlen is the enum's name (for display).
+;; Layout: [0]=count, [1]=cap, [2]=name_buf_ptr, [3]=vals_ptr,
+;;          [4]=name_offsets_ptr, [5]=name_lens_ptr, [6]=name_buf_used
+fn enum_new(name: &i8, nlen: i64) -> &i64 {
+    let e: &i64 = alloc_pages(1)
+    e[0] = 0       ; count
+    e[1] = 128     ; capacity
+    let name_buf: &i8 = alloc_pages(2)
+    e[2] = name_buf
+    let vals: &i64 = alloc_pages(1)
+    e[3] = vals
+    let offsets: &i64 = alloc_pages(1)
+    e[4] = offsets
+    let lens: &i64 = alloc_pages(1)
+    e[5] = lens
+    e[6] = 0       ; name buffer used bytes
+    ret e
+}
+
+;; Add a variant to the enum. Returns index on success, -1 if full.
+fn enum_add(e: &i64, name: &i8, nlen: i64, val: i64) -> i64 {
+    let count = e[0]
+    let cap = e[1]
+    if count >= cap { ret -1 }
+    let name_buf: &i8 = e[2]
+    let vals: &i64 = e[3]
+    let offsets: &i64 = e[4]
+    let lens: &i64 = e[5]
+    let used = e[6]
+    ; Copy name into buffer
+    _enum_copy(name_buf, used, name, 0, nlen)
+    offsets[count] = used
+    lens[count] = nlen
+    vals[count] = val
+    e[6] = used + nlen
+    e[0] = count + 1
+    ret count
+}
+
+;; Lookup value by variant name. Returns value or -1 if not found.
+fn enum_by_name(e: &i64, name: &i8, nlen: i64) -> i64 {
+    let count = e[0]
+    let name_buf: &i8 = e[2]
+    let vals: &i64 = e[3]
+    let offsets: &i64 = e[4]
+    let lens: &i64 = e[5]
+    let i = 0
+    loop i < count {
+        let off = offsets[i]
+        let ln = lens[i]
+        if ln == nlen {
+            let eq = 1
+            let j = 0
+            loop j < nlen {
+                let a = _enum_byte_at(name_buf, off + j)
+                if a != name[j] { eq = 0 }
+                j = j + 1
+            }
+            if eq == 1 { ret vals[i] }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
+;; Lookup name by value. Writes name to out, returns length. -1 if not found.
+fn enum_by_val(e: &i64, val: i64, out: &i8) -> i64 {
+    let count = e[0]
+    let name_buf: &i8 = e[2]
+    let vals: &i64 = e[3]
+    let offsets: &i64 = e[4]
+    let lens: &i64 = e[5]
+    let i = 0
+    loop i < count {
+        if vals[i] == val {
+            let off = offsets[i]
+            let ln = lens[i]
+            _enum_copy(out, 0, name_buf, off, ln)
+            ret ln
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
+;; Return number of variants.
+fn enum_count(e: &i64) -> i64 {
+    ret e[0]
+}
+
+;; Check if a variant name exists. Returns 1 or 0.
+fn enum_has(e: &i64, name: &i8, nlen: i64) -> i64 {
+    let v = enum_by_name(e, name, nlen)
+    if v == -1 { ret 0 }
+    ret 1
+}
+
+;; Get variant name at index. Returns length written, -1 if out of bounds.
+fn enum_name_at(e: &i64, idx: i64, out: &i8) -> i64 {
+    let count = e[0]
+    if idx < 0 { ret -1 }
+    if idx >= count { ret -1 }
+    let name_buf: &i8 = e[2]
+    let offsets: &i64 = e[4]
+    let lens: &i64 = e[5]
+    let off = offsets[idx]
+    let ln = lens[idx]
+    _enum_copy(out, 0, name_buf, off, ln)
+    ret ln
+}
+
+;; Get variant value at index. Returns -1 if out of bounds.
+fn enum_val_at(e: &i64, idx: i64) -> i64 {
+    let count = e[0]
+    if idx < 0 { ret -1 }
+    if idx >= count { ret -1 }
+    let vals: &i64 = e[3]
+    ret vals[idx]
+}

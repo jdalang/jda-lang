@@ -1,0 +1,58 @@
+fn _write_buf(buf: &i8, len: i64) -> i64 {
+    syscall(1, 1, buf, len)
+    ret 0
+}
+
+fn main() -> i64 {
+    ; Build password: "Hello1!" (72,101,108,108,111,49,33)
+    let buf: &i8 = alloc_pages(1)
+    poke_byte(buf, 0, 72)   ; H
+    poke_byte(buf, 1, 101)  ; e
+    poke_byte(buf, 2, 108)  ; l
+    poke_byte(buf, 3, 108)  ; l
+    poke_byte(buf, 4, 111)  ; o
+    poke_byte(buf, 5, 49)   ; 1
+    poke_byte(buf, 6, 33)   ; !
+
+    ; Test mask
+    let out: &i8 = alloc_pages(1)
+    let mlen = getpass_mask(buf, 7, out)
+    print("mask len: {mlen}\n")
+    let wr = _write_buf(out, mlen)
+    print("\n")
+
+    ; Test validate_len (7 chars, min=4, max=20 -> valid)
+    let v1 = getpass_validate_len(7, 4, 20)
+    print("valid 7/4-20: {v1}\n")
+
+    ; Too short (7 chars, min=8)
+    let v2 = getpass_validate_len(7, 8, 20)
+    print("valid 7/8-20: {v2}\n")
+
+    ; Test strength of "Hello1!" -> has upper+lower+digit+special = 3 (no len>=8)
+    let s1 = getpass_strength(buf, 7)
+    print("strength Hello1!: {s1}\n")
+
+    ; Build "abcd" (all lowercase, 4 chars)
+    poke_byte(buf, 0, 97)
+    poke_byte(buf, 1, 98)
+    poke_byte(buf, 2, 99)
+    poke_byte(buf, 3, 100)
+    let s2 = getpass_strength(buf, 4)
+    print("strength abcd: {s2}\n")
+
+    ; Build "Abcdefg1!" (9 chars - upper, lower, digit, special, len>=8)
+    poke_byte(buf, 0, 65)   ; A
+    poke_byte(buf, 1, 98)   ; b
+    poke_byte(buf, 2, 99)   ; c
+    poke_byte(buf, 3, 100)  ; d
+    poke_byte(buf, 4, 101)  ; e
+    poke_byte(buf, 5, 102)  ; f
+    poke_byte(buf, 6, 103)  ; g
+    poke_byte(buf, 7, 49)   ; 1
+    poke_byte(buf, 8, 33)   ; !
+    let s3 = getpass_strength(buf, 9)
+    print("strength Abcdefg1!: {s3}\n")
+
+    ret 0
+}

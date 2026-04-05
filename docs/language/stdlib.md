@@ -1,6 +1,6 @@
 # Jda Standard Library
 
-Jda ships with 76 stdlib packages covering data structures, algorithms, I/O, networking, crypto, testing, and more.
+Jda ships with 114 stdlib packages covering data structures, algorithms, I/O, networking, crypto, testing, and more.
 
 ## Using the Standard Library
 
@@ -57,6 +57,15 @@ jda pkg search hash          # search for packages by keyword
 | `json` | JSON parser/serializer — parse, stringify, get/set by key |
 | `csv` | CSV reader/writer — parse rows, quoted fields |
 | `uri` | URL parsing — scheme, host, path, query, percent-encode/decode |
+| `textwrap` | Text wrapping — wrap, fill, shorten, indent, dedent |
+| `fnmatch` | Filename matching — Unix shell-style wildcards |
+| `diff` | Text differencing — unified diff, line-by-line compare |
+| `toml` | TOML parser/emitter — tables, arrays, inline tables |
+| `configparser` | INI-style config parser — sections, keys, defaults |
+| `mimetypes` | MIME type detection — guess type from extension |
+| `htmlparser` | HTML parser — tokenize, tag/attribute extraction |
+| `xml` | XML parser — SAX-style events, element tree, namespaces |
+| `email` | Email message — parse/compose RFC 5322, MIME parts |
 
 ### I/O and Filesystem
 | Package | Description |
@@ -66,6 +75,13 @@ jda pkg search hash          # search for packages by keyword
 | `io` | Buffered read/write, stdin/stdout helpers |
 | `find` | Recursive directory traversal — walk, type detection |
 | `tempfile` | Secure temp file/directory creation and cleanup |
+| `glob` | Glob pattern matching — recursive **, brace expansion |
+| `mmap` | Memory-mapped files — map, unmap, read, write, sync |
+| `gzip` | Gzip compression — compress, decompress, header/footer |
+| `tarfile` | Tar archive — create, extract, list, ustar format |
+| `zipfile` | ZIP archive — create, extract, deflate/store methods |
+| `linecache` | Line cache — read specific lines from files |
+| `copy` | Object copying — shallow copy, deep copy, clone helpers |
 
 ### Networking
 | Package | Description |
@@ -75,6 +91,13 @@ jda pkg search hash          # search for packages by keyword
 | `net/http` | HTTP/1.1 parser and response writer |
 | `net/ws` | WebSocket protocol (RFC 6455) |
 | `ipaddr` | IPv4 parse/format, CIDR, private/loopback detection |
+| `dns` | DNS resolver — hostname lookup, UDP query |
+| `socketserver` | Socket server framework — TCP/UDP, request handlers |
+| `httpserver` | HTTP server — routing, static files, middleware |
+| `httpclient` | HTTP client — GET/POST/PUT/DELETE, response parsing |
+| `smtp` | SMTP client — connect, auth, send mail, STARTTLS |
+| `ftp` | FTP client — connect, login, list, get, put |
+| `netrc` | Netrc file parser — machine/login/password lookup |
 
 ### System
 | Package | Description |
@@ -87,18 +110,32 @@ jda pkg search hash          # search for packages by keyword
 | `select` | Channel select — poll multiple channels |
 | `args` | CLI argument parser — flags, --key=val options |
 | `shell` | Shell word escaping and splitting |
+| `signal` | Signal handling — sig_action, ignore, raise, block/unblock |
+| `platform` | Platform detection — OS, arch, endianness, features |
+| `errno` | System error codes — errno constants, strerror |
+| `getpass` | Password input — terminal echo suppression, secure prompt |
+| `sched` | Task scheduler — delayed execution, periodic tasks |
 
 ### Crypto and Security
 | Package | Description |
 |---------|-------------|
 | `crypto` | SHA-256, AES-128/256, HMAC, ChaCha20-Poly1305 |
 | `uuid` | UUID v4 random generation |
+| `securerandom` | Cryptographic random — hex, base64, UUID v4 |
+| `digest` | Message digests — MD5, SHA-512 |
 
 ### Math and Bit Operations
 | Package | Description |
 |---------|-------------|
 | `math` | abs, min, max, pow, sqrt, gcd, lcm, rand |
 | `bitops` | Bitwise and/or/xor/shift/popcount via arithmetic |
+| `statistics` | Statistical functions — mean, median, stdev, variance |
+| `fixedpoint` | Fixed-point arithmetic — add, sub, mul, div, round |
+| `bignum` | Arbitrary precision integers — add, sub, mul, div |
+| `complex` | Complex number arithmetic — add, sub, mul, abs |
+| `rational` | Rational number arithmetic — add, sub, mul, simplify |
+| `datetime` | Date and time — parse, format, duration, timezone |
+| `calendar` | Calendar utilities — month display, weekday, leap year |
 
 ### Testing and Development
 | Package | Description |
@@ -130,4 +167,12 @@ jda pkg search hash          # search for packages by keyword
 | `decorator` | Higher-order functions — apply, fold, map, pipeline |
 | `dataclass` | Comparison combinators, validation utilities |
 | `observer` | Publish/subscribe event bus |
+| `enum` | Enumeration utilities — define, iterate, name/value lookup |
+| `operator` | Operator functions — arithmetic, comparison as first-class fns |
+| `kvstore` | Key-value store — persistent on-disk storage, get/set/delete |
+| `compress` | Compression codecs — LZ4, zstd-style, streaming |
+| `marshal` | Binary serialization — dump/load i64, strings, arrays, TLV |
+| `pack` | Binary pack/unpack — i8/i16/i32/i64 LE/BE, strings |
+| `encoding` | Character encoding — UTF-8, ASCII, Latin-1 |
+| `erb` | Template engine — variable substitution, HTML escaping |
 | `prelude` | Common utilities automatically available |

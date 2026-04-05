@@ -1,0 +1,177 @@
+fn _write_buf(buf: &i8, len: i64) -> i64 {
+    syscall(1, 1, buf, len)
+    ret 0
+}
+
+fn main() -> i64 {
+    ; Build netrc data:
+    ; machine github.com login alice password s3cret
+    ; machine example.org login bob password hunter2
+    let buf: &i8 = alloc_pages(1)
+    let p = 0
+    ; "machine github.com login alice password s3cret\n"
+    ; machine
+    poke_byte(buf, p, 109) p = p + 1  ; m
+    poke_byte(buf, p, 97)  p = p + 1  ; a
+    poke_byte(buf, p, 99)  p = p + 1  ; c
+    poke_byte(buf, p, 104) p = p + 1  ; h
+    poke_byte(buf, p, 105) p = p + 1  ; i
+    poke_byte(buf, p, 110) p = p + 1  ; n
+    poke_byte(buf, p, 101) p = p + 1  ; e
+    poke_byte(buf, p, 32)  p = p + 1  ; space
+    ; github.com
+    poke_byte(buf, p, 103) p = p + 1  ; g
+    poke_byte(buf, p, 105) p = p + 1  ; i
+    poke_byte(buf, p, 116) p = p + 1  ; t
+    poke_byte(buf, p, 104) p = p + 1  ; h
+    poke_byte(buf, p, 117) p = p + 1  ; u
+    poke_byte(buf, p, 98)  p = p + 1  ; b
+    poke_byte(buf, p, 46)  p = p + 1  ; .
+    poke_byte(buf, p, 99)  p = p + 1  ; c
+    poke_byte(buf, p, 111) p = p + 1  ; o
+    poke_byte(buf, p, 109) p = p + 1  ; m
+    poke_byte(buf, p, 32)  p = p + 1  ; space
+    ; login
+    poke_byte(buf, p, 108) p = p + 1  ; l
+    poke_byte(buf, p, 111) p = p + 1  ; o
+    poke_byte(buf, p, 103) p = p + 1  ; g
+    poke_byte(buf, p, 105) p = p + 1  ; i
+    poke_byte(buf, p, 110) p = p + 1  ; n
+    poke_byte(buf, p, 32)  p = p + 1  ; space
+    ; alice
+    poke_byte(buf, p, 97)  p = p + 1  ; a
+    poke_byte(buf, p, 108) p = p + 1  ; l
+    poke_byte(buf, p, 105) p = p + 1  ; i
+    poke_byte(buf, p, 99)  p = p + 1  ; c
+    poke_byte(buf, p, 101) p = p + 1  ; e
+    poke_byte(buf, p, 32)  p = p + 1  ; space
+    ; password
+    poke_byte(buf, p, 112) p = p + 1  ; p
+    poke_byte(buf, p, 97)  p = p + 1  ; a
+    poke_byte(buf, p, 115) p = p + 1  ; s
+    poke_byte(buf, p, 115) p = p + 1  ; s
+    poke_byte(buf, p, 119) p = p + 1  ; w
+    poke_byte(buf, p, 111) p = p + 1  ; o
+    poke_byte(buf, p, 114) p = p + 1  ; r
+    poke_byte(buf, p, 100) p = p + 1  ; d
+    poke_byte(buf, p, 32)  p = p + 1  ; space
+    ; s3cret
+    poke_byte(buf, p, 115) p = p + 1  ; s
+    poke_byte(buf, p, 51)  p = p + 1  ; 3
+    poke_byte(buf, p, 99)  p = p + 1  ; c
+    poke_byte(buf, p, 114) p = p + 1  ; r
+    poke_byte(buf, p, 101) p = p + 1  ; e
+    poke_byte(buf, p, 116) p = p + 1  ; t
+    poke_byte(buf, p, 10)  p = p + 1  ; \n
+    ; "machine example.org login bob password hunter2\n"
+    ; machine
+    poke_byte(buf, p, 109) p = p + 1
+    poke_byte(buf, p, 97)  p = p + 1
+    poke_byte(buf, p, 99)  p = p + 1
+    poke_byte(buf, p, 104) p = p + 1
+    poke_byte(buf, p, 105) p = p + 1
+    poke_byte(buf, p, 110) p = p + 1
+    poke_byte(buf, p, 101) p = p + 1
+    poke_byte(buf, p, 32)  p = p + 1
+    ; example.org
+    poke_byte(buf, p, 101) p = p + 1  ; e
+    poke_byte(buf, p, 120) p = p + 1  ; x
+    poke_byte(buf, p, 97)  p = p + 1  ; a
+    poke_byte(buf, p, 109) p = p + 1  ; m
+    poke_byte(buf, p, 112) p = p + 1  ; p
+    poke_byte(buf, p, 108) p = p + 1  ; l
+    poke_byte(buf, p, 101) p = p + 1  ; e
+    poke_byte(buf, p, 46)  p = p + 1  ; .
+    poke_byte(buf, p, 111) p = p + 1  ; o
+    poke_byte(buf, p, 114) p = p + 1  ; r
+    poke_byte(buf, p, 103) p = p + 1  ; g
+    poke_byte(buf, p, 32)  p = p + 1
+    ; login
+    poke_byte(buf, p, 108) p = p + 1
+    poke_byte(buf, p, 111) p = p + 1
+    poke_byte(buf, p, 103) p = p + 1
+    poke_byte(buf, p, 105) p = p + 1
+    poke_byte(buf, p, 110) p = p + 1
+    poke_byte(buf, p, 32)  p = p + 1
+    ; bob
+    poke_byte(buf, p, 98)  p = p + 1  ; b
+    poke_byte(buf, p, 111) p = p + 1  ; o
+    poke_byte(buf, p, 98)  p = p + 1  ; b
+    poke_byte(buf, p, 32)  p = p + 1
+    ; password
+    poke_byte(buf, p, 112) p = p + 1
+    poke_byte(buf, p, 97)  p = p + 1
+    poke_byte(buf, p, 115) p = p + 1
+    poke_byte(buf, p, 115) p = p + 1
+    poke_byte(buf, p, 119) p = p + 1
+    poke_byte(buf, p, 111) p = p + 1
+    poke_byte(buf, p, 114) p = p + 1
+    poke_byte(buf, p, 100) p = p + 1
+    poke_byte(buf, p, 32)  p = p + 1
+    ; hunter2
+    poke_byte(buf, p, 104) p = p + 1  ; h
+    poke_byte(buf, p, 117) p = p + 1  ; u
+    poke_byte(buf, p, 110) p = p + 1  ; n
+    poke_byte(buf, p, 116) p = p + 1  ; t
+    poke_byte(buf, p, 101) p = p + 1  ; e
+    poke_byte(buf, p, 114) p = p + 1  ; r
+    poke_byte(buf, p, 50)  p = p + 1  ; 2
+    poke_byte(buf, p, 10)  p = p + 1  ; \n
+
+    let h = netrc_parse(buf, p)
+    let cnt = netrc_count(h)
+    print("count: {cnt}\n")
+
+    ; Lookup github.com
+    let host: &i8 = alloc_pages(1)
+    poke_byte(host, 0, 103)  ; g
+    poke_byte(host, 1, 105)  ; i
+    poke_byte(host, 2, 116)  ; t
+    poke_byte(host, 3, 104)  ; h
+    poke_byte(host, 4, 117)  ; u
+    poke_byte(host, 5, 98)   ; b
+    poke_byte(host, 6, 46)   ; .
+    poke_byte(host, 7, 99)   ; c
+    poke_byte(host, 8, 111)  ; o
+    poke_byte(host, 9, 109)  ; m
+    let idx = netrc_lookup(h, host, 10)
+    print("github idx: {idx}\n")
+
+    ; Get login for github.com
+    let out: &i8 = alloc_pages(1)
+    let llen = netrc_login(h, idx, out)
+    print("login len: {llen}\n")
+    let wr = _write_buf(out, llen)
+    print("\n")
+
+    ; Get password for github.com
+    let plen = netrc_password(h, idx, out)
+    print("pass len: {plen}\n")
+    let wr2 = _write_buf(out, plen)
+    print("\n")
+
+    ; Lookup example.org
+    poke_byte(host, 0, 101)  ; e
+    poke_byte(host, 1, 120)  ; x
+    poke_byte(host, 2, 97)   ; a
+    poke_byte(host, 3, 109)  ; m
+    poke_byte(host, 4, 112)  ; p
+    poke_byte(host, 5, 108)  ; l
+    poke_byte(host, 6, 101)  ; e
+    poke_byte(host, 7, 46)   ; .
+    poke_byte(host, 8, 111)  ; o
+    poke_byte(host, 9, 114)  ; r
+    poke_byte(host, 10, 103) ; g
+    let idx2 = netrc_lookup(h, host, 11)
+    print("example idx: {idx2}\n")
+
+    ; Lookup nonexistent host
+    poke_byte(host, 0, 110)  ; n
+    poke_byte(host, 1, 111)  ; o
+    poke_byte(host, 2, 110)  ; n
+    poke_byte(host, 3, 101)  ; e
+    let idx3 = netrc_lookup(h, host, 4)
+    print("none idx: {idx3}\n")
+
+    ret 0
+}

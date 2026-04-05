@@ -104,7 +104,7 @@ Legacy syntax is also supported for backward compatibility:
 jda hello.jda output_binary
 ```
 
-### Standard Library (76 packages)
+### Standard Library (114 packages)
 
 Use `--include` to link standard library packages:
 
@@ -121,14 +121,17 @@ jda pkg install sort
 jda pkg search hash           # search packages
 ```
 
-**Data Structures**: vec, hashmap, set, queue, heap, ring, matrix, tuple
-**Algorithms**: sort, iter, comprehension, tsort
-**Strings/Encoding**: string, fmt, conv, regex, base64, json, csv, uri
-**I/O & Networking**: fs, file_io, find, tempfile, net/tcp, net/http, net/ws
-**System**: os, process, time, timeout, context, args, shell
-**Crypto**: crypto (AES, SHA-256, ChaCha20), uuid
+**Data Structures**: vec, hashmap, set, queue, heap, ring, matrix, tuple, kvstore
+**Algorithms**: sort, iter, comprehension, tsort, diff, statistics
+**Strings/Encoding**: string, fmt, conv, regex, base64, json, csv, uri, textwrap, toml, configparser, xml, htmlparser, email
+**I/O & Filesystem**: fs, file_io, find, tempfile, glob, mmap, gzip, tarfile, zipfile, linecache, copy
+**Networking**: net/tcp, net/http, net/ws, ipaddr, dns, socketserver, httpserver, httpclient, smtp, ftp, netrc
+**System**: os, process, time, timeout, context, args, shell, platform, errno, getpass, sched, signal, mmap
+**Crypto**: crypto (AES, SHA-256, ChaCha20), uuid, securerandom, digest
+**Math**: math, bitops, fixedpoint, bignum, complex, rational, datetime, calendar
 **Testing**: testing, benchmark, log, pp
 **AI/ML**: tensor_ops, autograd, nn, transformer, avx512_ops, ptx, rocm
+**Patterns**: decorator, dataclass, observer, enum, operator, marshal, pack, encoding, erb, fnmatch, mimetypes, compress
 
 See [stdlib/PACKAGES.md](stdlib/PACKAGES.md) for the complete list, or [docs/stdlib-md/](docs/stdlib-md/index.md) for full API docs.
 
@@ -159,7 +162,7 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 bootstrap/
   stage0/          Build system + jda0 (assembly bootstrap)
   stage1/          jda1 compiler source (jda1.jda — self-hosted)
-stdlib/            76 standard library packages
+stdlib/            114 standard library packages
 tools/             CLI tools (jda, jda-doc, jda-test, jda-pkg, etc.)
 tests/             291 pass + 7 fail conformance tests
 examples/          Example programs
@@ -176,7 +179,7 @@ docker/            Dockerfile for build environment
 ### Language Reference (Markdown — GitHub)
 - [Syntax](docs/language/syntax.md) — variables, types, functions, control flow, operators
 - [Structs & OOP](docs/language/structs.md) — structs, traits, impl, derive, generics, closures, unsafe
-- [Standard Library](docs/language/stdlib.md) — all 76 packages by category
+- [Standard Library](docs/language/stdlib.md) — all 114 packages by category
 - [Toolchain](docs/language/toolchain.md) — CLI commands, package manager, doc generator, testing
 - [Compiler Architecture](docs/language/compiler.md) — pipeline, data structures, self-hosting
 
