@@ -1,0 +1,125 @@
+; =============================================================================
+; jda::tuple -- Tuples / Multiple Return Values
+; =============================================================================
+; Pairs and triples for returning multiple values from functions.
+; Each tuple is a small &i64 allocation.
+;
+; Usage:
+;   fn divmod(a: i64, b: i64) -> &i64 {
+;       let q = a / b
+;       let r = a - q * b
+;       ret pair(q, r)
+;   }
+;   let r = divmod(17, 5)
+;   let q = fst(r)     ; 3
+;   let rem = snd(r)   ; 2
+;
+; Functions:
+;   pair(a, b)           -> &i64   2-tuple
+;   fst(t)               -> i64    first element
+;   snd(t)               -> i64    second element
+;   triple(a, b, c)      -> &i64   3-tuple
+;   trd(t)               -> i64    third element
+;   tup_get(t, idx)      -> i64    indexed access
+;   tup_set(t, idx, val)           indexed mutation
+;   pair_eq(a, b)        -> i64    element-wise equality
+;   pair_swap(t)         -> &i64   (b, a)
+;   triple_eq(a, b)      -> i64    element-wise equality
+;   result_ok(val)       -> &i64   (val, 0) — success
+;   result_err(code)     -> &i64   (0, code) — error
+;   is_ok(r)             -> i64    snd == 0?
+;   is_err(r)            -> i64    snd != 0?
+;   unwrap(r)            -> i64    fst value
+;   err_code(r)          -> i64    snd value
+; =============================================================================
+
+;; Create a pair (2-tuple).
+fn pair(a: i64, b: i64) -> &i64 {
+    let t: &i64 = alloc_pages(1)
+    t[0] = a
+    t[1] = b
+    ret t
+}
+
+;; First element.
+fn fst(t: &i64) -> i64 {
+    ret t[0]
+}
+
+;; Second element.
+fn snd(t: &i64) -> i64 {
+    ret t[1]
+}
+
+;; Create a triple (3-tuple).
+fn triple(a: i64, b: i64, c: i64) -> &i64 {
+    let t: &i64 = alloc_pages(1)
+    t[0] = a
+    t[1] = b
+    t[2] = c
+    ret t
+}
+
+;; Third element.
+fn trd(t: &i64) -> i64 {
+    ret t[2]
+}
+
+;; Generic indexed access.
+fn tup_get(t: &i64, idx: i64) -> i64 {
+    ret t[idx]
+}
+
+;; Generic indexed mutation.
+fn tup_set(t: &i64, idx: i64, val: i64) {
+    t[idx] = val
+}
+
+;; Pair equality (element-wise).
+fn pair_eq(a: &i64, b: &i64) -> i64 {
+    if a[0] == b[0] and a[1] == b[1] { ret 1 }
+    ret 0
+}
+
+;; Swap pair elements.
+fn pair_swap(t: &i64) -> &i64 {
+    ret pair(t[1], t[0])
+}
+
+;; Triple equality (element-wise).
+fn triple_eq(a: &i64, b: &i64) -> i64 {
+    if a[0] == b[0] and a[1] == b[1] and a[2] == b[2] { ret 1 }
+    ret 0
+}
+
+;; Result-style: success value with no error.
+fn result_ok(val: i64) -> &i64 {
+    ret pair(val, 0)
+}
+
+;; Result-style: error with code.
+fn result_err(code: i64) -> &i64 {
+    ret pair(0, code)
+}
+
+;; Is result a success? (error code == 0)
+fn is_ok(r: &i64) -> i64 {
+    if r[1] == 0 { ret 1 }
+    ret 0
+}
+
+;; Is result an error? (error code != 0)
+fn is_err(r: &i64) -> i64 {
+    if r[1] != 0 { ret 1 }
+    ret 0
+}
+
+;; Get the value from a result.
+fn unwrap(r: &i64) -> i64 {
+    ret r[0]
+}
+
+;; Get the error code from a result.
+fn err_code(r: &i64) -> i64 {
+    ret r[1]
+}
