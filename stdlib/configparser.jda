@@ -1,36 +1,36 @@
-; =============================================================================
-; jda::configparser -- INI File Parser
-; =============================================================================
-; Simple INI format parser with sections, keys, and values.
-; Supports [section] headers, key=value pairs, and ; comments.
-;
-; Memory layout per IniHandle (&i64):
-;   [0] entry_count
-;   [1] section_offsets  (&i64)
-;   [2] section_lengths  (&i64)
-;   [3] key_offsets      (&i64)
-;   [4] key_lengths      (&i64)
-;   [5] val_offsets       (&i64)
-;   [6] val_lengths       (&i64)
-;   [7] data_buf          (&i8 — copy of source)
-;   [8] data_len
-;   [9] cur_sec_off       (current section offset during parse)
-;   [10] cur_sec_len      (current section length during parse)
-;
-; Functions:
-;   ini_parse(buf, len)                             -> &i64  parse INI data
-;   ini_get(h, sec, slen, key, klen, out)          -> i64   get value string
-;   ini_get_i64(h, sec, slen, key, klen)           -> i64   get value as int
-;   ini_has_section(h, sec, slen)                  -> i64   1 if section exists
-;   ini_set(h, sec, slen, key, klen, val, vlen)    -> i64   set value
-;   ini_write(h, out, max)                         -> i64   serialize to INI
-;   ini_count(h)                                    -> i64   number of entries
-; =============================================================================
+// =============================================================================
+// jda::configparser -- INI File Parser
+// =============================================================================
+// Simple INI format parser with sections, keys, and values.
+// Supports [section] headers, key=value pairs, and ; comments.
 
-;; Internal byte reader.
+// Memory layout per IniHandle (&i64):
+//   [0] entry_count
+//   [1] section_offsets  (&i64)
+//   [2] section_lengths  (&i64)
+//   [3] key_offsets      (&i64)
+//   [4] key_lengths      (&i64)
+//   [5] val_offsets       (&i64)
+//   [6] val_lengths       (&i64)
+//   [7] data_buf          (&i8 — copy of source)
+//   [8] data_len
+//   [9] cur_sec_off       (current section offset during parse)
+//   [10] cur_sec_len      (current section length during parse)
+
+// Functions:
+//   ini_parse(buf, len)                             -> &i64  parse INI data
+//   ini_get(h, sec, slen, key, klen, out)          -> i64   get value string
+//   ini_get_i64(h, sec, slen, key, klen)           -> i64   get value as int
+//   ini_has_section(h, sec, slen)                  -> i64   1 if section exists
+//   ini_set(h, sec, slen, key, klen, val, vlen)    -> i64   set value
+//   ini_write(h, out, max)                         -> i64   serialize to INI
+//   ini_count(h)                                    -> i64   number of entries
+// =============================================================================
+
+// Internal byte reader.
 fn _ini_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: copy bytes from src+off to dst, length len.
+// Internal: copy bytes from src+off to dst, length len.
 fn _ini_copy(dst: &i8, src: &i8, off: i64, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -41,7 +41,7 @@ fn _ini_copy(dst: &i8, src: &i8, off: i64, len: i64) -> i64 {
     ret len
 }
 
-;; Internal: compare two byte ranges for equality.
+// Internal: compare two byte ranges for equality.
 fn _ini_eq(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i64 {
     if alen != blen { ret 0 }
     let i = 0
@@ -54,7 +54,7 @@ fn _ini_eq(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i64 {
     ret 1
 }
 
-;; Internal: skip whitespace at pos. Returns new pos.
+// Internal: skip whitespace at pos. Returns new pos.
 fn _ini_skip_ws(buf: &i8, pos: i64, len: i64) -> i64 {
     let running = 1
     loop running == 1 and pos < len {
@@ -64,7 +64,7 @@ fn _ini_skip_ws(buf: &i8, pos: i64, len: i64) -> i64 {
     ret pos
 }
 
-;; Internal: skip to end of line. Returns pos after newline.
+// Internal: skip to end of line. Returns pos after newline.
 fn _ini_skip_line(buf: &i8, pos: i64, len: i64) -> i64 {
     let found = 0
     loop found == 0 and pos < len {
@@ -75,7 +75,7 @@ fn _ini_skip_line(buf: &i8, pos: i64, len: i64) -> i64 {
     ret pos
 }
 
-;; Internal: add one entry. Val info passed via h[11], h[12].
+// Internal: add one entry. Val info passed via h[11], h[12].
 fn _ini_add_entry(h: &i64, sec_off: i64, sec_len: i64, key_off: i64, key_len: i64) -> i64 {
     let count = h[0]
     let sec_offs: &i64 = h[1]
@@ -96,9 +96,9 @@ fn _ini_add_entry(h: &i64, sec_off: i64, sec_len: i64, key_off: i64, key_len: i6
     ret count + 1
 }
 
-;; Internal: parse section header. Sets h[9], h[10]. Returns pos after line.
+// Internal: parse section header. Sets h[9], h[10]. Returns pos after line.
 fn _ini_parse_section(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
-    ; pos points to '[', skip it
+    // pos points to '[', skip it
     pos = pos + 1
     let start = pos
     let found = 0
@@ -113,7 +113,7 @@ fn _ini_parse_section(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
     ret pos
 }
 
-;; Internal: trim trailing whitespace. Returns new end position.
+// Internal: trim trailing whitespace. Returns new end position.
 fn _ini_trim_end(buf: &i8, start: i64, end_pos: i64) -> i64 {
     let e = end_pos
     let trimming = 1
@@ -125,7 +125,7 @@ fn _ini_trim_end(buf: &i8, start: i64, end_pos: i64) -> i64 {
     ret e
 }
 
-;; Internal: parse key=value line. Returns pos after line.
+// Internal: parse key=value line. Returns pos after line.
 fn _ini_parse_kv(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
     let key_start = pos
     let found_eq = 0
@@ -141,10 +141,10 @@ fn _ini_parse_kv(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
     }
     let key_end = _ini_trim_end(buf, key_start, pos)
     pos = pos + 1
-    ; Skip leading ws of value
+    // Skip leading ws of value
     pos = _ini_skip_ws(buf, pos, len)
     let val_start = pos
-    ; Scan to end of line
+    // Scan to end of line
     let at_eol = 0
     loop at_eol == 0 and pos < len {
         let vc = _ini_byte_at(buf, pos)
@@ -162,7 +162,7 @@ fn _ini_parse_kv(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
     ret pos
 }
 
-;; Parse INI data from buf. Returns handle.
+// Parse INI data from buf. Returns handle.
 fn ini_parse(buf: &i8, len: i64) -> &i64 {
     let h: &i64 = alloc_pages(1)
     let sec_offs: &i64 = alloc_pages(1)
@@ -211,17 +211,17 @@ fn ini_parse(buf: &i8, len: i64) -> &i64 {
     ret h
 }
 
-;; Alias for compatibility.
+// Alias for compatibility.
 fn ini_parse_full(buf: &i8, len: i64) -> &i64 {
     ret ini_parse(buf, len)
 }
 
-;; Number of entries in the INI handle.
+// Number of entries in the INI handle.
 fn ini_count(h: &i64) -> i64 {
     ret h[0]
 }
 
-;; Get value for section+key. Copies to out, returns length. -1 if not found.
+// Get value for section+key. Copies to out, returns length. -1 if not found.
 fn ini_get(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64, out: &i8) -> i64 {
     let data: &i8 = h[7]
     let count = h[0]
@@ -248,8 +248,8 @@ fn ini_get(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64, out: &i8) -> i64 {
     ret 0 - 1
 }
 
-;; Get value as i64. Returns 0 if not found.
-;; Parses directly from data buffer to avoid alloc_pages overlap.
+// Get value as i64. Returns 0 if not found.
+// Parses directly from data buffer to avoid alloc_pages overlap.
 fn ini_get_i64(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64) -> i64 {
     let data: &i8 = h[7]
     let count = h[0]
@@ -290,7 +290,7 @@ fn ini_get_i64(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64) -> i64 {
     ret 0
 }
 
-;; Check if section exists. Returns 1 if found, 0 otherwise.
+// Check if section exists. Returns 1 if found, 0 otherwise.
 fn ini_has_section(h: &i64, sec: &i8, slen: i64) -> i64 {
     let data: &i8 = h[7]
     let count = h[0]
@@ -305,8 +305,8 @@ fn ini_has_section(h: &i64, sec: &i8, slen: i64) -> i64 {
     ret 0
 }
 
-;; Set a value for section+key. Overwrites if exists, appends if new.
-;; Val and vlen passed via h[11], h[12] to avoid 7-arg limit.
+// Set a value for section+key. Overwrites if exists, appends if new.
+// Val and vlen passed via h[11], h[12] to avoid 7-arg limit.
 fn ini_set(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64) -> i64 {
     let val: &i8 = h[13]
     let vlen = h[12]
@@ -319,14 +319,14 @@ fn ini_set(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64) -> i64 {
     let val_offs: &i64 = h[5]
     let val_lens: &i64 = h[6]
     let dlen = h[8]
-    ; Search for existing entry
+    // Search for existing entry
     let i = 0
     loop i < count {
         let s_match = _ini_eq(sec, 0, slen, data, sec_offs[i], sec_lens[i])
         if s_match == 1 {
             let k_match = _ini_eq(key, 0, klen, data, key_offs[i], key_lens[i])
             if k_match == 1 {
-                ; Overwrite: copy val to end of data
+                // Overwrite: copy val to end of data
                 let new_off = dlen
                 let vi = 0
                 loop vi < vlen {
@@ -343,7 +343,7 @@ fn ini_set(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64) -> i64 {
         }
         i = i + 1
     }
-    ; Append new entry
+    // Append new entry
     let s_off = dlen
     let si = 0
     loop si < slen {
@@ -379,7 +379,7 @@ fn ini_set(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64) -> i64 {
     ret 1
 }
 
-;; Internal: write section's key=value pairs.
+// Internal: write section's key=value pairs.
 fn _ini_write_section_kvs(h: &i64, out: &i8, pos: i64, data: &i8, sec_off: i64, sec_len: i64) -> i64 {
     let count = h[0]
     let sec_offs: &i64 = h[1]
@@ -420,7 +420,7 @@ fn _ini_write_section_kvs(h: &i64, out: &i8, pos: i64, data: &i8, sec_off: i64, 
     ret pos
 }
 
-;; Write INI data to out buffer. Returns length written.
+// Write INI data to out buffer. Returns length written.
 fn ini_write(h: &i64, out: &i8, max: i64) -> i64 {
     let data: &i8 = h[7]
     let count = h[0]

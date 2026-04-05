@@ -1,18 +1,18 @@
-; =============================================================================
-; jda::mimetypes -- File Extension to MIME Type Mapping
-; =============================================================================
-; Map file extensions to MIME types and back.
-;
-; Functions:
-;   mime_type(ext, elen, out, max)     -> i64  extension -> MIME type
-;   mime_guess(path, plen, out, max)   -> i64  guess from filename
-;   mime_is_text(ext, elen)            -> i64  1 if text/* type
-; =============================================================================
+// =============================================================================
+// jda::mimetypes -- File Extension to MIME Type Mapping
+// =============================================================================
+// Map file extensions to MIME types and back.
 
-;; Internal byte reader.
+// Functions:
+//   mime_type(ext, elen, out, max)     -> i64  extension -> MIME type
+//   mime_guess(path, plen, out, max)   -> i64  guess from filename
+//   mime_is_text(ext, elen)            -> i64  1 if text/* type
+// =============================================================================
+
+// Internal byte reader.
 fn _mime_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: copy literal to output.
+// Internal: copy literal to output.
 fn _mime_copy(dst: &i8, src: &i8, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -22,7 +22,7 @@ fn _mime_copy(dst: &i8, src: &i8, len: i64) -> i64 {
     ret len
 }
 
-;; Internal: compare strings.
+// Internal: compare strings.
 fn _mime_eq(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
     if alen != blen { ret 0 }
     let i = 0
@@ -33,7 +33,7 @@ fn _mime_eq(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
     ret 1
 }
 
-;; Get MIME type for file extension (without dot). Returns length, -1 if unknown.
+// Get MIME type for file extension (without dot). Returns length, -1 if unknown.
 fn mime_type(ext: &i8, elen: i64, out: &i8, max: i64) -> i64 {
     if _mime_eq(ext, elen, "html", 4) == 1 { ret _mime_copy(out, "text/html", 9) }
     if _mime_eq(ext, elen, "htm", 3) == 1 { ret _mime_copy(out, "text/html", 9) }
@@ -72,9 +72,9 @@ fn mime_type(ext: &i8, elen: i64, out: &i8, max: i64) -> i64 {
     ret -1
 }
 
-;; Guess MIME type from filename/path. Extracts extension after last dot.
+// Guess MIME type from filename/path. Extracts extension after last dot.
 fn mime_guess(path: &i8, plen: i64, out: &i8, max: i64) -> i64 {
-    ; Find last dot
+    // Find last dot
     let dot_pos = -1
     let i = plen - 1
     loop i >= 0 {
@@ -89,12 +89,12 @@ fn mime_guess(path: &i8, plen: i64, out: &i8, max: i64) -> i64 {
     let ext_start = dot_pos + 1
     let ext_len = plen - ext_start
     if ext_len <= 0 { ret -1 }
-    ; Copy extension to temp buffer
+    // Copy extension to temp buffer
     let tmp: &i8 = alloc_pages(1)
     let j = 0
     loop j < ext_len {
         let b = _mime_byte_at(path, ext_start + j)
-        ; Convert to lowercase
+        // Convert to lowercase
         if b >= 65 {
             if b <= 90 { b = b + 32 }
         }
@@ -104,7 +104,7 @@ fn mime_guess(path: &i8, plen: i64, out: &i8, max: i64) -> i64 {
     ret mime_type(tmp, ext_len, out, max)
 }
 
-;; Check if extension maps to a text/* type.
+// Check if extension maps to a text/* type.
 fn mime_is_text(ext: &i8, elen: i64) -> i64 {
     if _mime_eq(ext, elen, "html", 4) == 1 { ret 1 }
     if _mime_eq(ext, elen, "htm", 3) == 1 { ret 1 }

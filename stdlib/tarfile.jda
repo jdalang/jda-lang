@@ -1,40 +1,40 @@
-; =============================================================================
-; jda::tarfile -- POSIX ustar Tar Archive Format
-; =============================================================================
-; Read and write tar archives using 512-byte block headers.
-; Supports regular file entries with names up to 100 chars.
-;
-; Write handle layout (&i64):
-;   [0] output buffer (&i8)
-;   [1] current write position
-;   [2] entry count
-;
-; Read handle layout (&i64):
-;   [0] input buffer (&i8)
-;   [1] input length
-;   [2] current offset (position of current entry header)
-;   [3] entry count (total discovered)
-;
-; Functions:
-;   tar_create(out)              -> &i64  create write handle
-;   tar_add_file(h, name, nlen, data, dlen) -> i64  add file entry
-;   tar_finish(h)                -> i64   write end markers, return total len
-;   tar_open(buf, len)           -> &i64  open for reading
-;   tar_next(h)                  -> i64   advance to next entry (1=ok, 0=end)
-;   tar_entry_name(h, out)       -> i64   copy entry name, return length
-;   tar_entry_size(h)            -> i64   size of current entry data
-;   tar_entry_data(h, out)       -> i64   copy entry data, return length
-; =============================================================================
+// =============================================================================
+// jda::tarfile -- POSIX ustar Tar Archive Format
+// =============================================================================
+// Read and write tar archives using 512-byte block headers.
+// Supports regular file entries with names up to 100 chars.
 
-;; Internal byte reader.
+// Write handle layout (&i64):
+//   [0] output buffer (&i8)
+//   [1] current write position
+//   [2] entry count
+
+// Read handle layout (&i64):
+//   [0] input buffer (&i8)
+//   [1] input length
+//   [2] current offset (position of current entry header)
+//   [3] entry count (total discovered)
+
+// Functions:
+//   tar_create(out)              -> &i64  create write handle
+//   tar_add_file(h, name, nlen, data, dlen) -> i64  add file entry
+//   tar_finish(h)                -> i64   write end markers, return total len
+//   tar_open(buf, len)           -> &i64  open for reading
+//   tar_next(h)                  -> i64   advance to next entry (1=ok, 0=end)
+//   tar_entry_name(h, out)       -> i64   copy entry name, return length
+//   tar_entry_size(h)            -> i64   size of current entry data
+//   tar_entry_data(h, out)       -> i64   copy entry data, return length
+// =============================================================================
+
+// Internal byte reader.
 fn _tar_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: write octal string (zero-padded, len chars) at position.
-;; Writes right-to-left directly into output to avoid alloc_pages.
+// Internal: write octal string (zero-padded, len chars) at position.
+// Writes right-to-left directly into output to avoid alloc_pages.
 fn _tar_write_octal(out: &i8, pos: i64, val: i64, len: i64) -> i64 {
-    ; Null terminator at last position
+    // Null terminator at last position
     poke_byte(out, pos + len - 1, 0)
-    ; Write digits right-to-left starting from pos + len - 2
+    // Write digits right-to-left starting from pos + len - 2
     let v = val
     let wp = pos + len - 2
     if v == 0 {
@@ -48,7 +48,7 @@ fn _tar_write_octal(out: &i8, pos: i64, val: i64, len: i64) -> i64 {
             wp = wp - 1
         }
     }
-    ; Zero-pad remaining positions
+    // Zero-pad remaining positions
     loop wp >= pos {
         poke_byte(out, wp, 48)
         wp = wp - 1
@@ -56,7 +56,7 @@ fn _tar_write_octal(out: &i8, pos: i64, val: i64, len: i64) -> i64 {
     ret pos + len
 }
 
-;; Internal: read octal number from buffer.
+// Internal: read octal number from buffer.
 fn _tar_read_octal(buf: &i8, pos: i64, len: i64) -> i64 {
     let result = 0
     let i = 0
@@ -71,12 +71,12 @@ fn _tar_read_octal(buf: &i8, pos: i64, len: i64) -> i64 {
     ret result
 }
 
-;; Internal: compute header checksum.
+// Internal: compute header checksum.
 fn _tar_checksum(buf: &i8, pos: i64) -> i64 {
     let sum = 0
     let i = 0
     loop i < 512 {
-        ; Checksum field at offset 148-155 treated as spaces
+        // Checksum field at offset 148-155 treated as spaces
         if i >= 148 and i < 156 {
             sum = sum + 32
         } else {
@@ -89,7 +89,7 @@ fn _tar_checksum(buf: &i8, pos: i64) -> i64 {
     ret sum
 }
 
-;; Internal: zero-fill a 512-byte block.
+// Internal: zero-fill a 512-byte block.
 fn _tar_zero_block(buf: &i8, pos: i64) -> i64 {
     let i = 0
     loop i < 512 {
@@ -99,7 +99,7 @@ fn _tar_zero_block(buf: &i8, pos: i64) -> i64 {
     ret 512
 }
 
-;; Create a write handle. out is the output buffer.
+// Create a write handle. out is the output buffer.
 fn tar_create(out: &i8) -> &i64 {
     let h: &i64 = alloc_pages(1)
     h[0] = out
@@ -108,15 +108,15 @@ fn tar_create(out: &i8) -> &i64 {
     ret h
 }
 
-;; Add a file entry to the tar archive.
+// Add a file entry to the tar archive.
 fn tar_add_file(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
     let out: &i8 = h[0]
     let pos = h[1]
 
-    ; Zero the header block
+    // Zero the header block
     _tar_zero_block(out, pos)
 
-    ; Name (offset 0, 100 bytes)
+    // Name (offset 0, 100 bytes)
     let ni = 0
     let name_max = nlen
     if name_max > 99 { name_max = 99 }
@@ -126,44 +126,44 @@ fn tar_add_file(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
         ni = ni + 1
     }
 
-    ; Mode (offset 100, 8 bytes) = 0000644
+    // Mode (offset 100, 8 bytes) = 0000644
     _tar_write_octal(out, pos + 100, 420, 8)
 
-    ; UID (offset 108, 8 bytes) = 0
+    // UID (offset 108, 8 bytes) = 0
     _tar_write_octal(out, pos + 108, 0, 8)
 
-    ; GID (offset 116, 8 bytes) = 0
+    // GID (offset 116, 8 bytes) = 0
     _tar_write_octal(out, pos + 116, 0, 8)
 
-    ; Size (offset 124, 12 bytes)
+    // Size (offset 124, 12 bytes)
     _tar_write_octal(out, pos + 124, dlen, 12)
 
-    ; Mtime (offset 136, 12 bytes) = 0
+    // Mtime (offset 136, 12 bytes) = 0
     _tar_write_octal(out, pos + 136, 0, 12)
 
-    ; Typeflag (offset 156) = '0' (regular file)
+    // Typeflag (offset 156) = '0' (regular file)
     poke_byte(out, pos + 156, 48)
 
-    ; ustar magic (offset 257, 6 bytes)
-    poke_byte(out, pos + 257, 117)  ; 'u'
-    poke_byte(out, pos + 258, 115)  ; 's'
-    poke_byte(out, pos + 259, 116)  ; 't'
-    poke_byte(out, pos + 260, 97)   ; 'a'
-    poke_byte(out, pos + 261, 114)  ; 'r'
+    // ustar magic (offset 257, 6 bytes)
+    poke_byte(out, pos + 257, 117)  // 'u'
+    poke_byte(out, pos + 258, 115)  // 's'
+    poke_byte(out, pos + 259, 116)  // 't'
+    poke_byte(out, pos + 260, 97)   // 'a'
+    poke_byte(out, pos + 261, 114)  // 'r'
     poke_byte(out, pos + 262, 0)
 
-    ; ustar version (offset 263, 2 bytes) = "00"
+    // ustar version (offset 263, 2 bytes) = "00"
     poke_byte(out, pos + 263, 48)
     poke_byte(out, pos + 264, 48)
 
-    ; Compute and write checksum (offset 148, 8 bytes)
+    // Compute and write checksum (offset 148, 8 bytes)
     let cksum = _tar_checksum(out, pos)
     _tar_write_octal(out, pos + 148, cksum, 7)
-    poke_byte(out, pos + 155, 32)  ; space after checksum
+    poke_byte(out, pos + 155, 32)  // space after checksum
 
     pos = pos + 512
 
-    ; Write data
+    // Write data
     let di = 0
     loop di < dlen {
         let db = _tar_byte_at(data, di)
@@ -172,7 +172,7 @@ fn tar_add_file(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
     }
     pos = pos + dlen
 
-    ; Pad to 512-byte boundary
+    // Pad to 512-byte boundary
     let remainder = dlen - (dlen / 512) * 512
     if remainder > 0 {
         let pad = 512 - remainder
@@ -189,7 +189,7 @@ fn tar_add_file(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
     ret 1
 }
 
-;; Write two zero blocks to finish the archive. Returns total length.
+// Write two zero blocks to finish the archive. Returns total length.
 fn tar_finish(h: &i64) -> i64 {
     let out: &i8 = h[0]
     let pos = h[1]
@@ -201,30 +201,30 @@ fn tar_finish(h: &i64) -> i64 {
     ret pos
 }
 
-;; Open a tar archive for reading.
+// Open a tar archive for reading.
 fn tar_open(buf: &i8, len: i64) -> &i64 {
     let h: &i64 = alloc_pages(1)
     h[0] = buf
     h[1] = len
-    h[2] = 0     ; current offset starts before first entry
+    h[2] = 0     // current offset starts before first entry
     h[3] = 0
-    ; Set to -512 so first tar_next advances to offset 0
+    // Set to -512 so first tar_next advances to offset 0
     h[2] = 0 - 512
     ret h
 }
 
-;; Advance to next entry. Returns 1 if entry found, 0 if end of archive.
+// Advance to next entry. Returns 1 if entry found, 0 if end of archive.
 fn tar_next(h: &i64) -> i64 {
     let buf: &i8 = h[0]
     let blen = h[1]
     let cur = h[2]
 
-    ; If first call, advance to 0; otherwise skip current entry
+    // If first call, advance to 0; otherwise skip current entry
     if cur < 0 {
         h[2] = 0
         cur = 0
     } else {
-        ; Skip header + data of current entry
+        // Skip header + data of current entry
         let size = _tar_read_octal(buf, cur + 124, 12)
         let data_blocks = size / 512
         let rem = size - data_blocks * 512
@@ -235,11 +235,11 @@ fn tar_next(h: &i64) -> i64 {
 
     if cur + 512 > blen { ret 0 }
 
-    ; Check for zero block (end of archive)
+    // Check for zero block (end of archive)
     let first = _tar_byte_at(buf, cur)
     if first < 0 { first = first + 256 }
     if first == 0 {
-        ; Check if entire block is zero
+        // Check if entire block is zero
         let all_zero = 1
         let ci = 0
         loop ci < 512 and all_zero == 1 {
@@ -255,7 +255,7 @@ fn tar_next(h: &i64) -> i64 {
     ret 1
 }
 
-;; Copy current entry name to out. Returns length.
+// Copy current entry name to out. Returns length.
 fn tar_entry_name(h: &i64, out: &i8) -> i64 {
     let buf: &i8 = h[0]
     let cur = h[2]
@@ -270,14 +270,14 @@ fn tar_entry_name(h: &i64, out: &i8) -> i64 {
     ret len
 }
 
-;; Get size of current entry data.
+// Get size of current entry data.
 fn tar_entry_size(h: &i64) -> i64 {
     let buf: &i8 = h[0]
     let cur = h[2]
     ret _tar_read_octal(buf, cur + 124, 12)
 }
 
-;; Copy current entry data to out. Returns length.
+// Copy current entry data to out. Returns length.
 fn tar_entry_data(h: &i64, out: &i8) -> i64 {
     let buf: &i8 = h[0]
     let cur = h[2]

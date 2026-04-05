@@ -1,35 +1,35 @@
-; =============================================================================
-; jda::fs -- Minimal File I/O
-; =============================================================================
-; Direct Linux syscalls. No libc.
-;
-; IMPORTANT: Each helper function contains at most ONE syscall call.
-; Multiple syscalls in a single function cause register corruption
-; in the current compiler.
-;
-; Functions:
-;   fs_read_file(path, buf, max) -> bytes read (-1 on error)
-;   fs_write_file(path, data, len) -> bytes written (-1 on error)
-;   fs_append_file(path, data, len) -> bytes written (-1 on error)
-;   fs_exists(path) -> 1 if file exists, 0 otherwise
-;   fs_unlink(path) -> 0 on success, -1 on error
-;   fs_mkdir(path) -> 0 on success, -1 on error
-;   fs_file_size(path) -> size in bytes (-1 on error)
-; =============================================================================
+// =============================================================================
+// jda::fs -- Minimal File I/O
+// =============================================================================
+// Direct Linux syscalls. No libc.
 
-; --- Single-syscall primitives ---
+// IMPORTANT: Each helper function contains at most ONE syscall call.
+// Multiple syscalls in a single function cause register corruption
+// in the current compiler.
+
+// Functions:
+//   fs_read_file(path, buf, max) -> bytes read (-1 on error)
+//   fs_write_file(path, data, len) -> bytes written (-1 on error)
+//   fs_append_file(path, data, len) -> bytes written (-1 on error)
+//   fs_exists(path) -> 1 if file exists, 0 otherwise
+//   fs_unlink(path) -> 0 on success, -1 on error
+//   fs_mkdir(path) -> 0 on success, -1 on error
+//   fs_file_size(path) -> size in bytes (-1 on error)
+// =============================================================================
+
+// --- Single-syscall primitives ---
 
 fn _fs_open_read(path: &i8) -> i64 {
     ret syscall(2, path, 0, 0)
 }
 
 fn _fs_open_write(path: &i8) -> i64 {
-    ; O_WRONLY | O_CREAT | O_TRUNC = 577, mode 0644 = 420
+    // O_WRONLY | O_CREAT | O_TRUNC = 577, mode 0644 = 420
     ret syscall(2, path, 577, 420)
 }
 
 fn _fs_open_append(path: &i8) -> i64 {
-    ; O_WRONLY | O_CREAT | O_APPEND = 1089, mode 0644 = 420
+    // O_WRONLY | O_CREAT | O_APPEND = 1089, mode 0644 = 420
     ret syscall(2, path, 1089, 420)
 }
 
@@ -54,7 +54,7 @@ fn _fs_unlink_raw(path: &i8) -> i64 {
 }
 
 fn _fs_mkdir_raw(path: &i8) -> i64 {
-    ; mkdir(path, 0755=493)
+    // mkdir(path, 0755=493)
     ret syscall(83, path, 493, 0)
 }
 
@@ -66,7 +66,7 @@ fn _fs_rename_raw(src: &i8, dst: &i8) -> i64 {
     ret syscall(82, src, dst, 0)
 }
 
-; --- High-level functions (no syscalls, only call single-syscall helpers) ---
+// --- High-level functions (no syscalls, only call single-syscall helpers) ---
 
 fn fs_read_file(path: &i8, buf: &i8, max_bytes: i64) -> i64 {
     let fd = _fs_open_read(path)

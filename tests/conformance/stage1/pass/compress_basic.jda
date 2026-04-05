@@ -3,7 +3,7 @@ fn main() -> i64 {
     let comp: &i8 = alloc_pages(1)
     let decomp: &i8 = alloc_pages(1)
 
-    ; Build data: "aaabbc" = 97 97 97 98 98 99
+    // Build data: "aaabbc" = 97 97 97 98 98 99
     poke_byte(data, 0, 97)
     poke_byte(data, 1, 97)
     poke_byte(data, 2, 97)
@@ -11,29 +11,29 @@ fn main() -> i64 {
     poke_byte(data, 4, 98)
     poke_byte(data, 5, 99)
 
-    ; Compress
+    // Compress
     let clen = compress_rle(data, 6, comp)
-    ; Expected: [3][97] [2][98] [1][99] = 6 bytes
+    // Expected: [3][97] [2][98] [1][99] = 6 bytes
     print("{clen}\n")
 
-    ; Decompress
+    // Decompress
     let dlen = decompress_rle(comp, clen, decomp)
     print("{dlen}\n")
 
-    ; Print decompressed
+    // Print decompressed
     syscall(1, 1, decomp, dlen)
     print("\n")
 
-    ; Test single byte
-    poke_byte(data, 0, 65)  ; A
+    // Test single byte
+    poke_byte(data, 0, 65)  // A
     clen = compress_rle(data, 1, comp)
-    ; Expected: [1][65] = 2 bytes
+    // Expected: [1][65] = 2 bytes
     print("{clen}\n")
     dlen = decompress_rle(comp, clen, decomp)
     syscall(1, 1, decomp, dlen)
     print("\n")
 
-    ; Test LZ77 stubs
+    // Test LZ77 stubs
     let lz = compress_lz77(data, 1, comp)
     print("{lz}\n")
     let dlz = decompress_lz77(data, 1, decomp)

@@ -1,6 +1,6 @@
-; Test autograd: chain rule — composite function gradients
-; f(x) = exp(x*x + 1) → df/dx = exp(x*x+1) * 2x
-; g(x) = tanh(3*x) → dg/dx = (1 - tanh(3x)^2) * 3
+// Test autograd: chain rule — composite function gradients
+// f(x) = exp(x*x + 1) → df/dx = exp(x*x+1) * 2x
+// g(x) = tanh(3*x) → dg/dx = (1 - tanh(3x)^2) * 3
 
 fn grad_check_close(analytical: i64, numerical: i64, eps: i64) -> i64 {
     let diff = f64_sub(analytical, numerical)
@@ -19,18 +19,18 @@ fn main() -> i64 {
     let eps = f64_from_int(1)
     let twoh = f64_mul(two, h)
 
-    ; f(x) = exp(x*x + 1)
+    // f(x) = exp(x*x + 1)
     let xx = f64_mul(x, x)
     let xx1 = f64_add(xx, one)
     let f_val = f64_exp(xx1)
 
-    ; Backward: df/dx = exp(x*x+1) * 2x
+    // Backward: df/dx = exp(x*x+1) * 2x
     let grad_f = f64_from_int(1)
     let d_exp = f64_mul(grad_f, f_val)
     let d_xx = f64_mul(two, x)
     let df_dx = f64_mul(d_exp, d_xx)
 
-    ; Numerical df/dx (pre-compute all nested calls)
+    // Numerical df/dx (pre-compute all nested calls)
     let xh = f64_add(x, h)
     let xmh = f64_sub(x, h)
     let xxp = f64_mul(xh, xh)
@@ -47,18 +47,18 @@ fn main() -> i64 {
         print "grad chain exp ok"
     }
 
-    ; g(x) = tanh(3*x)
+    // g(x) = tanh(3*x)
     let tx = f64_mul(three, x)
     let g_val = f64_tanh(tx)
 
-    ; Backward: dg/dx = (1 - tanh(3x)^2) * 3
+    // Backward: dg/dx = (1 - tanh(3x)^2) * 3
     let grad_g = f64_from_int(1)
     let g2 = f64_mul(g_val, g_val)
     let d_tanh = f64_sub(one, g2)
     let d_tanh_gc = f64_mul(grad_g, d_tanh)
     let dg_dx = f64_mul(d_tanh_gc, three)
 
-    ; Numerical dg/dx (pre-compute nested calls)
+    // Numerical dg/dx (pre-compute nested calls)
     let txh = f64_mul(three, xh)
     let txmh = f64_mul(three, xmh)
     let gp = f64_tanh(txh)
@@ -71,8 +71,8 @@ fn main() -> i64 {
         print "grad chain tanh ok"
     }
 
-    ; h(x) = log(x*x + 1) where x=2
-    ; dh/dx = 1/(x*x+1) * 2x
+    // h(x) = log(x*x + 1) where x=2
+    // dh/dx = 1/(x*x+1) * 2x
     let x2 = f64_from_int(2)
     let h2 = f64_div(one, ten_k)
     let x2x2 = f64_mul(x2, x2)

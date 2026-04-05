@@ -1,32 +1,32 @@
 fn main() -> i64 {
     let out: &i8 = alloc_pages(1)
 
-    ; Test errno_name
+    // Test errno_name
     let n = errno_name(2, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Test errno_name for EINVAL
+    // Test errno_name for EINVAL
     n = errno_name(22, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Test errno_desc
+    // Test errno_desc
     n = errno_desc(13, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Test errno_from_name
+    // Test errno_from_name
     let code = errno_from_name("EPIPE", 5)
     print("{code}\n")
 
-    ; Test unknown
+    // Test unknown
     let unk = errno_from_name("BOGUS", 5)
     if unk < 0 {
         print("not found\n")
     }
 
-    ; Round-trip
+    // Round-trip
     let c2 = errno_from_name("EAGAIN", 6)
     let n2 = errno_name(c2, out)
     syscall(1, 1, out, n2)

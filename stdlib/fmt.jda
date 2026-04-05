@@ -1,18 +1,18 @@
-; =============================================================================
-; jda::fmt -- Minimal String Formatting
-; =============================================================================
-; Integer-to-string conversion and basic string utilities.
-;
-; Functions:
-;   fmt_i64(buf, val) -> length written
-;   fmt_hex(buf, val) -> length written
-;   str_len(s) -> length
-;   str_eq(a, b) -> 1 if equal, 0 otherwise
-;   str_copy(dst, src, len) -> len
-;   mem_set(dst, val, len)
-;   eprint_str(s, len) -- write to stderr
-;   print_str(s, len) -- write to stdout
-; =============================================================================
+// =============================================================================
+// jda::fmt -- Minimal String Formatting
+// =============================================================================
+// Integer-to-string conversion and basic string utilities.
+
+// Functions:
+//   fmt_i64(buf, val) -> length written
+//   fmt_hex(buf, val) -> length written
+//   str_len(s) -> length
+//   str_eq(a, b) -> 1 if equal, 0 otherwise
+//   str_copy(dst, src, len) -> len
+//   mem_set(dst, val, len)
+//   eprint_str(s, len) -- write to stderr
+//   print_str(s, len) -- write to stdout
+// =============================================================================
 
 fn fmt_i64(buf: &i8, val: i64) -> i64 {
     let v = val
@@ -25,7 +25,7 @@ fn fmt_i64(buf: &i8, val: i64) -> i64 {
         buf[0] = 48
         ret 1
     }
-    ; Write digits backwards starting at position 20
+    // Write digits backwards starting at position 20
     let pos = 20
     let len = 0
     loop v > 0 {
@@ -40,7 +40,7 @@ fn fmt_i64(buf: &i8, val: i64) -> i64 {
         buf[pos] = 45
         len = len + 1
     }
-    ; Shift to start of buffer
+    // Shift to start of buffer
     let i = 0
     loop i < len {
         let src_pos = pos + i
@@ -59,10 +59,10 @@ fn fmt_hex(buf: &i8, val: i64) -> i64 {
         buf[2] = 48
         ret 3
     }
-    ; Write "0x" prefix
+    // Write "0x" prefix
     buf[0] = 48
     buf[1] = 120
-    ; Write hex digits backwards starting at position 20
+    // Write hex digits backwards starting at position 20
     let pos = 20
     let len = 0
     loop v > 0 {
@@ -76,7 +76,7 @@ fn fmt_hex(buf: &i8, val: i64) -> i64 {
         v = v / 16
         len = len + 1
     }
-    ; Shift to position 2 (after "0x")
+    // Shift to position 2 (after "0x")
     let i = 0
     loop i < len {
         let src_pos = pos + i

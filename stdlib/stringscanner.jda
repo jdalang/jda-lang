@@ -1,30 +1,30 @@
-; =============================================================================
-; jda::stringscanner -- Stateful String Scanner
-; =============================================================================
-; Scan through a string with position tracking. Useful for tokenizers/parsers.
-;
-; Memory layout per StringScanner (&i64):
-;   [0] src_ptr    (&i8)
-;   [1] src_len
-;   [2] pos        (current scan position)
-;   [3] match_off  (start of last match)
-;   [4] match_len  (length of last match)
-;
-; Functions:
-;   ss_new(src, len)                 -> &i64  create scanner
-;   ss_scan(ss, pat, plen)           -> i64   match at pos, advance if found
-;   ss_check(ss, pat, plen)          -> i64   match at pos, don't advance
-;   ss_skip(ss, n)                            advance position by n
-;   ss_skip_until(ss, pat, plen)     -> i64   advance until pattern found
-;   ss_rest(ss, out)                 -> i64   copy remaining string
-;   ss_rest_len(ss)                  -> i64   length of remaining
-;   ss_eos(ss)                       -> i64   1 if at end
-;   ss_pos(ss)                       -> i64   current position
-;   ss_reset(ss)                              reset to start
-;   ss_matched(ss, out)              -> i64   copy last match
-;   ss_peek(ss, n, out)              -> i64   peek next n bytes without advancing
-;   ss_scan_byte(ss)                 -> i64   read one byte and advance
-; =============================================================================
+// =============================================================================
+// jda::stringscanner -- Stateful String Scanner
+// =============================================================================
+// Scan through a string with position tracking. Useful for tokenizers/parsers.
+
+// Memory layout per StringScanner (&i64):
+//   [0] src_ptr    (&i8)
+//   [1] src_len
+//   [2] pos        (current scan position)
+//   [3] match_off  (start of last match)
+//   [4] match_len  (length of last match)
+
+// Functions:
+//   ss_new(src, len)                 -> &i64  create scanner
+//   ss_scan(ss, pat, plen)           -> i64   match at pos, advance if found
+//   ss_check(ss, pat, plen)          -> i64   match at pos, don't advance
+//   ss_skip(ss, n)                            advance position by n
+//   ss_skip_until(ss, pat, plen)     -> i64   advance until pattern found
+//   ss_rest(ss, out)                 -> i64   copy remaining string
+//   ss_rest_len(ss)                  -> i64   length of remaining
+//   ss_eos(ss)                       -> i64   1 if at end
+//   ss_pos(ss)                       -> i64   current position
+//   ss_reset(ss)                              reset to start
+//   ss_matched(ss, out)              -> i64   copy last match
+//   ss_peek(ss, n, out)              -> i64   peek next n bytes without advancing
+//   ss_scan_byte(ss)                 -> i64   read one byte and advance
+// =============================================================================
 
 fn _ss_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
@@ -36,7 +36,7 @@ fn _ss_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
     }
 }
 
-;; Create new scanner over source string.
+// Create new scanner over source string.
 fn ss_new(src: &i8, len: i64) -> &i64 {
     let ss: &i64 = alloc_pages(1)
     ss[0] = src
@@ -47,7 +47,7 @@ fn ss_new(src: &i8, len: i64) -> &i64 {
     ret ss
 }
 
-;; Try to match pattern at current position. If found, advance and return 1.
+// Try to match pattern at current position. If found, advance and return 1.
 fn ss_scan(ss: &i64, pat: &i8, plen: i64) -> i64 {
     let src: &i8 = ss[0]
     let slen = ss[1]
@@ -64,7 +64,7 @@ fn ss_scan(ss: &i64, pat: &i8, plen: i64) -> i64 {
     ret 1
 }
 
-;; Check if pattern matches at current position without advancing.
+// Check if pattern matches at current position without advancing.
 fn ss_check(ss: &i64, pat: &i8, plen: i64) -> i64 {
     let src: &i8 = ss[0]
     let slen = ss[1]
@@ -78,14 +78,14 @@ fn ss_check(ss: &i64, pat: &i8, plen: i64) -> i64 {
     ret 1
 }
 
-;; Advance position by n bytes.
+// Advance position by n bytes.
 fn ss_skip(ss: &i64, n: i64) {
     let new_pos = ss[2] + n
     if new_pos > ss[1] { new_pos = ss[1] }
     ss[2] = new_pos
 }
 
-;; Skip forward until pattern is found. Returns distance skipped, -1 if not found.
+// Skip forward until pattern is found. Returns distance skipped, -1 if not found.
 fn ss_skip_until(ss: &i64, pat: &i8, plen: i64) -> i64 {
     let src: &i8 = ss[0]
     let slen = ss[1]
@@ -110,7 +110,7 @@ fn ss_skip_until(ss: &i64, pat: &i8, plen: i64) -> i64 {
     ret 0 - 1
 }
 
-;; Copy remaining unscanned portion to out. Returns length.
+// Copy remaining unscanned portion to out. Returns length.
 fn ss_rest(ss: &i64, out: &i8) -> i64 {
     let src: &i8 = ss[0]
     let remaining = ss[1] - ss[2]
@@ -119,30 +119,30 @@ fn ss_rest(ss: &i64, out: &i8) -> i64 {
     ret remaining
 }
 
-;; Length of remaining unscanned portion.
+// Length of remaining unscanned portion.
 fn ss_rest_len(ss: &i64) -> i64 {
     ret ss[1] - ss[2]
 }
 
-;; 1 if at end of string.
+// 1 if at end of string.
 fn ss_eos(ss: &i64) -> i64 {
     if ss[2] >= ss[1] { ret 1 }
     ret 0
 }
 
-;; Current scan position.
+// Current scan position.
 fn ss_pos(ss: &i64) -> i64 {
     ret ss[2]
 }
 
-;; Reset scanner to beginning.
+// Reset scanner to beginning.
 fn ss_reset(ss: &i64) {
     ss[2] = 0
     ss[3] = 0
     ss[4] = 0
 }
 
-;; Copy last matched string to out. Returns length.
+// Copy last matched string to out. Returns length.
 fn ss_matched(ss: &i64, out: &i8) -> i64 {
     let src: &i8 = ss[0]
     let mlen = ss[4]
@@ -151,7 +151,7 @@ fn ss_matched(ss: &i64, out: &i8) -> i64 {
     ret mlen
 }
 
-;; Peek at next n bytes without advancing. Returns bytes copied.
+// Peek at next n bytes without advancing. Returns bytes copied.
 fn ss_peek(ss: &i64, n: i64, out: &i8) -> i64 {
     let src: &i8 = ss[0]
     let avail = ss[1] - ss[2]
@@ -161,7 +161,7 @@ fn ss_peek(ss: &i64, n: i64, out: &i8) -> i64 {
     ret n
 }
 
-;; Read one byte and advance. Returns byte value or -1 at end.
+// Read one byte and advance. Returns byte value or -1 at end.
 fn ss_scan_byte(ss: &i64) -> i64 {
     if ss[2] >= ss[1] { ret 0 - 1 }
     let src: &i8 = ss[0]

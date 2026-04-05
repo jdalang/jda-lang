@@ -1,25 +1,25 @@
-; =============================================================================
-; jda::lockfile -- Lock File for Dependency Pinning
-; =============================================================================
-; Simple key=value lock file for recording exact installed versions.
-; Format: one entry per line, "name = version\n"
-;
-; Memory layout (&i64 registry):
-;   [i*3 + 0] = name pointer (&i8)
-;   [i*3 + 1] = version pointer (&i8)
-;   [i*3 + 2] = hash (integrity, 0 if not set)
-;
-; Functions:
-;   lock_init()                          initialize lock state
-;   lock_add(name, version)              add/update an entry
-;   lock_remove(name)                    remove an entry
-;   lock_get(name)           -> &i8      get pinned version ("" if not found)
-;   lock_has(name)           -> i64      1 if name is locked
-;   lock_count()             -> i64      number of entries
-;   lock_print()                         print all entries
-;   lock_set_hash(name, h)               set integrity hash
-;   lock_get_hash(name)     -> i64       get integrity hash (0 if not set)
-; =============================================================================
+// =============================================================================
+// jda::lockfile -- Lock File for Dependency Pinning
+// =============================================================================
+// Simple key=value lock file for recording exact installed versions.
+// Format: one entry per line, "name = version\n"
+
+// Memory layout (&i64 registry):
+//   [i*3 + 0] = name pointer (&i8)
+//   [i*3 + 1] = version pointer (&i8)
+//   [i*3 + 2] = hash (integrity, 0 if not set)
+
+// Functions:
+//   lock_init()                          initialize lock state
+//   lock_add(name, version)              add/update an entry
+//   lock_remove(name)                    remove an entry
+//   lock_get(name)           -> &i8      get pinned version ("" if not found)
+//   lock_has(name)           -> i64      1 if name is locked
+//   lock_count()             -> i64      number of entries
+//   lock_print()                         print all entries
+//   lock_set_hash(name, h)               set integrity hash
+//   lock_get_hash(name)     -> i64       get integrity hash (0 if not set)
+// =============================================================================
 
 const _LOCK_MAX = 128
 
@@ -27,7 +27,7 @@ let _lock_entries: &i64 = 0
 let _lock_count: i64 = 0
 let _lock_inited: i64 = 0
 
-;; Internal: c-string length.
+// Internal: c-string length.
 fn _lock_cstr_len(s: &i8) -> i64 {
     let n = 0
     loop n < 128 {
@@ -37,7 +37,7 @@ fn _lock_cstr_len(s: &i8) -> i64 {
     ret 128
 }
 
-;; Internal: c-string equality.
+// Internal: c-string equality.
 fn _lock_cstr_eq(a: &i8, b: &i8) -> i64 {
     let i = 0
     loop i < 128 {
@@ -50,18 +50,18 @@ fn _lock_cstr_eq(a: &i8, b: &i8) -> i64 {
     ret 1
 }
 
-;; Internal: write to stdout.
+// Internal: write to stdout.
 fn _lock_write(s: &i8, len: i64) {
     syscall(1, 1, s, len)
 }
 
-;; Internal: print c-string to stdout.
+// Internal: print c-string to stdout.
 fn _lock_print_str(s: &i8) {
     let n = _lock_cstr_len(s)
     _lock_write(s, n)
 }
 
-;; Internal: find entry by name, -1 if not found.
+// Internal: find entry by name, -1 if not found.
 fn _lock_find(name: &i8) -> i64 {
     let i = 0
     loop i < _lock_count {
@@ -73,7 +73,7 @@ fn _lock_find(name: &i8) -> i64 {
     ret 0 - 1
 }
 
-;; Initialize the lock file state.
+// Initialize the lock file state.
 fn lock_init() {
     if _lock_inited == 1 { ret }
     _lock_entries = alloc_pages(1)
@@ -81,11 +81,11 @@ fn lock_init() {
     _lock_inited = 1
 }
 
-;; Add or update an entry.
+// Add or update an entry.
 fn lock_add(name: &i8, version: &i8) {
     let idx = _lock_find(name)
     if idx >= 0 {
-        ; Update existing
+        // Update existing
         let base = idx * 3
         let b1 = base + 1
         _lock_entries[b1] = version
@@ -101,7 +101,7 @@ fn lock_add(name: &i8, version: &i8) {
     _lock_count = _lock_count + 1
 }
 
-;; Remove an entry.
+// Remove an entry.
 fn lock_remove(name: &i8) {
     let idx = _lock_find(name)
     if idx < 0 { ret }
@@ -120,7 +120,7 @@ fn lock_remove(name: &i8) {
     _lock_count = _lock_count - 1
 }
 
-;; Get pinned version string ("" if not found).
+// Get pinned version string ("" if not found).
 fn lock_get(name: &i8) -> &i8 {
     let idx = _lock_find(name)
     if idx < 0 { ret "" }
@@ -129,19 +129,19 @@ fn lock_get(name: &i8) -> &i8 {
     ret _lock_entries[b1]
 }
 
-;; Check if name is in the lock file.
+// Check if name is in the lock file.
 fn lock_has(name: &i8) -> i64 {
     let idx = _lock_find(name)
     if idx >= 0 { ret 1 }
     ret 0
 }
 
-;; Get number of locked entries.
+// Get number of locked entries.
 fn lock_count() -> i64 {
     ret _lock_count
 }
 
-;; Set integrity hash for an entry.
+// Set integrity hash for an entry.
 fn lock_set_hash(name: &i8, h: i64) {
     let idx = _lock_find(name)
     if idx < 0 { ret }
@@ -150,7 +150,7 @@ fn lock_set_hash(name: &i8, h: i64) {
     _lock_entries[b2] = h
 }
 
-;; Get integrity hash (0 if not set or not found).
+// Get integrity hash (0 if not set or not found).
 fn lock_get_hash(name: &i8) -> i64 {
     let idx = _lock_find(name)
     if idx < 0 { ret 0 }
@@ -159,7 +159,7 @@ fn lock_get_hash(name: &i8) -> i64 {
     ret _lock_entries[b2]
 }
 
-;; Print all lock entries.
+// Print all lock entries.
 fn lock_print() {
     let c = _lock_count
     print("Lock (")

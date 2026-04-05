@@ -1,73 +1,73 @@
-; =============================================================================
-; jda::tempfile -- Temporary Files and Directories
-; =============================================================================
-; Secure temporary file/directory creation using unique names.
-; Files are created in /tmp with random suffixes.
-;
-; Functions:
-;   tmp_file(prefix, plen)         -> &i64  create temp file, return handle
-;   tmp_dir(prefix, plen)          -> &i64  create temp directory, return handle
-;   tmp_path(handle, dst)          -> i64   copy path to dst, return length
-;   tmp_fd(handle)                 -> i64   file descriptor (files only)
-;   tmp_write(handle, data, len)   -> i64   write bytes to temp file
-;   tmp_read(handle, dst, max)     -> i64   read bytes from temp file
-;   tmp_close(handle)                       close file descriptor
-;   tmp_remove(handle)                      delete the temp file/directory
-;   tmp_name(prefix, plen, dst)    -> i64   just generate a unique path
-; =============================================================================
+// =============================================================================
+// jda::tempfile -- Temporary Files and Directories
+// =============================================================================
+// Secure temporary file/directory creation using unique names.
+// Files are created in /tmp with random suffixes.
 
-;; Internal: generate random suffix (6 alphanumeric chars).
+// Functions:
+//   tmp_file(prefix, plen)         -> &i64  create temp file, return handle
+//   tmp_dir(prefix, plen)          -> &i64  create temp directory, return handle
+//   tmp_path(handle, dst)          -> i64   copy path to dst, return length
+//   tmp_fd(handle)                 -> i64   file descriptor (files only)
+//   tmp_write(handle, data, len)   -> i64   write bytes to temp file
+//   tmp_read(handle, dst, max)     -> i64   read bytes from temp file
+//   tmp_close(handle)                       close file descriptor
+//   tmp_remove(handle)                      delete the temp file/directory
+//   tmp_name(prefix, plen, dst)    -> i64   just generate a unique path
+// =============================================================================
+
+// Internal: generate random suffix (6 alphanumeric chars).
 fn tmp_rand_suffix(dst: &i8, off: i64) -> i64 {
     let i = 0
     loop i < 6 {
         let r = math_rand()
         let rem = r - (r / 36) * 36
         if rem < 10 {
-            poke_byte(dst, off + i, rem + 48)      ; 0-9
+            poke_byte(dst, off + i, rem + 48)      // 0-9
         } else {
-            poke_byte(dst, off + i, rem - 10 + 97)  ; a-z
+            poke_byte(dst, off + i, rem - 10 + 97)  // a-z
         }
         i = i + 1
     }
     ret 6
 }
 
-;; Internal: write "/tmp/" prefix.
+// Internal: write "/tmp/" prefix.
 fn tmp_write_prefix(dst: &i8) -> i64 {
-    poke_byte(dst, 0, 47)   ; /
-    poke_byte(dst, 1, 116)  ; t
-    poke_byte(dst, 2, 109)  ; m
-    poke_byte(dst, 3, 112)  ; p
-    poke_byte(dst, 4, 47)   ; /
+    poke_byte(dst, 0, 47)   // /
+    poke_byte(dst, 1, 116)  // t
+    poke_byte(dst, 2, 109)  // m
+    poke_byte(dst, 3, 112)  // p
+    poke_byte(dst, 4, 47)   // /
     ret 5
 }
 
-;; Generate a unique temp path name. Returns length.
+// Generate a unique temp path name. Returns length.
 fn tmp_name(prefix: &i8, plen: i64, dst: &i8) -> i64 {
     let pos = tmp_write_prefix(dst)
-    ; Copy prefix
+    // Copy prefix
     let i = 0
     loop i < plen {
         poke_byte(dst, pos, load_i8_at(prefix, i))
         pos = pos + 1
         i = i + 1
     }
-    ; Add underscore separator
+    // Add underscore separator
     poke_byte(dst, pos, 95)
     pos = pos + 1
-    ; Add random suffix
+    // Add random suffix
     tmp_rand_suffix(dst, pos)
     pos = pos + 6
-    ; Null terminate
+    // Null terminate
     poke_byte(dst, pos, 0)
     ret pos
 }
 
-;; Handle layout: [0]=fd, [1]=path_ptr, [2]=path_len, [3]=is_dir
+// Handle layout: [0]=fd, [1]=path_ptr, [2]=path_len, [3]=is_dir
 fn tmp_make_handle(fd: i64, path: &i8, plen: i64, is_dir: i64) -> &i64 {
     let h: &i64 = alloc_pages(1)
     h[0] = fd
-    ; Copy path to persistent buffer
+    // Copy path to persistent buffer
     let pbuf: &i8 = alloc_pages(1)
     let i = 0
     loop i < plen {
@@ -81,36 +81,36 @@ fn tmp_make_handle(fd: i64, path: &i8, plen: i64, is_dir: i64) -> &i64 {
     ret h
 }
 
-;; Create a temporary file. Returns handle.
+// Create a temporary file. Returns handle.
 fn tmp_file(prefix: &i8, plen: i64) -> &i64 {
     let path: &i8 = alloc_pages(1)
     let pathlen = tmp_name(prefix, plen, path)
-    ; open(path, O_CREAT|O_RDWR|O_EXCL, 0600)
-    ; O_CREAT=64, O_RDWR=2, O_EXCL=128 → flags = 194
-    let fd = syscall(2, path, 194, 384)  ; 384 = 0600 octal
+    // open(path, O_CREAT|O_RDWR|O_EXCL, 0600)
+    // O_CREAT=64, O_RDWR=2, O_EXCL=128 → flags = 194
+    let fd = syscall(2, path, 194, 384)  // 384 = 0600 octal
     if fd < 0 {
-        ; Retry with different suffix
+        // Retry with different suffix
         pathlen = tmp_name(prefix, plen, path)
         fd = syscall(2, path, 194, 384)
     }
     ret tmp_make_handle(fd, path, pathlen, 0)
 }
 
-;; Create a temporary directory. Returns handle.
+// Create a temporary directory. Returns handle.
 fn tmp_dir(prefix: &i8, plen: i64) -> &i64 {
     let path: &i8 = alloc_pages(1)
     let pathlen = tmp_name(prefix, plen, path)
-    ; mkdir(path, 0700)
-    let rc = syscall(83, path, 448, 0)  ; 448 = 0700 octal
+    // mkdir(path, 0700)
+    let rc = syscall(83, path, 448, 0)  // 448 = 0700 octal
     if rc < 0 {
-        ; Retry
+        // Retry
         pathlen = tmp_name(prefix, plen, path)
         rc = syscall(83, path, 448, 0)
     }
     ret tmp_make_handle(-1, path, pathlen, 1)
 }
 
-;; Copy path to dst buffer. Returns length.
+// Copy path to dst buffer. Returns length.
 fn tmp_path(handle: &i64, dst: &i8) -> i64 {
     let src: &i8 = handle[1]
     let plen = handle[2]
@@ -122,22 +122,22 @@ fn tmp_path(handle: &i64, dst: &i8) -> i64 {
     ret plen
 }
 
-;; Get file descriptor.
+// Get file descriptor.
 fn tmp_fd(handle: &i64) -> i64 { ret handle[0] }
 
-;; Write bytes to temp file.
+// Write bytes to temp file.
 fn tmp_write(handle: &i64, data: &i8, len: i64) -> i64 {
     ret syscall(1, handle[0], data, len)
 }
 
-;; Read bytes from temp file (seeks to start first).
+// Read bytes from temp file (seeks to start first).
 fn tmp_read(handle: &i64, dst: &i8, max: i64) -> i64 {
-    ; lseek(fd, 0, SEEK_SET)
+    // lseek(fd, 0, SEEK_SET)
     syscall(8, handle[0], 0, 0)
     ret syscall(0, handle[0], dst, max)
 }
 
-;; Close the file descriptor.
+// Close the file descriptor.
 fn tmp_close(handle: &i64) {
     if handle[0] >= 0 {
         syscall(3, handle[0], 0, 0)
@@ -145,14 +145,14 @@ fn tmp_close(handle: &i64) {
     }
 }
 
-;; Delete the temp file or directory.
+// Delete the temp file or directory.
 fn tmp_remove(handle: &i64) {
     let path: &i8 = handle[1]
     if handle[3] == 1 {
-        ; rmdir
+        // rmdir
         syscall(84, path, 0, 0)
     } else {
-        ; unlink
+        // unlink
         tmp_close(handle)
         syscall(87, path, 0, 0)
     }

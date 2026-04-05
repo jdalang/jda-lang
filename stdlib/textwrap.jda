@@ -1,20 +1,20 @@
-; =============================================================================
-; jda::textwrap -- Text Wrapping and Formatting
-; =============================================================================
-; Word-wrap text at specified width, dedent, indent, and shorten.
-;
-; Functions:
-;   textwrap_wrap(src, slen, width, out, max)              -> i64  wrap text
-;   textwrap_fill(src, slen, width, out, max)              -> i64  wrap + join with newlines
-;   textwrap_dedent(src, slen, out, max)                   -> i64  remove common indent
-;   textwrap_indent(src, slen, pfx, plen, out, max)        -> i64  add prefix to lines
-;   textwrap_shorten(src, slen, width, out, max)           -> i64  truncate with [...]
-; =============================================================================
+// =============================================================================
+// jda::textwrap -- Text Wrapping and Formatting
+// =============================================================================
+// Word-wrap text at specified width, dedent, indent, and shorten.
 
-;; Internal byte reader.
+// Functions:
+//   textwrap_wrap(src, slen, width, out, max)              -> i64  wrap text
+//   textwrap_fill(src, slen, width, out, max)              -> i64  wrap + join with newlines
+//   textwrap_dedent(src, slen, out, max)                   -> i64  remove common indent
+//   textwrap_indent(src, slen, pfx, plen, out, max)        -> i64  add prefix to lines
+//   textwrap_shorten(src, slen, width, out, max)           -> i64  truncate with [...]
+// =============================================================================
+
+// Internal byte reader.
 fn _tw_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: copy bytes.
+// Internal: copy bytes.
 fn _tw_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
     let i = 0
     loop i < n {
@@ -24,7 +24,7 @@ fn _tw_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
     }
 }
 
-;; Wrap text at word boundaries. Inserts newlines. Returns total length.
+// Wrap text at word boundaries. Inserts newlines. Returns total length.
 fn textwrap_fill(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
     let opos = 0
     let line_len = 0
@@ -33,13 +33,13 @@ fn textwrap_fill(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
     loop i < slen {
         let b = _tw_byte_at(src, i)
         if b == 32 {
-            ; Space — check if word fits on current line
+            // Space — check if word fits on current line
             let wlen = i - word_start
             if wlen > 0 {
                 if line_len > 0 {
                     let needed = line_len + 1 + wlen
                     if needed > width {
-                        ; Wrap
+                        // Wrap
                         poke_byte(out, opos, 10)
                         opos = opos + 1
                         line_len = 0
@@ -57,7 +57,7 @@ fn textwrap_fill(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
         }
         i = i + 1
     }
-    ; Last word
+    // Last word
     let wlen = slen - word_start
     if wlen > 0 {
         if line_len > 0 {
@@ -76,18 +76,18 @@ fn textwrap_fill(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
     ret opos
 }
 
-;; Wrap text (alias for fill).
+// Wrap text (alias for fill).
 fn textwrap_wrap(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
     ret textwrap_fill(src, slen, width, out, max)
 }
 
-;; Remove common leading whitespace from all lines.
+// Remove common leading whitespace from all lines.
 fn textwrap_dedent(src: &i8, slen: i64, out: &i8, max: i64) -> i64 {
-    ; Find minimum indent (spaces only)
+    // Find minimum indent (spaces only)
     let min_indent = 9999
     let line_start = 0
     let i = 0
-    ; First pass: find minimum indent
+    // First pass: find minimum indent
     loop i <= slen {
         let at_end = 0
         if i == slen { at_end = 1 }
@@ -98,7 +98,7 @@ fn textwrap_dedent(src: &i8, slen: i64, out: &i8, max: i64) -> i64 {
         if at_end == 1 {
             let llen = i - line_start
             if llen > 0 {
-                ; Count leading spaces
+                // Count leading spaces
                 let spaces = 0
                 let j = line_start
                 let counting = 1
@@ -121,7 +121,7 @@ fn textwrap_dedent(src: &i8, slen: i64, out: &i8, max: i64) -> i64 {
         i = i + 1
     }
     if min_indent == 9999 { min_indent = 0 }
-    ; Second pass: copy with indent removed
+    // Second pass: copy with indent removed
     let opos = 0
     line_start = 0
     i = 0
@@ -152,7 +152,7 @@ fn textwrap_dedent(src: &i8, slen: i64, out: &i8, max: i64) -> i64 {
     ret opos
 }
 
-;; Add prefix to each line.
+// Add prefix to each line.
 fn textwrap_indent(src: &i8, slen: i64, pfx: &i8, plen: i64, out: &i8, max: i64) -> i64 {
     let opos = 0
     let line_start = 0
@@ -183,7 +183,7 @@ fn textwrap_indent(src: &i8, slen: i64, pfx: &i8, plen: i64, out: &i8, max: i64)
     ret opos
 }
 
-;; Truncate text to width, adding [...] if too long.
+// Truncate text to width, adding [...] if too long.
 fn textwrap_shorten(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
     if slen <= width {
         _tw_copy(out, 0, src, 0, slen)
@@ -191,7 +191,7 @@ fn textwrap_shorten(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 
     }
     let cut = width - 5
     if cut < 0 { cut = 0 }
-    ; Find last space before cut
+    // Find last space before cut
     let last_space = cut
     let i = cut
     loop i > 0 {
@@ -204,10 +204,10 @@ fn textwrap_shorten(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 
     }
     _tw_copy(out, 0, src, 0, last_space)
     poke_byte(out, last_space, 32)
-    poke_byte(out, last_space + 1, 91)   ; [
-    poke_byte(out, last_space + 2, 46)   ; .
-    poke_byte(out, last_space + 3, 46)   ; .
-    poke_byte(out, last_space + 4, 46)   ; .
-    poke_byte(out, last_space + 5, 93)   ; ]
+    poke_byte(out, last_space + 1, 91)   // [
+    poke_byte(out, last_space + 2, 46)   // .
+    poke_byte(out, last_space + 3, 46)   // .
+    poke_byte(out, last_space + 4, 46)   // .
+    poke_byte(out, last_space + 5, 93)   // ]
     ret last_space + 6
 }

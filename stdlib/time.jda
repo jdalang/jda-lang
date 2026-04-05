@@ -1,17 +1,17 @@
-; =============================================================================
-; jda::time -- Clocks & Sleep
-; =============================================================================
-; Direct Linux syscalls. No libc.
-;
-; Functions:
-;   time_now_ns() -> nanoseconds (monotonic clock)
-;   time_now_us() -> microseconds (monotonic clock)
-;   time_now_ms() -> milliseconds (monotonic clock)
-;   time_sleep_ns(ns) -- sleep for nanoseconds
-;   time_sleep_ms(ms) -- sleep for milliseconds
-;   time_elapsed_ns(start_ns) -> nanoseconds since start_ns
-;   time_unix_secs() -> seconds since Unix epoch (wall clock)
-; =============================================================================
+// =============================================================================
+// jda::time -- Clocks & Sleep
+// =============================================================================
+// Direct Linux syscalls. No libc.
+
+// Functions:
+//   time_now_ns() -> nanoseconds (monotonic clock)
+//   time_now_us() -> microseconds (monotonic clock)
+//   time_now_ms() -> milliseconds (monotonic clock)
+//   time_sleep_ns(ns) -- sleep for nanoseconds
+//   time_sleep_ms(ms) -- sleep for milliseconds
+//   time_elapsed_ns(start_ns) -> nanoseconds since start_ns
+//   time_unix_secs() -> seconds since Unix epoch (wall clock)
+// =============================================================================
 
 struct Timespec {
     tv_sec: i64
@@ -19,7 +19,7 @@ struct Timespec {
 }
 
 fn time_now_ns() -> i64 {
-    ; clock_gettime(CLOCK_MONOTONIC=1, &ts)
+    // clock_gettime(CLOCK_MONOTONIC=1, &ts)
     let ts = Timespec{}
     syscall(228, 1, &ts, 0)
     ret ts.tv_sec * 1000000000 + ts.tv_nsec
@@ -52,7 +52,7 @@ fn time_elapsed_ns(start_ns: i64) -> i64 {
 }
 
 fn time_unix_secs() -> i64 {
-    ; clock_gettime(CLOCK_REALTIME=0, &ts)
+    // clock_gettime(CLOCK_REALTIME=0, &ts)
     let ts = Timespec{}
     syscall(228, 0, &ts, 0)
     ret ts.tv_sec

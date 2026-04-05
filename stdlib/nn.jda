@@ -1,8 +1,8 @@
-; Neural Network Library — pure Jda, built on M1-M6 builtins
-; All functions use ≤6 args. Dimensions derived from tensor shapes.
+// Neural Network Library — pure Jda, built on M1-M6 builtins
+// All functions use ≤6 args. Dimensions derived from tensor shapes.
 
-; ── Linear layer ─────────────────────────────────────────────────────
-; W[out_f, in_f], bias[out_f], x[batch, in_f], out[batch, out_f]
+// ── Linear layer ─────────────────────────────────────────────────────
+// W[out_f, in_f], bias[out_f], x[batch, in_f], out[batch, out_f]
 
 fn linear_forward(x: i64, w: i64, bias: i64, out: i64) -> i64 {
     let batch = tensor_shape(x, 0)
@@ -111,7 +111,7 @@ fn backward_input(w: i64, grad_out: i64, grad_in: i64) -> i64 {
     ret 0
 }
 
-; ── Activations ──────────────────────────────────────────────────────
+// ── Activations ──────────────────────────────────────────────────────
 
 fn relu_forward(a: i64, out: i64) -> i64 {
     let n = tensor_len(a)
@@ -146,7 +146,7 @@ fn relu_backward(pre_relu: i64, grad_out: i64, grad_in: i64) -> i64 {
     ret 0
 }
 
-; ── Loss ─────────────────────────────────────────────────────────────
+// ── Loss ─────────────────────────────────────────────────────────────
 
 fn mse_loss(pred: i64, target: i64) -> i64 {
     let n = tensor_len(pred)
@@ -181,7 +181,7 @@ fn mse_backward(pred: i64, target: i64, grad_out: i64) -> i64 {
     ret 0
 }
 
-; ── Optimizer ────────────────────────────────────────────────────────
+// ── Optimizer ────────────────────────────────────────────────────────
 
 fn sgd_step(params: i64, grads: i64, lr: i64) -> i64 {
     let n = tensor_len(params)

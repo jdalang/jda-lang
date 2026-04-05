@@ -1,26 +1,26 @@
-; =============================================================================
-; jda::diff -- Sequence Comparison and Diff
-; =============================================================================
-; Longest common subsequence, similarity ratio, and unified diff.
-;
-; Functions:
-;   diff_lcs_len(a, alen, b, blen)     -> i64  LCS length
-;   diff_ratio(a, alen, b, blen)       -> i64  similarity * 10000
-;   diff_lines(a, alen, b, blen, out, max) -> i64  unified diff output
-; =============================================================================
+// =============================================================================
+// jda::diff -- Sequence Comparison and Diff
+// =============================================================================
+// Longest common subsequence, similarity ratio, and unified diff.
 
-;; Internal byte reader.
+// Functions:
+//   diff_lcs_len(a, alen, b, blen)     -> i64  LCS length
+//   diff_ratio(a, alen, b, blen)       -> i64  similarity * 10000
+//   diff_lines(a, alen, b, blen, out, max) -> i64  unified diff output
+// =============================================================================
+
+// Internal byte reader.
 fn _diff_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Compute Longest Common Subsequence length.
-;; Uses O(n*m) DP. Max input ~200 chars (limited by alloc_pages).
+// Compute Longest Common Subsequence length.
+// Uses O(n*m) DP. Max input ~200 chars (limited by alloc_pages).
 fn diff_lcs_len(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
-    ; DP table: (alen+1) * (blen+1) entries
+    // DP table: (alen+1) * (blen+1) entries
     let cols = blen + 1
     let rows = alen + 1
     let dp: &i64 = alloc_pages(16)
-    ; Initialize to 0 (alloc_pages returns zeroed memory)
-    ; Fill DP
+    // Initialize to 0 (alloc_pages returns zeroed memory)
+    // Fill DP
     let i = 1
     loop i <= alen {
         let j = 1
@@ -51,8 +51,8 @@ fn diff_lcs_len(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
     ret dp[result_idx]
 }
 
-;; Compute similarity ratio * 10000.
-;; ratio = 2 * lcs_len / (alen + blen) * 10000
+// Compute similarity ratio * 10000.
+// ratio = 2 * lcs_len / (alen + blen) * 10000
 fn diff_ratio(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
     let total = alen + blen
     if total == 0 { ret 10000 }
@@ -61,13 +61,13 @@ fn diff_ratio(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
     ret numerator / total
 }
 
-;; Simple line-by-line diff output. Lines prefixed with +/- / (space).
-;; Compares byte-by-byte (not line-aware for simplicity).
-;; Returns length written to out.
+// Simple line-by-line diff output. Lines prefixed with +/- / (space).
+// Compares byte-by-byte (not line-aware for simplicity).
+// Returns length written to out.
 fn diff_lines(a: &i8, alen: i64, b: &i8, blen: i64, out: &i8, max: i64) -> i64 {
     let opos = 0
-    ; Split a into lines and compare with b lines
-    ; Simple approach: show - for a lines, + for b lines if different
+    // Split a into lines and compare with b lines
+    // Simple approach: show - for a lines, + for b lines if different
     let ai = 0
     let bi = 0
     let running = 1
@@ -76,7 +76,7 @@ fn diff_lines(a: &i8, alen: i64, b: &i8, blen: i64, out: &i8, max: i64) -> i64 {
             if bi >= blen { running = 0 }
         }
         if running == 1 {
-            ; Find end of current line in a
+            // Find end of current line in a
             let a_line_start = ai
             let a_line_end = ai
             if ai < alen {
@@ -89,7 +89,7 @@ fn diff_lines(a: &i8, alen: i64, b: &i8, blen: i64, out: &i8, max: i64) -> i64 {
                     }
                 }
             }
-            ; Find end of current line in b
+            // Find end of current line in b
             let b_line_start = bi
             let b_line_end = bi
             if bi < blen {
@@ -102,7 +102,7 @@ fn diff_lines(a: &i8, alen: i64, b: &i8, blen: i64, out: &i8, max: i64) -> i64 {
                     }
                 }
             }
-            ; Compare lines
+            // Compare lines
             let a_len = a_line_end - a_line_start
             let b_len = b_line_end - b_line_start
             let same = 0
@@ -117,7 +117,7 @@ fn diff_lines(a: &i8, alen: i64, b: &i8, blen: i64, out: &i8, max: i64) -> i64 {
                 }
             }
             if same == 1 {
-                ; Same line
+                // Same line
                 poke_byte(out, opos, 32)
                 opos = opos + 1
                 let k = 0
@@ -132,7 +132,7 @@ fn diff_lines(a: &i8, alen: i64, b: &i8, blen: i64, out: &i8, max: i64) -> i64 {
                 if a_line_end < alen { ai = a_line_end + 1 } else { ai = alen }
                 if b_line_end < blen { bi = b_line_end + 1 } else { bi = blen }
             } else {
-                ; Different: show - then +
+                // Different: show - then +
                 if ai < alen {
                     poke_byte(out, opos, 45)
                     opos = opos + 1

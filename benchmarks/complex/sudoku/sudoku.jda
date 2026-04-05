@@ -1,5 +1,5 @@
-; Sudoku solver — backtracking with MRV heuristic
-; Single alloc_pages call, partitioned into regions
+// Sudoku solver — backtracking with MRV heuristic
+// Single alloc_pages call, partitioned into regions
 
 let mem: &i64
 
@@ -26,11 +26,11 @@ fn now_ms(ts: &i8) -> i64 {
     ret ms
 }
 
-; Memory layout (in i64 slots):
-; [0..80]     = grid (81 slots)
-; [81..580]   = puzzle starts (500 slots)
-; [581..582]  = timespec (16 bytes = 2 i64 slots)
-; Page-aligned input buffer starts at offset 4096 bytes from mem
+// Memory layout (in i64 slots):
+// [0..80]     = grid (81 slots)
+// [81..580]   = puzzle starts (500 slots)
+// [581..582]  = timespec (16 bytes = 2 i64 slots)
+// Page-aligned input buffer starts at offset 4096 bytes from mem
 
 fn grd_get(i: i64) -> i64 {
     ret mem[i]
@@ -179,7 +179,7 @@ fn solve() -> i64 {
 fn main() -> i64 {
     mem = alloc_pages(128)
 
-    ; Input buffer at mem + 8192 (1024 i64 slots offset)
+    // Input buffer at mem + 8192 (1024 i64 slots offset)
     let inbuf_off = 8192
     let inbuf = mem + inbuf_off
     let total = 0

@@ -1,49 +1,49 @@
-; =============================================================================
-; jda::benchmark -- In-Language Micro-Benchmarking
-; =============================================================================
-; Run and time code blocks from within Jda programs. Complements the external
-; jda-bench.sh tool with in-language timing.
-;
-; Functions:
-;   bench_start()                  -> i64   start timer (returns ns timestamp)
-;   bench_stop(start)              -> i64   stop timer, return elapsed nanoseconds
-;   bench_ms(start)                -> i64   stop timer, return elapsed milliseconds
-;   bench_us(start)                -> i64   stop timer, return elapsed microseconds
-;   bench_report(name, nlen, start)         print "name: Nns (N.NNNms)"
-;   bench_iter(fn_ptr, n)          -> i64   call fn_ptr() n times, return total ns
-;   bench_iter_report(name, nlen, fn_ptr, n)  run + print ns/op
-; =============================================================================
+// =============================================================================
+// jda::benchmark -- In-Language Micro-Benchmarking
+// =============================================================================
+// Run and time code blocks from within Jda programs. Complements the external
+// jda-bench.sh tool with in-language timing.
 
-;; Get current timestamp in nanoseconds.
+// Functions:
+//   bench_start()                  -> i64   start timer (returns ns timestamp)
+//   bench_stop(start)              -> i64   stop timer, return elapsed nanoseconds
+//   bench_ms(start)                -> i64   stop timer, return elapsed milliseconds
+//   bench_us(start)                -> i64   stop timer, return elapsed microseconds
+//   bench_report(name, nlen, start)         print "name: Nns (N.NNNms)"
+//   bench_iter(fn_ptr, n)          -> i64   call fn_ptr() n times, return total ns
+//   bench_iter_report(name, nlen, fn_ptr, n)  run + print ns/op
+// =============================================================================
+
+// Get current timestamp in nanoseconds.
 fn bench_now_ns() -> i64 {
     let ts: &i64 = alloc_pages(1)
-    syscall(228, 1, ts, 0)  ; clock_gettime(CLOCK_MONOTONIC)
+    syscall(228, 1, ts, 0)  // clock_gettime(CLOCK_MONOTONIC)
     ret ts[0] * 1000000000 + ts[1]
 }
 
-;; Start a benchmark timer.
+// Start a benchmark timer.
 fn bench_start() -> i64 {
     ret bench_now_ns()
 }
 
-;; Stop timer, return elapsed nanoseconds.
+// Stop timer, return elapsed nanoseconds.
 fn bench_stop(start: i64) -> i64 {
     ret bench_now_ns() - start
 }
 
-;; Stop timer, return elapsed milliseconds.
+// Stop timer, return elapsed milliseconds.
 fn bench_ms(start: i64) -> i64 {
     let ns = bench_now_ns() - start
     ret ns / 1000000
 }
 
-;; Stop timer, return elapsed microseconds.
+// Stop timer, return elapsed microseconds.
 fn bench_us(start: i64) -> i64 {
     let ns = bench_now_ns() - start
     ret ns / 1000
 }
 
-;; Internal: print integer.
+// Internal: print integer.
 fn bench_print_int(val: i64) {
     let buf: &i8 = alloc_pages(1)
     let v = val
@@ -70,7 +70,7 @@ fn bench_print_int(val: i64) {
     syscall(1, 1, buf, pos)
 }
 
-;; Print benchmark result: "name: 12345ns (12.345ms)"
+// Print benchmark result: "name: 12345ns (12.345ms)"
 fn bench_report(name: &i8, nlen: i64, start: i64) {
     let ns = bench_now_ns() - start
     syscall(1, 1, name, nlen)
@@ -87,7 +87,7 @@ fn bench_report(name: &i8, nlen: i64, start: i64) {
     print("ms)\n")
 }
 
-;; Run fn_ptr() n times. Returns total nanoseconds.
+// Run fn_ptr() n times. Returns total nanoseconds.
 fn bench_iter(fn_ptr: i64, n: i64) -> i64 {
     let start = bench_now_ns()
     let i = 0
@@ -98,7 +98,7 @@ fn bench_iter(fn_ptr: i64, n: i64) -> i64 {
     ret bench_now_ns() - start
 }
 
-;; Run fn_ptr() n times and print results.
+// Run fn_ptr() n times and print results.
 fn bench_iter_report(name: &i8, nlen: i64, fn_ptr: i64, n: i64) {
     let total_ns = bench_iter(fn_ptr, n)
     let ns_per_op = total_ns / n

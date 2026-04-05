@@ -1,23 +1,23 @@
-; =============================================================================
-; jda::conv -- Value Conversions (itoa, atoi, hex)
-; =============================================================================
-; Integer-to-string and string-to-integer conversions.
-;
-; Functions:
-;   conv_itoa(val, dst)        -> i64  integer to decimal string, return length
-;   conv_atoi(src, len)        -> i64  decimal string to integer
-;   conv_itohex(val, dst)      -> i64  integer to hex string, return length
-;   conv_hextoi(src, len)      -> i64  hex string to integer
-;   conv_itobin(val, dst)      -> i64  integer to binary string, return length
-;   conv_itoa_pad(val, dst, width) -> i64  zero-padded decimal string
-; =============================================================================
+// =============================================================================
+// jda::conv -- Value Conversions (itoa, atoi, hex)
+// =============================================================================
+// Integer-to-string and string-to-integer conversions.
 
-;; Integer to decimal string. Returns length written.
+// Functions:
+//   conv_itoa(val, dst)        -> i64  integer to decimal string, return length
+//   conv_atoi(src, len)        -> i64  decimal string to integer
+//   conv_itohex(val, dst)      -> i64  integer to hex string, return length
+//   conv_hextoi(src, len)      -> i64  hex string to integer
+//   conv_itobin(val, dst)      -> i64  integer to binary string, return length
+//   conv_itoa_pad(val, dst, width) -> i64  zero-padded decimal string
+// =============================================================================
+
+// Integer to decimal string. Returns length written.
 fn conv_itoa(val: i64, dst: &i8) -> i64 {
     let v = val
     let pos = 0
     if v < 0 {
-        poke_byte(dst, 0, 45)  ; '-'
+        poke_byte(dst, 0, 45)  // '-'
         pos = 1
         v = 0 - v
     }
@@ -25,7 +25,7 @@ fn conv_itoa(val: i64, dst: &i8) -> i64 {
         poke_byte(dst, pos, 48)
         ret pos + 1
     }
-    ; Write digits in reverse
+    // Write digits in reverse
     let start = pos
     let tmp = v
     loop tmp > 0 {
@@ -34,7 +34,7 @@ fn conv_itoa(val: i64, dst: &i8) -> i64 {
         pos = pos + 1
         tmp = tmp / 10
     }
-    ; Reverse the digits
+    // Reverse the digits
     let lo = start
     let hi = pos - 1
     loop lo < hi {
@@ -48,12 +48,12 @@ fn conv_itoa(val: i64, dst: &i8) -> i64 {
     ret pos
 }
 
-;; Decimal string to integer.
+// Decimal string to integer.
 fn conv_atoi(src: &i8, len: i64) -> i64 {
     let result = 0
     let neg = 0
     let i = 0
-    ; Skip whitespace
+    // Skip whitespace
     loop i < len {
         let ch = load_i8_at(src, i)
         if ch != 32 and ch != 9 { ret 0 }
@@ -66,7 +66,7 @@ fn conv_atoi(src: &i8, len: i64) -> i64 {
         if ch >= 48 and ch <= 57 {
             result = result * 10 + ch - 48
         } else {
-            i = len  ; break on non-digit
+            i = len  // break on non-digit
         }
         i = i + 1
     }
@@ -74,12 +74,12 @@ fn conv_atoi(src: &i8, len: i64) -> i64 {
     ret result
 }
 
-;; Integer to hex string (lowercase). Returns length.
+// Integer to hex string (lowercase). Returns length.
 fn conv_itohex(val: i64, dst: &i8) -> i64 {
     let v = val
     if v < 0 { v = 0 - v }
     if v == 0 {
-        poke_byte(dst, 0, 48)  ; '0'
+        poke_byte(dst, 0, 48)  // '0'
         ret 1
     }
     let pos = 0
@@ -94,7 +94,7 @@ fn conv_itohex(val: i64, dst: &i8) -> i64 {
         pos = pos + 1
         tmp = tmp / 16
     }
-    ; Reverse
+    // Reverse
     let lo = 0
     let hi = pos - 1
     loop lo < hi {
@@ -108,11 +108,11 @@ fn conv_itohex(val: i64, dst: &i8) -> i64 {
     ret pos
 }
 
-;; Hex string to integer.
+// Hex string to integer.
 fn conv_hextoi(src: &i8, len: i64) -> i64 {
     let result = 0
     let i = 0
-    ; Skip 0x prefix
+    // Skip 0x prefix
     if len >= 2 and load_i8_at(src, 0) == 48 {
         let x = load_i8_at(src, 1)
         if x == 120 or x == 88 { i = 2 }
@@ -129,7 +129,7 @@ fn conv_hextoi(src: &i8, len: i64) -> i64 {
     ret result
 }
 
-;; Integer to binary string. Returns length.
+// Integer to binary string. Returns length.
 fn conv_itobin(val: i64, dst: &i8) -> i64 {
     let v = val
     if v < 0 { v = 0 - v }
@@ -145,7 +145,7 @@ fn conv_itobin(val: i64, dst: &i8) -> i64 {
         pos = pos + 1
         tmp = tmp / 2
     }
-    ; Reverse
+    // Reverse
     let lo = 0
     let hi = pos - 1
     loop lo < hi {
@@ -159,19 +159,19 @@ fn conv_itobin(val: i64, dst: &i8) -> i64 {
     ret pos
 }
 
-;; Integer to zero-padded decimal string. Returns width.
+// Integer to zero-padded decimal string. Returns width.
 fn conv_itoa_pad(val: i64, dst: &i8, width: i64) -> i64 {
-    ; First write the number
+    // First write the number
     let buf: &i8 = alloc_pages(1)
     let len = conv_itoa(val, buf)
-    ; Pad with zeros
+    // Pad with zeros
     let pad = width - len
     let i = 0
     loop i < pad {
         poke_byte(dst, i, 48)
         i = i + 1
     }
-    ; Copy digits
+    // Copy digits
     let j = 0
     loop j < len {
         poke_byte(dst, i, load_i8_at(buf, j))

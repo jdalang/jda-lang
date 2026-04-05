@@ -1,14 +1,14 @@
 fn main() -> i64 {
     let sio = sio_new(4096)
 
-    ; Write
+    // Write
     let n = sio_write(sio, "hello ", 6)
     print("{n}\n")
     sio_write(sio, "world", 5)
     let len = sio_len(sio)
     print("{len}\n")
 
-    ; Rewind and read
+    // Rewind and read
     sio_rewind(sio)
     let buf: &i8 = alloc_pages(1)
     let r = sio_read(sio, buf, 11)
@@ -16,17 +16,17 @@ fn main() -> i64 {
     syscall(1, 1, buf, r)
     print("\n")
 
-    ; EOF
+    // EOF
     let eof = sio_eof(sio)
     print("{eof}\n")
 
-    ; Seek and read
+    // Seek and read
     sio_seek(sio, 6)
     r = sio_read(sio, buf, 5)
     syscall(1, 1, buf, r)
     print("\n")
 
-    ; putc / getc
+    // putc / getc
     sio_rewind(sio)
     let gc = sio_getc(sio)
     print("{gc}\n")

@@ -1,29 +1,29 @@
-; =============================================================================
-; jda::bitops -- Bit Manipulation Utilities
-; =============================================================================
-; Since Jda doesn't have bitwise operators (& | ^ ~ << >>), this library
-; provides them via arithmetic emulation.
-;
-; Functions:
-;   bit_and(a, b)          -> i64   bitwise AND
-;   bit_or(a, b)           -> i64   bitwise OR
-;   bit_xor(a, b)          -> i64   bitwise XOR
-;   bit_not(a)             -> i64   bitwise NOT (ones complement)
-;   bit_shl(a, n)          -> i64   left shift by n
-;   bit_shr(a, n)          -> i64   logical right shift by n
-;   bit_get(a, n)          -> i64   get bit n (0 or 1)
-;   bit_set(a, n)          -> i64   set bit n to 1
-;   bit_clear(a, n)        -> i64   clear bit n to 0
-;   bit_toggle(a, n)       -> i64   toggle bit n
-;   bit_count(a)           -> i64   popcount (number of 1 bits)
-;   bit_leading_zeros(a)   -> i64   number of leading zero bits
-;   bit_trailing_zeros(a)  -> i64   number of trailing zero bits
-;   bit_reverse(a)         -> i64   reverse bit order
-;   bit_rotl(a, n)         -> i64   rotate left by n
-;   bit_rotr(a, n)         -> i64   rotate right by n
-; =============================================================================
+// =============================================================================
+// jda::bitops -- Bit Manipulation Utilities
+// =============================================================================
+// Since Jda doesn't have bitwise operators (& | ^ ~ << >>), this library
+// provides them via arithmetic emulation.
 
-;; Internal: power of 2 lookup.
+// Functions:
+//   bit_and(a, b)          -> i64   bitwise AND
+//   bit_or(a, b)           -> i64   bitwise OR
+//   bit_xor(a, b)          -> i64   bitwise XOR
+//   bit_not(a)             -> i64   bitwise NOT (ones complement)
+//   bit_shl(a, n)          -> i64   left shift by n
+//   bit_shr(a, n)          -> i64   logical right shift by n
+//   bit_get(a, n)          -> i64   get bit n (0 or 1)
+//   bit_set(a, n)          -> i64   set bit n to 1
+//   bit_clear(a, n)        -> i64   clear bit n to 0
+//   bit_toggle(a, n)       -> i64   toggle bit n
+//   bit_count(a)           -> i64   popcount (number of 1 bits)
+//   bit_leading_zeros(a)   -> i64   number of leading zero bits
+//   bit_trailing_zeros(a)  -> i64   number of trailing zero bits
+//   bit_reverse(a)         -> i64   reverse bit order
+//   bit_rotl(a, n)         -> i64   rotate left by n
+//   bit_rotr(a, n)         -> i64   rotate right by n
+// =============================================================================
+
+// Internal: power of 2 lookup.
 fn bit_pow2(n: i64) -> i64 {
     let result = 1
     let i = 0
@@ -34,21 +34,21 @@ fn bit_pow2(n: i64) -> i64 {
     ret result
 }
 
-;; Left shift: a << n.
+// Left shift: a << n.
 fn bit_shl(a: i64, n: i64) -> i64 {
     if n <= 0 { ret a }
     if n >= 64 { ret 0 }
     ret a * bit_pow2(n)
 }
 
-;; Logical right shift: a >>> n (unsigned).
+// Logical right shift: a >>> n (unsigned).
 fn bit_shr(a: i64, n: i64) -> i64 {
     if n <= 0 { ret a }
     if n >= 64 { ret 0 }
     ret a / bit_pow2(n)
 }
 
-;; Bitwise AND via arithmetic decomposition.
+// Bitwise AND via arithmetic decomposition.
 fn bit_and(a: i64, b: i64) -> i64 {
     let result = 0
     let va = a
@@ -67,7 +67,7 @@ fn bit_and(a: i64, b: i64) -> i64 {
     ret result
 }
 
-;; Bitwise OR via arithmetic decomposition.
+// Bitwise OR via arithmetic decomposition.
 fn bit_or(a: i64, b: i64) -> i64 {
     let result = 0
     let va = a
@@ -86,7 +86,7 @@ fn bit_or(a: i64, b: i64) -> i64 {
     ret result
 }
 
-;; Bitwise XOR via arithmetic decomposition.
+// Bitwise XOR via arithmetic decomposition.
 fn bit_xor(a: i64, b: i64) -> i64 {
     let result = 0
     let va = a
@@ -105,31 +105,31 @@ fn bit_xor(a: i64, b: i64) -> i64 {
     ret result
 }
 
-;; Bitwise NOT (ones complement, 64-bit).
+// Bitwise NOT (ones complement, 64-bit).
 fn bit_not(a: i64) -> i64 {
     ret 0 - a - 1
 }
 
-;; Get bit n of a (0 or 1).
+// Get bit n of a (0 or 1).
 fn bit_get(a: i64, n: i64) -> i64 {
     let shifted = a / bit_pow2(n)
     ret shifted - (shifted / 2) * 2
 }
 
-;; Set bit n of a to 1.
+// Set bit n of a to 1.
 fn bit_set(a: i64, n: i64) -> i64 {
     let mask = bit_pow2(n)
     if bit_get(a, n) == 1 { ret a }
     ret a + mask
 }
 
-;; Clear bit n of a to 0.
+// Clear bit n of a to 0.
 fn bit_clear(a: i64, n: i64) -> i64 {
     if bit_get(a, n) == 0 { ret a }
     ret a - bit_pow2(n)
 }
 
-;; Toggle bit n of a.
+// Toggle bit n of a.
 fn bit_toggle(a: i64, n: i64) -> i64 {
     if bit_get(a, n) == 1 {
         ret a - bit_pow2(n)
@@ -137,11 +137,11 @@ fn bit_toggle(a: i64, n: i64) -> i64 {
     ret a + bit_pow2(n)
 }
 
-;; Population count (number of 1 bits).
+// Population count (number of 1 bits).
 fn bit_count(a: i64) -> i64 {
     let count = 0
     let v = a
-    if v < 0 { v = 0 - v count = count + 1 }  ; sign bit
+    if v < 0 { v = 0 - v count = count + 1 }  // sign bit
     loop v > 0 {
         let d = v - (v / 2) * 2
         count = count + d
@@ -150,7 +150,7 @@ fn bit_count(a: i64) -> i64 {
     ret count
 }
 
-;; Number of leading zero bits (from MSB).
+// Number of leading zero bits (from MSB).
 fn bit_leading_zeros(a: i64) -> i64 {
     if a == 0 { ret 64 }
     let count = 0
@@ -163,7 +163,7 @@ fn bit_leading_zeros(a: i64) -> i64 {
     ret count
 }
 
-;; Number of trailing zero bits (from LSB).
+// Number of trailing zero bits (from LSB).
 fn bit_trailing_zeros(a: i64) -> i64 {
     if a == 0 { ret 64 }
     let count = 0
@@ -180,7 +180,7 @@ fn bit_trailing_zeros(a: i64) -> i64 {
     ret count
 }
 
-;; Reverse bit order.
+// Reverse bit order.
 fn bit_reverse(a: i64) -> i64 {
     let result = 0
     let bit = 0
@@ -194,7 +194,7 @@ fn bit_reverse(a: i64) -> i64 {
     ret result
 }
 
-;; Rotate left by n positions.
+// Rotate left by n positions.
 fn bit_rotl(a: i64, n: i64) -> i64 {
     let shift = n - (n / 64) * 64
     if shift == 0 { ret a }
@@ -204,7 +204,7 @@ fn bit_rotl(a: i64, n: i64) -> i64 {
     ret bit_or(left, right)
 }
 
-;; Rotate right by n positions.
+// Rotate right by n positions.
 fn bit_rotr(a: i64, n: i64) -> i64 {
     let shift = n - (n / 64) * 64
     if shift == 0 { ret a }

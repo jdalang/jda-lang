@@ -1,15 +1,15 @@
-; Test stdlib/namespace — module registry
+// Test stdlib/namespace — module registry
 
 fn main() -> i64 {
     ns_init()
 
-    ; --- Initial state ---
+    // --- Initial state ---
     let c0 = ns_count()
     print("initial: ")
     print("{c0}")
     print("\n")
 
-    ; --- Register modules ---
+    // --- Register modules ---
     ns_register("string", "str_", 1)
     ns_register("vec", "vec_", 1)
     ns_register("hashmap", "map_", 2)
@@ -18,14 +18,14 @@ fn main() -> i64 {
     print("{c1}")
     print("\n")
 
-    ; --- Duplicate register (should be no-op) ---
+    // --- Duplicate register (should be no-op) ---
     ns_register("string", "str_", 1)
     let c2 = ns_count()
     print("after dup: ")
     print("{c2}")
     print("\n")
 
-    ; --- is_loaded ---
+    // --- is_loaded ---
     let r1 = ns_is_loaded("string")
     print("string loaded: ")
     print("{r1}")
@@ -35,7 +35,7 @@ fn main() -> i64 {
     print("{r2}")
     print("\n")
 
-    ; --- get_version ---
+    // --- get_version ---
     let v1 = ns_get_version("hashmap")
     print("hashmap version: ")
     print("{v1}")
@@ -45,11 +45,11 @@ fn main() -> i64 {
     print("{v2}")
     print("\n")
 
-    ; --- ns_require (should not panic for loaded module) ---
+    // --- ns_require (should not panic for loaded module) ---
     ns_require("vec")
     print("require vec: ok\n")
 
-    ; --- ns_list ---
+    // --- ns_list ---
     ns_list()
 
     print("PASS\n")

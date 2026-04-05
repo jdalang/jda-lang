@@ -1,72 +1,72 @@
-; =============================================================================
-; jda::timeout -- Deadline and Timeout Utilities
-; =============================================================================
-; Timeout wrappers using clock_gettime for deadline tracking.
-;
-; Functions:
-;   timeout_now()                  -> i64   current time in milliseconds
-;   timeout_deadline(ms)           -> i64   deadline = now + ms
-;   timeout_remaining(deadline)    -> i64   ms remaining (0 if expired)
-;   timeout_expired(deadline)      -> i64   1 if past deadline
-;   timeout_sleep_ms(ms)                    sleep for ms milliseconds
-;   timeout_elapsed(start)         -> i64   ms elapsed since start
-;   timeout_timer_start()          -> i64   start a timer (returns start ms)
-;   timeout_timer_stop(start)      -> i64   stop timer, return elapsed ms
-;   timeout_timer_print(label, llen, start)  print "label: Nms"
-; =============================================================================
+// =============================================================================
+// jda::timeout -- Deadline and Timeout Utilities
+// =============================================================================
+// Timeout wrappers using clock_gettime for deadline tracking.
 
-;; Get current time in milliseconds since epoch.
+// Functions:
+//   timeout_now()                  -> i64   current time in milliseconds
+//   timeout_deadline(ms)           -> i64   deadline = now + ms
+//   timeout_remaining(deadline)    -> i64   ms remaining (0 if expired)
+//   timeout_expired(deadline)      -> i64   1 if past deadline
+//   timeout_sleep_ms(ms)                    sleep for ms milliseconds
+//   timeout_elapsed(start)         -> i64   ms elapsed since start
+//   timeout_timer_start()          -> i64   start a timer (returns start ms)
+//   timeout_timer_stop(start)      -> i64   stop timer, return elapsed ms
+//   timeout_timer_print(label, llen, start)  print "label: Nms"
+// =============================================================================
+
+// Get current time in milliseconds since epoch.
 fn timeout_now() -> i64 {
     let ts: &i64 = alloc_pages(1)
-    syscall(228, 0, ts, 0)  ; clock_gettime(CLOCK_REALTIME)
+    syscall(228, 0, ts, 0)  // clock_gettime(CLOCK_REALTIME)
     let sec = ts[0]
     let nsec = ts[1]
     ret sec * 1000 + nsec / 1000000
 }
 
-;; Create a deadline ms milliseconds from now.
+// Create a deadline ms milliseconds from now.
 fn timeout_deadline(ms: i64) -> i64 {
     ret timeout_now() + ms
 }
 
-;; Milliseconds remaining until deadline (0 if expired).
+// Milliseconds remaining until deadline (0 if expired).
 fn timeout_remaining(deadline: i64) -> i64 {
     let now = timeout_now()
     if now >= deadline { ret 0 }
     ret deadline - now
 }
 
-;; Check if deadline has passed.
+// Check if deadline has passed.
 fn timeout_expired(deadline: i64) -> i64 {
     if timeout_now() >= deadline { ret 1 }
     ret 0
 }
 
-;; Sleep for ms milliseconds using nanosleep.
+// Sleep for ms milliseconds using nanosleep.
 fn timeout_sleep_ms(ms: i64) {
     let ts: &i64 = alloc_pages(1)
-    ts[0] = ms / 1000                          ; seconds
+    ts[0] = ms / 1000                          // seconds
     let rem_ms = ms - (ms / 1000) * 1000
-    ts[1] = rem_ms * 1000000                    ; nanoseconds
-    syscall(35, ts, 0, 0)                       ; nanosleep
+    ts[1] = rem_ms * 1000000                    // nanoseconds
+    syscall(35, ts, 0, 0)                       // nanosleep
 }
 
-;; Milliseconds elapsed since a start timestamp.
+// Milliseconds elapsed since a start timestamp.
 fn timeout_elapsed(start: i64) -> i64 {
     ret timeout_now() - start
 }
 
-;; Start a timer. Returns current time in ms.
+// Start a timer. Returns current time in ms.
 fn timeout_timer_start() -> i64 {
     ret timeout_now()
 }
 
-;; Stop a timer. Returns elapsed milliseconds.
+// Stop a timer. Returns elapsed milliseconds.
 fn timeout_timer_stop(start: i64) -> i64 {
     ret timeout_now() - start
 }
 
-;; Internal: print integer to stdout.
+// Internal: print integer to stdout.
 fn timeout_print_int(val: i64) {
     let buf: &i8 = alloc_pages(1)
     let v = val
@@ -99,7 +99,7 @@ fn timeout_print_int(val: i64) {
     syscall(1, 1, buf, pos)
 }
 
-;; Print "label: Nms\n" for profiling.
+// Print "label: Nms\n" for profiling.
 fn timeout_timer_print(label: &i8, llen: i64, start: i64) {
     syscall(1, 1, label, llen)
     print(": ")

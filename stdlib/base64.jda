@@ -1,38 +1,38 @@
-; =============================================================================
-; jda::base64 -- Base64 Encoding/Decoding
-; =============================================================================
-; RFC 4648 standard base64 encoding. Pure integer arithmetic.
-;
-; Functions:
-;   b64_encode(src, src_len, dst)  -> i64  encode bytes, return output length
-;   b64_decode(src, src_len, dst)  -> i64  decode bytes, return output length
-;   b64_encoded_len(src_len)       -> i64  output length for encoding
-;   b64_decoded_len(src_len)       -> i64  max output length for decoding
-; =============================================================================
+// =============================================================================
+// jda::base64 -- Base64 Encoding/Decoding
+// =============================================================================
+// RFC 4648 standard base64 encoding. Pure integer arithmetic.
 
-;; Base64 alphabet character at index 0-63.
+// Functions:
+//   b64_encode(src, src_len, dst)  -> i64  encode bytes, return output length
+//   b64_decode(src, src_len, dst)  -> i64  decode bytes, return output length
+//   b64_encoded_len(src_len)       -> i64  output length for encoding
+//   b64_decoded_len(src_len)       -> i64  max output length for decoding
+// =============================================================================
+
+// Base64 alphabet character at index 0-63.
 fn b64_char(idx: i64) -> i64 {
-    ; A-Z: 0-25, a-z: 26-51, 0-9: 52-61, +: 62, /: 63
+    // A-Z: 0-25, a-z: 26-51, 0-9: 52-61, +: 62, /: 63
     if idx < 26 { ret idx + 65 }
     let shifted = idx - 26
     if shifted < 26 { ret shifted + 97 }
     let digit = idx - 52
     if digit < 10 { ret digit + 48 }
-    if idx == 62 { ret 43 }  ; '+'
-    ret 47                    ; '/'
+    if idx == 62 { ret 43 }  // '+'
+    ret 47                    // '/'
 }
 
-;; Decode a base64 character to 0-63, or -1 for padding/invalid.
+// Decode a base64 character to 0-63, or -1 for padding/invalid.
 fn b64_val(ch: i64) -> i64 {
-    if ch >= 65 and ch <= 90 { ret ch - 65 }       ; A-Z
-    if ch >= 97 and ch <= 122 { ret ch - 97 + 26 }  ; a-z
-    if ch >= 48 and ch <= 57 { ret ch - 48 + 52 }   ; 0-9
-    if ch == 43 { ret 62 }  ; '+'
-    if ch == 47 { ret 63 }  ; '/'
-    ret -1                   ; padding '=' or invalid
+    if ch >= 65 and ch <= 90 { ret ch - 65 }       // A-Z
+    if ch >= 97 and ch <= 122 { ret ch - 97 + 26 }  // a-z
+    if ch >= 48 and ch <= 57 { ret ch - 48 + 52 }   // 0-9
+    if ch == 43 { ret 62 }  // '+'
+    if ch == 47 { ret 63 }  // '/'
+    ret -1                   // padding '=' or invalid
 }
 
-;; Calculate encoded output length (including padding).
+// Calculate encoded output length (including padding).
 fn b64_encoded_len(src_len: i64) -> i64 {
     let groups = src_len / 3
     let rem = src_len - groups * 3
@@ -41,16 +41,16 @@ fn b64_encoded_len(src_len: i64) -> i64 {
     ret out_len
 }
 
-;; Calculate maximum decoded output length.
+// Calculate maximum decoded output length.
 fn b64_decoded_len(src_len: i64) -> i64 {
     ret src_len * 3 / 4
 }
 
-;; Encode src bytes to base64 in dst. Returns output length.
+// Encode src bytes to base64 in dst. Returns output length.
 fn b64_encode(src: &i8, src_len: i64, dst: &i8) -> i64 {
     let si = 0
     let di = 0
-    ; Process full 3-byte groups
+    // Process full 3-byte groups
     loop si + 2 < src_len {
         let b0 = load_i8_at(src, si)
         let b1 = load_i8_at(src, si + 1)
@@ -65,15 +65,15 @@ fn b64_encode(src: &i8, src_len: i64, dst: &i8) -> i64 {
         si = si + 3
         di = di + 4
     }
-    ; Handle remaining bytes
+    // Handle remaining bytes
     let remaining = src_len - si
     if remaining == 1 {
         let b0 = load_i8_at(src, si)
         poke_byte(dst, di, b64_char(b0 / 4))
         let r1 = b0 - (b0 / 4) * 4
         poke_byte(dst, di + 1, b64_char(r1 * 16))
-        poke_byte(dst, di + 2, 61)  ; '='
-        poke_byte(dst, di + 3, 61)  ; '='
+        poke_byte(dst, di + 2, 61)  // '='
+        poke_byte(dst, di + 3, 61)  // '='
         di = di + 4
     }
     if remaining == 2 {
@@ -84,13 +84,13 @@ fn b64_encode(src: &i8, src_len: i64, dst: &i8) -> i64 {
         poke_byte(dst, di + 1, b64_char(r1 * 16 + b1 / 16))
         let r2 = b1 - (b1 / 16) * 16
         poke_byte(dst, di + 2, b64_char(r2 * 4))
-        poke_byte(dst, di + 3, 61)  ; '='
+        poke_byte(dst, di + 3, 61)  // '='
         di = di + 4
     }
     ret di
 }
 
-;; Decode base64 src to bytes in dst. Returns output length.
+// Decode base64 src to bytes in dst. Returns output length.
 fn b64_decode(src: &i8, src_len: i64, dst: &i8) -> i64 {
     let si = 0
     let di = 0

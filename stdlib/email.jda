@@ -1,35 +1,35 @@
-; =============================================================================
-; jda::email -- Email Message Parser/Composer
-; =============================================================================
-; Parses RFC 2822-style email messages into headers and body.
-; Headers are separated from body by a blank line (\n\n).
-; Each header is "Name: Value\n".
-;
-; Memory layout per EmailHandle (&i64):
-;   [0] header_count
-;   [1] hdr_name_offs   (&i64 — byte offsets into data)
-;   [2] hdr_name_lens   (&i64)
-;   [3] hdr_val_offs    (&i64)
-;   [4] hdr_val_lens    (&i64)
-;   [5] body_off
-;   [6] body_len
-;   [7] data            (&i8 — copy of source)
-;   [8] data_len
-;
-; Functions:
-;   email_parse(buf, len)                   -> &i64  parse email
-;   email_from(h, out)                      -> i64   copy From value
-;   email_to(h, out)                        -> i64   copy To value
-;   email_subject(h, out)                   -> i64   copy Subject value
-;   email_body(h, out)                      -> i64   copy body
-;   email_header(h, name, nlen, out)        -> i64   copy header value by name
-;   email_header_count(h)                   -> i64   number of headers
-; =============================================================================
+// =============================================================================
+// jda::email -- Email Message Parser/Composer
+// =============================================================================
+// Parses RFC 2822-style email messages into headers and body.
+// Headers are separated from body by a blank line (\n\n).
+// Each header is "Name: Value\n".
 
-;; Internal byte reader.
+// Memory layout per EmailHandle (&i64):
+//   [0] header_count
+//   [1] hdr_name_offs   (&i64 — byte offsets into data)
+//   [2] hdr_name_lens   (&i64)
+//   [3] hdr_val_offs    (&i64)
+//   [4] hdr_val_lens    (&i64)
+//   [5] body_off
+//   [6] body_len
+//   [7] data            (&i8 — copy of source)
+//   [8] data_len
+
+// Functions:
+//   email_parse(buf, len)                   -> &i64  parse email
+//   email_from(h, out)                      -> i64   copy From value
+//   email_to(h, out)                        -> i64   copy To value
+//   email_subject(h, out)                   -> i64   copy Subject value
+//   email_body(h, out)                      -> i64   copy body
+//   email_header(h, name, nlen, out)        -> i64   copy header value by name
+//   email_header_count(h)                   -> i64   number of headers
+// =============================================================================
+
+// Internal byte reader.
 fn _email_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: copy bytes.
+// Internal: copy bytes.
 fn _email_copy(dst: &i8, src: &i8, off: i64, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -40,7 +40,7 @@ fn _email_copy(dst: &i8, src: &i8, off: i64, len: i64) -> i64 {
     ret len
 }
 
-;; Internal: case-insensitive compare single bytes.
+// Internal: case-insensitive compare single bytes.
 fn _email_lower(ch: i64) -> i64 {
     if ch >= 65 and ch <= 90 {
         let r = ch + 32
@@ -49,7 +49,7 @@ fn _email_lower(ch: i64) -> i64 {
     ret ch
 }
 
-;; Internal: case-insensitive compare.
+// Internal: case-insensitive compare.
 fn _email_eq_ci(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i64 {
     if alen != blen { ret 0 }
     let i = 0
@@ -66,8 +66,8 @@ fn _email_eq_ci(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i
     ret 1
 }
 
-;; Internal: find the blank line separating headers from body.
-;; Returns offset of body start, or len if no blank line.
+// Internal: find the blank line separating headers from body.
+// Returns offset of body start, or len if no blank line.
 fn _email_find_body(buf: &i8, len: i64) -> i64 {
     let i = 0
     let limit = len - 1
@@ -79,7 +79,7 @@ fn _email_find_body(buf: &i8, len: i64) -> i64 {
                 let r = i + 2
                 ret r
             }
-            ; Check for \n\r\n
+            // Check for \n\r\n
             if next == 13 and i + 2 < len {
                 let nn = _email_byte_at(buf, i + 2)
                 if nn == 10 {
@@ -93,15 +93,15 @@ fn _email_find_body(buf: &i8, len: i64) -> i64 {
     ret len
 }
 
-;; Internal: parse one header line starting at pos.
-;; Sets name_off, name_len, val_off, val_len via handle slots.
-;; Returns position after the header line (after \n).
+// Internal: parse one header line starting at pos.
+// Sets name_off, name_len, val_off, val_len via handle slots.
+// Returns position after the header line (after \n).
 fn _email_parse_hdr(buf: &i8, pos: i64, hdr_end: i64, h: &i64, idx: i64) -> i64 {
     let name_offs: &i64 = h[1]
     let name_lens: &i64 = h[2]
     let val_offs: &i64 = h[3]
     let val_lens: &i64 = h[4]
-    ; Find colon
+    // Find colon
     let cpos = pos
     let found_colon = 0
     loop cpos < hdr_end {
@@ -109,13 +109,13 @@ fn _email_parse_hdr(buf: &i8, pos: i64, hdr_end: i64, h: &i64, idx: i64) -> i64 
         if ch == 58 { found_colon = 1 }
         if ch == 10 { found_colon = 0 }
         if found_colon == 1 or ch == 10 {
-            cpos = hdr_end  ; break
+            cpos = hdr_end  // break
         } else {
             cpos = cpos + 1
         }
     }
     if found_colon == 0 {
-        ; Skip to next line
+        // Skip to next line
         let sk = pos
         loop sk < hdr_end {
             let ch = _email_byte_at(buf, sk)
@@ -127,7 +127,7 @@ fn _email_parse_hdr(buf: &i8, pos: i64, hdr_end: i64, h: &i64, idx: i64) -> i64 
         }
         ret hdr_end
     }
-    ; cpos points to just before colon; re-find it
+    // cpos points to just before colon; re-find it
     let cp = pos
     loop cp < hdr_end {
         let ch = _email_byte_at(buf, cp)
@@ -135,19 +135,19 @@ fn _email_parse_hdr(buf: &i8, pos: i64, hdr_end: i64, h: &i64, idx: i64) -> i64 
             name_offs[idx] = pos
             let nlen = cp - pos
             name_lens[idx] = nlen
-            ; Skip colon and optional space
+            // Skip colon and optional space
             cp = cp + 1
             if cp < hdr_end {
                 let sp = _email_byte_at(buf, cp)
                 if sp == 32 { cp = cp + 1 }
             }
-            ; Value runs to end of line
+            // Value runs to end of line
             let vs = cp
             loop cp < hdr_end {
                 let ch2 = _email_byte_at(buf, cp)
                 if ch2 == 10 {
                     let vlen = cp - vs
-                    ; Strip trailing \r
+                    // Strip trailing \r
                     if vlen > 0 {
                         let last = vs + vlen - 1
                         let lc = _email_byte_at(buf, last)
@@ -160,7 +160,7 @@ fn _email_parse_hdr(buf: &i8, pos: i64, hdr_end: i64, h: &i64, idx: i64) -> i64 
                 }
                 cp = cp + 1
             }
-            ; No newline at end
+            // No newline at end
             let vlen = cp - vs
             val_offs[idx] = vs
             val_lens[idx] = vlen
@@ -171,7 +171,7 @@ fn _email_parse_hdr(buf: &i8, pos: i64, hdr_end: i64, h: &i64, idx: i64) -> i64 
     ret hdr_end
 }
 
-;; Parse an email message. Returns handle.
+// Parse an email message. Returns handle.
 fn email_parse(buf: &i8, len: i64) -> &i64 {
     let h: &i64 = alloc_pages(1)
     let name_offs: &i64 = alloc_pages(1)
@@ -179,7 +179,7 @@ fn email_parse(buf: &i8, len: i64) -> &i64 {
     let val_offs: &i64 = alloc_pages(1)
     let val_lens: &i64 = alloc_pages(1)
     let data: &i8 = alloc_pages(2)
-    ; Copy source
+    // Copy source
     let ci = 0
     loop ci < len {
         let cb = _email_byte_at(buf, ci)
@@ -195,20 +195,20 @@ fn email_parse(buf: &i8, len: i64) -> &i64 {
     h[6] = 0
     h[7] = data
     h[8] = len
-    ; Find body start
+    // Find body start
     let body_start = _email_find_body(data, len)
     h[5] = body_start
     let blen = len - body_start
     if blen < 0 { blen = 0 }
     h[6] = blen
-    ; Parse headers
+    // Parse headers
     let pos = 0
     let hdr_count = 0
     let running = 1
     loop running == 1 {
         if pos >= body_start { running = 0 }
         if running == 1 {
-            ; Skip blank lines
+            // Skip blank lines
             let ch = _email_byte_at(data, pos)
             if ch == 10 {
                 pos = pos + 1
@@ -226,7 +226,7 @@ fn email_parse(buf: &i8, len: i64) -> &i64 {
     ret h
 }
 
-;; Internal: find header by name (case-insensitive), copy value to out.
+// Internal: find header by name (case-insensitive), copy value to out.
 fn _email_get_hdr(h: &i64, name: &i8, nlen: i64, out: &i8) -> i64 {
     let count = h[0]
     let name_offs: &i64 = h[1]
@@ -248,18 +248,18 @@ fn _email_get_hdr(h: &i64, name: &i8, nlen: i64, out: &i8) -> i64 {
     ret 0
 }
 
-;; Get From header value.
+// Get From header value.
 fn email_from(h: &i64, out: &i8) -> i64 {
-    ; Build "From" key: F=70, r=114, o=111, m=109
-    let key: &i8 = h  ; reuse handle memory temporarily... no, use stack trick
-    ; We need a small buffer for the key name. Use pointer arithmetic.
-    ; Actually, just inline the comparison in _email_get_hdr with a temp buf.
-    ; Since we can't alloc here (no alloc_pages in helpers), we pass through.
-    ; Workaround: build key on caller's stack — but jda has no stack arrays.
-    ; Solution: use the data buffer's unused tail area as scratch.
+    // Build "From" key: F=70, r=114, o=111, m=109
+    let key: &i8 = h  // reuse handle memory temporarily... no, use stack trick
+    // We need a small buffer for the key name. Use pointer arithmetic.
+    // Actually, just inline the comparison in _email_get_hdr with a temp buf.
+    // Since we can't alloc here (no alloc_pages in helpers), we pass through.
+    // Workaround: build key on caller's stack — but jda has no stack arrays.
+    // Solution: use the data buffer's unused tail area as scratch.
     let data: &i8 = h[7]
     let dlen = h[8]
-    ; Write "From" at dlen offset (scratch area)
+    // Write "From" at dlen offset (scratch area)
     poke_byte(data, dlen, 70)
     poke_byte(data, dlen + 1, 114)
     poke_byte(data, dlen + 2, 111)
@@ -269,11 +269,11 @@ fn email_from(h: &i64, out: &i8) -> i64 {
     ret r
 }
 
-;; Get To header value.
+// Get To header value.
 fn email_to(h: &i64, out: &i8) -> i64 {
     let data: &i8 = h[7]
     let dlen = h[8]
-    ; "To" = 84, 111
+    // "To" = 84, 111
     poke_byte(data, dlen, 84)
     poke_byte(data, dlen + 1, 111)
     let key: &i8 = data + dlen
@@ -281,11 +281,11 @@ fn email_to(h: &i64, out: &i8) -> i64 {
     ret r
 }
 
-;; Get Subject header value.
+// Get Subject header value.
 fn email_subject(h: &i64, out: &i8) -> i64 {
     let data: &i8 = h[7]
     let dlen = h[8]
-    ; "Subject" = 83,117,98,106,101,99,116
+    // "Subject" = 83,117,98,106,101,99,116
     poke_byte(data, dlen, 83)
     poke_byte(data, dlen + 1, 117)
     poke_byte(data, dlen + 2, 98)
@@ -298,7 +298,7 @@ fn email_subject(h: &i64, out: &i8) -> i64 {
     ret r
 }
 
-;; Get email body.
+// Get email body.
 fn email_body(h: &i64, out: &i8) -> i64 {
     let data: &i8 = h[7]
     let body_off = h[5]
@@ -307,13 +307,13 @@ fn email_body(h: &i64, out: &i8) -> i64 {
     ret copied
 }
 
-;; Get any header value by name.
+// Get any header value by name.
 fn email_header(h: &i64, name: &i8, nlen: i64, out: &i8) -> i64 {
     let r = _email_get_hdr(h, name, nlen, out)
     ret r
 }
 
-;; Return number of headers.
+// Return number of headers.
 fn email_header_count(h: &i64) -> i64 {
     ret h[0]
 }

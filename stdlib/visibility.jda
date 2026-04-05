@@ -1,25 +1,25 @@
-; =============================================================================
-; jda::visibility -- Visibility Control (pub/private convention)
-; =============================================================================
-; Convention-based visibility for Jda. Since the compiler has no `pub`
-; keyword, visibility is enforced by naming convention:
-;
-;   Public:   no underscore prefix    fn str_len()
-;   Private:  leading underscore      fn _str_grow()
-;   Internal: double underscore       fn __compiler_hook()
-;
-; This module provides introspection helpers to check and enforce
-; the convention at the API boundary level.
-;
-; Functions:
-;   vis_is_public(name)      -> i64   1 if name is public (no _ prefix)
-;   vis_is_private(name)     -> i64   1 if name starts with _
-;   vis_is_internal(name)    -> i64   1 if name starts with __
-;   vis_check_access(name)   -> i64   0=public, 1=private, 2=internal
-;   vis_print_access(name)             print visibility level
-; =============================================================================
+// =============================================================================
+// jda::visibility -- Visibility Control (pub/private convention)
+// =============================================================================
+// Convention-based visibility for Jda. Since the compiler has no `pub`
+// keyword, visibility is enforced by naming convention:
 
-;; Internal: c-string length.
+//   Public:   no underscore prefix    fn str_len()
+//   Private:  leading underscore      fn _str_grow()
+//   Internal: double underscore       fn __compiler_hook()
+
+// This module provides introspection helpers to check and enforce
+// the convention at the API boundary level.
+
+// Functions:
+//   vis_is_public(name)      -> i64   1 if name is public (no _ prefix)
+//   vis_is_private(name)     -> i64   1 if name starts with _
+//   vis_is_internal(name)    -> i64   1 if name starts with __
+//   vis_check_access(name)   -> i64   0=public, 1=private, 2=internal
+//   vis_print_access(name)             print visibility level
+// =============================================================================
+
+// Internal: c-string length.
 fn _vis_cstr_len(s: &i8) -> i64 {
     let n = 0
     loop n < 256 {
@@ -29,44 +29,44 @@ fn _vis_cstr_len(s: &i8) -> i64 {
     ret 256
 }
 
-;; Internal: write to stdout.
+// Internal: write to stdout.
 fn _vis_write(s: &i8, len: i64) {
     syscall(1, 1, s, len)
 }
 
-;; Internal: print c-string to stdout.
+// Internal: print c-string to stdout.
 fn _vis_print_str(s: &i8) {
     let n = _vis_cstr_len(s)
     _vis_write(s, n)
 }
 
-;; Check if a name is public (no leading underscore).
+// Check if a name is public (no leading underscore).
 fn vis_is_public(name: &i8) -> i64 {
     if name[0] == 95 { ret 0 }
     ret 1
 }
 
-;; Check if a name is private (starts with _).
+// Check if a name is private (starts with _).
 fn vis_is_private(name: &i8) -> i64 {
     if name[0] == 95 { ret 1 }
     ret 0
 }
 
-;; Check if a name is internal (starts with __).
+// Check if a name is internal (starts with __).
 fn vis_is_internal(name: &i8) -> i64 {
     if name[0] != 95 { ret 0 }
     if name[1] != 95 { ret 0 }
     ret 1
 }
 
-;; Get access level: 0=public, 1=private, 2=internal.
+// Get access level: 0=public, 1=private, 2=internal.
 fn vis_check_access(name: &i8) -> i64 {
     if name[0] != 95 { ret 0 }
     if name[1] == 95 { ret 2 }
     ret 1
 }
 
-;; Print visibility level for a name.
+// Print visibility level for a name.
 fn vis_print_access(name: &i8) {
     let level = vis_check_access(name)
     _vis_print_str(name)

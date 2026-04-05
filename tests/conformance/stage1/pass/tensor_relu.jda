@@ -52,7 +52,7 @@ fn tensor_softmax(a: i64, out: i64) -> i64 {
 }
 
 fn main() -> i64 {
-    ; Test relu: [-3, -1, 0, 2, 5] -> [0, 0, 0, 2, 5]
+    // Test relu: [-3, -1, 0, 2, 5] -> [0, 0, 0, 2, 5]
     let a = tensor_new1(5)
     let out = tensor_new1(5)
     let vm3 = f64_from_int(-3)
@@ -74,7 +74,7 @@ fn main() -> i64 {
     if r0 == 0 and r1 == 0 and r2 == 0 and r3 == 2 and r4 == 5 {
         print "relu ok"
     }
-    ; Test softmax: output sums to 1 (check as int = 1)
+    // Test softmax: output sums to 1 (check as int = 1)
     let s = tensor_new1(3)
     let sout = tensor_new1(3)
     let s1 = f64_from_int(1)
@@ -84,13 +84,13 @@ fn main() -> i64 {
     let s3 = f64_from_int(3)
     tensor_set(s, 2, s3)
     tensor_softmax(s, sout)
-    ; Sum of softmax outputs should be 1.0
+    // Sum of softmax outputs should be 1.0
     let p0 = tensor_get(sout, 0)
     let p1 = tensor_get(sout, 1)
     let partial = f64_add(p0, p1)
     let p2 = tensor_get(sout, 2)
     let total = f64_add(partial, p2)
-    ; Round to nearest integer: add 0.5 before truncating
+    // Round to nearest integer: add 0.5 before truncating
     let half = f64_from_int(1)
     let two = f64_from_int(2)
     let half_val = f64_div(half, two)
@@ -99,7 +99,7 @@ fn main() -> i64 {
     if total_i == 1 {
         print "softmax ok"
     }
-    ; softmax(3) > softmax(2) > softmax(1)
+    // softmax(3) > softmax(2) > softmax(1)
     let g2 = tensor_get(sout, 2)
     let g1 = tensor_get(sout, 1)
     let g0 = tensor_get(sout, 0)

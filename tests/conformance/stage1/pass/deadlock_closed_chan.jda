@@ -1,12 +1,12 @@
-; DoD 4: Deadlock on chan_recv on closed empty channel with no senders
+// DoD 4: Deadlock on chan_recv on closed empty channel with no senders
 fn main() {
     let ch = chan_new(4)
     chan_close(ch)
     let v = chan_recv(ch)
-    ; v == -1 means closed, no senders alive → deadlock
+    // v == -1 means closed, no senders alive → deadlock
     if v == -1 {
         let r = deadlock_check(0, 1, 0)
     }
-    ; Should not reach here
+    // Should not reach here
     print("bug")
 }

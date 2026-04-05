@@ -1,14 +1,14 @@
-; =============================================================================
-; jda::process — Process management
-; =============================================================================
-; fork / exec / waitpid / kill / signals / getpid / getenv / argv
-;
-; All calls are raw Linux x86-64 syscalls.  No libc.  No POSIX wrappers.
-; =============================================================================
+// =============================================================================
+// jda::process — Process management
+// =============================================================================
+// fork / exec / waitpid / kill / signals / getpid / getenv / argv
 
-; ============================================================
-; 1. SYSCALL NUMBERS  (Linux x86-64)
-; ============================================================
+// All calls are raw Linux x86-64 syscalls.  No libc.  No POSIX wrappers.
+// =============================================================================
+
+// ============================================================
+// 1. SYSCALL NUMBERS  (Linux x86-64)
+// ============================================================
 
 const SYS_READ      =  0
 const SYS_WRITE     =  1
@@ -41,45 +41,45 @@ const SYS_PRCTL     = 157
 const SYS_SETPGID   = 109
 const SYS_GETPGID   = 121
 const SYS_SETSID    = 112
-const SYS_ENVIRON   = -1   ; accessed via auxv, not a syscall
+const SYS_ENVIRON   = -1   // accessed via auxv, not a syscall
 
-; ============================================================
-; 2. SIGNAL NUMBERS
-; ============================================================
+// ============================================================
+// 2. SIGNAL NUMBERS
+// ============================================================
 
-const SIGHUP    =  1    ; hangup
-const SIGINT    =  2    ; interrupt (Ctrl-C)
-const SIGQUIT   =  3    ; quit
-const SIGILL    =  4    ; illegal instruction
-const SIGTRAP   =  5    ; trace / breakpoint
-const SIGABRT   =  6    ; abort
-const SIGBUS    =  7    ; bus error
-const SIGFPE    =  8    ; floating-point exception
-const SIGKILL   =  9    ; kill (cannot be caught)
-const SIGUSR1   = 10    ; user-defined 1
-const SIGSEGV   = 11    ; segfault
-const SIGUSR2   = 12    ; user-defined 2
-const SIGPIPE   = 13    ; broken pipe
-const SIGALRM   = 14    ; alarm clock
-const SIGTERM   = 15    ; termination
-const SIGCHLD   = 17    ; child stopped or exited
-const SIGCONT   = 18    ; continue
-const SIGSTOP   = 19    ; stop (cannot be caught)
-const SIGTSTP   = 20    ; terminal stop (Ctrl-Z)
-const SIGTTIN   = 21    ; background read from tty
-const SIGTTOU   = 22    ; background write to tty
-const SIGURG    = 23    ; urgent data on socket
-const SIGWINCH  = 28    ; terminal resize
+const SIGHUP    =  1    // hangup
+const SIGINT    =  2    // interrupt (Ctrl-C)
+const SIGQUIT   =  3    // quit
+const SIGILL    =  4    // illegal instruction
+const SIGTRAP   =  5    // trace / breakpoint
+const SIGABRT   =  6    // abort
+const SIGBUS    =  7    // bus error
+const SIGFPE    =  8    // floating-point exception
+const SIGKILL   =  9    // kill (cannot be caught)
+const SIGUSR1   = 10    // user-defined 1
+const SIGSEGV   = 11    // segfault
+const SIGUSR2   = 12    // user-defined 2
+const SIGPIPE   = 13    // broken pipe
+const SIGALRM   = 14    // alarm clock
+const SIGTERM   = 15    // termination
+const SIGCHLD   = 17    // child stopped or exited
+const SIGCONT   = 18    // continue
+const SIGSTOP   = 19    // stop (cannot be caught)
+const SIGTSTP   = 20    // terminal stop (Ctrl-Z)
+const SIGTTIN   = 21    // background read from tty
+const SIGTTOU   = 22    // background write to tty
+const SIGURG    = 23    // urgent data on socket
+const SIGWINCH  = 28    // terminal resize
 
-; Signal disposition constants
-const SIG_DFL   = 0     ; default action
-const SIG_IGN   = 1     ; ignore signal
+// Signal disposition constants
+const SIG_DFL   = 0     // default action
+const SIG_IGN   = 1     // ignore signal
 
-; ============================================================
-; 3. WAIT STATUS MACROS
-; ============================================================
+// ============================================================
+// 3. WAIT STATUS MACROS
+// ============================================================
 
-const WNOHANG   = 1     ; non-blocking waitpid
+const WNOHANG   = 1     // non-blocking waitpid
 
 fn wifexited(status: i32) -> i32   { ret (status & 0x7F) == 0 }
 fn wexitstatus(status: i32) -> i32 { ret (status >> 8) & 0xFF }
@@ -88,15 +88,15 @@ fn wtermsig(status: i32) -> i32    { ret status & 0x7F }
 fn wifstopped(status: i32) -> i32  { ret (status & 0xFF) == 0x7F }
 fn wstopsig(status: i32) -> i32    { ret (status >> 8) & 0xFF }
 
-; ============================================================
-; 4. STRUCTS
-; ============================================================
+// ============================================================
+// 4. STRUCTS
+// ============================================================
 
 struct SigAction {
-    handler:  i64      ; fn pointer or SIG_DFL / SIG_IGN
-    flags:    i64      ; SA_* flags
-    restorer: i64      ; signal trampoline (kernel sets this)
-    mask:     u64[2]   ; signal mask (128 bits)
+    handler:  i64      // fn pointer or SIG_DFL / SIG_IGN
+    flags:    i64      // SA_* flags
+    restorer: i64      // signal trampoline (kernel sets this)
+    mask:     u64[2]   // signal mask (128 bits)
 }
 
 struct ProcInfo {
@@ -111,32 +111,32 @@ struct ProcInfo {
 }
 
 struct SpawnOpts {
-    stdin_fd:  i32   ; -1 = inherit
-    stdout_fd: i32   ; -1 = inherit
-    stderr_fd: i32   ; -1 = inherit
-    cwd:       &i8   ; null = inherit
-    env:       &&i8  ; null = inherit current environ
-    detach:    i32   ; 1 = new session (setsid)
+    stdin_fd:  i32   // -1 = inherit
+    stdout_fd: i32   // -1 = inherit
+    stderr_fd: i32   // -1 = inherit
+    cwd:       &i8   // null = inherit
+    env:       &&i8  // null = inherit current environ
+    detach:    i32   // 1 = new session (setsid)
 }
 
 struct ChildProc {
     pid:    i32
-    stdin:  i32   ; write end of stdin pipe  (-1 if not piped)
-    stdout: i32   ; read  end of stdout pipe (-1 if not piped)
-    stderr: i32   ; read  end of stderr pipe (-1 if not piped)
+    stdin:  i32   // write end of stdin pipe  (-1 if not piped)
+    stdout: i32   // read  end of stdout pipe (-1 if not piped)
+    stderr: i32   // read  end of stderr pipe (-1 if not piped)
 }
 
 struct WaitResult {
     pid:    i32
     status: i32
     exited: i32
-    code:   i32     ; exit code if exited
-    signal: i32     ; signal if killed by signal
+    code:   i32     // exit code if exited
+    signal: i32     // signal if killed by signal
 }
 
-; ============================================================
-; 5. BASIC PROCESS OPERATIONS
-; ============================================================
+// ============================================================
+// 5. BASIC PROCESS OPERATIONS
+// ============================================================
 
 fn getpid() -> i32 {
     ret syscall(SYS_GETPID, 0, 0, 0) as i32
@@ -157,29 +157,29 @@ fn abort() {
     kill(getpid(), SIGABRT)
 }
 
-; ============================================================
-; 6. FORK / EXEC / WAIT
-; ============================================================
+// ============================================================
+// 6. FORK / EXEC / WAIT
+// ============================================================
 
 fn fork() -> i32 {
     ret syscall(SYS_FORK, 0, 0, 0) as i32
 }
 
-; execve(path, argv, envp)
-; argv and envp are null-terminated arrays of null-terminated strings.
+// execve(path, argv, envp)
+// argv and envp are null-terminated arrays of null-terminated strings.
 fn execve(path: &i8, argv: &&i8, envp: &&i8) -> i32 {
     ret syscall(SYS_EXECVE, path, argv, envp) as i32
 }
 
-; Execute a command with a simple argv array (no environment override).
-; Returns the child pid or -errno.
+// Execute a command with a simple argv array (no environment override).
+// Returns the child pid or -errno.
 fn exec_argv(path: &i8, argv: &&i8) -> i32 {
     let pid = fork()
-    if pid < 0 { ret pid }          ; fork failed
+    if pid < 0 { ret pid }          // fork failed
     if pid == 0 {
-        ; child: exec
+        // child: exec
         execve(path, argv, environ())
-        exit(127)                   ; exec failed: command not found
+        exit(127)                   // exec failed: command not found
     }
     ret pid
 }
@@ -188,7 +188,7 @@ fn waitpid(pid: i32, status: &i32, options: i32) -> i32 {
     ret syscall(SYS_WAIT4, pid, status, options) as i32
 }
 
-; Wait for any child and return structured result
+// Wait for any child and return structured result
 fn wait_any(opts: i32) -> WaitResult {
     let status = 0
     let pid = waitpid(-1, &status, opts)
@@ -201,7 +201,7 @@ fn wait_any(opts: i32) -> WaitResult {
     ret r
 }
 
-; Run a command and wait for it to finish; return exit code.
+// Run a command and wait for it to finish; return exit code.
 fn run(path: &i8, argv: &&i8) -> i32 {
     let pid = exec_argv(path, argv)
     if pid < 0 { ret -1 }
@@ -210,12 +210,12 @@ fn run(path: &i8, argv: &&i8) -> i32 {
     ret wexitstatus(status)
 }
 
-; ============================================================
-; 7. SPAWN WITH PIPES  (like subprocess.Popen)
-; ============================================================
+// ============================================================
+// 7. SPAWN WITH PIPES  (like subprocess.Popen)
+// ============================================================
 
 fn pipe2(fds: &i32) -> i32 {
-    ; pipe2(fds, 0) — SYS_PIPE2 = 293
+    // pipe2(fds, 0) — SYS_PIPE2 = 293
     ret syscall(293, fds, 0, 0) as i32
 }
 
@@ -227,15 +227,15 @@ fn close_fd(fd: i32) {
     syscall(SYS_CLOSE, fd, 0, 0)
 }
 
-; Spawn a child process with piped stdin/stdout/stderr.
-; Returns ChildProc with pid and pipe file descriptors.
+// Spawn a child process with piped stdin/stdout/stderr.
+// Returns ChildProc with pid and pipe file descriptors.
 fn spawn(path: &i8, argv: &&i8, opts: &SpawnOpts) -> ChildProc {
     let child = ChildProc{}
     child.stdin  = -1
     child.stdout = -1
     child.stderr = -1
 
-    let in_fds  = i32[2]   ; [0]=read  [1]=write  (child reads [0])
+    let in_fds  = i32[2]   // [0]=read  [1]=write  (child reads [0])
     let out_fds = i32[2]
     let err_fds = i32[2]
 
@@ -250,12 +250,12 @@ fn spawn(path: &i8, argv: &&i8, opts: &SpawnOpts) -> ChildProc {
     }
 
     if pid == 0 {
-        ; ---- Child ----
+        // ---- Child ----
         if opts.detach != 0 { syscall(SYS_SETSID, 0, 0, 0) }
 
-        ; Wire up stdio
+        // Wire up stdio
         if opts.stdin_fd == -1 {
-            dup2(in_fds[0],  0)   ; stdin  ← read end of in_pipe
+            dup2(in_fds[0],  0)   // stdin  ← read end of in_pipe
             close_fd(in_fds[0])   close_fd(in_fds[1])
         } else if opts.stdin_fd >= 0 {
             dup2(opts.stdin_fd, 0)
@@ -279,8 +279,8 @@ fn spawn(path: &i8, argv: &&i8, opts: &SpawnOpts) -> ChildProc {
         exit(127)
     }
 
-    ; ---- Parent ----
-    ; Close child-side pipe ends
+    // ---- Parent ----
+    // Close child-side pipe ends
     if opts.stdin_fd == -1 {
         close_fd(in_fds[0])
         child.stdin = in_fds[1]
@@ -298,7 +298,7 @@ fn spawn(path: &i8, argv: &&i8, opts: &SpawnOpts) -> ChildProc {
     ret child
 }
 
-; Read all output from a spawned process into a buffer; return bytes read.
+// Read all output from a spawned process into a buffer; return bytes read.
 fn spawn_output(path: &i8, argv: &&i8, out: &i8, cap: i64) -> i64 {
     let opts = SpawnOpts{}
     opts.stdin_fd  = -1
@@ -307,10 +307,10 @@ fn spawn_output(path: &i8, argv: &&i8, out: &i8, cap: i64) -> i64 {
     let child = spawn(path, argv, &opts)
     if child.pid < 0 { ret -1 }
 
-    ; Close stdin (we won't write to it)
+    // Close stdin (we won't write to it)
     close_fd(child.stdin)
 
-    ; Read all stdout
+    // Read all stdout
     let total = 0
     loop total < cap - 1 {
         let n = syscall(SYS_READ, child.stdout, out + total, cap - 1 - total) as i64
@@ -325,16 +325,16 @@ fn spawn_output(path: &i8, argv: &&i8, out: &i8, cap: i64) -> i64 {
     ret total
 }
 
-; ============================================================
-; 8. KILL / SIGNALS
-; ============================================================
+// ============================================================
+// 8. KILL / SIGNALS
+// ============================================================
 
 fn kill(pid: i32, sig: i32) -> i32 {
     ret syscall(SYS_KILL, pid, sig, 0) as i32
 }
 
 fn killpg(pgid: i32, sig: i32) -> i32 {
-    ret kill(0 - pgid, sig)   ; negative pid = process group
+    ret kill(0 - pgid, sig)   // negative pid = process group
 }
 
 fn raise_sig(sig: i32) {
@@ -344,8 +344,8 @@ fn raise_sig(sig: i32) {
 fn signal(sig: i32, handler: i64) -> i32 {
     let sa = SigAction{}
     sa.handler = handler
-    sa.flags   = 0x04000000   ; SA_RESTORER (kernel requires it on Linux)
-    ; rt_sigaction(sig, &sa, NULL, 8)
+    sa.flags   = 0x04000000   // SA_RESTORER (kernel requires it on Linux)
+    // rt_sigaction(sig, &sa, NULL, 8)
     ret syscall(SYS_RT_SIGACTION, sig, &sa, 0) as i32
 }
 
@@ -357,12 +357,12 @@ fn signal_default(sig: i32) {
     signal(sig, SIG_DFL)
 }
 
-; Block a set of signals (simple: block single signal)
+// Block a set of signals (simple: block single signal)
 fn signal_block(sig: i32) {
     let mask = u64[2]
     if sig <= 64 { mask[0] = 1 << (sig - 1) }
     else         { mask[1] = 1 << (sig - 65) }
-    ; SIG_BLOCK = 0
+    // SIG_BLOCK = 0
     syscall(SYS_RT_SIGPROCMASK, 0, &mask, 0)
 }
 
@@ -370,58 +370,58 @@ fn signal_unblock(sig: i32) {
     let mask = u64[2]
     if sig <= 64 { mask[0] = 1 << (sig - 1) }
     else         { mask[1] = 1 << (sig - 65) }
-    ; SIG_UNBLOCK = 1
+    // SIG_UNBLOCK = 1
     syscall(SYS_RT_SIGPROCMASK, 1, &mask, 0)
 }
 
-; ============================================================
-; 9. ENVIRONMENT VARIABLES
-; ============================================================
-; On Linux, the env pointer is passed to the process via execve
-; and is accessible at argv + argc + 1 on the initial stack.
-; We expose a module-level pointer set during startup.
+// ============================================================
+// 9. ENVIRONMENT VARIABLES
+// ============================================================
+// On Linux, the env pointer is passed to the process via execve
+// and is accessible at argv + argc + 1 on the initial stack.
+// We expose a module-level pointer set during startup.
 
-let _environ_ptr = 0   ; set by process_init()
+let _environ_ptr = 0   // set by process_init()
 
 fn environ() -> &&i8 {
     ret _environ_ptr
 }
 
-; Call this from main() with the stack pointer to initialise argv/environ.
-; Convention: rsp+8 = argc, rsp+16 = argv[0], argv[argc+1] = envp[0]
+// Call this from main() with the stack pointer to initialise argv/environ.
+// Convention: rsp+8 = argc, rsp+16 = argv[0], argv[argc+1] = envp[0]
 fn process_init(argc: i64, argv: &&i8) {
     _environ_ptr = argv + (argc + 1)
 }
 
-; Look up an environment variable by name; return null if not found.
+// Look up an environment variable by name; return null if not found.
 fn getenv(name: &i8) -> &i8 {
     let env = environ()
     if env == null { ret null }
     let i = 0
     loop env[i] != null {
         let entry = env[i]
-        ; Compare name to entry up to '='
+        // Compare name to entry up to '='
         let j = 0
         loop name[j] != 0 and entry[j] == name[j] { j = j + 1 }
         if name[j] == 0 and entry[j] == '=' {
-            ret entry + j + 1    ; pointer to value
+            ret entry + j + 1    // pointer to value
         }
         i = i + 1
     }
     ret null
 }
 
-; Set an environment variable (appends to env array — limited to 256 new vars)
-let _extra_env  = &i8[256 * 64]   ; storage for new KEY=VALUE strings
+// Set an environment variable (appends to env array — limited to 256 new vars)
+let _extra_env  = &i8[256 * 64]   // storage for new KEY=VALUE strings
 let _extra_cnt  = 0
-let _env_arr    = &&i8[512]        ; rebuilt env array
+let _env_arr    = &&i8[512]        // rebuilt env array
 
 fn setenv(name: &i8, value: &i8, overwrite: i32) -> i32 {
-    ; Check if already set
+    // Check if already set
     if overwrite == 0 {
         if getenv(name) != null { ret 0 }
     }
-    ; Build "NAME=VALUE" string
+    // Build "NAME=VALUE" string
     let slot = &_extra_env[_extra_cnt * 64]
     let p = 0
     let i = 0
@@ -432,7 +432,7 @@ fn setenv(name: &i8, value: &i8, overwrite: i32) -> i32 {
     slot[p] = 0
     _extra_cnt = _extra_cnt + 1
 
-    ; Rebuild env array: copy existing + append new
+    // Rebuild env array: copy existing + append new
     let old = environ()
     let cnt = 0
     if old != null { loop old[cnt] != null { _env_arr[cnt] = old[cnt]   cnt = cnt + 1 } }
@@ -445,7 +445,7 @@ fn setenv(name: &i8, value: &i8, overwrite: i32) -> i32 {
 fn unsetenv(name: &i8) -> i32 {
     let env = environ()
     if env == null { ret 0 }
-    ; Rebuild array skipping matching entry
+    // Rebuild array skipping matching entry
     let cnt = 0
     let out = 0
     loop env[cnt] != null {
@@ -463,9 +463,9 @@ fn unsetenv(name: &i8) -> i32 {
     ret 0
 }
 
-; ============================================================
-; 10. PROCESS INFO
-; ============================================================
+// ============================================================
+// 10. PROCESS INFO
+// ============================================================
 
 fn proc_info() -> ProcInfo {
     let info = ProcInfo{}
@@ -476,13 +476,13 @@ fn proc_info() -> ProcInfo {
     info.euid = syscall(SYS_GETEUID, 0, 0, 0) as i32
     info.egid = syscall(SYS_GETEGID, 0, 0, 0) as i32
     info.pgid = syscall(SYS_GETPGID, 0, 0, 0) as i32
-    info.sid  = syscall(112, 0, 0, 0) as i32   ; getsid(0)
+    info.sid  = syscall(112, 0, 0, 0) as i32   // getsid(0)
     ret info
 }
 
-; ============================================================
-; 11. PIPES (standalone, without spawn)
-; ============================================================
+// ============================================================
+// 11. PIPES (standalone, without spawn)
+// ============================================================
 
 struct Pipe {
     read_fd:  i32
@@ -509,26 +509,26 @@ fn pipe_read(p: &Pipe, buf: &i8, cap: i64) -> i64 {
 fn pipe_close_write(p: &Pipe) { close_fd(p.write_fd)   p.write_fd = -1 }
 fn pipe_close_read(p: &Pipe)  { close_fd(p.read_fd)    p.read_fd  = -1 }
 
-; ============================================================
-; 12. DAEMON  (double-fork + setsid)
-; ============================================================
+// ============================================================
+// 12. DAEMON  (double-fork + setsid)
+// ============================================================
 
 fn daemonize() -> i32 {
-    ; First fork
+    // First fork
     let pid = fork()
     if pid < 0 { ret pid }
-    if pid > 0 { exit(0) }           ; parent exits
+    if pid > 0 { exit(0) }           // parent exits
 
-    ; New session
+    // New session
     syscall(SYS_SETSID, 0, 0, 0)
 
-    ; Second fork (prevents re-acquiring a controlling terminal)
+    // Second fork (prevents re-acquiring a controlling terminal)
     pid = fork()
     if pid < 0 { ret pid }
-    if pid > 0 { exit(0) }           ; first child exits
+    if pid > 0 { exit(0) }           // first child exits
 
-    ; Redirect stdio to /dev/null
-    let devnull = syscall(SYS_OPEN, "/dev/null", 2, 0) as i32  ; O_RDWR
+    // Redirect stdio to /dev/null
+    let devnull = syscall(SYS_OPEN, "/dev/null", 2, 0) as i32  // O_RDWR
     if devnull >= 0 {
         dup2(devnull, 0)   dup2(devnull, 1)   dup2(devnull, 2)
         if devnull > 2 { close_fd(devnull) }
@@ -536,15 +536,15 @@ fn daemonize() -> i32 {
     ret 0
 }
 
-; ============================================================
-; 13. PRCTL HELPERS
-; ============================================================
+// ============================================================
+// 13. PRCTL HELPERS
+// ============================================================
 
 const PR_SET_NAME   = 15
 const PR_GET_NAME   = 16
 const PR_SET_DUMPABLE = 4
 const PR_GET_DUMPABLE = 3
-const PR_SET_PDEATHSIG = 1   ; signal sent to child when parent dies
+const PR_SET_PDEATHSIG = 1   // signal sent to child when parent dies
 
 fn set_process_name(name: &i8) {
     syscall(SYS_PRCTL, PR_SET_NAME, name, 0)
@@ -554,12 +554,12 @@ fn get_process_name(out: &i8) {
     syscall(SYS_PRCTL, PR_GET_NAME, out, 0)
 }
 
-; Send sig to this process when its parent dies
+// Send sig to this process when its parent dies
 fn set_pdeathsig(sig: i32) {
     syscall(SYS_PRCTL, PR_SET_PDEATHSIG, sig, 0)
 }
 
-; Disable core dumps for this process
+// Disable core dumps for this process
 fn disable_coredump() {
     syscall(SYS_PRCTL, PR_SET_DUMPABLE, 0, 0)
 }

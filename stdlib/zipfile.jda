@@ -1,42 +1,42 @@
-; =============================================================================
-; jda::zipfile -- ZIP Archive Format (Stored Only)
-; =============================================================================
-; Read and write ZIP archives with stored (uncompressed) entries.
-; Implements local file headers, central directory, and EOCD.
-;
-; Write handle layout (&i64):
-;   [0] output buffer (&i8)
-;   [1] current write position
-;   [2] entry count
-;   [3] name_offsets   (&i64 — offset of local header for each entry)
-;   [4] name_lens      (&i64)
-;   [5] data_lens      (&i64)
-;   [6] name_buf       (&i8 — stored names)
-;   [7] name_buf_pos
-;
-; Read handle layout (&i64):
-;   [0] input buffer (&i8)
-;   [1] input length
-;   [2] entry count
-;   [3] local_offsets  (&i64 — offset of each local file header)
-;   [4] name_lens      (&i64)
-;   [5] data_lens      (&i64)
-;
-; Functions:
-;   zip_create(out)                    -> &i64  create write handle
-;   zip_add(h, name, nlen, data, dlen) -> i64   add stored entry
-;   zip_finish(h)                      -> i64   write central dir + EOCD, ret len
-;   zip_open(buf, len)                 -> &i64  open for reading
-;   zip_count(h)                       -> i64   number of entries
-;   zip_entry_name(h, idx, out)        -> i64   copy name, return length
-;   zip_entry_size(h, idx)             -> i64   data size
-;   zip_entry_data(h, idx, out)        -> i64   copy data, return length
-; =============================================================================
+// =============================================================================
+// jda::zipfile -- ZIP Archive Format (Stored Only)
+// =============================================================================
+// Read and write ZIP archives with stored (uncompressed) entries.
+// Implements local file headers, central directory, and EOCD.
 
-;; Internal byte reader.
+// Write handle layout (&i64):
+//   [0] output buffer (&i8)
+//   [1] current write position
+//   [2] entry count
+//   [3] name_offsets   (&i64 — offset of local header for each entry)
+//   [4] name_lens      (&i64)
+//   [5] data_lens      (&i64)
+//   [6] name_buf       (&i8 — stored names)
+//   [7] name_buf_pos
+
+// Read handle layout (&i64):
+//   [0] input buffer (&i8)
+//   [1] input length
+//   [2] entry count
+//   [3] local_offsets  (&i64 — offset of each local file header)
+//   [4] name_lens      (&i64)
+//   [5] data_lens      (&i64)
+
+// Functions:
+//   zip_create(out)                    -> &i64  create write handle
+//   zip_add(h, name, nlen, data, dlen) -> i64   add stored entry
+//   zip_finish(h)                      -> i64   write central dir + EOCD, ret len
+//   zip_open(buf, len)                 -> &i64  open for reading
+//   zip_count(h)                       -> i64   number of entries
+//   zip_entry_name(h, idx, out)        -> i64   copy name, return length
+//   zip_entry_size(h, idx)             -> i64   data size
+//   zip_entry_data(h, idx, out)        -> i64   copy data, return length
+// =============================================================================
+
+// Internal byte reader.
 fn _zip_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: write little-endian 16-bit.
+// Internal: write little-endian 16-bit.
 fn _zip_w16(out: &i8, pos: i64, val: i64) -> i64 {
     let lo = val - (val / 256) * 256
     let hi = (val / 256) - (val / 65536) * 256
@@ -45,7 +45,7 @@ fn _zip_w16(out: &i8, pos: i64, val: i64) -> i64 {
     ret pos + 2
 }
 
-;; Internal: write little-endian 32-bit.
+// Internal: write little-endian 32-bit.
 fn _zip_w32(out: &i8, pos: i64, val: i64) -> i64 {
     let b0 = val - (val / 256) * 256
     let v1 = val / 256
@@ -61,7 +61,7 @@ fn _zip_w32(out: &i8, pos: i64, val: i64) -> i64 {
     ret pos + 4
 }
 
-;; Internal: read little-endian 16-bit.
+// Internal: read little-endian 16-bit.
 fn _zip_r16(buf: &i8, pos: i64) -> i64 {
     let b0 = _zip_byte_at(buf, pos)
     let b1 = _zip_byte_at(buf, pos + 1)
@@ -70,7 +70,7 @@ fn _zip_r16(buf: &i8, pos: i64) -> i64 {
     ret b0 + b1 * 256
 }
 
-;; Internal: read little-endian 32-bit.
+// Internal: read little-endian 32-bit.
 fn _zip_r32(buf: &i8, pos: i64) -> i64 {
     let b0 = _zip_byte_at(buf, pos)
     let b1 = _zip_byte_at(buf, pos + 1)
@@ -83,9 +83,9 @@ fn _zip_r32(buf: &i8, pos: i64) -> i64 {
     ret b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
 }
 
-;; Simple CRC-32 for ZIP (same algorithm as gzip).
+// Simple CRC-32 for ZIP (same algorithm as gzip).
 fn _zip_crc32_byte(crc: i64, byte_val: i64) -> i64 {
-    ; XOR byte into CRC
+    // XOR byte into CRC
     let xval = 0
     let bit = 0
     let aa = crc
@@ -136,7 +136,7 @@ fn _zip_crc32_byte(crc: i64, byte_val: i64) -> i64 {
     ret c
 }
 
-;; Compute CRC-32 for data.
+// Compute CRC-32 for data.
 fn _zip_crc32(buf: &i8, len: i64) -> i64 {
     let crc = 4294967295
     let i = 0
@@ -146,7 +146,7 @@ fn _zip_crc32(buf: &i8, len: i64) -> i64 {
         crc = _zip_crc32_byte(crc, b)
         i = i + 1
     }
-    ; Final XOR with 0xFFFFFFFF
+    // Final XOR with 0xFFFFFFFF
     let result = 0
     let bit = 0
     let ac = crc
@@ -167,7 +167,7 @@ fn _zip_crc32(buf: &i8, len: i64) -> i64 {
     ret result
 }
 
-;; Create a write handle.
+// Create a write handle.
 fn zip_create(out: &i8) -> &i64 {
     let h: &i64 = alloc_pages(1)
     h[0] = out
@@ -182,13 +182,13 @@ fn zip_create(out: &i8) -> &i64 {
     h[5] = dlens
     h[6] = nbuf
     h[7] = 0
-    ; Also store CRC values for central directory
+    // Also store CRC values for central directory
     let crcs: &i64 = alloc_pages(1)
     h[8] = crcs
     ret h
 }
 
-;; Add a stored file entry to the ZIP.
+// Add a stored file entry to the ZIP.
 fn zip_add(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
     let out: &i8 = h[0]
     let pos = h[1]
@@ -200,14 +200,14 @@ fn zip_add(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
     let nbpos = h[7]
     let crcs: &i64 = h[8]
 
-    ; Remember this entry's local header offset
+    // Remember this entry's local header offset
     offs[count] = pos
 
-    ; Compute CRC-32
+    // Compute CRC-32
     let crc = _zip_crc32(data, dlen)
     crcs[count] = crc
 
-    ; Store name for central directory
+    // Store name for central directory
     let ni = 0
     loop ni < nlen {
         let nc = _zip_byte_at(name, ni)
@@ -218,36 +218,36 @@ fn zip_add(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
     dlens[count] = dlen
     h[7] = nbpos + nlen
 
-    ; Local file header (30 bytes + name + data)
-    ; Signature: PK\x03\x04
-    poke_byte(out, pos, 80)      ; 'P'
-    poke_byte(out, pos + 1, 75)  ; 'K'
+    // Local file header (30 bytes + name + data)
+    // Signature: PK\x03\x04
+    poke_byte(out, pos, 80)      // 'P'
+    poke_byte(out, pos + 1, 75)  // 'K'
     poke_byte(out, pos + 2, 3)
     poke_byte(out, pos + 3, 4)
     pos = pos + 4
 
-    ; Version needed (20 = 2.0)
+    // Version needed (20 = 2.0)
     pos = _zip_w16(out, pos, 20)
-    ; General purpose flags
+    // General purpose flags
     pos = _zip_w16(out, pos, 0)
-    ; Compression method (0 = stored)
+    // Compression method (0 = stored)
     pos = _zip_w16(out, pos, 0)
-    ; Mod time
+    // Mod time
     pos = _zip_w16(out, pos, 0)
-    ; Mod date
+    // Mod date
     pos = _zip_w16(out, pos, 0)
-    ; CRC-32
+    // CRC-32
     pos = _zip_w32(out, pos, crc)
-    ; Compressed size
+    // Compressed size
     pos = _zip_w32(out, pos, dlen)
-    ; Uncompressed size
+    // Uncompressed size
     pos = _zip_w32(out, pos, dlen)
-    ; Filename length
+    // Filename length
     pos = _zip_w16(out, pos, nlen)
-    ; Extra field length
+    // Extra field length
     pos = _zip_w16(out, pos, 0)
 
-    ; Filename
+    // Filename
     let fi = 0
     loop fi < nlen {
         let fc = _zip_byte_at(name, fi)
@@ -256,7 +256,7 @@ fn zip_add(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
         fi = fi + 1
     }
 
-    ; File data
+    // File data
     let di = 0
     loop di < dlen {
         let db = _zip_byte_at(data, di)
@@ -270,7 +270,7 @@ fn zip_add(h: &i64, name: &i8, nlen: i64, data: &i8, dlen: i64) -> i64 {
     ret 1
 }
 
-;; Write central directory and EOCD. Returns total archive length.
+// Write central directory and EOCD. Returns total archive length.
 fn zip_finish(h: &i64) -> i64 {
     let out: &i8 = h[0]
     let pos = h[1]
@@ -284,51 +284,51 @@ fn zip_finish(h: &i64) -> i64 {
     let cd_start = pos
     let name_pos = 0
 
-    ; Write central directory entries
+    // Write central directory entries
     let i = 0
     loop i < count {
-        ; Signature: PK\x01\x02
+        // Signature: PK\x01\x02
         poke_byte(out, pos, 80)
         poke_byte(out, pos + 1, 75)
         poke_byte(out, pos + 2, 1)
         poke_byte(out, pos + 3, 2)
         pos = pos + 4
 
-        ; Version made by (20)
+        // Version made by (20)
         pos = _zip_w16(out, pos, 20)
-        ; Version needed (20)
+        // Version needed (20)
         pos = _zip_w16(out, pos, 20)
-        ; Flags
+        // Flags
         pos = _zip_w16(out, pos, 0)
-        ; Compression (stored)
+        // Compression (stored)
         pos = _zip_w16(out, pos, 0)
-        ; Mod time
+        // Mod time
         pos = _zip_w16(out, pos, 0)
-        ; Mod date
+        // Mod date
         pos = _zip_w16(out, pos, 0)
-        ; CRC-32
+        // CRC-32
         pos = _zip_w32(out, pos, crcs[i])
-        ; Compressed size
+        // Compressed size
         pos = _zip_w32(out, pos, dlens[i])
-        ; Uncompressed size
+        // Uncompressed size
         pos = _zip_w32(out, pos, dlens[i])
-        ; Filename length
+        // Filename length
         let nlen = nlens[i]
         pos = _zip_w16(out, pos, nlen)
-        ; Extra field length
+        // Extra field length
         pos = _zip_w16(out, pos, 0)
-        ; File comment length
+        // File comment length
         pos = _zip_w16(out, pos, 0)
-        ; Disk number start
+        // Disk number start
         pos = _zip_w16(out, pos, 0)
-        ; Internal file attributes
+        // Internal file attributes
         pos = _zip_w16(out, pos, 0)
-        ; External file attributes
+        // External file attributes
         pos = _zip_w32(out, pos, 0)
-        ; Relative offset of local header
+        // Relative offset of local header
         pos = _zip_w32(out, pos, offs[i])
 
-        ; Filename
+        // Filename
         let ni = 0
         loop ni < nlen {
             let nc = _zip_byte_at(nbuf, name_pos + ni)
@@ -342,36 +342,36 @@ fn zip_finish(h: &i64) -> i64 {
 
     let cd_size = pos - cd_start
 
-    ; EOCD record
-    ; Signature: PK\x05\x06
+    // EOCD record
+    // Signature: PK\x05\x06
     poke_byte(out, pos, 80)
     poke_byte(out, pos + 1, 75)
     poke_byte(out, pos + 2, 5)
     poke_byte(out, pos + 3, 6)
     pos = pos + 4
 
-    ; Disk number
+    // Disk number
     pos = _zip_w16(out, pos, 0)
-    ; Disk with central directory
+    // Disk with central directory
     pos = _zip_w16(out, pos, 0)
-    ; Entries on this disk
+    // Entries on this disk
     pos = _zip_w16(out, pos, count)
-    ; Total entries
+    // Total entries
     pos = _zip_w16(out, pos, count)
-    ; Size of central directory
+    // Size of central directory
     pos = _zip_w32(out, pos, cd_size)
-    ; Offset of central directory
+    // Offset of central directory
     pos = _zip_w32(out, pos, cd_start)
-    ; Comment length
+    // Comment length
     pos = _zip_w16(out, pos, 0)
 
     h[1] = pos
     ret pos
 }
 
-;; Internal: scan for EOCD to find central directory.
+// Internal: scan for EOCD to find central directory.
 fn _zip_find_eocd(buf: &i8, len: i64) -> i64 {
-    ; Search backwards for PK\x05\x06
+    // Search backwards for PK\x05\x06
     let pos = len - 22
     loop pos >= 0 {
         let b0 = _zip_byte_at(buf, pos)
@@ -390,13 +390,13 @@ fn _zip_find_eocd(buf: &i8, len: i64) -> i64 {
     ret 0 - 1
 }
 
-;; Open a ZIP archive for reading.
+// Open a ZIP archive for reading.
 fn zip_open(buf: &i8, len: i64) -> &i64 {
     let h: &i64 = alloc_pages(1)
     h[0] = buf
     h[1] = len
 
-    ; Find EOCD
+    // Find EOCD
     let eocd = _zip_find_eocd(buf, len)
     if eocd < 0 {
         h[2] = 0
@@ -413,13 +413,13 @@ fn zip_open(buf: &i8, len: i64) -> &i64 {
     h[4] = name_lens
     h[5] = data_lens
 
-    ; Read central directory
+    // Read central directory
     let cd_off = _zip_r32(buf, eocd + 16)
     let pos = cd_off
     let i = 0
     loop i < count {
-        ; Skip signature (4) + versions (4) + flags (2) + method (2) + time (4) + crc (4)
-        ; = 20 bytes to compressed size
+        // Skip signature (4) + versions (4) + flags (2) + method (2) + time (4) + crc (4)
+        // = 20 bytes to compressed size
         let nlen = _zip_r16(buf, pos + 28)
         let extra_len = _zip_r16(buf, pos + 30)
         let comment_len = _zip_r16(buf, pos + 32)
@@ -437,19 +437,19 @@ fn zip_open(buf: &i8, len: i64) -> &i64 {
     ret h
 }
 
-;; Number of entries in the ZIP.
+// Number of entries in the ZIP.
 fn zip_count(h: &i64) -> i64 {
     ret h[2]
 }
 
-;; Copy entry name at index to out. Returns length.
+// Copy entry name at index to out. Returns length.
 fn zip_entry_name(h: &i64, idx: i64, out: &i8) -> i64 {
     let buf: &i8 = h[0]
     let local_offs: &i64 = h[3]
     let name_lens: &i64 = h[4]
     let loff = local_offs[idx]
     let nlen = name_lens[idx]
-    ; Name starts at offset 30 in local file header
+    // Name starts at offset 30 in local file header
     let name_off = loff + 30
     let i = 0
     loop i < nlen {
@@ -460,13 +460,13 @@ fn zip_entry_name(h: &i64, idx: i64, out: &i8) -> i64 {
     ret nlen
 }
 
-;; Get data size for entry at index.
+// Get data size for entry at index.
 fn zip_entry_size(h: &i64, idx: i64) -> i64 {
     let data_lens: &i64 = h[5]
     ret data_lens[idx]
 }
 
-;; Copy entry data at index to out. Returns length.
+// Copy entry data at index to out. Returns length.
 fn zip_entry_data(h: &i64, idx: i64, out: &i8) -> i64 {
     let buf: &i8 = h[0]
     let local_offs: &i64 = h[3]
@@ -475,7 +475,7 @@ fn zip_entry_data(h: &i64, idx: i64, out: &i8) -> i64 {
     let loff = local_offs[idx]
     let nlen = name_lens[idx]
     let dlen = data_lens[idx]
-    ; Data starts after local header (30 bytes) + name + extra field
+    // Data starts after local header (30 bytes) + name + extra field
     let extra_len = _zip_r16(buf, loff + 28)
     let data_off = loff + 30 + nlen + extra_len
     let i = 0

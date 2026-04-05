@@ -1,48 +1,48 @@
-; =============================================================================
-; jda::json — Zero-Copy JSON Parser & Serialiser
-; =============================================================================
-; Parser:     slices point INTO the source buffer — zero allocations
-; Serialiser: writes directly to a caller-supplied buffer
-; Both are J-Thread safe (no global state)
-;
-; Usage:
-;   let val = json_parse(src)?
-;   let name = val.get("name")?.as_str()?
-;   let age  = val.get("age")?.as_i64()?
-;
-;   let buf = [4096]i8
-;   let n = json_write(val, buf)
-; =============================================================================
+// =============================================================================
+// jda::json — Zero-Copy JSON Parser & Serialiser
+// =============================================================================
+// Parser:     slices point INTO the source buffer — zero allocations
+// Serialiser: writes directly to a caller-supplied buffer
+// Both are J-Thread safe (no global state)
 
-; =============================================================================
-; JsonValue — tagged union covering all JSON types
-; =============================================================================
+// Usage:
+//   let val = json_parse(src)?
+//   let name = val.get("name")?.as_str()?
+//   let age  = val.get("age")?.as_i64()?
+
+//   let buf = [4096]i8
+//   let n = json_write(val, buf)
+// =============================================================================
+
+// =============================================================================
+// JsonValue — tagged union covering all JSON types
+// =============================================================================
 enum JsonValue {
     Null
     Bool(bool)
     Int(i64)
     Float(f64)
-    Str([]i8)           ; slice into original source buffer (zero-copy)
-    Array([]JsonValue)  ; elements stored in caller's region
-    Object([]JsonPair)  ; key-value pairs stored in caller's region
+    Str([]i8)           // slice into original source buffer (zero-copy)
+    Array([]JsonValue)  // elements stored in caller's region
+    Object([]JsonPair)  // key-value pairs stored in caller's region
 }
 
 struct JsonPair {
-    key: []i8           ; slice into source buffer (zero-copy)
+    key: []i8           // slice into source buffer (zero-copy)
     val: JsonValue
 }
 
-; =============================================================================
-; Parser state
-; =============================================================================
+// =============================================================================
+// Parser state
+// =============================================================================
 struct Parser {
     src: []i8
     pos: i64
 }
 
-; =============================================================================
-; json_parse(src) -> Result<JsonValue, JsonError>
-; =============================================================================
+// =============================================================================
+// json_parse(src) -> Result<JsonValue, JsonError>
+// =============================================================================
 fn json_parse(src: []i8) -> Result<JsonValue, []i8> {
     let p = Parser { src: src, pos: 0 }
     skip_ws(&mut p)
@@ -67,7 +67,7 @@ fn parse_value(p: &mut Parser) -> Result<JsonValue, []i8> {
     }
 }
 
-; ---- null / true / false ------------------------------------------------
+// ---- null / true / false ------------------------------------------------
 fn parse_null(p: &mut Parser) -> Result<JsonValue, []i8> {
     expect_lit(p, "null")?
     ret ok(JsonValue::Null)
@@ -90,11 +90,11 @@ fn expect_lit(p: &mut Parser, lit: ref []i8) -> Result<(), []i8> {
     ret ok(())
 }
 
-; ---- string -------------------------------------------------------------
-; Returns a slice directly into p.src — zero copy.
-; Handles escape sequences by falling back to a copy when needed.
+// ---- string -------------------------------------------------------------
+// Returns a slice directly into p.src — zero copy.
+// Handles escape sequences by falling back to a copy when needed.
 fn parse_string(p: &mut Parser) -> Result<JsonValue, []i8> {
-    p.pos = p.pos + 1      ; skip opening "
+    p.pos = p.pos + 1      // skip opening "
     let start = p.pos
     let has_escape = false
 
@@ -104,14 +104,14 @@ fn parse_string(p: &mut Parser) -> Result<JsonValue, []i8> {
             let s = if has_escape {
                 unescape(p.src[start..p.pos])
             } else {
-                p.src[start..p.pos]   ; zero-copy slice
+                p.src[start..p.pos]   // zero-copy slice
             }
-            p.pos = p.pos + 1        ; skip closing "
+            p.pos = p.pos + 1        // skip closing "
             ret ok(JsonValue::Str(s))
         }
         if c == '\\' {
             has_escape = true
-            p.pos = p.pos + 2        ; skip escape sequence (simplified)
+            p.pos = p.pos + 2        // skip escape sequence (simplified)
         } else {
             p.pos = p.pos + 1
         }
@@ -120,8 +120,8 @@ fn parse_string(p: &mut Parser) -> Result<JsonValue, []i8> {
 }
 
 fn unescape(s: []i8) -> []i8 {
-    ; Full unescape: \n \t \r \\ \" \uXXXX
-    ; Returns a new []i8 (uses region alloc in full impl)
+    // Full unescape: \n \t \r \\ \" \uXXXX
+    // Returns a new []i8 (uses region alloc in full impl)
     let buf = [4096]i8
     let j   = 0i64
     let i   = 0i64
@@ -136,7 +136,7 @@ fn unescape(s: []i8) -> []i8 {
                 '\\' => { buf[j] = '\\'   j = j + 1 }
                 '/'  => { buf[j] = '/'    j = j + 1 }
                 'u'  => {
-                    ; \uXXXX → UTF-8
+                    // \uXXXX → UTF-8
                     let cp = hex4(s, i + 1)
                     j = j + utf8_encode(cp, buf, j)
                     i = i + 4
@@ -152,7 +152,7 @@ fn unescape(s: []i8) -> []i8 {
     ret buf[0..j]
 }
 
-; ---- number -------------------------------------------------------------
+// ---- number -------------------------------------------------------------
 fn parse_number(p: &mut Parser) -> Result<JsonValue, []i8> {
     let start = p.pos
     let is_float = false
@@ -186,9 +186,9 @@ fn parse_number(p: &mut Parser) -> Result<JsonValue, []i8> {
     ret ok(JsonValue::Int(parse_i64_str(tok)?))
 }
 
-; ---- array --------------------------------------------------------------
+// ---- array --------------------------------------------------------------
 fn parse_array(p: &mut Parser) -> Result<JsonValue, []i8> {
-    p.pos = p.pos + 1      ; skip [
+    p.pos = p.pos + 1      // skip [
     skip_ws(p)
     let items = Vec<JsonValue>::new()
     if p.pos < p.src.len and p.src[p.pos] == ']' {
@@ -207,9 +207,9 @@ fn parse_array(p: &mut Parser) -> Result<JsonValue, []i8> {
     ret ok(JsonValue::Array(items.as_slice()))
 }
 
-; ---- object -------------------------------------------------------------
+// ---- object -------------------------------------------------------------
 fn parse_object(p: &mut Parser) -> Result<JsonValue, []i8> {
-    p.pos = p.pos + 1      ; skip {
+    p.pos = p.pos + 1      // skip {
     skip_ws(p)
     let pairs = Vec<JsonPair>::new()
     if p.pos < p.src.len and p.src[p.pos] == '}' {
@@ -218,7 +218,7 @@ fn parse_object(p: &mut Parser) -> Result<JsonValue, []i8> {
     }
     loop {
         skip_ws(p)
-        ; Key
+        // Key
         let key_val = parse_string(p)?
         let key = key_val.as_str().unwrap()
         skip_ws(p)
@@ -227,7 +227,7 @@ fn parse_object(p: &mut Parser) -> Result<JsonValue, []i8> {
         }
         p.pos = p.pos + 1
         skip_ws(p)
-        ; Value
+        // Value
         let val = parse_value(p)?
         pairs.push(JsonPair { key: key, val: val })
         skip_ws(p)
@@ -247,9 +247,9 @@ fn skip_ws(p: &mut Parser) {
     }
 }
 
-; =============================================================================
-; JsonValue accessor methods
-; =============================================================================
+// =============================================================================
+// JsonValue accessor methods
+// =============================================================================
 impl JsonValue {
     fn as_str(self) -> Result<[]i8, []i8> {
         match self { Str(s) => ok(s)  _ => err("not a string") }
@@ -304,9 +304,9 @@ impl JsonValue {
     }
 }
 
-; =============================================================================
-; Serialiser — writes JSON to a caller-supplied buffer
-; =============================================================================
+// =============================================================================
+// Serialiser — writes JSON to a caller-supplied buffer
+// =============================================================================
 fn json_write(val: ref JsonValue, buf: []mut i8) -> i64 {
     let pos = 0i64
     write_value(val, buf, &mut pos, 0)

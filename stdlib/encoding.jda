@@ -1,21 +1,21 @@
-; =============================================================================
-; jda::encoding -- Character Encoding Utilities
-; =============================================================================
-; UTF-8 validation, character counting, ASCII operations, Latin-1 conversion.
-;
-; Functions:
-;   enc_utf8_valid(buf, len)              -> i64  1 if valid UTF-8
-;   enc_utf8_char_count(buf, len)         -> i64  number of codepoints
-;   enc_utf8_byte_len(buf, len, nchars)   -> i64  bytes for first N chars
-;   enc_is_ascii(buf, len)                -> i64  1 if all ASCII
-;   enc_to_upper(buf, len, out)           -> i64  ASCII uppercase
-;   enc_to_lower(buf, len, out)           -> i64  ASCII lowercase
-;   enc_latin1_to_utf8(src, slen, out)    -> i64  convert Latin-1 to UTF-8
-;   enc_utf8_codepoint_at(buf, off)       -> i64  read codepoint at byte offset
-;   enc_utf8_next(buf, off, len)          -> i64  next byte offset after codepoint
-; =============================================================================
+// =============================================================================
+// jda::encoding -- Character Encoding Utilities
+// =============================================================================
+// UTF-8 validation, character counting, ASCII operations, Latin-1 conversion.
 
-;; Validate UTF-8 byte sequence. Returns 1 if valid, 0 if invalid.
+// Functions:
+//   enc_utf8_valid(buf, len)              -> i64  1 if valid UTF-8
+//   enc_utf8_char_count(buf, len)         -> i64  number of codepoints
+//   enc_utf8_byte_len(buf, len, nchars)   -> i64  bytes for first N chars
+//   enc_is_ascii(buf, len)                -> i64  1 if all ASCII
+//   enc_to_upper(buf, len, out)           -> i64  ASCII uppercase
+//   enc_to_lower(buf, len, out)           -> i64  ASCII lowercase
+//   enc_latin1_to_utf8(src, slen, out)    -> i64  convert Latin-1 to UTF-8
+//   enc_utf8_codepoint_at(buf, off)       -> i64  read codepoint at byte offset
+//   enc_utf8_next(buf, off, len)          -> i64  next byte offset after codepoint
+// =============================================================================
+
+// Validate UTF-8 byte sequence. Returns 1 if valid, 0 if invalid.
 fn enc_utf8_valid(buf: &i8, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -23,15 +23,15 @@ fn enc_utf8_valid(buf: &i8, len: i64) -> i64 {
         if b < 0 { b = b + 256 }
 
         if b < 128 {
-            ; ASCII: 0xxxxxxx
+            // ASCII: 0xxxxxxx
             i = i + 1
         } else {
             if b < 192 {
-                ; Invalid: continuation byte at start
+                // Invalid: continuation byte at start
                 ret 0
             }
             if b < 224 {
-                ; 2-byte: 110xxxxx 10xxxxxx
+                // 2-byte: 110xxxxx 10xxxxxx
                 if i + 1 >= len { ret 0 }
                 let c1 = buf[i + 1]
                 if c1 < 0 { c1 = c1 + 256 }
@@ -39,7 +39,7 @@ fn enc_utf8_valid(buf: &i8, len: i64) -> i64 {
                 i = i + 2
             } else {
                 if b < 240 {
-                    ; 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
+                    // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
                     if i + 2 >= len { ret 0 }
                     let c1 = buf[i + 1]
                     let c2 = buf[i + 2]
@@ -50,7 +50,7 @@ fn enc_utf8_valid(buf: &i8, len: i64) -> i64 {
                     i = i + 3
                 } else {
                     if b < 248 {
-                        ; 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+                        // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
                         if i + 3 >= len { ret 0 }
                         let c1 = buf[i + 1]
                         let c2 = buf[i + 2]
@@ -72,14 +72,14 @@ fn enc_utf8_valid(buf: &i8, len: i64) -> i64 {
     ret 1
 }
 
-;; Count UTF-8 codepoints in buffer.
+// Count UTF-8 codepoints in buffer.
 fn enc_utf8_char_count(buf: &i8, len: i64) -> i64 {
     let count = 0
     let i = 0
     loop i < len {
         let b = buf[i]
         if b < 0 { b = b + 256 }
-        ; Count non-continuation bytes (not 10xxxxxx)
+        // Count non-continuation bytes (not 10xxxxxx)
         if b < 128 or b >= 192 {
             count = count + 1
         }
@@ -88,7 +88,7 @@ fn enc_utf8_char_count(buf: &i8, len: i64) -> i64 {
     ret count
 }
 
-;; Byte length of first nchars codepoints.
+// Byte length of first nchars codepoints.
 fn enc_utf8_byte_len(buf: &i8, len: i64, nchars: i64) -> i64 {
     let chars = 0
     let i = 0
@@ -109,19 +109,19 @@ fn enc_utf8_byte_len(buf: &i8, len: i64, nchars: i64) -> i64 {
     ret i
 }
 
-;; Check if all bytes are ASCII (< 128).
+// Check if all bytes are ASCII (< 128).
 fn enc_is_ascii(buf: &i8, len: i64) -> i64 {
     let i = 0
     loop i < len {
         let b = buf[i]
-        if b < 0 { ret 0 }  ; negative means >= 128 in signed byte
+        if b < 0 { ret 0 }  // negative means >= 128 in signed byte
         if b >= 128 { ret 0 }
         i = i + 1
     }
     ret 1
 }
 
-;; Convert ASCII lowercase to uppercase. Returns length.
+// Convert ASCII lowercase to uppercase. Returns length.
 fn enc_to_upper(buf: &i8, len: i64, out: &i8) -> i64 {
     let i = 0
     loop i < len {
@@ -133,7 +133,7 @@ fn enc_to_upper(buf: &i8, len: i64, out: &i8) -> i64 {
     ret len
 }
 
-;; Convert ASCII uppercase to lowercase. Returns length.
+// Convert ASCII uppercase to lowercase. Returns length.
 fn enc_to_lower(buf: &i8, len: i64, out: &i8) -> i64 {
     let i = 0
     loop i < len {
@@ -145,7 +145,7 @@ fn enc_to_lower(buf: &i8, len: i64, out: &i8) -> i64 {
     ret len
 }
 
-;; Convert Latin-1 (ISO 8859-1) to UTF-8. Returns output length.
+// Convert Latin-1 (ISO 8859-1) to UTF-8. Returns output length.
 fn enc_latin1_to_utf8(src: &i8, slen: i64, out: &i8) -> i64 {
     let oi = 0
     let i = 0
@@ -156,7 +156,7 @@ fn enc_latin1_to_utf8(src: &i8, slen: i64, out: &i8) -> i64 {
             poke_byte(out, oi, b)
             oi = oi + 1
         } else {
-            ; 2-byte UTF-8: 110xxxxx 10xxxxxx
+            // 2-byte UTF-8: 110xxxxx 10xxxxxx
             poke_byte(out, oi, 192 + b / 64)
             poke_byte(out, oi + 1, 128 + (b - (b / 64) * 64))
             oi = oi + 2
@@ -166,7 +166,7 @@ fn enc_latin1_to_utf8(src: &i8, slen: i64, out: &i8) -> i64 {
     ret oi
 }
 
-;; Read UTF-8 codepoint at byte offset. Returns codepoint value.
+// Read UTF-8 codepoint at byte offset. Returns codepoint value.
 fn enc_utf8_codepoint_at(buf: &i8, off: i64) -> i64 {
     let b = buf[off]
     if b < 0 { b = b + 256 }
@@ -192,7 +192,7 @@ fn enc_utf8_codepoint_at(buf: &i8, off: i64) -> i64 {
     ret (b - 240) * 262144 + (c1 - 128) * 4096 + (c2 - 128) * 64 + (c3 - 128)
 }
 
-;; Get next byte offset after codepoint at given offset.
+// Get next byte offset after codepoint at given offset.
 fn enc_utf8_next(buf: &i8, off: i64, len: i64) -> i64 {
     if off >= len { ret off }
     let b = buf[off]
