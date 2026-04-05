@@ -13,11 +13,23 @@
  */
 ```
 
+## Imports
+
+```jda
+import "math"           ; imports stdlib/math.jda
+import "vec"            ; imports stdlib/vec.jda
+import "conv"           ; imports stdlib/conv.jda
+```
+
+Import statements must appear at the top of the file. The compiler resolves `import "name"` to `stdlib/<name>.jda` relative to the working directory. Duplicate imports are automatically skipped. The `--include` CLI flag is still supported for backward compatibility.
+
 ## Variables
 
 ```jda
 let x = 42              ; mutable variable
 let name = "hello"      ; string literal (pointer to data)
+let flag = true         ; boolean literal (true=1, false=0)
+let ch = 'A'            ; char literal (ASCII value 65)
 const MAX = 100         ; compile-time constant
 ```
 
@@ -28,9 +40,25 @@ const MAX = 100         ; compile-time constant
 | `i64` | 64-bit signed integer (default) |
 | `i32` | 32-bit signed integer |
 | `i8` | 8-bit signed integer (byte) |
+| `f64` | 64-bit floating point |
 | `&T` | Pointer/reference to type T |
 | `&i64` | Pointer to i64 array |
 | `&i8` | Byte buffer pointer |
+
+## Boolean and Character Literals
+
+```jda
+let a = true            ; boolean true (compiles to i64 1)
+let b = false           ; boolean false (compiles to i64 0)
+if a and not b { print("ok\n") }
+
+let ch = 'A'            ; char literal → i64 65
+let nl = '\n'           ; escape sequence → i64 10
+let tab = '\t'          ; tab → i64 9
+let zero = '\0'         ; null → i64 0
+```
+
+Booleans are syntactic sugar for i64 values. Char literals produce the ASCII integer value and support escape sequences: `\n`, `\t`, `\r`, `\0`, `\\`, `\'`.
 
 ## Functions
 
@@ -94,6 +122,21 @@ for i in range(10) {
     sum += i
 }
 ```
+
+### Defer
+
+```jda
+fn cleanup() { print("cleanup\n") }
+
+fn do_work() -> i64 {
+    defer cleanup()          ; runs when do_work returns
+    defer step_b()           ; multiple defers execute in LIFO order
+    print("working\n")
+    ret 42                   ; deferred calls run before ret
+}
+```
+
+`defer fn()` schedules a function call to execute when the enclosing function returns. Multiple defers in the same function execute in reverse order (last-in, first-out). Deferred calls run before every `ret` statement and at the implicit function end.
 
 ## Operators
 
