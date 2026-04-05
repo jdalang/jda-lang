@@ -1,0 +1,229 @@
+; =============================================================================
+; jda::namespace -- Namespaces / Module Registry
+; =============================================================================
+; Convention-based module system for Jda. Since the compiler has no
+; built-in module/namespace support, this package provides a runtime
+; registry that tracks loaded modules and their metadata.
+;
+; Jda naming convention:
+;   - Each module owns a prefix: str_, vec_, map_, opt_, res_, etc.
+;   - All public functions use the prefix: str_len(), vec_push(), etc.
+;   - Internal helpers use _prefix: _str_grow(), _vec_resize()
+;   - Constants use UPPER_CASE with prefix: ERR_NOT_FOUND, DROP_FREE
+;
+; This package formalizes that convention with a runtime registry:
+;   ns_init()                            initialize registry
+;   ns_register(name, prefix, ver)       register a module
+;   ns_is_loaded(name)      -> i64       1 if module registered
+;   ns_count()               -> i64       number of modules
+;   ns_get_prefix(name)     -> &i8       get module's prefix
+;   ns_get_version(name)    -> i64       get module's version
+;   ns_list()                             print all registered modules
+;   ns_require(name)                      panic if module not loaded
+;
+; Module entry layout (&i64 registry):
+;   [i*4 + 0] = name pointer (&i8)
+;   [i*4 + 1] = prefix pointer (&i8)
+;   [i*4 + 2] = version (integer)
+;   [i*4 + 3] = flags (reserved)
+; =============================================================================
+
+const _NS_MAX_MODULES = 128
+
+let _ns_registry: &i64 = 0
+let _ns_count: i64 = 0
+let _ns_inited: i64 = 0
+
+;; Internal: c-string length (max 128).
+fn _ns_cstr_len(s: &i8) -> i64 {
+    let n = 0
+    loop n < 128 {
+        if s[n] == 0 { ret n }
+        n = n + 1
+    }
+    ret 128
+}
+
+;; Internal: c-string equality.
+fn _ns_cstr_eq(a: &i8, b: &i8) -> i64 {
+    let i = 0
+    loop i < 128 {
+        let ca = a[i]
+        let cb = b[i]
+        if ca != cb { ret 0 }
+        if ca == 0 { ret 1 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Internal: write to stderr.
+fn _ns_write_err(s: &i8, len: i64) {
+    syscall(1, 2, s, len)
+}
+
+;; Internal: write to stdout.
+fn _ns_write_out(s: &i8, len: i64) {
+    syscall(1, 1, s, len)
+}
+
+;; Internal: print a c-string to stdout.
+fn _ns_print_str(s: &i8) {
+    let n = _ns_cstr_len(s)
+    _ns_write_out(s, n)
+}
+
+;; Internal: print an integer to stdout.
+fn _ns_print_int(val: i64) {
+    let buf: &i8 = alloc_pages(1)
+    let v = val
+    let neg = 0
+    if v < 0 {
+        neg = 1
+        v = 0 - v
+    }
+    if v == 0 {
+        _ns_write_out("0", 1)
+        ret
+    }
+    let pos = 20
+    loop v > 0 {
+        pos = pos - 1
+        let d = v - (v / 10) * 10
+        let ch = d + 48
+        poke_byte(buf, pos, ch)
+        v = v / 10
+    }
+    if neg == 1 {
+        pos = pos - 1
+        poke_byte(buf, pos, 45)
+    }
+    let len = 20 - pos
+    let i = 0
+    loop i < len {
+        let idx = pos + i
+        let b = buf[idx]
+        let one: &i8 = alloc_pages(1)
+        poke_byte(one, 0, b)
+        _ns_write_out(one, 1)
+        i = i + 1
+    }
+}
+
+;; Internal: exit.
+fn _ns_exit() {
+    syscall(60, 1, 0, 0)
+}
+
+;; Internal: panic with message.
+fn _ns_panic(msg: &i8) {
+    let n = _ns_cstr_len(msg)
+    _ns_write_err(msg, n)
+    _ns_write_err("\n", 1)
+    _ns_exit()
+}
+
+;; Internal: find module index by name, or -1.
+fn _ns_find(name: &i8) -> i64 {
+    let i = 0
+    loop i < _ns_count {
+        let base = i * 4
+        let stored: &i8 = _ns_registry[base]
+        if _ns_cstr_eq(stored, name) == 1 { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Initialize the namespace registry. Call once at program start.
+fn ns_init() {
+    if _ns_inited == 1 { ret }
+    _ns_registry = alloc_pages(1)
+    _ns_count = 0
+    _ns_inited = 1
+}
+
+;; Register a module with name, prefix, and version.
+fn ns_register(name: &i8, prefix: &i8, ver: i64) {
+    if _ns_count >= 128 { ret }
+    ; Skip if already registered
+    let idx = _ns_find(name)
+    if idx >= 0 { ret }
+    let base = _ns_count * 4
+    _ns_registry[base] = name
+    let b1 = base + 1
+    _ns_registry[b1] = prefix
+    let b2 = base + 2
+    _ns_registry[b2] = ver
+    let b3 = base + 3
+    _ns_registry[b3] = 0
+    _ns_count = _ns_count + 1
+}
+
+;; Check if a module is loaded.
+fn ns_is_loaded(name: &i8) -> i64 {
+    let idx = _ns_find(name)
+    if idx >= 0 { ret 1 }
+    ret 0
+}
+
+;; Get the number of registered modules.
+fn ns_count() -> i64 {
+    ret _ns_count
+}
+
+;; Get a module's prefix string. Returns "" if not found.
+fn ns_get_prefix(name: &i8) -> &i8 {
+    let idx = _ns_find(name)
+    if idx < 0 { ret "" }
+    let base = idx * 4
+    let b1 = base + 1
+    ret _ns_registry[b1]
+}
+
+;; Get a module's version. Returns 0 if not found.
+fn ns_get_version(name: &i8) -> i64 {
+    let idx = _ns_find(name)
+    if idx < 0 { ret 0 }
+    let base = idx * 4
+    let b2 = base + 2
+    ret _ns_registry[b2]
+}
+
+;; Internal: print one module entry.
+fn _ns_print_entry(name: &i8, prefix: &i8, ver: i64) {
+    _ns_write_out("  ", 2)
+    _ns_print_str(name)
+    _ns_write_out(" [", 2)
+    _ns_print_str(prefix)
+    _ns_write_out("*] v", 4)
+    print("{ver}")
+    print("\n")
+}
+
+;; Print all registered modules.
+fn ns_list() {
+    let c = _ns_count
+    print("Modules (")
+    print("{c}")
+    print("):\n")
+    let i = 0
+    loop i < _ns_count {
+        let base = i * 4
+        let name: &i8 = _ns_registry[base]
+        let b1 = base + 1
+        let prefix: &i8 = _ns_registry[b1]
+        let b2 = base + 2
+        let ver = _ns_registry[b2]
+        _ns_print_entry(name, prefix, ver)
+        i = i + 1
+    }
+}
+
+;; Require a module — panic if not loaded.
+fn ns_require(name: &i8) {
+    let idx = _ns_find(name)
+    if idx < 0 {
+        _ns_panic("required module not loaded")
+    }
+}

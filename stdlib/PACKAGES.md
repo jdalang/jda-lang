@@ -8,6 +8,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | args | CLI argument parser — flags, options (--key=val), positional args |
 | autograd | Automatic differentiation — forward/backward pass, gradient tape |
 | benchmark | In-language micro-benchmarking — ns/us/ms timers, iteration, ns/op reporting |
+| buildconfig | Build configuration (jda.toml) — parse, name/version/entry/output/deps, summary |
 | avx512_ops | AVX-512 SIMD vector operations — add, mul, fma, reduce |
 | base64 | Base64 encoding/decoding — RFC 4648 standard |
 | bitops | Bit manipulation — and, or, xor, shift, popcount, rotate |
@@ -18,6 +19,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | csv | CSV reader/writer — parse rows, fields, quoted strings |
 | dataclass | Data class utilities — comparison combinators (le/gt/ge/cmp), validation |
 | decorator | Higher-order functions — apply, fold, map, filter, find, pipeline, zip_with |
+| drop | Destructors / finalizers — registry-based cleanup, scope guards, drop_all |
 | file_io | File I/O helpers — slurp, write, append, copy, rename, path ops, line parsing |
 | find | Recursive directory traversal — walk, files-only, type detection |
 | fmt | String formatting — sprintf-style format, pad, align |
@@ -28,12 +30,14 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | ipaddr | IP address parsing — IPv4 parse/format, CIDR, private/loopback/multicast |
 | iter | Chainable iterator adapters — map, filter, take, skip, fold, collect |
 | json | JSON parser/serializer — parse, stringify, get/set by key |
+| lockfile | Lock file — dependency pinning, version/hash tracking, add/remove/print |
 | log | Structured logging — levels (trace/debug/info/warn/error/fatal), timestamps |
 | math | Math functions — abs, min, max, clamp, pow, sqrt, gcd, lcm, rand |
+| namespace | Module registry — register, is_loaded, require, version, prefix, list |
 | matrix | Integer matrix operations — add, mul, transpose, identity, trace |
 | nn | Neural network — layers, activations, loss functions, SGD optimizer |
 | observer | Publish/subscribe event pattern — event bus, topic handlers |
-| option | Option type — Some/None, unwrap, unwrap_or, opt_or, opt_eq, print |
+| option | Option type — Some/None, unwrap, expect, unwrap_or, opt_or, opt_eq, print |
 | os | OS interface — env vars, argv, exit, getpid |
 | plot | Visualization — bar charts, line plots, histograms, scatter, heatmaps |
 | pp | Pretty printer — vec, matrix, hex dump, labeled values for debugging |
@@ -41,12 +45,17 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | process | Process management — fork, exec, wait, pipe |
 | queue | Queue, stack, priority queue — FIFO, LIFO, min-heap |
 | regex | Regular expressions — match, search, count, character classes |
+| result | Error return pattern — ok/err, unwrap, expect, error codes, unwrap_or, res_or, print |
 | ring | Ring buffer — fixed-capacity circular buffer, windowed data |
 | select | Channel select — poll multiple channels, non-blocking receive |
+| semver | Semantic versioning — parse, compare, bump, compatible, format |
 | set | Hash set — add, has, del, union, intersect, diff, subset |
 | shell | Shell word splitting and escaping — escape, quote, join, split |
 | slice | Slice / dynamic view — view into array, sub-slice, get/set, contains, sum, print |
+| smartptr | Smart pointers — Box (unique), Rc (refcounted), Weak (non-owning ref) |
 | sort | Sorting — quicksort, binary search, reverse, unique, merge |
+| stacktrace | Call stack trace — st_enter/leave, st_panic with trace, st_print, scope tracking |
+| sync | Synchronization — WaitGroup, Barrier, OnceFlag (futex-based) |
 | string | String library — length-prefixed, from_cstr, concat, slice, replace, trim, split, join, cmp, reverse, pad, from_i64 |
 | tensor_ops | Tensor operations — create, add, mul, matmul, transpose, reshape |
 | tempfile | Temporary files and directories — create, read, write, remove |
@@ -61,6 +70,8 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | uuid | UUID v4 generation — random UUIDs |
 | variant | Sum types / tagged unions — var0–var4, tag, field access, equality, print |
 | vec | Dynamic arrays — push, pop, get, set, grow, contains, remove |
+| vtable | Dynamic dispatch — vtable construction, dyn objects, method lookup, type tags |
+| visibility | Visibility control — pub/private/internal convention, check, print |
 | bignum | Arbitrary precision integers — add, sub, mul, div, compare, string conversion |
 | i128 | 128-bit integer arithmetic — add, sub, mul, cmp, shifts, bitwise, string conversion |
 | complex | Complex number arithmetic — add, sub, mul, div, abs, conjugate |
@@ -119,3 +130,6 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | ftp | FTP client — connect, login, list, get, put, passive mode |
 | compress | Compression codecs — LZ4, zstd-style frame format, streaming |
 | glob | Glob pattern matching — recursive **, brace expansion, dotfiles |
+| debug | Software debugger toolkit — breakpoints, watchpoints, assertions, inspection, counters |
+| lint | Code style checker — snake_case/UPPER_SNAKE/PascalCase validation, line checks, warnings |
+| profile | Function-level profiler — slot-based timing, call counts, avg ns/call, flat report |

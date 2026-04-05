@@ -1,0 +1,184 @@
+; =============================================================================
+; jda::buildconfig -- Build Configuration File (jda.toml)
+; =============================================================================
+; Parses and queries jda.toml build configuration files.
+; Wraps the TOML parser with jda.toml-specific field accessors.
+;
+; jda.toml format:
+;   [package]
+;   name = "my-app"
+;   version = "1.0.0"
+;   author = "Alice"
+;   description = "A cool app"
+;
+;   [build]
+;   entry = "src/main.jda"
+;   output = "bin/my-app"
+;   includes = "stdlib/vec.jda stdlib/hashmap.jda"
+;   safe = true
+;
+;   [dependencies]
+;   jda-http = "2.1.0"
+;   jda-json = "^1.0.0"
+;
+; Functions:
+;   bc_parse(buf, len)              -> &i64   parse jda.toml data
+;   bc_name(h, out)                 -> i64    get package.name, return len
+;   bc_version(h, out)              -> i64    get package.version, return len
+;   bc_author(h, out)               -> i64    get package.author, return len
+;   bc_description(h, out)          -> i64    get package.description, return len
+;   bc_entry(h, out)                -> i64    get build.entry, return len
+;   bc_output(h, out)               -> i64    get build.output, return len
+;   bc_includes(h, out)             -> i64    get build.includes, return len
+;   bc_is_safe(h)                   -> i64    get build.safe (0 or 1)
+;   bc_dep_count(h)                 -> i64    count dependencies
+;   bc_has_field(h, key, klen)      -> i64    1 if field exists
+;   bc_print_summary(h)                       print package summary
+; =============================================================================
+
+;; Internal: c-string length.
+fn _bc_cstr_len(s: &i8) -> i64 {
+    let n = 0
+    loop n < 256 {
+        if s[n] == 0 { ret n }
+        n = n + 1
+    }
+    ret 256
+}
+
+;; Internal: write to stdout.
+fn _bc_write(s: &i8, len: i64) {
+    syscall(1, 1, s, len)
+}
+
+;; Internal: print c-string.
+fn _bc_print_str(s: &i8) {
+    let n = _bc_cstr_len(s)
+    _bc_write(s, n)
+}
+
+;; Parse jda.toml data. Delegates to toml_parse.
+fn bc_parse(buf: &i8, len: i64) -> &i64 {
+    ret toml_parse(buf, len)
+}
+
+;; Get package.name into out buffer, return length.
+fn bc_name(h: &i64, out: &i8) -> i64 {
+    ret toml_get_str(h, "package.name", 12, out)
+}
+
+;; Get package.version into out buffer, return length.
+fn bc_version(h: &i64, out: &i8) -> i64 {
+    ret toml_get_str(h, "package.version", 15, out)
+}
+
+;; Get package.author into out buffer, return length.
+fn bc_author(h: &i64, out: &i8) -> i64 {
+    ret toml_get_str(h, "package.author", 14, out)
+}
+
+;; Get package.description into out buffer, return length.
+fn bc_description(h: &i64, out: &i8) -> i64 {
+    ret toml_get_str(h, "package.description", 19, out)
+}
+
+;; Get build.entry into out buffer, return length.
+fn bc_entry(h: &i64, out: &i8) -> i64 {
+    ret toml_get_str(h, "build.entry", 11, out)
+}
+
+;; Get build.output into out buffer, return length.
+fn bc_output(h: &i64, out: &i8) -> i64 {
+    ret toml_get_str(h, "build.output", 12, out)
+}
+
+;; Get build.includes into out buffer, return length.
+fn bc_includes(h: &i64, out: &i8) -> i64 {
+    ret toml_get_str(h, "build.includes", 14, out)
+}
+
+;; Get build.safe boolean (0 or 1).
+fn bc_is_safe(h: &i64) -> i64 {
+    ret toml_get_bool(h, "build.safe", 10)
+}
+
+;; Count entries under [dependencies] section.
+;; Walks all entries, counts those with "dependencies." prefix.
+fn bc_dep_count(h: &i64) -> i64 {
+    let total = toml_count(h)
+    let count = 0
+    let i = 0
+    let key_offs: &i64 = h[1]
+    let key_lens: &i64 = h[2]
+    let data: &i8 = h[6]
+    loop i < total {
+        let koff = key_offs[i]
+        let klen = key_lens[i]
+        ; Check if starts with "dependencies."  (13 chars)
+        if klen > 13 {
+            let m = _bc_prefix_match(data, koff, klen)
+            if m == 1 { count = count + 1 }
+        }
+        i = i + 1
+    }
+    ret count
+}
+
+;; Internal: check if key at offset starts with "dependencies."
+fn _bc_prefix_match(data: &i8, koff: i64, klen: i64) -> i64 {
+    let prefix: &i8 = "dependencies."
+    let plen = 13
+    if klen < plen { ret 0 }
+    let i = 0
+    loop i < plen {
+        let a = _toml_byte_at(data, koff + i)
+        let b = prefix[i]
+        if a != b { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Check if a field exists.
+fn bc_has_field(h: &i64, key: &i8, klen: i64) -> i64 {
+    let out: &i8 = alloc_pages(1)
+    let len = toml_get_str(h, key, klen, out)
+    if len > 0 { ret 1 }
+    ; Also check int/bool
+    let ival = toml_get_i64(h, key, klen)
+    if ival != 0 { ret 1 }
+    ret 0
+}
+
+;; Print package summary.
+fn bc_print_summary(h: &i64) {
+    let buf: &i8 = alloc_pages(1)
+    let nlen = bc_name(h, buf)
+    if nlen > 0 {
+        _bc_write("name: ", 6)
+        _bc_write(buf, nlen)
+        _bc_write("\n", 1)
+    }
+    let vlen = bc_version(h, buf)
+    if vlen > 0 {
+        _bc_write("version: ", 9)
+        _bc_write(buf, vlen)
+        _bc_write("\n", 1)
+    }
+    let alen = bc_author(h, buf)
+    if alen > 0 {
+        _bc_write("author: ", 8)
+        _bc_write(buf, alen)
+        _bc_write("\n", 1)
+    }
+    let elen = bc_entry(h, buf)
+    if elen > 0 {
+        _bc_write("entry: ", 7)
+        _bc_write(buf, elen)
+        _bc_write("\n", 1)
+    }
+    let deps = bc_dep_count(h)
+    print("deps: ")
+    print("{deps}")
+    print("\n")
+}

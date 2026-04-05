@@ -1,0 +1,64 @@
+; Test stdlib/semver — semantic versioning
+
+fn test_create() {
+    let v1 = semver_new(1, 2, 3)
+    semver_println(v1)
+    let v2 = semver_parse("2.10.0")
+    semver_println(v2)
+    let maj = semver_major(v1)
+    let min = semver_minor(v1)
+    let pat = semver_patch(v1)
+    print("major: ")
+    print("{maj}")
+    print(" minor: ")
+    print("{min}")
+    print(" patch: ")
+    print("{pat}")
+    print("\n")
+}
+
+fn test_compare() {
+    let a = semver_new(1, 2, 3)
+    let b = semver_new(2, 10, 0)
+    let c = semver_new(1, 2, 3)
+    let eq = semver_eq(a, c)
+    print("eq: ")
+    print("{eq}")
+    print("\n")
+    let lt = semver_lt(a, b)
+    print("lt: ")
+    print("{lt}")
+    print("\n")
+    let gt = semver_gt(b, a)
+    print("gt: ")
+    print("{gt}")
+    print("\n")
+}
+
+fn test_compat() {
+    let a = semver_new(1, 2, 3)
+    let b = semver_new(1, 5, 0)
+    let compat = semver_compatible(a, b)
+    print("compat: ")
+    print("{compat}")
+    print("\n")
+}
+
+fn test_bump() {
+    let v = semver_new(1, 2, 3)
+    let b1 = semver_bump_patch(v)
+    semver_println(b1)
+    let b2 = semver_bump_minor(v)
+    semver_println(b2)
+    let b3 = semver_bump_major(v)
+    semver_println(b3)
+}
+
+fn main() -> i64 {
+    test_create()
+    test_compare()
+    test_compat()
+    test_bump()
+    print("PASS\n")
+    ret 0
+}

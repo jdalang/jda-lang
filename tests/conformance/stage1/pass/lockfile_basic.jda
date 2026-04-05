@@ -1,0 +1,57 @@
+; Test stdlib/lockfile — lock file for dependency pinning
+
+fn main() -> i64 {
+    lock_init()
+
+    ; --- Initial state ---
+    let c0 = lock_count()
+    print("initial: ")
+    print("{c0}")
+    print("\n")
+
+    ; --- Add entries ---
+    lock_add("jda-http", "2.1.0")
+    lock_add("jda-crypto", "1.3.2")
+    lock_add("jda-json", "0.9.1")
+    let c1 = lock_count()
+    print("after add: ")
+    print("{c1}")
+    print("\n")
+
+    ; --- Has ---
+    let h1 = lock_has("jda-http")
+    print("has jda-http: ")
+    print("{h1}")
+    print("\n")
+    let h2 = lock_has("jda-xml")
+    print("has jda-xml: ")
+    print("{h2}")
+    print("\n")
+
+    ; --- Update ---
+    lock_add("jda-http", "2.2.0")
+    let c2 = lock_count()
+    print("after update: ")
+    print("{c2}")
+    print("\n")
+
+    ; --- Remove ---
+    lock_remove("jda-json")
+    let c3 = lock_count()
+    print("after remove: ")
+    print("{c3}")
+    print("\n")
+
+    ; --- Hash ---
+    lock_set_hash("jda-crypto", 12345)
+    let hash = lock_get_hash("jda-crypto")
+    print("hash: ")
+    print("{hash}")
+    print("\n")
+
+    ; --- Print ---
+    lock_print()
+
+    print("PASS\n")
+    ret 0
+}
