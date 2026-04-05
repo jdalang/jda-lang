@@ -1,0 +1,78 @@
+fn test_path_join() -> i64 {
+    let out: &i8 = alloc_pages(1)
+    let plen = path_join("/tmp", 4, "test.txt", 8, out)
+    if plen == 13 { print "join ok" }
+    ret 0
+}
+
+fn test_join_eq() -> i64 {
+    let out: &i8 = alloc_pages(1)
+    path_join("/tmp", 4, "test.txt", 8, out)
+    let eq = buf_eq(out, "/tmp/test.txt", 13)
+    if eq == 1 { print "join_eq ok" }
+    ret 0
+}
+
+fn test_join_slash() -> i64 {
+    let out: &i8 = alloc_pages(1)
+    let plen = path_join("/tmp/", 5, "test.txt", 8, out)
+    if plen == 13 { print "join_slash ok" }
+    ret 0
+}
+
+fn test_basename() -> i64 {
+    let boff = path_basename("/foo/bar/baz.txt", 16)
+    if boff == 9 { print "basename ok" }
+    ret 0
+}
+
+fn test_ext() -> i64 {
+    let eoff = path_ext("/foo/bar/baz.txt", 16)
+    if eoff == 12 { print "ext ok" }
+    ret 0
+}
+
+fn test_strlen() -> i64 {
+    let slen = cstr_length("hello")
+    if slen == 5 { print "strlen ok" }
+    ret 0
+}
+
+fn test_copy() -> i64 {
+    fs_write_str("/tmp/jda_copy_src.txt", "copy test", 9)
+    let cp = fs_copy("/tmp/jda_copy_src.txt", "/tmp/jda_copy_dst.txt")
+    if cp == 9 {
+        let dbuf: &i8 = fs_slurp("/tmp/jda_copy_dst.txt")
+        let deq = buf_eq(dbuf, "copy test", 9)
+        if deq == 1 { print "copy ok" }
+    }
+    fs_unlink("/tmp/jda_copy_src.txt")
+    fs_unlink("/tmp/jda_copy_dst.txt")
+    ret 0
+}
+
+fn test_rename() -> i64 {
+    fs_write_str("/tmp/jda_rename_a.txt", "rename", 6)
+    let rr = fs_rename("/tmp/jda_rename_a.txt", "/tmp/jda_rename_b.txt")
+    let e1 = fs_exists("/tmp/jda_rename_a.txt")
+    let e2 = fs_exists("/tmp/jda_rename_b.txt")
+    if rr == 0 {
+        if e1 == 0 {
+            if e2 == 1 { print "rename ok" }
+        }
+    }
+    fs_unlink("/tmp/jda_rename_b.txt")
+    ret 0
+}
+
+fn main() -> i64 {
+    test_path_join()
+    test_join_eq()
+    test_join_slash()
+    test_basename()
+    test_ext()
+    test_strlen()
+    test_copy()
+    test_rename()
+    ret 0
+}
