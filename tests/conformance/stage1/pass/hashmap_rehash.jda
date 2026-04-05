@@ -1,0 +1,22 @@
+fn main() {
+    let m = map_new(4)
+    ; Insert 20 entries — will trigger multiple rehashes
+    let i = 1
+    loop i <= 20 {
+        map_put(m, i, i * 10)
+        i = i + 1
+    }
+    ; Verify all 20 entries survived rehash
+    let ok = 1
+    i = 1
+    loop i <= 20 {
+        let v = map_get(m, i)
+        let expected = i * 10
+        if v != expected { ok = 0 }
+        i = i + 1
+    }
+    let len = map_len(m)
+    if len != 20 { ok = 0 }
+    if ok == 1 { print("ok") }
+    if ok == 0 { print("fail") }
+}
