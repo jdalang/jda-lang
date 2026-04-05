@@ -1,0 +1,182 @@
+; =============================================================================
+; jda::conv -- Value Conversions (itoa, atoi, hex)
+; =============================================================================
+; Integer-to-string and string-to-integer conversions.
+;
+; Functions:
+;   conv_itoa(val, dst)        -> i64  integer to decimal string, return length
+;   conv_atoi(src, len)        -> i64  decimal string to integer
+;   conv_itohex(val, dst)      -> i64  integer to hex string, return length
+;   conv_hextoi(src, len)      -> i64  hex string to integer
+;   conv_itobin(val, dst)      -> i64  integer to binary string, return length
+;   conv_itoa_pad(val, dst, width) -> i64  zero-padded decimal string
+; =============================================================================
+
+;; Integer to decimal string. Returns length written.
+fn conv_itoa(val: i64, dst: &i8) -> i64 {
+    let v = val
+    let pos = 0
+    if v < 0 {
+        poke_byte(dst, 0, 45)  ; '-'
+        pos = 1
+        v = 0 - v
+    }
+    if v == 0 {
+        poke_byte(dst, pos, 48)
+        ret pos + 1
+    }
+    ; Write digits in reverse
+    let start = pos
+    let tmp = v
+    loop tmp > 0 {
+        let d = tmp - (tmp / 10) * 10
+        poke_byte(dst, pos, d + 48)
+        pos = pos + 1
+        tmp = tmp / 10
+    }
+    ; Reverse the digits
+    let lo = start
+    let hi = pos - 1
+    loop lo < hi {
+        let a = load_i8_at(dst, lo)
+        let b = load_i8_at(dst, hi)
+        poke_byte(dst, lo, b)
+        poke_byte(dst, hi, a)
+        lo = lo + 1
+        hi = hi - 1
+    }
+    ret pos
+}
+
+;; Decimal string to integer.
+fn conv_atoi(src: &i8, len: i64) -> i64 {
+    let result = 0
+    let neg = 0
+    let i = 0
+    ; Skip whitespace
+    loop i < len {
+        let ch = load_i8_at(src, i)
+        if ch != 32 and ch != 9 { ret 0 }
+        i = i + 1
+    }
+    if i < len and load_i8_at(src, i) == 45 { neg = 1 i = i + 1 }
+    if i < len and load_i8_at(src, i) == 43 { i = i + 1 }
+    loop i < len {
+        let ch = load_i8_at(src, i)
+        if ch >= 48 and ch <= 57 {
+            result = result * 10 + ch - 48
+        } else {
+            i = len  ; break on non-digit
+        }
+        i = i + 1
+    }
+    if neg == 1 { result = 0 - result }
+    ret result
+}
+
+;; Integer to hex string (lowercase). Returns length.
+fn conv_itohex(val: i64, dst: &i8) -> i64 {
+    let v = val
+    if v < 0 { v = 0 - v }
+    if v == 0 {
+        poke_byte(dst, 0, 48)  ; '0'
+        ret 1
+    }
+    let pos = 0
+    let tmp = v
+    loop tmp > 0 {
+        let nibble = tmp - (tmp / 16) * 16
+        if nibble < 10 {
+            poke_byte(dst, pos, nibble + 48)
+        } else {
+            poke_byte(dst, pos, nibble - 10 + 97)
+        }
+        pos = pos + 1
+        tmp = tmp / 16
+    }
+    ; Reverse
+    let lo = 0
+    let hi = pos - 1
+    loop lo < hi {
+        let a = load_i8_at(dst, lo)
+        let b = load_i8_at(dst, hi)
+        poke_byte(dst, lo, b)
+        poke_byte(dst, hi, a)
+        lo = lo + 1
+        hi = hi - 1
+    }
+    ret pos
+}
+
+;; Hex string to integer.
+fn conv_hextoi(src: &i8, len: i64) -> i64 {
+    let result = 0
+    let i = 0
+    ; Skip 0x prefix
+    if len >= 2 and load_i8_at(src, 0) == 48 {
+        let x = load_i8_at(src, 1)
+        if x == 120 or x == 88 { i = 2 }
+    }
+    loop i < len {
+        let ch = load_i8_at(src, i)
+        let nibble = 0
+        if ch >= 48 and ch <= 57 { nibble = ch - 48 }
+        if ch >= 97 and ch <= 102 { nibble = ch - 97 + 10 }
+        if ch >= 65 and ch <= 70 { nibble = ch - 65 + 10 }
+        result = result * 16 + nibble
+        i = i + 1
+    }
+    ret result
+}
+
+;; Integer to binary string. Returns length.
+fn conv_itobin(val: i64, dst: &i8) -> i64 {
+    let v = val
+    if v < 0 { v = 0 - v }
+    if v == 0 {
+        poke_byte(dst, 0, 48)
+        ret 1
+    }
+    let pos = 0
+    let tmp = v
+    loop tmp > 0 {
+        let bit = tmp - (tmp / 2) * 2
+        poke_byte(dst, pos, bit + 48)
+        pos = pos + 1
+        tmp = tmp / 2
+    }
+    ; Reverse
+    let lo = 0
+    let hi = pos - 1
+    loop lo < hi {
+        let a = load_i8_at(dst, lo)
+        let b = load_i8_at(dst, hi)
+        poke_byte(dst, lo, b)
+        poke_byte(dst, hi, a)
+        lo = lo + 1
+        hi = hi - 1
+    }
+    ret pos
+}
+
+;; Integer to zero-padded decimal string. Returns width.
+fn conv_itoa_pad(val: i64, dst: &i8, width: i64) -> i64 {
+    ; First write the number
+    let buf: &i8 = alloc_pages(1)
+    let len = conv_itoa(val, buf)
+    ; Pad with zeros
+    let pad = width - len
+    let i = 0
+    loop i < pad {
+        poke_byte(dst, i, 48)
+        i = i + 1
+    }
+    ; Copy digits
+    let j = 0
+    loop j < len {
+        poke_byte(dst, i, load_i8_at(buf, j))
+        i = i + 1
+        j = j + 1
+    }
+    ret width
+}

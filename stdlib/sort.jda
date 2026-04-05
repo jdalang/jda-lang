@@ -1,0 +1,231 @@
+; =============================================================================
+; jda::sort -- Sorting Algorithms for Vec
+; =============================================================================
+; In-place sorting of Vec<i64> (from vec.jda). Pure integer comparisons.
+;
+; Functions:
+;   sort_vec(v)                    sort vec ascending (in-place)
+;   sort_vec_desc(v)               sort vec descending (in-place)
+;   sort_is_sorted(v)     -> i64   1 if ascending order, 0 otherwise
+;   sort_reverse(v)                reverse vec in-place
+;   sort_min(v)            -> i64  minimum element
+;   sort_max(v)            -> i64  maximum element
+;   sort_binary_search(v, val) -> i64  index or -1 (vec must be sorted)
+;   sort_unique(v)         -> &i64 new vec with duplicates removed (input sorted)
+;   sort_merge(a, b)       -> &i64 merge two sorted vecs into one sorted vec
+; =============================================================================
+
+;; Internal: swap two elements in a vec's data array.
+fn sort_swap(data: &i64, i: i64, j: i64) {
+    let tmp = data[i]
+    data[i] = data[j]
+    data[j] = tmp
+}
+
+;; Internal: insertion sort for small partitions.
+fn sort_insertion(data: &i64, lo: i64, hi: i64) {
+    let i = lo + 1
+    loop i <= hi {
+        let key = data[i]
+        let j = i - 1
+        let done = 0
+        loop j >= lo and done == 0 {
+            if data[j] > key {
+                data[j + 1] = data[j]
+                j = j - 1
+            } else {
+                done = 1
+            }
+        }
+        data[j + 1] = key
+        i = i + 1
+    }
+}
+
+;; Internal: partition for quicksort (Lomuto scheme).
+fn sort_partition(data: &i64, lo: i64, hi: i64) -> i64 {
+    let pivot = data[hi]
+    let i = lo
+    let j = lo
+    loop j < hi {
+        if data[j] < pivot {
+            sort_swap(data, i, j)
+            i = i + 1
+        }
+        j = j + 1
+    }
+    sort_swap(data, i, hi)
+    ret i
+}
+
+;; Internal: quicksort with insertion sort for small ranges.
+fn sort_qs(data: &i64, lo: i64, hi: i64) {
+    let run = 1
+    loop run == 1 {
+        run = 0
+        let size = hi - lo + 1
+        if size > 1 {
+            if size <= 16 {
+                sort_insertion(data, lo, hi)
+            } else {
+                let p = sort_partition(data, lo, hi)
+                ; Recurse on smaller side, loop on larger
+                let left_size = p - lo
+                let right_size = hi - p
+                if left_size < right_size {
+                    if p > lo + 1 {
+                        sort_qs(data, lo, p - 1)
+                    }
+                    if p + 1 < hi {
+                        lo = p + 1
+                        run = 1
+                    }
+                } else {
+                    if p + 1 < hi {
+                        sort_qs(data, p + 1, hi)
+                    }
+                    if p > lo + 1 {
+                        hi = p - 1
+                        run = 1
+                    }
+                }
+            }
+        }
+    }
+}
+
+;; Sort a vec ascending in-place.
+fn sort_vec(v: &i64) {
+    let len = v[0]
+    if len < 2 { ret }
+    let data: &i64 = v[2]
+    sort_qs(data, 0, len - 1)
+}
+
+;; Sort a vec descending in-place.
+fn sort_vec_desc(v: &i64) {
+    sort_vec(v)
+    sort_reverse(v)
+}
+
+;; Check if vec is sorted ascending.
+fn sort_is_sorted(v: &i64) -> i64 {
+    let len = v[0]
+    if len < 2 { ret 1 }
+    let data: &i64 = v[2]
+    let i = 1
+    loop i < len {
+        let prev = i - 1
+        if data[prev] > data[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Reverse a vec in-place.
+fn sort_reverse(v: &i64) {
+    let len = v[0]
+    if len < 2 { ret }
+    let data: &i64 = v[2]
+    let lo = 0
+    let hi = len - 1
+    loop lo < hi {
+        sort_swap(data, lo, hi)
+        lo = lo + 1
+        hi = hi - 1
+    }
+}
+
+;; Minimum element (-1 if empty).
+fn sort_min(v: &i64) -> i64 {
+    let len = v[0]
+    if len == 0 { ret -1 }
+    let data: &i64 = v[2]
+    let m = data[0]
+    let i = 1
+    loop i < len {
+        if data[i] < m { m = data[i] }
+        i = i + 1
+    }
+    ret m
+}
+
+;; Maximum element (-1 if empty).
+fn sort_max(v: &i64) -> i64 {
+    let len = v[0]
+    if len == 0 { ret -1 }
+    let data: &i64 = v[2]
+    let m = data[0]
+    let i = 1
+    loop i < len {
+        if data[i] > m { m = data[i] }
+        i = i + 1
+    }
+    ret m
+}
+
+;; Binary search on a sorted vec. Returns index or -1.
+fn sort_binary_search(v: &i64, val: i64) -> i64 {
+    let len = v[0]
+    if len == 0 { ret -1 }
+    let data: &i64 = v[2]
+    let lo = 0
+    let hi = len - 1
+    loop lo <= hi {
+        let mid = lo + (hi - lo) / 2
+        if data[mid] == val { ret mid }
+        if data[mid] < val {
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    ret -1
+}
+
+;; Remove duplicates from a sorted vec. Returns new vec.
+fn sort_unique(v: &i64) -> &i64 {
+    let len = v[0]
+    let out = vec_new(len)
+    if len == 0 { ret out }
+    let data: &i64 = v[2]
+    vec_push(out, data[0])
+    let i = 1
+    loop i < len {
+        let prev = i - 1
+        if data[i] != data[prev] {
+            vec_push(out, data[i])
+        }
+        i = i + 1
+    }
+    ret out
+}
+
+;; Merge two sorted vecs into one sorted vec.
+fn sort_merge(a: &i64, b: &i64) -> &i64 {
+    let alen = a[0]
+    let blen = b[0]
+    let out = vec_new(alen + blen)
+    let adata: &i64 = a[2]
+    let bdata: &i64 = b[2]
+    let i = 0
+    let j = 0
+    loop i < alen and j < blen {
+        if adata[i] <= bdata[j] {
+            vec_push(out, adata[i])
+            i = i + 1
+        } else {
+            vec_push(out, bdata[j])
+            j = j + 1
+        }
+    }
+    loop i < alen {
+        vec_push(out, adata[i])
+        i = i + 1
+    }
+    loop j < blen {
+        vec_push(out, bdata[j])
+        j = j + 1
+    }
+    ret out
+}
