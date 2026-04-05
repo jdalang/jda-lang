@@ -19638,10 +19638,6 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         rhs_id = emit(jfn, ok_bb, &ld_val)
         let_cur = ok_bb
     }
-    // Infer f64/f32 from expression result (builtins, float literals, etc.)
-    if arr_type_tok == 0 and g_codegen_stype == TYPE_F64 { bind_stype = TYPE_F64 }
-    if arr_type_tok == 0 and g_codegen_stype == TYPE_F32 { bind_stype = TYPE_F32 }
-    // Explicit type annotation overrides inferred type
     if arr_type_tok == TOK_F64 { bind_stype = TYPE_F64 }
     if arr_type_tok == TOK_F32 { bind_stype = TYPE_F32 }
     let slot = bind_name(jfn, name_start, name_len, bind_stype)
@@ -20725,7 +20721,7 @@ fn try_small_ret_tokens_fast(toks: &Token, tok_cnt: i64, out_path: &i8) -> i64 {
 fn live_compile_if(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_IF { report_error("expected 'if'") }
     g_main_pos = g_main_pos + 1
-    let cond_id = codegen_expr_inline(g_dbg_toks_init, &g_main_pos, stab, src, jfn, bb)
+    let cond_id = live_codegen_expr_inline(bb)
     let then_bb = create_block_live(jfn)
     let else_bb = create_block_live(jfn)
     let merge_bb = create_block_live(jfn)
@@ -20770,7 +20766,7 @@ fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFuncti
     let saved_loop_head = g_loop_head
     g_loop_ctrl = merge_bb
     g_loop_head = start_bb
-    let cond_id = codegen_expr_inline(g_dbg_toks_init, &g_main_pos, stab, src, jfn, start_bb)
+    let cond_id = live_codegen_expr_inline(start_bb)
     emit_br(jfn, start_bb, cond_id, body_bb, merge_bb)
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE {
         g_loop_ctrl = saved_loop_ctrl
