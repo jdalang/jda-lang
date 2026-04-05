@@ -381,6 +381,8 @@ struct RegAlloc {
     spill_off: i64[8192]
     sp_top:    i64
     evict_idx: i64
+    reg_time:  i64[16]
+    tick:      i64
 }
 
 struct LowerCtx {
@@ -542,6 +544,8 @@ let g_cand_load: &i64 = 0
 let g_cand_store: &i64 = 0
 let g_cand_cnt = 0
 let g_save_mask: i64 = 0
+// Copy propagation globals
+let g_cp_slot_val: &i64 = 0
 // Token write cursor (avoids 5-arg calls and local-ptr bugs)
 let g_ltw_base: &i64 = 0
 let g_ltw_off: i64 = 0
@@ -12798,6 +12802,63 @@ fn find_const(jfn: &JirFunction, val_id: i64) -> ConstVal {
     ret cv
 }
 
+// ============================================================
+// 7a. COPY PROPAGATION (redundant load elimination)
+// ============================================================
+
+fn cp_init_slots() {
+    let i = 0
+    loop i < 2048 {
+        g_cp_slot_val[i] = -1
+        i = i + 1
+    }
+}
+
+fn cp_scan_block(jfn: &JirFunction, bi: i64) {
+    cp_init_slots()
+    let ii = 0
+    loop ii < jfn.blocks[bi].instr_cnt {
+        let op = jfn.blocks[bi].instrs[ii].op
+        let dead = jfn.blocks[bi].instrs[ii].dead
+        if dead == 0 and op == OP_STORE {
+            let val = jfn.blocks[bi].instrs[ii].operand0
+            let slot = jfn.blocks[bi].instrs[ii].operand1
+            let idx = slot / 8
+            if idx >= 0 and idx < 2048 {
+                g_cp_slot_val[idx] = val
+            }
+        }
+        if dead == 0 and op == OP_LOAD {
+            let slot = jfn.blocks[bi].instrs[ii].operand0
+            let idx = slot / 8
+            if idx >= 0 and idx < 2048 {
+                let prev_val = g_cp_slot_val[idx]
+                if prev_val >= 0 {
+                    let cv = find_const(jfn, prev_val)
+                    if cv.found == 1 {
+                        instr_set_op(&jfn.blocks[bi].instrs[ii], OP_CONST)
+                        instr_set_imm(&jfn.blocks[bi].instrs[ii], cv.val)
+                    }
+                }
+                let this_id = jfn.blocks[bi].instrs[ii].id
+                if this_id >= 0 and this_id < 2048 {
+                    g_cp_slot_val[idx] = this_id
+                }
+            }
+        }
+        ii = ii + 1
+    }
+}
+
+
+fn copy_prop(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        cp_scan_block(jfn, bi)
+        bi = bi + 1
+    }
+}
+
 fn fold_constants(jfn: &JirFunction) {
     let bi = 0
     loop bi < jfn.block_cnt {
@@ -13267,6 +13328,12 @@ fn regalloc_init(ra: &RegAlloc) {
     // sp_top is set to jfn.next_slot_off before lowering, so spills start after locals.
     ra.sp_top = 32
     ra.evict_idx = 0
+    ra.tick = 0
+    let ri = 0
+    loop ri < 16 {
+        ra.reg_time[ri] = 0
+        ri = ri + 1
+    }
 }
 
 fn fill_bytes(buf: &i8, len: i64, val: i8) {
@@ -13316,21 +13383,30 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     if val_id < 0 { valid = 0 }
     if val_id >= 8192 { valid = 0 }
     if valid != 1 { ret reg_pool_at(0) }
+    ra.tick = ra.tick + 1
     let i = 0
     loop i < N_ALLOC_REGS {
         if ra.reg2val[i] == -1 {
             ra.reg2val[i] = val_id
             ra.val2reg[val_id] = i
+            ra.reg_time[i] = ra.tick
             ret reg_pool_at(i)
         }
         i = i + 1
     }
-    // Round-robin eviction
-    let ei = ra.evict_idx
-    if ei >= N_ALLOC_REGS { ei = 0 }
+    // LRU eviction — evict the register used least recently
+    let ei = 0
+    let min_time = ra.reg_time[0]
+    let j = 1
+    loop j < N_ALLOC_REGS {
+        if ra.reg_time[j] < min_time {
+            min_time = ra.reg_time[j]
+            ei = j
+        }
+        j = j + 1
+    }
     let victim = ra.reg2val[ei]
     let spill_reg = reg_pool_at(ei)
-    ra.evict_idx = ei + 1
     if victim < 0 { ret spill_reg }
     if victim >= 8192 { ret spill_reg }
     let next_sp = ra.sp_top + 8
@@ -13340,6 +13416,7 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     ra.val2reg[victim]    = -1
     ra.reg2val[ei]        = val_id
     ra.val2reg[val_id]    = ei
+    ra.reg_time[ei] = ra.tick
     ret spill_reg
 }
 
@@ -13354,6 +13431,8 @@ fn regalloc_get(ra: &RegAlloc, val_id: i64) -> i32 {
     if idx < 0 { idx_ok = 0 }
     if idx >= N_ALLOC_REGS { idx_ok = 0 }
     if idx_ok != 1 { ret -1 }
+    ra.tick = ra.tick + 1
+    ra.reg_time[idx] = ra.tick
     ret reg_pool_at(idx)
 }
 
@@ -21572,6 +21651,9 @@ fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx
     ri.op = OP_RET
     ri.operand0 = rv
     emit(jfn, fb, &ri)
+    copy_prop(jfn)
+    fold_constants(jfn)
+    copy_prop(jfn)
     fold_constants(jfn)
     dce(jfn)
     tail_call_opt(jfn)
@@ -22456,6 +22538,8 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_val_imm = alloc_pages(16) as &i64
     g_val_load_slot = alloc_pages(16) as &i64
     g_val_promo_reg = alloc_pages(16) as &i64
+    // Copy propagation arrays
+    g_cp_slot_val = alloc_pages(4) as &i64
     // Bootstrap: alloc_pages gives zero-initialized memory so entry 0 is already zero.
     // Just set the count and total size to skip slot 0 (dummy entry).
     g_glob_cnt      = 1
@@ -22623,6 +22707,9 @@ fn main(argc: i64, argv_ptr: &i64) {
                         if jfn.block_cnt > 512 { panic("lex_handle_minus block blowup") }
                     }
                 }
+                copy_prop(jfn)
+                fold_constants(jfn)
+                copy_prop(jfn)
                 fold_constants(jfn)
                 dce(jfn)
                 tail_call_opt(jfn)
