@@ -1,77 +1,117 @@
-#!/usr/bin/env python3
-"""
-jda-fuzz — Built-in fuzz testing for Jda
+#!/bin/bash
+set -euo pipefail
 
-Discovers fn fuzz_* functions in .jda files, generates random inputs,
-compiles once, and runs repeatedly to find crashes.
+# jda-fuzz — Built-in fuzz testing for Jda
+#
+# Discovers fn fuzz_* functions in .jda files, generates random inputs,
+# compiles once, and runs repeatedly to find crashes.
+#
+# Fuzz target signature:
+#   fn fuzz_example(a: i64, b: i64) {
+#       ; test code here — crash (exit non-zero) means bug found
+#   }
+#
+# Usage:
+#   jda-fuzz.sh <file.jda>                    Fuzz all fuzz_* functions
+#   jda-fuzz.sh --runs 10000 <file.jda>       Set iteration count (default: 1000)
+#   jda-fuzz.sh --time 30 <file.jda>          Run for N seconds
+#   jda-fuzz.sh --seed 42 <file.jda>          Reproducible random seed
+#   jda-fuzz.sh --corpus <dir> <file.jda>     Save/load crash corpus
+#
+# Crash corpus files are saved as one-line-per-arg text files.
+# Re-running with --corpus replays saved crashes as regression tests first.
 
-Fuzz target signature:
-  fn fuzz_example(a: i64, b: i64) {
-      ; test code here — crash (exit non-zero) means bug found
-  }
-
-Usage:
-  jda-fuzz.sh <file.jda>                    Fuzz all fuzz_* functions
-  jda-fuzz.sh --runs 10000 <file.jda>       Set iteration count (default: 1000)
-  jda-fuzz.sh --time 30 <file.jda>          Run for N seconds
-  jda-fuzz.sh --seed 42 <file.jda>          Reproducible random seed
-  jda-fuzz.sh --corpus <dir> <file.jda>     Save/load crash corpus
-  jda-fuzz.sh --workers 4 <file.jda>        Parallel fuzz workers
-
-Crash corpus files are saved as one-line-per-arg text files.
-Re-running with --corpus replays saved crashes as regression tests first.
-"""
-
-import sys
-import os
-import re
-import random
-import subprocess
-import tempfile
-import time
-import signal
-import struct
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-JDA = os.environ.get("JDA", os.path.join(PROJECT_ROOT, "bootstrap", "stage0", "jda1"))
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+JDA="${JDA:-$PROJECT_ROOT/bootstrap/stage0/jda1}"
 
 # Interesting i64 values for mutations
-INTERESTING_VALUES = [
-    0, 1, -1, 2, -2,
-    127, 128, -128, -129,
-    255, 256, -256,
-    32767, 32768, -32768, -32769,
-    65535, 65536,
-    2147483647, 2147483648, -2147483648, -2147483649,  # i32 bounds
-    9223372036854775807, -9223372036854775808,  # i64 bounds
-    0x5555555555555555, 0xAAAAAAAAAAAAAAAA,  # bit patterns
-    0xDEADBEEF, 0xCAFEBABE,
-]
+INTERESTING_VALUES=(
+    0 1 -1 2 -2
+    127 128 -128 -129
+    255 256 -256
+    32767 32768 -32768 -32769
+    65535 65536
+    2147483647 2147483648 -2147483648 -2147483649
+    9223372036854775807 -9223372036854775808
+    6148914691236517205 -6148914691236517206
+    3735928559 3405691582
+)
 
+# --- Random number generation ---
 
-def find_fuzz_targets(source):
-    """Find fn fuzz_*(params) functions and extract parameter counts."""
-    targets = []
-    pattern = re.compile(r'^fn\s+(fuzz_\w+)\s*\(([^)]*)\)')
-    for line in source.split('\n'):
-        m = pattern.match(line.strip())
-        if m:
-            name = m.group(1)
-            params_str = m.group(2).strip()
-            if not params_str:
-                param_count = 0
-            else:
-                param_count = len([p.strip() for p in params_str.split(',') if p.strip()])
-            targets.append((name, param_count))
-    return targets
+# Seed the bash RANDOM (limited to 32767, so we also use /dev/urandom for big values)
+fuzz_seed=0
 
+rand_init() {
+    fuzz_seed="$1"
+    RANDOM="$fuzz_seed"
+}
 
-def generate_wrapper(source, target_name, param_count):
-    """Generate a main() wrapper that reads i64 values from stdin."""
-    # Wrapper reads space-separated i64 values from stdin via syscall(0, 0, buf, n)
-    wrapper = source + "\n"
-    wrapper += """
+# Generate a random i64 value (full 64-bit range, signed)
+rand_i64() {
+    # Read 8 bytes from urandom, interpret as unsigned, then treat as signed
+    local hex
+    hex=$(od -A n -t x1 -N 8 /dev/urandom | tr -d ' \n')
+    # Convert hex to decimal using python-free approach: printf + bc or shell arithmetic
+    # Shell arithmetic is limited to 63-bit signed, so we use two 32-bit halves
+    local hi lo val
+    hi=$((16#${hex:0:8}))
+    lo=$((16#${hex:8:8}))
+    val=$(( (hi << 32) | lo ))
+    echo "$val"
+}
+
+# Generate a random integer in range [lo, hi] inclusive
+rand_range() {
+    local lo="$1" hi="$2"
+    local span=$(( hi - lo + 1 ))
+    local r=$(( RANDOM % span ))
+    echo $(( lo + r ))
+}
+
+# Pick a random element from INTERESTING_VALUES
+rand_interesting() {
+    local idx=$(( RANDOM % ${#INTERESTING_VALUES[@]} ))
+    echo "${INTERESTING_VALUES[$idx]}"
+}
+
+# --- Fuzz target discovery ---
+
+# Find fuzz_* functions: outputs "name param_count" per line
+find_fuzz_targets() {
+    local file="$1"
+    awk '/^[[:space:]]*fn[[:space:]]+fuzz_[a-zA-Z0-9_]+[[:space:]]*\(/ {
+        # Extract function name
+        name = $0; sub(/.*fn[[:space:]]+/, "", name); sub(/[^a-zA-Z0-9_].*/, "", name)
+        # Extract parameter list between parens
+        params = $0; sub(/^[^(]*\(/, "", params); sub(/\).*/, "", params)
+        # Remove whitespace
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", params)
+        if (params == "") {
+            print name, 0
+        } else {
+            # Count commas + 1
+            n = gsub(/,/, ",", params) + 1
+            print name, n
+        }
+    }' "$file"
+}
+
+# --- Wrapper generation ---
+
+generate_wrapper() {
+    local source_file="$1"
+    local target_name="$2"
+    local param_count="$3"
+    local output_file="$4"
+
+    # Copy source
+    cat "$source_file" > "$output_file"
+
+    # Append helper functions and main
+    cat >> "$output_file" << 'WRAPPER_HELPERS'
+
 fn fuzz_read_stdin(buf: &i8, max: i64) -> i64 {
     let n = syscall(0, 0, buf, max)
     if n < 0 { n = 0 }
@@ -104,274 +144,368 @@ fn main() {
     let n = fuzz_read_stdin(buf, 4096)
     let pos = alloc_pages(1)
     pos[0] = 0
-"""
-    for i in range(param_count):
-        wrapper += f"    let arg{i} = fuzz_parse_i64(buf, pos[0], pos)\n"
+WRAPPER_HELPERS
 
-    args = ", ".join(f"arg{i}" for i in range(param_count))
-    wrapper += f"    {target_name}({args})\n"
-    wrapper += "}\n"
-    return wrapper
+    # Generate argument parsing lines
+    local i
+    for (( i = 0; i < param_count; i++ )); do
+        echo "    let arg${i} = fuzz_parse_i64(buf, pos[0], pos)" >> "$output_file"
+    done
 
+    # Generate call
+    local args=""
+    for (( i = 0; i < param_count; i++ )); do
+        if (( i > 0 )); then
+            args="${args}, "
+        fi
+        args="${args}arg${i}"
+    done
+    echo "    ${target_name}(${args})" >> "$output_file"
+    echo "}" >> "$output_file"
+}
 
-def generate_input(param_count, rng):
-    """Generate random i64 inputs using mutation strategies."""
-    strategy = rng.randint(0, 4)
-    values = []
-    for _ in range(param_count):
-        if strategy == 0:
-            # Pure random
-            values.append(rng.randint(-9223372036854775808, 9223372036854775807))
-        elif strategy == 1:
-            # Interesting values
-            values.append(rng.choice(INTERESTING_VALUES))
-        elif strategy == 2:
-            # Small values (common edge cases)
-            values.append(rng.randint(-100, 100))
-        elif strategy == 3:
-            # Powers of two +/- 1
-            exp = rng.randint(0, 62)
-            base = 1 << exp
-            values.append(base + rng.choice([-1, 0, 1]))
-        else:
-            # Bit pattern mutations
-            val = rng.getrandbits(64)
-            if val >= (1 << 63):
-                val -= (1 << 64)
-            values.append(val)
-    return values
+# --- Input generation ---
 
+generate_input() {
+    local param_count="$1"
+    local strategy=$(( RANDOM % 5 ))
+    local values=()
+    local i
 
-def load_corpus(corpus_dir, target_name):
-    """Load saved crash inputs from corpus directory."""
-    inputs = []
-    target_dir = os.path.join(corpus_dir, target_name)
-    if not os.path.isdir(target_dir):
-        return inputs
-    for fname in sorted(os.listdir(target_dir)):
-        fpath = os.path.join(target_dir, fname)
-        if not os.path.isfile(fpath):
-            continue
-        try:
-            with open(fpath, 'r') as f:
-                values = [int(line.strip()) for line in f if line.strip()]
-            inputs.append(values)
-        except (ValueError, IOError):
-            pass
-    return inputs
+    for (( i = 0; i < param_count; i++ )); do
+        local val
+        case "$strategy" in
+            0) # Pure random i64
+                val=$(rand_i64)
+                ;;
+            1) # Interesting values
+                val=$(rand_interesting)
+                ;;
+            2) # Small values [-100, 100]
+                val=$(rand_range -100 100)
+                ;;
+            3) # Powers of two +/- 1
+                local exp=$(( RANDOM % 63 ))
+                local base=$(( 1 << exp ))
+                local delta_choices=(-1 0 1)
+                local delta=${delta_choices[$(( RANDOM % 3 ))]}
+                val=$(( base + delta ))
+                ;;
+            4) # Bit pattern mutations (random i64)
+                val=$(rand_i64)
+                ;;
+        esac
+        values+=("$val")
+    done
 
+    # Output space-separated
+    echo "${values[*]}"
+}
 
-def save_crash(corpus_dir, target_name, values, crash_num):
-    """Save crashing input to corpus directory."""
-    target_dir = os.path.join(corpus_dir, target_name)
-    os.makedirs(target_dir, exist_ok=True)
-    fname = os.path.join(target_dir, f"crash_{crash_num:04d}")
-    with open(fname, 'w') as f:
-        for v in values:
-            f.write(f"{v}\n")
-    return fname
+# --- Corpus management ---
 
+load_corpus() {
+    local corpus_dir="$1"
+    local target_name="$2"
+    local target_dir="${corpus_dir}/${target_name}"
 
-def run_one(binary, values, timeout=5):
-    """Run the fuzz binary with given inputs via stdin. Returns (ok, exit_code, stderr)."""
-    stdin_data = " ".join(str(v) for v in values) + "\n"
-    try:
-        result = subprocess.run(
-            [binary], timeout=timeout,
-            input=stdin_data.encode(),
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
-        )
-        return result.returncode == 0, result.returncode, result.stderr.decode('utf-8', errors='replace')
-    except subprocess.TimeoutExpired:
-        return False, -1, "TIMEOUT"
-    except OSError as e:
-        return False, -2, str(e)
+    if [[ ! -d "$target_dir" ]]; then
+        return
+    fi
 
+    local f
+    for f in "$target_dir"/crash_*; do
+        [[ -f "$f" ]] || continue
+        # Read lines as space-separated values
+        local vals
+        vals=$(tr '\n' ' ' < "$f" | sed 's/[[:space:]]*$//')
+        if [[ -n "$vals" ]]; then
+            echo "$vals"
+        fi
+    done
+}
 
-def fuzz_target(source, target_name, param_count, args):
-    """Fuzz a single target function."""
-    max_runs = args.get('runs', 1000)
-    max_time = args.get('time', 0)
-    seed = args.get('seed', int(time.time() * 1000) & 0xFFFFFFFF)
-    corpus_dir = args.get('corpus', None)
-    workers = args.get('workers', 1)
+save_crash() {
+    local corpus_dir="$1"
+    local target_name="$2"
+    local values="$3"
+    local crash_num="$4"
 
-    rng = random.Random(seed)
+    local target_dir="${corpus_dir}/${target_name}"
+    mkdir -p "$target_dir"
+
+    local fname
+    fname=$(printf "%s/crash_%04d" "$target_dir" "$crash_num")
+
+    # Write one value per line
+    echo "$values" | tr ' ' '\n' > "$fname"
+    echo "$fname"
+}
+
+# --- Run one test ---
+
+run_one() {
+    local binary="$1"
+    local values="$2"
+    local stdin_data="${values}
+"
+    local exit_code=0
+    echo -n "$stdin_data" | timeout 5 "$binary" > /dev/null 2>"$FUZZ_STDERR_FILE" || exit_code=$?
+    echo "$exit_code"
+}
+
+# --- Fuzz a single target ---
+
+fuzz_target() {
+    local source_file="$1"
+    local target_name="$2"
+    local param_count="$3"
+    local max_runs="$4"
+    local max_time="$5"
+    local seed="$6"
+    local corpus_dir="$7"
+
+    rand_init "$seed"
 
     # Generate wrapper source
-    wrapper_src = generate_wrapper(source, target_name, param_count)
+    local src_path
+    src_path=$(mktemp /tmp/jda_fuzz_XXXXXX.jda)
+    local bin_path="${src_path%.jda}"
+
+    generate_wrapper "$source_file" "$target_name" "$param_count" "$src_path"
 
     # Compile
-    with tempfile.NamedTemporaryFile(suffix='.jda', mode='w', delete=False) as f:
-        f.write(wrapper_src)
-        src_path = f.name
+    local compile_exit=0
+    "$JDA" "$src_path" "$bin_path" > /dev/null 2>&1 || compile_exit=$?
+    if (( compile_exit != 0 )); then
+        echo "  FAIL  ${target_name}: compile error"
+        rm -f "$src_path"
+        echo "0 0 0"
+        return
+    fi
+    chmod +x "$bin_path"
 
-    bin_path = src_path.replace('.jda', '')
-    try:
-        result = subprocess.run(
-            [JDA, src_path, bin_path],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        if result.returncode != 0:
-            print(f"  FAIL  {target_name}: compile error")
-            return 0, 0, 0
-        os.chmod(bin_path, 0o755)
-    except OSError as e:
-        print(f"  FAIL  {target_name}: {e}")
-        return 0, 0, 0
+    local crashes=0
+    local total_runs=0
+    local start_time
+    start_time=$(date +%s)
 
-    crashes = []
-    total_runs = 0
-    start_time = time.time()
-
-    # Phase 1: Replay corpus (regression tests)
-    if corpus_dir:
-        saved_inputs = load_corpus(corpus_dir, target_name)
-        if saved_inputs:
-            print(f"  {target_name}: replaying {len(saved_inputs)} corpus entries...")
-            for values in saved_inputs:
-                ok, code, stderr = run_one(bin_path, values)
-                total_runs += 1
-                if not ok:
-                    crashes.append(values)
-                    args_str = ", ".join(str(v) for v in values)
-                    print(f"  CRASH (corpus replay) {target_name}({args_str}) exit={code}")
+    # Phase 1: Replay corpus
+    if [[ -n "$corpus_dir" ]]; then
+        local corpus_inputs
+        corpus_inputs=$(load_corpus "$corpus_dir" "$target_name")
+        if [[ -n "$corpus_inputs" ]]; then
+            local count
+            count=$(echo "$corpus_inputs" | wc -l | tr -d ' ')
+            echo "  ${target_name}: replaying ${count} corpus entries..."
+            while IFS= read -r values; do
+                local code
+                code=$(run_one "$bin_path" "$values")
+                total_runs=$(( total_runs + 1 ))
+                if (( code != 0 )); then
+                    crashes=$(( crashes + 1 ))
+                    echo "  CRASH (corpus replay) ${target_name}(${values// /, }) exit=${code}"
+                fi
+            done <<< "$corpus_inputs"
+        fi
+    fi
 
     # Phase 2: Random fuzzing
-    print(f"  {target_name}: fuzzing with seed={seed}, params={param_count}...")
+    echo "  ${target_name}: fuzzing with seed=${seed}, params=${param_count}..."
 
-    run_count = 0
-    last_report = start_time
-    while True:
-        # Check termination conditions
-        if max_time > 0:
-            if time.time() - start_time >= max_time:
+    local run_count=0
+    local last_report
+    last_report=$(date +%s)
+
+    while true; do
+        # Check termination
+        if (( max_time > 0 )); then
+            local now
+            now=$(date +%s)
+            if (( now - start_time >= max_time )); then
                 break
-        else:
-            if run_count >= max_runs:
+            fi
+        else
+            if (( run_count >= max_runs )); then
                 break
+            fi
+        fi
 
-        values = generate_input(param_count, rng)
-        ok, code, stderr = run_one(bin_path, values)
-        run_count += 1
-        total_runs += 1
+        local values
+        values=$(generate_input "$param_count")
+        local code
+        code=$(run_one "$bin_path" "$values")
+        run_count=$(( run_count + 1 ))
+        total_runs=$(( total_runs + 1 ))
 
-        if not ok:
-            crashes.append(values)
-            args_str = ", ".join(str(v) for v in values)
-            print(f"  CRASH #{len(crashes)} {target_name}({args_str}) exit={code}")
-            if corpus_dir:
-                fname = save_crash(corpus_dir, target_name, values, len(crashes))
-                print(f"         saved to {fname}")
+        if (( code != 0 )); then
+            crashes=$(( crashes + 1 ))
+            echo "  CRASH #${crashes} ${target_name}(${values// /, }) exit=${code}"
+            if [[ -n "$corpus_dir" ]]; then
+                local fname
+                fname=$(save_crash "$corpus_dir" "$target_name" "$values" "$crashes")
+                echo "         saved to ${fname}"
+            fi
+        fi
 
         # Progress report every 5 seconds
-        now = time.time()
-        if now - last_report >= 5.0:
-            elapsed = now - start_time
-            rate = total_runs / elapsed if elapsed > 0 else 0
-            print(f"  {target_name}: {total_runs} runs, {len(crashes)} crashes, {rate:.0f} runs/sec")
-            last_report = now
+        local now
+        now=$(date +%s)
+        if (( now - last_report >= 5 )); then
+            local elapsed=$(( now - start_time ))
+            local rate=0
+            if (( elapsed > 0 )); then
+                rate=$(( total_runs / elapsed ))
+            fi
+            echo "  ${target_name}: ${total_runs} runs, ${crashes} crashes, ${rate} runs/sec"
+            last_report=$now
+        fi
+    done
 
     # Cleanup
-    os.unlink(src_path)
-    if os.path.exists(bin_path):
-        os.unlink(bin_path)
+    rm -f "$src_path" "$bin_path"
 
-    elapsed = time.time() - start_time
-    rate = total_runs / elapsed if elapsed > 0 else 0
-    print(f"  {target_name}: {total_runs} runs in {elapsed:.1f}s ({rate:.0f}/sec), {len(crashes)} crashes")
+    local end_time
+    end_time=$(date +%s)
+    local elapsed=$(( end_time - start_time ))
+    local rate=0
+    if (( elapsed > 0 )); then
+        rate=$(( total_runs / elapsed ))
+    fi
+    echo "  ${target_name}: ${total_runs} runs in ${elapsed}s (${rate}/sec), ${crashes} crashes"
 
-    return total_runs, len(crashes), elapsed
+    # Return results via global variables
+    _FUZZ_RUNS=$total_runs
+    _FUZZ_CRASHES=$crashes
+}
 
+# --- Main ---
 
-def main():
-    args = {
-        'runs': 1000,
-        'time': 0,
-        'seed': None,
-        'corpus': None,
-        'workers': 1,
-    }
-    files = []
+usage() {
+    cat << 'EOF'
+jda-fuzz — Built-in fuzz testing for Jda
 
-    i = 1
-    while i < len(sys.argv):
-        arg = sys.argv[i]
-        if arg == '--runs' and i + 1 < len(sys.argv):
-            args['runs'] = int(sys.argv[i + 1])
-            i += 2
-        elif arg == '--time' and i + 1 < len(sys.argv):
-            args['time'] = int(sys.argv[i + 1])
-            i += 2
-        elif arg == '--seed' and i + 1 < len(sys.argv):
-            args['seed'] = int(sys.argv[i + 1])
-            i += 2
-        elif arg == '--corpus' and i + 1 < len(sys.argv):
-            args['corpus'] = sys.argv[i + 1]
-            i += 2
-        elif arg == '--workers' and i + 1 < len(sys.argv):
-            args['workers'] = int(sys.argv[i + 1])
-            i += 2
-        elif arg in ('--help', '-h'):
-            print(__doc__.strip())
-            sys.exit(0)
-        elif arg.startswith('-'):
-            print(f"jda-fuzz: unknown option '{arg}'", file=sys.stderr)
-            sys.exit(1)
-        else:
-            files.append(arg)
-            i += 1
+Discovers fn fuzz_* functions in .jda files, generates random inputs,
+compiles once, and runs repeatedly to find crashes.
+
+Fuzz target signature:
+  fn fuzz_example(a: i64, b: i64) {
+      ; test code here — crash (exit non-zero) means bug found
+  }
+
+Usage:
+  jda-fuzz.sh <file.jda>                    Fuzz all fuzz_* functions
+  jda-fuzz.sh --runs 10000 <file.jda>       Set iteration count (default: 1000)
+  jda-fuzz.sh --time 30 <file.jda>          Run for N seconds
+  jda-fuzz.sh --seed 42 <file.jda>          Reproducible random seed
+  jda-fuzz.sh --corpus <dir> <file.jda>     Save/load crash corpus
+
+Crash corpus files are saved as one-line-per-arg text files.
+Re-running with --corpus replays saved crashes as regression tests first.
+EOF
+}
+
+# Parse arguments
+OPT_RUNS=1000
+OPT_TIME=0
+OPT_SEED=""
+OPT_CORPUS=""
+FILES=()
+
+while (( $# > 0 )); do
+    case "$1" in
+        --runs)
+            OPT_RUNS="$2"; shift 2 ;;
+        --time)
+            OPT_TIME="$2"; shift 2 ;;
+        --seed)
+            OPT_SEED="$2"; shift 2 ;;
+        --corpus)
+            OPT_CORPUS="$2"; shift 2 ;;
+        --workers)
+            shift 2 ;;  # accepted but ignored in bash version
+        -h|--help)
+            usage; exit 0 ;;
+        -*)
+            echo "jda-fuzz: unknown option '$1'" >&2; exit 1 ;;
+        *)
+            FILES+=("$1"); shift ;;
+    esac
+done
+
+if (( ${#FILES[@]} == 0 )); then
+    echo "usage: jda-fuzz.sh [options] <file.jda>" >&2
+    exit 1
+fi
+
+# Default seed from epoch seconds
+if [[ -z "$OPT_SEED" ]]; then
+    OPT_SEED=$(date +%s)
+fi
+
+# Temp file for stderr capture
+FUZZ_STDERR_FILE=$(mktemp /tmp/jda_fuzz_stderr_XXXXXX)
+trap 'rm -f "$FUZZ_STDERR_FILE"' EXIT
+
+TOTAL_RUNS=0
+TOTAL_CRASHES=0
+TOTAL_TARGETS=0
+
+# Global return values from fuzz_target
+_FUZZ_RUNS=0
+_FUZZ_CRASHES=0
+
+for filepath in "${FILES[@]}"; do
+    jda_files=()
+    if [[ -d "$filepath" ]]; then
+        while IFS= read -r f; do
+            jda_files+=("$f")
+        done < <(find "$filepath" -maxdepth 1 -name '*.jda' -type f | sort)
+    else
+        jda_files=("$filepath")
+    fi
+
+    for jda_file in "${jda_files[@]}"; do
+        # Find targets
+        targets=()
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && targets+=("$line")
+        done < <(find_fuzz_targets "$jda_file")
+
+        if (( ${#targets[@]} == 0 )); then
             continue
-        continue
+        fi
 
-    if not files:
-        print("usage: jda-fuzz.sh [options] <file.jda>", file=sys.stderr)
-        sys.exit(1)
+        echo ""
+        echo "=== ${jda_file}: ${#targets[@]} fuzz target(s) ==="
 
-    if args['seed'] is None:
-        args['seed'] = int(time.time() * 1000) & 0xFFFFFFFF
+        for entry in "${targets[@]}"; do
+            local_name="${entry%% *}"
+            local_count="${entry##* }"
 
-    total_runs = 0
-    total_crashes = 0
-    total_targets = 0
-
-    for filepath in files:
-        if os.path.isdir(filepath):
-            jda_files = sorted(
-                os.path.join(filepath, f)
-                for f in os.listdir(filepath)
-                if f.endswith('.jda')
-            )
-        else:
-            jda_files = [filepath]
-
-        for jda_file in jda_files:
-            with open(jda_file, 'r') as f:
-                source = f.read()
-
-            targets = find_fuzz_targets(source)
-            if not targets:
+            if (( local_count == 0 )); then
+                echo "  SKIP  ${local_name}: no parameters to fuzz"
                 continue
+            fi
 
-            print(f"\n=== {jda_file}: {len(targets)} fuzz target(s) ===")
-            for target_name, param_count in targets:
-                if param_count == 0:
-                    print(f"  SKIP  {target_name}: no parameters to fuzz")
-                    continue
-                total_targets += 1
-                runs, crashes, elapsed = fuzz_target(source, target_name, param_count, args)
-                total_runs += runs
-                total_crashes += crashes
+            TOTAL_TARGETS=$(( TOTAL_TARGETS + 1 ))
 
-    print(f"\n=== Fuzz Summary ===")
-    print(f"  Targets: {total_targets}")
-    print(f"  Runs:    {total_runs}")
-    print(f"  Crashes: {total_crashes}")
+            fuzz_target "$jda_file" "$local_name" "$local_count" \
+                "$OPT_RUNS" "$OPT_TIME" "$OPT_SEED" "$OPT_CORPUS"
 
-    if total_crashes > 0:
-        sys.exit(1)
-    sys.exit(0)
+            TOTAL_RUNS=$(( TOTAL_RUNS + _FUZZ_RUNS ))
+            TOTAL_CRASHES=$(( TOTAL_CRASHES + _FUZZ_CRASHES ))
+        done
+    done
+done
 
+echo ""
+echo "=== Fuzz Summary ==="
+echo "  Targets: ${TOTAL_TARGETS}"
+echo "  Runs:    ${TOTAL_RUNS}"
+echo "  Crashes: ${TOTAL_CRASHES}"
 
-if __name__ == '__main__':
-    main()
+if (( TOTAL_CRASHES > 0 )); then
+    exit 1
+fi
+exit 0

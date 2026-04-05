@@ -1,677 +1,756 @@
-#!/usr/bin/env python3
-"""
-jda-arm64 — ARM64 (AArch64) cross-compiler for Jda
+#!/bin/bash
+set -euo pipefail
+#
+# jda-arm64 — ARM64 (AArch64) cross-compiler for Jda (pure bash + awk)
+#
+# Compiles Jda source to aarch64-linux ELF binaries.
+#
+# ABI: AAPCS64
+#   - x0-x7: argument/result registers
+#   - x19-x28: callee-saved
+#   - x29: frame pointer (FP)
+#   - x30: link register (LR)
+#   - sp: stack pointer (16-byte aligned)
+#
+# Syscall convention (Linux aarch64):
+#   - x8: syscall number
+#   - x0-x5: arguments
+#   - svc #0
+#
+# Usage:
+#   jda-arm64.sh <file.jda> <output>           Compile to ARM64 ELF
+#   jda-arm64.sh --asm <file.jda>              Output ARM64 assembly
+#   jda-arm64.sh --run <file.jda>              Compile and run via QEMU
 
-Compiles Jda source to aarch64-linux ELF binaries.
-Implements: JIR-like lowering → AArch64 instructions → ELF writer.
+# ─── Argument parsing ────────────────────────────────────────────────────────
 
-ABI: AAPCS64
-  - x0-x7: argument/result registers
-  - x19-x28: callee-saved
-  - x29: frame pointer (FP)
-  - x30: link register (LR)
-  - sp: stack pointer (16-byte aligned)
-  - d0-d7: float args
+ASM_MODE=0
+RUN_MODE=0
+SOURCE_FILE=""
+OUTPUT_FILE=""
 
-Syscall convention (Linux aarch64):
-  - x8: syscall number
-  - x0-x5: arguments
-  - svc #0
+if [[ $# -eq 0 ]]; then
+    echo "jda-arm64 — ARM64 cross-compiler for Jda"
+    echo ""
+    echo "Usage:"
+    echo "  jda-arm64.sh <file.jda> <output>   Compile to ARM64 ELF"
+    echo "  jda-arm64.sh --asm <file.jda>       Output ARM64 assembly"
+    echo "  jda-arm64.sh --run <file.jda>       Compile and run via QEMU"
+    echo ""
+    echo "Target: aarch64-linux (AAPCS64 ABI)"
+    echo "Requires: aarch64-linux-gnu-as/ld or Docker"
+    exit 1
+fi
 
-Usage:
-  jda-arm64.sh <file.jda> <output>           Compile to ARM64 ELF
-  jda-arm64.sh --asm <file.jda>              Output ARM64 assembly
-  jda-arm64.sh --run <file.jda>              Compile and run via QEMU
-"""
+for arg in "$@"; do
+    case "$arg" in
+        --asm) ASM_MODE=1 ;;
+        --run) RUN_MODE=1 ;;
+        *)
+            if [[ -z "$SOURCE_FILE" ]]; then
+                SOURCE_FILE="$arg"
+            else
+                OUTPUT_FILE="$arg"
+            fi
+            ;;
+    esac
+done
 
-import sys
-import os
-import re
-import struct
-import tempfile
-import subprocess
+if [[ -z "$SOURCE_FILE" ]]; then
+    echo "error: no source file specified" >&2
+    exit 1
+fi
 
+if [[ ! -f "$SOURCE_FILE" ]]; then
+    echo "error: file not found: $SOURCE_FILE" >&2
+    exit 1
+fi
+
+if [[ -z "$OUTPUT_FILE" ]]; then
+    OUTPUT_FILE="${SOURCE_FILE%.jda}"
+fi
+
+# ─── Lexer + Parser + CodeGen (all in one awk program) ───────────────────────
+
+generate_asm() {
+    awk '
 # ─── Lexer ────────────────────────────────────────────────────────────────────
 
-class Token:
-    def __init__(self, kind, value, line=0):
-        self.kind = kind
-        self.value = value
-        self.line = line
-
-def lex(source):
-    tokens = []
-    i = 0
+function lex(src,    i, c, c2, j, word, num, sval, line) {
+    ntokens = 0
+    i = 1
     line = 1
-    while i < len(source):
-        c = source[i]
-        if c == '\n':
-            line += 1; i += 1
-        elif c in ' \t\r':
-            i += 1
-        elif c == ';':
-            while i < len(source) and source[i] != '\n': i += 1
-        elif c == '"':
+    while (i <= length(src)) {
+        c = substr(src, i, 1)
+        if (c == "\n") {
+            line++; i++
+        } else if (c == " " || c == "\t" || c == "\r") {
+            i++
+        } else if (c == ";") {
+            # comment to end of line
+            while (i <= length(src) && substr(src, i, 1) != "\n") i++
+        } else if (c == "\"") {
+            # string literal
             j = i + 1
-            while j < len(source) and source[j] != '"':
-                if source[j] == '\\': j += 1
-                j += 1
-            tokens.append(Token('STR', source[i+1:j], line))
+            sval = ""
+            while (j <= length(src) && substr(src, j, 1) != "\"") {
+                if (substr(src, j, 1) == "\\") {
+                    j++
+                    c2 = substr(src, j, 1)
+                    if (c2 == "n") sval = sval "\n"
+                    else if (c2 == "t") sval = sval "\t"
+                    else if (c2 == "\\") sval = sval "\\"
+                    else if (c2 == "\"") sval = sval "\""
+                    else sval = sval c2
+                } else {
+                    sval = sval substr(src, j, 1)
+                }
+                j++
+            }
+            ntokens++
+            tok_kind[ntokens] = "STR"
+            tok_val[ntokens] = sval
+            tok_line[ntokens] = line
             i = j + 1
-        elif c.isdigit():
+        } else if (c ~ /[0-9]/) {
             j = i
-            while j < len(source) and source[j].isdigit(): j += 1
-            tokens.append(Token('INT', int(source[i:j]), line))
+            while (j <= length(src) && substr(src, j, 1) ~ /[0-9]/) j++
+            num = substr(src, i, j - i) + 0
+            ntokens++
+            tok_kind[ntokens] = "INT"
+            tok_val[ntokens] = num
+            tok_line[ntokens] = line
             i = j
-        elif c.isalpha() or c == '_':
+        } else if (c ~ /[a-zA-Z_]/) {
             j = i
-            while j < len(source) and (source[j].isalnum() or source[j] == '_'): j += 1
-            word = source[i:j]
-            tokens.append(Token('ID', word, line))
+            while (j <= length(src) && substr(src, j, 1) ~ /[a-zA-Z0-9_]/) j++
+            word = substr(src, i, j - i)
+            ntokens++
+            tok_kind[ntokens] = "ID"
+            tok_val[ntokens] = word
+            tok_line[ntokens] = line
             i = j
-        elif source[i:i+2] == '->':
-            tokens.append(Token('->', '->', line)); i += 2
-        elif source[i:i+2] == '!=':
-            tokens.append(Token('!=', '!=', line)); i += 2
-        elif source[i:i+2] == '==':
-            tokens.append(Token('==', '==', line)); i += 2
-        elif source[i:i+2] == '<=':
-            tokens.append(Token('<=', '<=', line)); i += 2
-        elif source[i:i+2] == '>=':
-            tokens.append(Token('>=', '>=', line)); i += 2
-        else:
-            tokens.append(Token(c, c, line)); i += 1
-    tokens.append(Token('EOF', '', line))
-    return tokens
+        } else if (substr(src, i, 2) == "->") {
+            ntokens++; tok_kind[ntokens] = "->"; tok_val[ntokens] = "->"; tok_line[ntokens] = line; i += 2
+        } else if (substr(src, i, 2) == "!=") {
+            ntokens++; tok_kind[ntokens] = "!="; tok_val[ntokens] = "!="; tok_line[ntokens] = line; i += 2
+        } else if (substr(src, i, 2) == "==") {
+            ntokens++; tok_kind[ntokens] = "=="; tok_val[ntokens] = "=="; tok_line[ntokens] = line; i += 2
+        } else if (substr(src, i, 2) == "<=") {
+            ntokens++; tok_kind[ntokens] = "<="; tok_val[ntokens] = "<="; tok_line[ntokens] = line; i += 2
+        } else if (substr(src, i, 2) == ">=") {
+            ntokens++; tok_kind[ntokens] = ">="; tok_val[ntokens] = ">="; tok_line[ntokens] = line; i += 2
+        } else {
+            ntokens++; tok_kind[ntokens] = c; tok_val[ntokens] = c; tok_line[ntokens] = line; i++
+        }
+    }
+    ntokens++
+    tok_kind[ntokens] = "EOF"
+    tok_val[ntokens] = ""
+    tok_line[ntokens] = line
+}
+
+function peek() { return tok_kind[pos] }
+function peekval() { return tok_val[pos] }
+function advance(    k, v) { k = tok_kind[pos]; v = tok_val[pos]; pos++; return v }
+function expect(kind,    k, v, l) {
+    k = tok_kind[pos]; v = tok_val[pos]; l = tok_line[pos]
+    if (k != kind) {
+        print "error: expected " kind ", got " k " (" v ") at line " l > "/dev/stderr"
+        exit 1
+    }
+    pos++
+    return v
+}
+
+# ─── AST storage ──────────────────────────────────────────────────────────────
+# We store the AST in flat arrays using integer node IDs.
+#   node_type[id] = "int" | "var" | "binop" | "call" | "let" | "if" | "ret" | "print" | "syscall" | "expr" | "skip"
+#   node_ival[id]  = integer value (for int nodes)
+#   node_sval[id]  = string value (for var name, label, op, function name)
+#   node_sval2[id] = secondary string (e.g., print label)
+#   node_ival2[id] = secondary int (e.g., print length)
+#   node_child[id,i] = child node id
+#   node_nchild[id]  = number of children
+
+function new_node(type,    id) {
+    id = ++next_node
+    node_type[id] = type
+    node_nchild[id] = 0
+    return id
+}
+
+function add_child(parent, child) {
+    node_child[parent, node_nchild[parent]] = child
+    node_nchild[parent]++
+}
 
 # ─── Parser ───────────────────────────────────────────────────────────────────
 
-class Function:
-    def __init__(self, name, params, ret_type, body):
-        self.name = name
-        self.params = params    # [(name, type)]
-        self.ret_type = ret_type
-        self.body = body        # list of statements
-
-class Program:
-    def __init__(self):
-        self.functions = []
-        self.strings = {}       # label -> string
-
-def parse(tokens):
-    prog = Program()
-    pos = [0]
-
-    def peek(): return tokens[pos[0]]
-    def advance():
-        t = tokens[pos[0]]; pos[0] += 1; return t
-    def expect(kind):
-        t = advance()
-        if t.kind != kind: raise Exception(f"expected {kind}, got {t.kind} '{t.value}' at line {t.line}")
-        return t
-
-    def parse_fn():
-        advance()  # fn
-        name = expect('ID').value
-        expect('(')
-        params = []
-        while peek().kind != ')':
-            pname = expect('ID').value
-            expect(':')
-            ptype = expect('ID').value
-            params.append((pname, ptype))
-            if peek().kind == ',': advance()
-        expect(')')
-        ret_type = 'void'
-        if peek().kind == '->':
+function parse_program(    fn_id) {
+    nfunctions = 0
+    nstrings = 0
+    while (peek() != "EOF") {
+        if (peek() == "ID" && peekval() == "fn") {
+            fn_id = parse_fn()
+            nfunctions++
+            fn_list[nfunctions] = fn_id
+        } else {
             advance()
-            ret_type = expect('ID').value
-        expect('{')
-        body = parse_block()
-        expect('}')
-        return Function(name, params, ret_type, body)
+        }
+    }
+}
 
-    def parse_block():
-        stmts = []
-        while peek().kind != '}' and peek().kind != 'EOF':
-            stmts.append(parse_stmt())
-        return stmts
+function parse_fn(    name, nparams, pname, ptype, ret_type, body_id, fn_id, i) {
+    advance()  # fn
+    name = expect("ID")
+    expect("(")
+    nparams = 0
+    while (peek() != ")") {
+        pname = expect("ID")
+        expect(":")
+        ptype = expect("ID")
+        nparams++
+        param_names[name, nparams] = pname
+        param_types[name, nparams] = ptype
+        if (peek() == ",") advance()
+    }
+    expect(")")
+    fn_nparams[name] = nparams
+    ret_type = "void"
+    if (peek() == "->") {
+        advance()
+        ret_type = expect("ID")
+    }
+    fn_ret[name] = ret_type
+    expect("{")
+    body_id = parse_block()
+    expect("}")
 
-    def parse_stmt():
-        t = peek()
-        if t.kind == 'ID':
-            if t.value == 'let':
-                return parse_let()
-            elif t.value == 'if':
-                return parse_if()
-            elif t.value == 'ret':
-                return parse_ret()
-            elif t.value == 'print':
-                return parse_print()
-            elif t.value == 'syscall':
-                return parse_syscall()
-            else:
-                return parse_expr_stmt()
-        return ('skip', advance())
+    fn_id = new_node("fn")
+    node_sval[fn_id] = name
+    node_child[fn_id, 0] = body_id
+    node_nchild[fn_id] = 1
+    return fn_id
+}
 
-    def parse_let():
-        advance()  # let
-        name = expect('ID').value
-        expect('=')
+function parse_block(    block_id, stmt_id) {
+    block_id = new_node("block")
+    while (peek() != "}" && peek() != "EOF") {
+        stmt_id = parse_stmt()
+        add_child(block_id, stmt_id)
+    }
+    return block_id
+}
+
+function parse_stmt(    t, tv) {
+    t = peek(); tv = peekval()
+    if (t == "ID") {
+        if (tv == "let") return parse_let()
+        else if (tv == "if") return parse_if()
+        else if (tv == "ret") return parse_ret()
+        else if (tv == "print") return parse_print()
+        else if (tv == "syscall") return parse_syscall()
+        else return parse_expr_stmt()
+    }
+    advance()
+    return new_node("skip")
+}
+
+function parse_let(    id, name, expr) {
+    advance()  # let
+    name = expect("ID")
+    expect("=")
+    expr = parse_expr()
+    id = new_node("let")
+    node_sval[id] = name
+    node_child[id, 0] = expr
+    node_nchild[id] = 1
+    return id
+}
+
+function parse_if(    id, cond, body) {
+    advance()  # if
+    cond = parse_expr()
+    expect("{")
+    body = parse_block()
+    expect("}")
+    id = new_node("if")
+    node_child[id, 0] = cond
+    node_child[id, 1] = body
+    node_nchild[id] = 2
+    return id
+}
+
+function parse_ret(    id, expr) {
+    advance()  # ret
+    if (peek() == "}") {
+        expr = new_node("int")
+        node_ival[expr] = 0
+    } else {
         expr = parse_expr()
-        return ('let', name, expr)
+    }
+    id = new_node("ret")
+    node_child[id, 0] = expr
+    node_nchild[id] = 1
+    return id
+}
 
-    def parse_if():
-        advance()  # if
-        cond = parse_expr()
-        expect('{')
-        body = parse_block()
-        expect('}')
-        return ('if', cond, body)
+function parse_print(    id, has_paren, sval, label, slen, raw, i, c, hex) {
+    advance()  # print
+    has_paren = 0
+    if (peek() == "(") { advance(); has_paren = 1 }
+    sval = tok_val[pos]
+    expect("STR")
+    if (has_paren) expect(")")
 
-    def parse_ret():
-        advance()  # ret
-        if peek().kind == '}':
-            return ('ret', ('int', 0))
-        return ('ret', parse_expr())
+    nstrings++
+    label = ".str" (nstrings - 1)
+    str_labels[nstrings] = label
+    str_vals[nstrings] = sval
 
-    def parse_print():
-        advance()  # print
-        has_paren = peek().kind == '('
-        if has_paren:
-            advance()
-        s = expect('STR').value
-        if has_paren:
-            expect(')')
-        label = f".str{len(prog.strings)}"
-        prog.strings[label] = s
-        return ('print', label, len(s))
+    # Compute byte length of the string (after escape processing)
+    slen = length(sval)
 
-    def parse_syscall():
-        advance()  # syscall
-        expect('(')
-        args = [parse_expr()]
-        while peek().kind == ',':
-            advance()
-            args.append(parse_expr())
-        expect(')')
-        return ('syscall', args)
+    id = new_node("print")
+    node_sval[id] = label
+    node_ival[id] = slen
+    return id
+}
 
-    def parse_expr_stmt():
+function parse_syscall(    id, expr) {
+    advance()  # syscall
+    expect("(")
+    id = new_node("syscall")
+    expr = parse_expr()
+    add_child(id, expr)
+    while (peek() == ",") {
+        advance()
         expr = parse_expr()
-        return ('expr', expr)
+        add_child(id, expr)
+    }
+    expect(")")
+    return id
+}
 
-    def parse_expr():
-        left = parse_unary()
-        while peek().kind in ('+', '-', '*', '/', '==', '!=', '<', '>', '<=', '>='):
-            op = advance().kind
-            right = parse_unary()
-            left = ('binop', op, left, right)
-        return left
+function parse_expr_stmt(    id, expr) {
+    expr = parse_expr()
+    id = new_node("expr")
+    node_child[id, 0] = expr
+    node_nchild[id] = 1
+    return id
+}
 
-    def parse_unary():
-        if peek().kind == '(':
+function parse_expr(    left, op, right) {
+    left = parse_unary()
+    while (peek() == "+" || peek() == "-" || peek() == "*" || peek() == "/" || \
+           peek() == "==" || peek() == "!=" || peek() == "<" || peek() == ">" || \
+           peek() == "<=" || peek() == ">=") {
+        op = advance()
+        right = parse_unary()
+        id = new_node("binop")
+        node_sval[id] = op
+        node_child[id, 0] = left
+        node_child[id, 1] = right
+        node_nchild[id] = 2
+        left = id
+    }
+    return left
+}
+
+function parse_unary(    e, id, name, nargs, arg) {
+    if (peek() == "(") {
+        advance()
+        e = parse_expr()
+        expect(")")
+        return e
+    }
+    if (peek() == "INT") {
+        id = new_node("int")
+        node_ival[id] = advance() + 0
+        return id
+    }
+    if (peek() == "ID") {
+        name = advance()
+        if (peek() == "(") {
             advance()
-            e = parse_expr()
-            expect(')')
-            return e
-        if peek().kind == 'INT':
-            return ('int', advance().value)
-        if peek().kind == 'ID':
-            name = advance().value
-            if peek().kind == '(':
-                advance()
-                args = []
-                while peek().kind != ')':
-                    args.append(parse_expr())
-                    if peek().kind == ',': advance()
-                expect(')')
-                return ('call', name, args)
-            return ('var', name)
-        raise Exception(f"unexpected {peek().kind} '{peek().value}' at line {peek().line}")
-
-    while peek().kind != 'EOF':
-        if peek().kind == 'ID' and peek().value == 'fn':
-            prog.functions.append(parse_fn())
-        else:
-            advance()
-    return prog
+            id = new_node("call")
+            node_sval[id] = name
+            while (peek() != ")") {
+                arg = parse_expr()
+                add_child(id, arg)
+                if (peek() == ",") advance()
+            }
+            expect(")")
+            return id
+        }
+        id = new_node("var")
+        node_sval[id] = name
+        return id
+    }
+    print "error: unexpected " peek() " (" peekval() ") at line " tok_line[pos] > "/dev/stderr"
+    exit 1
+}
 
 # ─── ARM64 Code Generator ────────────────────────────────────────────────────
 
-class ARM64Gen:
-    def __init__(self, prog):
-        self.prog = prog
-        self.asm = []
-        self.label_count = 0
-        self.locals = {}
-        self.stack_size = 0
+function emit(line) {
+    nasm++
+    asm_lines[nasm] = line
+}
 
-    def new_label(self):
-        self.label_count += 1
-        return f".L{self.label_count}"
+function new_label(    l) {
+    label_count++
+    return ".L" label_count
+}
 
-    def emit(self, line):
-        self.asm.append(line)
+function gen_all(    i) {
+    label_count = 0
+    nasm = 0
 
-    def generate(self):
-        self.emit(".section .text")
-        self.emit(".global _start")
-        self.emit("")
+    emit(".section .text")
+    emit(".global _start")
+    emit("")
 
-        for fn in self.prog.functions:
-            self.gen_function(fn)
+    for (i = 1; i <= nfunctions; i++) {
+        gen_function(fn_list[i])
+    }
 
-        # _start calls main and exits
-        self.emit("_start:")
-        self.emit("  bl main")
-        self.emit("  mov x8, #93")        # exit syscall
-        self.emit("  svc #0")
-        self.emit("")
+    # _start calls main and exits
+    emit("_start:")
+    emit("  bl main")
+    emit("  mov x8, #93")
+    emit("  svc #0")
+    emit("")
 
-        # String data
-        if self.prog.strings:
-            self.emit(".section .rodata")
-            for label, s in self.prog.strings.items():
-                escaped = s.encode('utf-8')
-                self.emit(f"{label}:")
-                hex_bytes = ','.join(f'0x{b:02x}' for b in escaped)
-                self.emit(f"  .byte {hex_bytes}")
-                # Add newline
-                self.emit(f"{label}_nl:")
-                self.emit(f"  .byte 0x0a")
-            self.emit("")
+    # String data
+    if (nstrings > 0) {
+        emit(".section .rodata")
+        for (i = 1; i <= nstrings; i++) {
+            gen_string_data(str_labels[i], str_vals[i])
+        }
+        emit("")
+    }
+}
 
-        return '\n'.join(self.asm)
+function gen_string_data(label, sval,    i, c, hex_bytes, ord_val, n) {
+    emit(label ":")
+    hex_bytes = ""
+    n = length(sval)
+    for (i = 1; i <= n; i++) {
+        c = substr(sval, i, 1)
+        ord_val = ord(c)
+        if (hex_bytes != "") hex_bytes = hex_bytes ","
+        hex_bytes = hex_bytes sprintf("0x%02x", ord_val)
+    }
+    if (hex_bytes != "") emit("  .byte " hex_bytes)
+    emit(label "_nl:")
+    emit("  .byte 0x0a")
+}
 
-    def gen_function(self, fn):
-        self.locals = {}
-        # Allocate locals: parameters + local variables
-        local_names = [p[0] for p in fn.params]
-        for stmt in fn.body:
-            if isinstance(stmt, tuple) and stmt[0] == 'let':
-                local_names.append(stmt[1])
+function ord(c,    i) {
+    if (!_ord_init) {
+        for (i = 0; i < 256; i++) {
+            _ord_map[sprintf("%c", i)] = i
+        }
+        _ord_init = 1
+    }
+    return _ord_map[c] + 0
+}
 
-        # Stack frame: 16-byte aligned, save FP+LR + locals
-        n_locals = len(local_names)
-        frame_size = ((n_locals + 2) * 8 + 15) & ~15  # align to 16
-        self.stack_size = frame_size
+function gen_function(fn_id,    name, nparams, block_id, i, n_locals, frame_size, pname, off, stmt_id) {
+    name = node_sval[fn_id]
+    nparams = fn_nparams[name] + 0
+    block_id = node_child[fn_id, 0]
 
-        for i, name in enumerate(local_names):
-            self.locals[name] = (i + 2) * 8  # offset from SP (after FP+LR)
+    # Collect local variable names: params first, then let-stmts
+    cur_nlocals = 0
+    for (i = 1; i <= nparams; i++) {
+        cur_nlocals++
+        cur_local_name[cur_nlocals] = param_names[name, i]
+    }
+    collect_lets(block_id)
 
-        self.emit(f"{fn.name}:")
-        # Prologue
-        self.emit(f"  stp x29, x30, [sp, #-{frame_size}]!")
-        self.emit(f"  mov x29, sp")
+    # Compute frame size (16-byte aligned)
+    n_locals = cur_nlocals
+    frame_size = (n_locals + 2) * 8
+    if (frame_size % 16 != 0) frame_size = frame_size + (16 - frame_size % 16)
+    cur_frame_size = frame_size
 
-        # Save parameters to stack
-        for i, (pname, ptype) in enumerate(fn.params):
-            if i < 8:
-                off = self.locals[pname]
-                self.emit(f"  str x{i}, [x29, #{off}]")
+    # Map locals to frame offsets
+    delete cur_local_off
+    for (i = 1; i <= cur_nlocals; i++) {
+        cur_local_off[cur_local_name[i]] = (i + 1) * 8
+    }
 
-        # Generate body
-        for stmt in fn.body:
-            self.gen_stmt(stmt)
+    emit(name ":")
+    # Prologue
+    emit("  stp x29, x30, [sp, #-" frame_size "]!")
+    emit("  mov x29, sp")
 
-        # Epilogue (fallthrough)
-        self.emit(f"  mov x0, #0")
-        self.emit(f"  ldp x29, x30, [sp], #{frame_size}")
-        self.emit(f"  ret")
-        self.emit("")
+    # Save parameters to stack
+    for (i = 1; i <= nparams && i <= 8; i++) {
+        pname = param_names[name, i]
+        off = cur_local_off[pname]
+        emit("  str x" (i - 1) ", [x29, #" off "]")
+    }
 
-    def gen_stmt(self, stmt):
-        if stmt[0] == 'let':
-            _, name, expr = stmt
-            self.gen_expr(expr)  # result in x0
-            off = self.locals[name]
-            self.emit(f"  str x0, [x29, #{off}]")
+    # Generate body
+    for (i = 0; i < node_nchild[block_id]; i++) {
+        stmt_id = node_child[block_id, i]
+        gen_stmt(stmt_id)
+    }
 
-        elif stmt[0] == 'ret':
-            _, expr = stmt
-            self.gen_expr(expr)
-            self.emit(f"  ldp x29, x30, [sp], #{self.stack_size}")
-            self.emit(f"  ret")
+    # Epilogue (fallthrough)
+    emit("  mov x0, #0")
+    emit("  ldp x29, x30, [sp], #" frame_size)
+    emit("  ret")
+    emit("")
+}
 
-        elif stmt[0] == 'if':
-            _, cond, body = stmt
-            else_label = self.new_label()
-            self.gen_expr(cond)
-            self.emit(f"  cbz x0, {else_label}")
-            for s in body:
-                self.gen_stmt(s)
-            self.emit(f"{else_label}:")
+function collect_lets(block_id,    i, child_id, t) {
+    for (i = 0; i < node_nchild[block_id]; i++) {
+        child_id = node_child[block_id, i]
+        t = node_type[child_id]
+        if (t == "let") {
+            cur_nlocals++
+            cur_local_name[cur_nlocals] = node_sval[child_id]
+        } else if (t == "if") {
+            # Recurse into if body
+            collect_lets(node_child[child_id, 1])
+        }
+    }
+}
 
-        elif stmt[0] == 'print':
-            _, label, length = stmt
-            self.emit(f"  mov x0, #1")          # fd = stdout
-            self.emit(f"  adrp x1, {label}")
-            self.emit(f"  add x1, x1, :lo12:{label}")
-            self.emit(f"  mov x2, #{length}")
-            self.emit(f"  mov x8, #64")          # write syscall
-            self.emit(f"  svc #0")
-            # Print newline
-            self.emit(f"  mov x0, #1")
-            self.emit(f"  adrp x1, {label}_nl")
-            self.emit(f"  add x1, x1, :lo12:{label}_nl")
-            self.emit(f"  mov x2, #1")
-            self.emit(f"  mov x8, #64")
-            self.emit(f"  svc #0")
+function gen_stmt(stmt_id,    t, name, off, expr_id, cond_id, body_id, else_lbl, i, child_id, label, slen, nargs) {
+    t = node_type[stmt_id]
 
-        elif stmt[0] == 'syscall':
-            _, args = stmt
-            # Syscall number in x8, args in x0-x5
-            if len(args) > 0:
-                self.gen_expr(args[0])
-                self.emit(f"  mov x8, x0")
-            for i in range(1, min(len(args), 7)):
-                self.gen_expr(args[i])
-                if i - 1 != 0:
-                    self.emit(f"  mov x{i-1}, x0")
-            self.emit(f"  svc #0")
+    if (t == "let") {
+        name = node_sval[stmt_id]
+        expr_id = node_child[stmt_id, 0]
+        gen_expr(expr_id)
+        off = cur_local_off[name]
+        emit("  str x0, [x29, #" off "]")
 
-        elif stmt[0] == 'expr':
-            self.gen_expr(stmt[1])
+    } else if (t == "ret") {
+        expr_id = node_child[stmt_id, 0]
+        gen_expr(expr_id)
+        emit("  ldp x29, x30, [sp], #" cur_frame_size)
+        emit("  ret")
 
-    def gen_expr(self, expr):
-        if expr[0] == 'int':
-            val = expr[1]
-            if val < 0:
-                self.emit(f"  mov x0, #{-val}")
-                self.emit(f"  neg x0, x0")
-            elif val <= 65535:
-                self.emit(f"  mov x0, #{val}")
-            else:
-                # Load large immediate
-                self.emit(f"  mov x0, #{val & 0xffff}")
-                if val > 0xffff:
-                    self.emit(f"  movk x0, #{(val >> 16) & 0xffff}, lsl #16")
-                if val > 0xffffffff:
-                    self.emit(f"  movk x0, #{(val >> 32) & 0xffff}, lsl #32")
-                if val > 0xffffffffffff:
-                    self.emit(f"  movk x0, #{(val >> 48) & 0xffff}, lsl #48")
+    } else if (t == "if") {
+        cond_id = node_child[stmt_id, 0]
+        body_id = node_child[stmt_id, 1]
+        else_lbl = new_label()
+        gen_expr(cond_id)
+        emit("  cbz x0, " else_lbl)
+        for (i = 0; i < node_nchild[body_id]; i++) {
+            gen_stmt(node_child[body_id, i])
+        }
+        emit(else_lbl ":")
 
-        elif expr[0] == 'var':
-            name = expr[1]
-            off = self.locals.get(name, 0)
-            self.emit(f"  ldr x0, [x29, #{off}]")
+    } else if (t == "print") {
+        label = node_sval[stmt_id]
+        slen = node_ival[stmt_id]
+        emit("  mov x0, #1")
+        emit("  adrp x1, " label)
+        emit("  add x1, x1, :lo12:" label)
+        emit("  mov x2, #" slen)
+        emit("  mov x8, #64")
+        emit("  svc #0")
+        # Newline
+        emit("  mov x0, #1")
+        emit("  adrp x1, " label "_nl")
+        emit("  add x1, x1, :lo12:" label "_nl")
+        emit("  mov x2, #1")
+        emit("  mov x8, #64")
+        emit("  svc #0")
 
-        elif expr[0] == 'binop':
-            _, op, left, right = expr
-            self.gen_expr(right)
-            self.emit(f"  str x0, [sp, #-16]!")  # push right
-            self.gen_expr(left)
-            self.emit(f"  ldr x1, [sp], #16")    # pop right into x1
+    } else if (t == "syscall") {
+        nargs = node_nchild[stmt_id]
+        if (nargs > 0) {
+            gen_expr(node_child[stmt_id, 0])
+            emit("  mov x8, x0")
+        }
+        for (i = 1; i < nargs && i < 7; i++) {
+            gen_expr(node_child[stmt_id, i])
+            if (i - 1 != 0) {
+                emit("  mov x" (i - 1) ", x0")
+            }
+        }
+        emit("  svc #0")
 
-            if op == '+':
-                self.emit(f"  add x0, x0, x1")
-            elif op == '-':
-                self.emit(f"  sub x0, x0, x1")
-            elif op == '*':
-                self.emit(f"  mul x0, x0, x1")
-            elif op == '/':
-                self.emit(f"  sdiv x0, x0, x1")
-            elif op == '==':
-                self.emit(f"  cmp x0, x1")
-                self.emit(f"  cset x0, eq")
-            elif op == '!=':
-                self.emit(f"  cmp x0, x1")
-                self.emit(f"  cset x0, ne")
-            elif op == '<':
-                self.emit(f"  cmp x0, x1")
-                self.emit(f"  cset x0, lt")
-            elif op == '>':
-                self.emit(f"  cmp x0, x1")
-                self.emit(f"  cset x0, gt")
-            elif op == '<=':
-                self.emit(f"  cmp x0, x1")
-                self.emit(f"  cset x0, le")
-            elif op == '>=':
-                self.emit(f"  cmp x0, x1")
-                self.emit(f"  cset x0, ge")
+    } else if (t == "expr") {
+        gen_expr(node_child[stmt_id, 0])
+    }
+}
 
-        elif expr[0] == 'call':
-            _, name, args = expr
-            # Save args to stack, then load into x0-x7
-            for i, arg in enumerate(args):
-                self.gen_expr(arg)
-                if i < 8:
-                    self.emit(f"  str x0, [sp, #-16]!")
-            # Pop args into registers (reverse order)
-            for i in range(len(args) - 1, -1, -1):
-                if i < 8:
-                    self.emit(f"  ldr x{i}, [sp], #16")
-            self.emit(f"  bl {name}")
+function gen_expr(expr_id,    t, val, name, off, op, left_id, right_id, cond, nargs, i) {
+    t = node_type[expr_id]
 
-# ─── ELF Writer (aarch64) ────────────────────────────────────────────────────
+    if (t == "int") {
+        val = node_ival[expr_id] + 0
+        if (val < 0) {
+            emit("  mov x0, #" (-val))
+            emit("  neg x0, x0")
+        } else if (val <= 65535) {
+            emit("  mov x0, #" val)
+        } else {
+            emit("  mov x0, #" and_bits(val, 0xffff))
+            if (val > 65535) {
+                emit("  movk x0, #" and_bits(rshift(val, 16), 0xffff) ", lsl #16")
+            }
+            if (val + 0 > 4294967295) {
+                emit("  movk x0, #" and_bits(rshift(val, 32), 0xffff) ", lsl #32")
+            }
+            if (val + 0 > 281474976710655) {
+                emit("  movk x0, #" and_bits(rshift(val, 48), 0xffff) ", lsl #48")
+            }
+        }
 
-def write_elf_aarch64(code_bytes, rodata_bytes, entry_offset, output_path):
-    """Write a minimal static ELF binary for aarch64-linux."""
-    # ELF constants
-    ET_EXEC = 2
-    EM_AARCH64 = 183
-    EV_CURRENT = 1
-    PT_LOAD = 1
-    PF_R = 4
-    PF_W = 2
-    PF_X = 1
+    } else if (t == "var") {
+        name = node_sval[expr_id]
+        off = cur_local_off[name] + 0
+        emit("  ldr x0, [x29, #" off "]")
 
-    EHDR_SIZE = 64
-    PHDR_SIZE = 56
+    } else if (t == "binop") {
+        op = node_sval[expr_id]
+        left_id = node_child[expr_id, 0]
+        right_id = node_child[expr_id, 1]
+        gen_expr(right_id)
+        emit("  str x0, [sp, #-16]!")
+        gen_expr(left_id)
+        emit("  ldr x1, [sp], #16")
 
-    # Two segments: text (RX) and rodata (R)
-    n_phdr = 2 if rodata_bytes else 1
-    headers_size = EHDR_SIZE + n_phdr * PHDR_SIZE
+        if (op == "+") emit("  add x0, x0, x1")
+        else if (op == "-") emit("  sub x0, x0, x1")
+        else if (op == "*") emit("  mul x0, x0, x1")
+        else if (op == "/") emit("  sdiv x0, x0, x1")
+        else if (op == "==") { emit("  cmp x0, x1"); emit("  cset x0, eq") }
+        else if (op == "!=") { emit("  cmp x0, x1"); emit("  cset x0, ne") }
+        else if (op == "<")  { emit("  cmp x0, x1"); emit("  cset x0, lt") }
+        else if (op == ">")  { emit("  cmp x0, x1"); emit("  cset x0, gt") }
+        else if (op == "<=") { emit("  cmp x0, x1"); emit("  cset x0, le") }
+        else if (op == ">=") { emit("  cmp x0, x1"); emit("  cset x0, ge") }
 
-    # Align code to page
-    code_offset = (headers_size + 0xfff) & ~0xfff
-    code_vaddr = 0x400000 + code_offset
-    code_size = len(code_bytes)
+    } else if (t == "call") {
+        name = node_sval[expr_id]
+        nargs = node_nchild[expr_id]
+        for (i = 0; i < nargs; i++) {
+            gen_expr(node_child[expr_id, i])
+            if (i < 8) emit("  str x0, [sp, #-16]!")
+        }
+        for (i = nargs - 1; i >= 0; i--) {
+            if (i < 8) emit("  ldr x" i ", [sp], #16")
+        }
+        emit("  bl " name)
+    }
+}
 
-    rodata_offset = 0
-    rodata_vaddr = 0
-    rodata_size = len(rodata_bytes) if rodata_bytes else 0
-    if rodata_size:
-        rodata_offset = ((code_offset + code_size + 0xfff) & ~0xfff)
-        rodata_vaddr = 0x400000 + rodata_offset
+# Bitwise helpers (awk lacks bitwise ops in POSIX; simulate them)
+function and_bits(a, b,    result, bit, pa, pb) {
+    result = 0; bit = 1
+    for (pa = 0; pa < 32; pa++) {
+        if (a % 2 == 1 && b % 2 == 1) result += bit
+        a = int(a / 2); b = int(b / 2); bit *= 2
+    }
+    return result
+}
 
-    entry = code_vaddr + entry_offset
-
-    # Build ELF
-    elf = bytearray()
-
-    # ELF header
-    elf += b'\x7fELF'               # magic
-    elf += bytes([2])                # 64-bit
-    elf += bytes([1])                # little-endian
-    elf += bytes([EV_CURRENT])       # version
-    elf += bytes([0])                # OS/ABI (NONE)
-    elf += b'\x00' * 8              # padding
-    elf += struct.pack('<H', ET_EXEC)
-    elf += struct.pack('<H', EM_AARCH64)
-    elf += struct.pack('<I', EV_CURRENT)
-    elf += struct.pack('<Q', entry)
-    elf += struct.pack('<Q', EHDR_SIZE)    # phoff
-    elf += struct.pack('<Q', 0)            # shoff
-    elf += struct.pack('<I', 0)            # flags
-    elf += struct.pack('<H', EHDR_SIZE)
-    elf += struct.pack('<H', PHDR_SIZE)
-    elf += struct.pack('<H', n_phdr)
-    elf += struct.pack('<H', 0)            # shentsize
-    elf += struct.pack('<H', 0)            # shnum
-    elf += struct.pack('<H', 0)            # shstrndx
-
-    # Program headers
-    # Text segment
-    elf += struct.pack('<I', PT_LOAD)
-    elf += struct.pack('<I', PF_R | PF_X)
-    elf += struct.pack('<Q', code_offset)
-    elf += struct.pack('<Q', code_vaddr)
-    elf += struct.pack('<Q', code_vaddr)   # paddr
-    elf += struct.pack('<Q', code_size)
-    elf += struct.pack('<Q', code_size)
-    elf += struct.pack('<Q', 0x1000)       # align
-
-    if rodata_size:
-        elf += struct.pack('<I', PT_LOAD)
-        elf += struct.pack('<I', PF_R)
-        elf += struct.pack('<Q', rodata_offset)
-        elf += struct.pack('<Q', rodata_vaddr)
-        elf += struct.pack('<Q', rodata_vaddr)
-        elf += struct.pack('<Q', rodata_size)
-        elf += struct.pack('<Q', rodata_size)
-        elf += struct.pack('<Q', 0x1000)
-
-    # Pad to code offset
-    elf += b'\x00' * (code_offset - len(elf))
-    elf += code_bytes
-
-    # Pad to rodata offset
-    if rodata_size:
-        elf += b'\x00' * (rodata_offset - len(elf))
-        elf += rodata_bytes
-
-    with open(output_path, 'wb') as f:
-        f.write(elf)
-    os.chmod(output_path, 0o755)
-
-# ─── Assembly via external tools ──────────────────────────────────────────────
-
-def assemble_with_tools(asm_source, output_path):
-    """Assemble ARM64 using aarch64-linux-gnu-as + ld (or Docker)."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        asm_path = os.path.join(tmpdir, "prog.s")
-        obj_path = os.path.join(tmpdir, "prog.o")
-        bin_path = os.path.join(tmpdir, "prog")
-
-        with open(asm_path, "w") as f:
-            f.write(asm_source)
-
-        # Try native tools first, then Docker
-        as_cmd = None
-        ld_cmd = None
-
-        for prefix in ["aarch64-linux-gnu-", "aarch64-linux-musl-", ""]:
-            try:
-                subprocess.run([f"{prefix}as", "--version"],
-                             capture_output=True, check=True)
-                as_cmd = f"{prefix}as"
-                ld_cmd = f"{prefix}ld"
-                break
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                continue
-
-        if as_cmd:
-            subprocess.run([as_cmd, "-o", obj_path, asm_path], check=True,
-                         capture_output=True)
-            subprocess.run([ld_cmd, "-o", bin_path, obj_path, "-static"],
-                         check=True, capture_output=True)
-        else:
-            # Use Docker with cross-compilation tools
-            subprocess.run([
-                "docker", "run", "--rm", "--platform", "linux/amd64",
-                "-v", f"{tmpdir}:{tmpdir}", "-w", tmpdir,
-                "jda-build", "sh", "-c",
-                f"apt-get update -qq && apt-get install -qq -y binutils-aarch64-linux-gnu >/dev/null 2>&1 && "
-                f"aarch64-linux-gnu-as -o {obj_path} {asm_path} && "
-                f"aarch64-linux-gnu-ld -o {bin_path} {obj_path} -static"
-            ], check=True, capture_output=True)
-
-        # Copy result
-        import shutil
-        shutil.copy2(bin_path, output_path)
-
-def run_with_qemu(binary_path):
-    """Run ARM64 binary using qemu-aarch64."""
-    try:
-        result = subprocess.run(
-            ["qemu-aarch64", binary_path],
-            capture_output=True, text=True, timeout=10
-        )
-        sys.stdout.write(result.stdout)
-        if result.stderr:
-            sys.stderr.write(result.stderr)
-        return result.returncode
-    except FileNotFoundError:
-        # Try Docker with QEMU
-        abs_path = os.path.abspath(binary_path)
-        result = subprocess.run([
-            "docker", "run", "--rm", "--platform", "linux/arm64",
-            "-v", f"{os.path.dirname(abs_path)}:/work", "-w", "/work",
-            "arm64v8/ubuntu:22.04",
-            f"./{os.path.basename(abs_path)}"
-        ], capture_output=True, text=True, timeout=10)
-        sys.stdout.write(result.stdout)
-        return result.returncode
+function rshift(a, n,    i) {
+    for (i = 0; i < n; i++) a = int(a / 2)
+    return a
+}
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def main():
-    args = sys.argv[1:]
+{
+    # Read entire file into source (handle multi-line)
+    if (NR == 1) source = $0
+    else source = source "\n" $0
+}
 
-    if not args:
-        print("jda-arm64 — ARM64 cross-compiler for Jda")
-        print()
-        print("Usage:")
-        print("  jda-arm64.sh <file.jda> <output>   Compile to ARM64 ELF")
-        print("  jda-arm64.sh --asm <file.jda>       Output ARM64 assembly")
-        print("  jda-arm64.sh --run <file.jda>       Compile and run via QEMU")
-        print()
-        print("Target: aarch64-linux (AAPCS64 ABI)")
-        print("Requires: aarch64-linux-gnu-as/ld or Docker")
-        sys.exit(1)
+END {
+    pos = 1
+    next_node = 0
+    lex(source)
+    parse_program()
+    gen_all()
+    for (i = 1; i <= nasm; i++) {
+        print asm_lines[i]
+    }
+}
+' "$SOURCE_FILE"
+}
 
-    asm_mode = False
-    run_mode = False
-    source_file = None
-    output_file = None
+# ─── Assembly via external tools ─────────────────────────────────────────────
 
-    i = 0
-    while i < len(args):
-        if args[i] == "--asm":
-            asm_mode = True
-        elif args[i] == "--run":
-            run_mode = True
-        elif source_file is None:
-            source_file = args[i]
-        else:
-            output_file = args[i]
-        i += 1
+assemble_with_tools() {
+    local asm_source="$1"
+    local output="$2"
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    trap "rm -rf '$tmpdir'" EXIT
 
-    if not source_file:
-        print("error: no source file specified", file=sys.stderr)
-        sys.exit(1)
+    local asm_path="$tmpdir/prog.s"
+    local obj_path="$tmpdir/prog.o"
+    local bin_path="$tmpdir/prog"
 
-    with open(source_file) as f:
-        source = f.read()
+    printf '%s\n' "$asm_source" > "$asm_path"
 
-    # Lex and parse
-    tokens = lex(source)
-    prog = parse(tokens)
+    # Try native tools first, then Docker
+    local as_cmd="" ld_cmd=""
+    for prefix in "aarch64-linux-gnu-" "aarch64-linux-musl-" ""; do
+        if command -v "${prefix}as" &>/dev/null; then
+            as_cmd="${prefix}as"
+            ld_cmd="${prefix}ld"
+            break
+        fi
+    done
 
-    # Generate ARM64 assembly
-    gen = ARM64Gen(prog)
-    asm = gen.generate()
+    if [[ -n "$as_cmd" ]]; then
+        "$as_cmd" -o "$obj_path" "$asm_path"
+        "$ld_cmd" -o "$bin_path" "$obj_path" -static
+    else
+        # Use Docker with cross-compilation tools
+        docker run --rm --platform linux/amd64 \
+            -v "$tmpdir:$tmpdir" -w "$tmpdir" \
+            jda-build sh -c \
+            "apt-get update -qq && apt-get install -qq -y binutils-aarch64-linux-gnu >/dev/null 2>&1 && \
+             aarch64-linux-gnu-as -o $obj_path $asm_path && \
+             aarch64-linux-gnu-ld -o $bin_path $obj_path -static"
+    fi
 
-    if asm_mode:
-        print(asm)
-        sys.exit(0)
+    cp "$bin_path" "$output"
+    chmod 755 "$output"
+}
 
-    # Assemble to binary
-    if not output_file:
-        output_file = os.path.splitext(source_file)[0]
+run_with_qemu() {
+    local binary="$1"
+    if command -v qemu-aarch64 &>/dev/null; then
+        qemu-aarch64 "$binary"
+    else
+        local abs_path
+        abs_path="$(cd "$(dirname "$binary")" && pwd)/$(basename "$binary")"
+        docker run --rm --platform linux/arm64 \
+            -v "$(dirname "$abs_path"):/work" -w /work \
+            arm64v8/ubuntu:22.04 \
+            "./$( basename "$abs_path")"
+    fi
+}
 
-    try:
-        assemble_with_tools(asm, output_file)
-        print(f"  Compiled {source_file} -> {output_file} (aarch64-linux)")
-    except Exception as e:
-        print(f"error: assembly failed: {e}", file=sys.stderr)
-        sys.exit(1)
+# ─── Main logic ──────────────────────────────────────────────────────────────
 
-    if run_mode:
-        rc = run_with_qemu(output_file)
-        sys.exit(rc)
+ASM_OUTPUT="$(generate_asm)"
 
-if __name__ == "__main__":
-    main()
+if [[ "$ASM_MODE" -eq 1 ]]; then
+    printf '%s\n' "$ASM_OUTPUT"
+    exit 0
+fi
+
+assemble_with_tools "$ASM_OUTPUT" "$OUTPUT_FILE"
+echo "  Compiled $SOURCE_FILE -> $OUTPUT_FILE (aarch64-linux)"
+
+if [[ "$RUN_MODE" -eq 1 ]]; then
+    run_with_qemu "$OUTPUT_FILE"
+fi

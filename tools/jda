@@ -45,6 +45,7 @@ Commands:
   repl    Start the interactive REPL
   test    Run test files with assertions
   fuzz    Fuzz test fn fuzz_* functions with random inputs
+  race    Run with data race detection on g_* globals
   fmt     Format .jda source files
   doc     Generate documentation from doc comments
   pkg     Package manager (init, add, build, deps)
@@ -107,22 +108,22 @@ build_with_target() {
             exec "$JDA1" build "$@"
             ;;
         linux/arm64|linux/aarch64)
-            exec python3 "$SCRIPT_DIR/jda-arm64.sh" "$@"
+            exec bash "$SCRIPT_DIR/jda-arm64.sh" "$@"
             ;;
         darwin/arm64|darwin/aarch64)
-            exec python3 "$SCRIPT_DIR/jda-macos.sh" --arch arm64 "$@"
+            exec bash "$SCRIPT_DIR/jda-macos.sh" --arch arm64 "$@"
             ;;
         darwin/x86_64|darwin/amd64)
-            exec python3 "$SCRIPT_DIR/jda-macos.sh" --arch x86_64 "$@"
+            exec bash "$SCRIPT_DIR/jda-macos.sh" --arch x86_64 "$@"
             ;;
         darwin/universal)
-            exec python3 "$SCRIPT_DIR/jda-macos.sh" --universal "$@"
+            exec bash "$SCRIPT_DIR/jda-macos.sh" --universal "$@"
             ;;
         wasm/wasi|wasm/wasm)
-            exec python3 "$SCRIPT_DIR/jda-wasm.sh" "$@"
+            exec bash "$SCRIPT_DIR/jda-wasm.sh" "$@"
             ;;
         wasm/browser)
-            exec python3 "$SCRIPT_DIR/jda-wasm.sh" --target browser "$@"
+            exec bash "$SCRIPT_DIR/jda-wasm.sh" --target browser "$@"
             ;;
         *)
             echo "jda: unsupported target '$target_os/$target_arch'" >&2
@@ -179,7 +180,10 @@ case "$CMD" in
         exec "$SCRIPT_DIR/jda-test.sh" "$@"
         ;;
     fuzz)
-        exec python3 "$SCRIPT_DIR/jda-fuzz.sh" "$@"
+        exec bash "$SCRIPT_DIR/jda-fuzz.sh" "$@"
+        ;;
+    race)
+        exec bash "$SCRIPT_DIR/jda-race.sh" "$@"
         ;;
     fmt)
         exec "$SCRIPT_DIR/jda-fmt.sh" "$@"
