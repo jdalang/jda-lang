@@ -1,0 +1,279 @@
+; =============================================================================
+; jda::plot -- Terminal & SVG Visualization
+; =============================================================================
+; Python equivalent mapping:
+;   matplotlib.pyplot.bar()      -> plot_bars(arr, len, width)
+;   matplotlib.pyplot.barh()     -> plot_bar(val, max_val, width)
+;   matplotlib.pyplot.hist()     -> plot_hist(arr, len, nbins, lo, hi, width)
+;   matplotlib.pyplot.plot()     -> plot_line(arr, len, height)
+;   matplotlib.pyplot.scatter()  -> plot_scatter(xs, ys, len, w, h, grid)
+;   matplotlib.pyplot.heatmap() -> plot_heatmap(data, rows, cols)
+;
+; All output goes to stdout via print. For file output, redirect stdout
+; or use SVG generation functions with file I/O.
+;
+; Values are i64. For fractional data, scale to integers first.
+; =============================================================================
+
+; --- Print a character N times ---
+fn print_repeat(ch: &i8, n: i64) -> i64 {
+    let i = 0
+    loop i < n {
+        print ch
+        i = i + 1
+    }
+    ret n
+}
+
+; --- Print a single horizontal bar ---
+; Prints: [####      ] val
+; val: the data value
+; max_val: the maximum value (for scaling)
+; width: total bar width in characters
+fn plot_bar(val: i64, max_val: i64, width: i64) -> i64 {
+    let filled = 0
+    if max_val > 0 {
+        filled = val * width / max_val
+    }
+    if filled < 0 { filled = 0 }
+    if filled > width { filled = width }
+    print "["
+    let i = 0
+    loop i < width {
+        if i < filled { print "#" }
+        if i >= filled { print " " }
+        i = i + 1
+    }
+    print "] {val}\n"
+    ret filled
+}
+
+; --- Print horizontal bar chart for an array ---
+; Finds max value, then prints one bar per element.
+fn plot_bars(arr: &i64, len: i64, width: i64) -> i64 {
+    ; Find max
+    let max_val = 0
+    let i = 0
+    loop i < len {
+        if arr[i] > max_val { max_val = arr[i] }
+        i = i + 1
+    }
+    if max_val == 0 { max_val = 1 }
+    ; Print bars
+    i = 0
+    loop i < len {
+        plot_bar(arr[i], max_val, width)
+        i = i + 1
+    }
+    ret len
+}
+
+; --- Print ASCII line plot ---
+; Renders arr values on a height x len grid.
+; Each column is one data point, rows go from top (max) to bottom (min).
+fn plot_line(arr: &i64, len: i64, height: i64) -> i64 {
+    ; Find min and max
+    let vmin = arr[0]
+    let vmax = arr[0]
+    let i = 0
+    loop i < len {
+        if arr[i] < vmin { vmin = arr[i] }
+        if arr[i] > vmax { vmax = arr[i] }
+        i = i + 1
+    }
+    let range = vmax - vmin
+    if range == 0 { range = 1 }
+    ; Print rows from top to bottom
+    let row = 0
+    loop row < height {
+        let row_val = vmax - row * range / height
+        let next_val = vmax - (row + 1) * range / height
+        let col = 0
+        loop col < len {
+            let v = arr[col]
+            if v <= row_val {
+                if v >= next_val { print "*" }
+                if v < next_val { print " " }
+            }
+            if v > row_val { print " " }
+            col = col + 1
+        }
+        print "\n"
+        row = row + 1
+    }
+    ret height
+}
+
+; --- Histogram: bin data and print bar chart ---
+; Counts how many values fall in each bin in [lo, hi).
+; bins: output array for bin counts (must have nbins elements)
+; Returns nbins.
+fn hist_bin(arr: &i64, len: i64, nbins: i64, lo: i64, hi: i64, bins: &i64) -> i64 {
+    ; Clear bins
+    let i = 0
+    loop i < nbins {
+        bins[i] = 0
+        i = i + 1
+    }
+    let range = hi - lo
+    if range == 0 { range = 1 }
+    ; Bin each value
+    i = 0
+    loop i < len {
+        let v = arr[i]
+        let b = (v - lo) * nbins / range
+        if b < 0 { b = 0 }
+        if b >= nbins { b = nbins - 1 }
+        let cur = bins[b]
+        bins[b] = cur + 1
+        i = i + 1
+    }
+    ret nbins
+}
+
+; --- Plot histogram: bin + bar chart ---
+fn plot_hist(arr: &i64, len: i64, nbins: i64, lo: i64, hi: i64, width: i64, bins: &i64) -> i64 {
+    hist_bin(arr, len, nbins, lo, hi, bins)
+    plot_bars(bins, nbins, width)
+    ret nbins
+}
+
+; --- Scatter: place points on grid ---
+; xs, ys: coordinate arrays. len: number of points.
+; grid: scratch buffer. dim: encodes width*1000+height (e.g. 5*1000+5=5005).
+fn scatter_points(xs: &i64, ys: &i64, len: i64, grid: &i64, dim: i64) -> i64 {
+    let width = dim / 1000
+    let height = dim - width * 1000
+    ; Clear grid
+    let total = width * height
+    let i = 0
+    loop i < total {
+        grid[i] = 0
+        i = i + 1
+    }
+    ; Place points
+    i = 0
+    loop i < len {
+        let x = xs[i]
+        let y = ys[i]
+        let valid = 1
+        if x < 0 { valid = 0 }
+        if x >= width { valid = 0 }
+        if y < 0 { valid = 0 }
+        if y >= height { valid = 0 }
+        if valid == 1 {
+            let ry = height - 1 - y
+            let idx = ry * width + x
+            grid[idx] = 1
+        }
+        i = i + 1
+    }
+    ret len
+}
+
+; --- Scatter: print grid ---
+fn scatter_print(grid: &i64, width: i64, height: i64) -> i64 {
+    let row = 0
+    loop row < height {
+        let col = 0
+        loop col < width {
+            let idx = row * width + col
+            if grid[idx] == 1 { print "*" }
+            if grid[idx] == 0 { print "." }
+            col = col + 1
+        }
+        print "\n"
+        row = row + 1
+    }
+    ret height
+}
+
+; --- Heatmap: print 2D array as intensity characters ---
+; data[row * cols + col] values mapped to: " .:-=+*#%@"
+; 10 levels from min to max.
+fn plot_heatmap(data: &i64, rows: i64, cols: i64) -> i64 {
+    ; Find min and max
+    let total = rows * cols
+    let vmin = data[0]
+    let vmax = data[0]
+    let i = 0
+    loop i < total {
+        if data[i] < vmin { vmin = data[i] }
+        if data[i] > vmax { vmax = data[i] }
+        i = i + 1
+    }
+    let range = vmax - vmin
+    if range == 0 { range = 1 }
+    ; Print grid
+    let row = 0
+    loop row < rows {
+        let col = 0
+        loop col < cols {
+            let idx = row * cols + col
+            let v = data[idx]
+            let level = (v - vmin) * 9 / range
+            if level < 0 { level = 0 }
+            if level > 9 { level = 9 }
+            if level == 0 { print " " }
+            if level == 1 { print "." }
+            if level == 2 { print ":" }
+            if level == 3 { print "-" }
+            if level == 4 { print "=" }
+            if level == 5 { print "+" }
+            if level == 6 { print "*" }
+            if level == 7 { print "#" }
+            if level == 8 { print "%" }
+            if level == 9 { print "@" }
+            col = col + 1
+        }
+        print "\n"
+        row = row + 1
+    }
+    ret total
+}
+
+; --- Summary statistics ---
+fn stat_min(arr: &i64, len: i64) -> i64 {
+    let m = arr[0]
+    let i = 1
+    loop i < len {
+        if arr[i] < m { m = arr[i] }
+        i = i + 1
+    }
+    ret m
+}
+
+fn stat_max(arr: &i64, len: i64) -> i64 {
+    let m = arr[0]
+    let i = 1
+    loop i < len {
+        if arr[i] > m { m = arr[i] }
+        i = i + 1
+    }
+    ret m
+}
+
+fn stat_sum(arr: &i64, len: i64) -> i64 {
+    let s = 0
+    let i = 0
+    loop i < len {
+        s = s + arr[i]
+        i = i + 1
+    }
+    ret s
+}
+
+fn stat_mean(arr: &i64, len: i64) -> i64 {
+    let s = stat_sum(arr, len)
+    ret s / len
+}
+
+; --- Print summary: min, max, sum, mean ---
+fn plot_summary(arr: &i64, len: i64) -> i64 {
+    let mn = stat_min(arr, len)
+    let mx = stat_max(arr, len)
+    let sm = stat_sum(arr, len)
+    let av = stat_mean(arr, len)
+    print "min={mn} max={mx} sum={sm} mean={av}\n"
+    ret len
+}
