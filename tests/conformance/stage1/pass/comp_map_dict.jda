@@ -1,0 +1,58 @@
+fn main() -> i64 {
+    ; Test map_from_vecs: {1: 10, 2: 20, 3: 30}
+    let keys = vec_new(4)
+    vec_push(keys, 1)
+    vec_push(keys, 2)
+    vec_push(keys, 3)
+    let vals = vec_new(4)
+    vec_push(vals, 10)
+    vec_push(vals, 20)
+    vec_push(vals, 30)
+    let m = map_from_vecs(keys, vals)
+    let v1 = map_get(m, 1)
+    let v2 = map_get(m, 2)
+    let v3 = map_get(m, 3)
+    if v1 == 10 and v2 == 20 and v3 == 30 { print "from_vecs ok" }
+
+    ; Test map_keys and map_vals
+    let ks = map_keys(m)
+    let vs = map_vals(m)
+    let kn = vec_len(ks)
+    let vn = vec_len(vs)
+    let ks_sum = vec_sum(ks)
+    let vs_sum = vec_sum(vs)
+    if kn == 3 and vn == 3 and ks_sum == 6 and vs_sum == 60 { print "keys_vals ok" }
+
+    ; Test map_items: flat [k0,v0,k1,v1,...]
+    let items = map_items(m)
+    let in_len = vec_len(items)
+    if in_len == 6 { print "items ok" }
+
+    ; Test vec_zip: [1,2,3] zip [10,20,30] -> [1,10,2,20,3,30]
+    let a = vec_new(4)
+    vec_push(a, 1)
+    vec_push(a, 2)
+    vec_push(a, 3)
+    let b = vec_new(4)
+    vec_push(b, 10)
+    vec_push(b, 20)
+    vec_push(b, 30)
+    let zipped = vec_zip(a, b)
+    let zn = vec_len(zipped)
+    let z0 = vec_get(zipped, 0)
+    let z1 = vec_get(zipped, 1)
+    let z4 = vec_get(zipped, 4)
+    let z5 = vec_get(zipped, 5)
+    if zn == 6 and z0 == 1 and z1 == 10 and z4 == 3 and z5 == 30 { print "zip ok" }
+
+    ; Test vec_enumerate: [10,20,30] -> [0,10,1,20,2,30]
+    let en = vec_enumerate(b)
+    let en_len = vec_len(en)
+    let e0 = vec_get(en, 0)
+    let e1 = vec_get(en, 1)
+    let e4 = vec_get(en, 4)
+    let e5 = vec_get(en, 5)
+    if en_len == 6 and e0 == 0 and e1 == 10 and e4 == 2 and e5 == 30 { print "enumerate ok" }
+
+    ret 0
+}
