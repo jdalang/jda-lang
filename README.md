@@ -119,67 +119,17 @@ All three compile to **< 1.1 MB static ELF binaries** with zero external depende
 
 **Compiler**: SSA IR, constant folding, DCE, tail call optimization, loop register promotion, peephole opts, register allocator with spill, x86-64 native codegen, ELF output
 
-## Installation
+## Download & Install
 
-### Native Installers (recommended)
-
-Download the installer for your platform from the [latest release](https://github.com/jdalang/jda-lang/releases/latest):
-
-| Platform | Installer | Single-click |
-|----------|-----------|-------------|
-| **Windows** | [`.exe` installer](https://github.com/jdalang/jda-lang/releases/latest) | Double-click to install |
-| **macOS** | [`.pkg` installer](https://github.com/jdalang/jda-lang/releases/latest) | Double-click to install |
+| Platform | Download | Install |
+|----------|----------|---------|
+| **Windows** | [`.exe` installer](https://github.com/jdalang/jda-lang/releases/latest) | Double-click |
+| **macOS** | [`.pkg` installer](https://github.com/jdalang/jda-lang/releases/latest) | Double-click |
 | **Ubuntu/Debian** | [`.deb` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo dpkg -i jda_*.deb` |
 | **Fedora/RHEL** | [`.rpm` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo rpm -i jda-*.rpm` |
+| **Any Linux/macOS** | Shell script | `curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh \| sh` |
 
-### One-line install (all platforms)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | sh
-```
-
-<details>
-<summary>Windows (PowerShell / CMD)</summary>
-
-```powershell
-irm https://raw.githubusercontent.com/jdalang/jda-lang/main/install.ps1 | iex
-```
-
-```cmd
-curl -o install.bat https://raw.githubusercontent.com/jdalang/jda-lang/main/install.bat && install.bat
-```
-
-</details>
-
-<details>
-<summary>Platform details</summary>
-
-| Platform | Method | Requirements |
-|----------|--------|-------------|
-| Linux x86-64 | **Native binary** | None |
-| Linux ARM64 | Docker emulation | Docker |
-| macOS (Intel / Apple Silicon) | Docker | [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/) |
-| Windows 10/11 | WSL2 *(recommended)* | `wsl --install` then run the Linux installer inside WSL |
-| Windows 10/11 | Docker | [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) |
-| FreeBSD x86-64 | Native (Linux compat) | `sysctl kern.elf64.fallback_brand=3` |
-
-</details>
-
-<details>
-<summary>Installer options</summary>
-
-```bash
-# Install a specific version
-JDA_VERSION=0.2.0 curl -fsSL .../install.sh | sh
-
-# Custom install directory
-JDA_INSTALL_DIR=/opt/jda curl -fsSL .../install.sh | sh
-
-# Uninstall
-curl -fsSL .../install.sh | sh -s -- --uninstall
-```
-
-</details>
+**[→ Full installation guide](docs/getting-started/installation.md)** — all platforms, options, troubleshooting, uninstall
 
 See [docs/INSTALL.md](docs/INSTALL.md) for the full installation guide, troubleshooting, and building from source.
 
