@@ -1,0 +1,450 @@
+; =============================================================================
+; jda-httpd — A minimal HTTP/1.1 server written in Jda
+; =============================================================================
+; Second real application. Pure syscalls, zero libc.
+; Demonstrates: socket programming, string parsing, HTTP protocol.
+;
+; Usage: jda-httpd [port]      (default: 8080)
+;
+; Supported:
+;   GET /              → welcome page
+;   GET /hello         → "Hello from Jda!"
+;   GET /status        → server stats (uptime, requests served)
+;   GET /echo?msg=...  → echoes query string
+;   GET /fib?n=...     → computes fibonacci(n)
+;   Everything else    → 404
+; =============================================================================
+
+; --- Socket syscall wrappers (1 syscall per function) ---
+
+fn sock_create() -> i64 {
+    ret syscall(41, 2, 1, 0)
+}
+
+fn sock_setsockopt(fd: i64, buf: &i64) -> i64 {
+    buf[0] = 1
+    ret syscall(54, fd, 1, 2, buf, 4)
+}
+
+fn sock_bind(fd: i64, addr: &i8) -> i64 {
+    ret syscall(49, fd, addr, 16)
+}
+
+fn sock_listen(fd: i64) -> i64 {
+    ret syscall(50, fd, 128, 0)
+}
+
+fn sock_accept(fd: i64) -> i64 {
+    ret syscall(43, fd, 0, 0)
+}
+
+fn sock_read(fd: i64, buf: &i8, len: i64) -> i64 {
+    ret syscall(0, fd, buf, len)
+}
+
+fn sock_write(fd: i64, buf: &i8, len: i64) -> i64 {
+    ret syscall(1, fd, buf, len)
+}
+
+fn sock_close(fd: i64) -> i64 {
+    ret syscall(3, fd, 0, 0)
+}
+
+fn get_time() -> i64 {
+    ret syscall(201, 0, 0, 0)
+}
+
+; --- Byte helpers ---
+
+fn _b(buf: &i8, idx: i64) -> i64 {
+    ret buf[idx]
+}
+
+fn _print_buf(buf: &i8, len: i64) -> i64 {
+    ret syscall(1, 1, buf, len)
+}
+
+; --- Build sockaddr_in (16 bytes) ---
+
+fn build_sockaddr(buf: &i8, port: i64) {
+    let i = 0
+    loop i < 16 { set_byte(buf, i, 0) i = i + 1 }
+    set_byte(buf, 0, 2)
+    let hi = port / 256
+    let lo = port - hi * 256
+    set_byte(buf, 2, hi)
+    set_byte(buf, 3, lo)
+}
+
+; --- String matching ---
+
+fn starts_with(buf: &i8, off: i64, s: &i8, slen: i64) -> i64 {
+    let i = 0
+    loop i < slen {
+        let a = _b(buf, off + i)
+        let b = _b(s, i)
+        if a < 0 { a = a + 256 }
+        if b < 0 { b = b + 256 }
+        if a != b { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+fn find_space(buf: &i8, off: i64, len: i64) -> i64 {
+    let i = off
+    loop i < len {
+        let ch = _b(buf, i)
+        if ch < 0 { ch = ch + 256 }
+        if ch == 32 { ret i }
+        if ch == 13 { ret i }
+        if ch == 10 { ret i }
+        i = i + 1
+    }
+    ret len
+}
+
+fn find_char(buf: &i8, off: i64, len: i64, ch: i64) -> i64 {
+    let i = off
+    loop i < len {
+        let c = _b(buf, i)
+        if c < 0 { c = c + 256 }
+        if c == ch { ret i }
+        i = i + 1
+    }
+    ret -1
+}
+
+fn copy_into(dst: &i8, doff: i64, src: &i8, slen: i64) -> i64 {
+    let i = 0
+    loop i < slen {
+        let ch = _b(src, i)
+        set_byte(dst, doff + i, ch)
+        i = i + 1
+    }
+    ret doff + slen
+}
+
+fn copy_region(dst: &i8, doff: i64, src: &i8, soff: i64, slen: i64) -> i64 {
+    let i = 0
+    loop i < slen {
+        let ch = _b(src, soff + i)
+        set_byte(dst, doff + i, ch)
+        i = i + 1
+    }
+    ret doff + slen
+}
+
+fn parse_int(buf: &i8, off: i64, len: i64) -> i64 {
+    let val = 0
+    let i = off
+    loop i < len {
+        let ch = _b(buf, i)
+        if ch < 0 { ch = ch + 256 }
+        if ch < 48 { ret val }
+        if ch > 57 { ret val }
+        val = val * 10 + ch - 48
+        i = i + 1
+    }
+    ret val
+}
+
+fn path_eq(buf: &i8, off: i64, len: i64, s: &i8, slen: i64) -> i64 {
+    if len != slen { ret 0 }
+    ret starts_with(buf, off, s, slen)
+}
+
+; --- Fibonacci ---
+
+fn fib(n: i64) -> i64 {
+    if n <= 1 { ret n }
+    let a = 0
+    let b = 1
+    let i = 2
+    loop i <= n {
+        let tmp = a + b
+        a = b
+        b = tmp
+        i = i + 1
+    }
+    ret b
+}
+
+; --- HTTP Response Builder ---
+; All responses go into resp buffer. tmp is a scratch buffer.
+; No alloc_pages anywhere in these functions!
+
+; g_tmp is set by main before dispatching each request
+let g_tmp: &i8 = 0
+
+fn resp_headers(resp: &i8, code: i64, ctype: &i8, ctlen: i64, bodylen: i64) -> i64 {
+    let tmp = g_tmp
+    let pos = 0
+    if code == 200 { pos = copy_into(resp, 0, "HTTP/1.1 200 OK\n", 16) }
+    if code == 404 { pos = copy_into(resp, 0, "HTTP/1.1 404 Not Found\n", 23) }
+    if code == 400 { pos = copy_into(resp, 0, "HTTP/1.1 400 Bad Request\n", 25) }
+    if pos == 0 { pos = copy_into(resp, 0, "HTTP/1.1 200 OK\n", 16) }
+
+    pos = copy_into(resp, pos, "Content-Type: ", 14)
+    pos = copy_into(resp, pos, ctype, ctlen)
+    pos = copy_into(resp, pos, "\n", 1)
+
+    pos = copy_into(resp, pos, "Content-Length: ", 16)
+    let numlen = fmt_i64(tmp, bodylen)
+    pos = copy_region(resp, pos, tmp, 0, numlen)
+    pos = copy_into(resp, pos, "\n", 1)
+
+    pos = copy_into(resp, pos, "Connection: close\n", 18)
+    pos = copy_into(resp, pos, "\n", 1)
+    ret pos
+}
+
+; NOTE: removed build_resp — it had 7 args (max is 6!)
+
+; --- Route Handlers ---
+
+fn handle_index(resp: &i8) -> i64 {
+    let tmp = g_tmp
+    ; Build index page into tmp+512 to avoid overlap with header scratch space
+    let bo = 512
+    bo = copy_into(tmp, bo, "<html><body>", 12)
+    bo = copy_into(tmp, bo, "<h1>jda-httpd</h1>", 18)
+    bo = copy_into(tmp, bo, "<p>HTTP server in Jda. Zero libc.</p>", 37)
+    bo = copy_into(tmp, bo, "<ul>", 4)
+    bo = copy_into(tmp, bo, "<li><a href='/hello'>/hello</a></li>", 36)
+    bo = copy_into(tmp, bo, "<li><a href='/status'>/status</a></li>", 38)
+    bo = copy_into(tmp, bo, "<li><a href='/echo?msg=hi'>/echo</a></li>", 41)
+    bo = copy_into(tmp, bo, "<li><a href='/fib?n=30'>/fib</a></li>", 37)
+    bo = copy_into(tmp, bo, "</ul></body></html>\n", 20)
+    let blen = bo - 512
+    let hdr_end = resp_headers(resp, 200, "text/html", 9, blen)
+    ret copy_region(resp, hdr_end, tmp, 512, blen)
+}
+
+fn handle_hello(resp: &i8) -> i64 {
+    let hdr_end = resp_headers(resp, 200, "text/plain", 10, 16)
+    ret copy_into(resp, hdr_end, "Hello from Jda!\n", 16)
+}
+
+fn handle_404(resp: &i8) -> i64 {
+    let hdr_end = resp_headers(resp, 404, "text/html", 9, 49)
+    ret copy_into(resp, hdr_end, "<html><body><h1>404 Not Found</h1></body></html>\n", 49)
+}
+
+fn handle_echo(resp: &i8, req: &i8, qoff: i64, qlen: i64) -> i64 {
+    let tmp = g_tmp
+    let blen = 0
+    let found = 0
+    let i = qoff
+    let end = qoff + qlen
+    loop i < end {
+        if starts_with(req, i, "msg=", 4) == 1 {
+            let vstart = i + 4
+            let vend = find_char(req, vstart, end, 38)
+            if vend < 0 { vend = end }
+            let vlen = vend - vstart
+            blen = copy_region(tmp, 0, req, vstart, vlen)
+            set_byte(tmp, blen, 10)
+            blen = blen + 1
+            found = 1
+            i = end
+        }
+        if found == 0 { i = i + 1 }
+    }
+    if found == 0 {
+        blen = copy_into(tmp, 0, "(no msg parameter)\n", 19)
+    }
+    ; Body is in tmp[0..blen]. Build response using resp, with body from tmp.
+    ; But resp_headers also uses tmp for Content-Length! We need a second approach.
+    ; Copy body aside first, then build response.
+    ; Actually, build_resp copies body into resp after headers.
+    ; resp_headers writes Content-Length digits into tmp — that's fine, body is already in tmp too
+    ; but at different offsets... this is a problem.
+    ; Solution: write body starting at tmp+512 to avoid overlap.
+    let body_off = 512
+    let bi = 0
+    loop bi < blen {
+        let ch = _b(tmp, bi)
+        set_byte(tmp, body_off + bi, ch)
+        bi = bi + 1
+    }
+    let hdr_end = resp_headers(resp, 200, "text/plain", 10, blen)
+    let pos = copy_region(resp, hdr_end, tmp, body_off, blen)
+    ret pos
+}
+
+fn handle_fib_route(resp: &i8, req: &i8, qoff: i64, qlen: i64) -> i64 {
+    let tmp = g_tmp
+    let found = 0
+    let i = qoff
+    let end = qoff + qlen
+    let result_n = 0
+    let result_fib = 0
+    loop i < end {
+        if starts_with(req, i, "n=", 2) == 1 {
+            let vstart = i + 2
+            let vend = find_char(req, vstart, end, 38)
+            if vend < 0 { vend = end }
+            result_n = parse_int(req, vstart, vend)
+            if result_n > 90 { result_n = 90 }
+            result_fib = fib(result_n)
+            found = 1
+            i = end
+        }
+        if found == 0 { i = i + 1 }
+    }
+    if found == 0 {
+        let hf = resp_headers(resp, 200, "text/plain", 10, 17)
+        ret copy_region(resp, hf, "Usage: /fib?n=30\n", 0, 17)
+    }
+
+    ; Build body: "fib(N) = R\n" in tmp+512
+    let bo = 512
+    bo = copy_into(tmp, bo, "fib(", 4)
+    let nlen = fmt_i64(tmp, result_n)
+    ; copy digits from tmp[0..nlen] to tmp[bo..bo+nlen]
+    let di = 0
+    loop di < nlen { set_byte(tmp, bo + di, _b(tmp, di)) di = di + 1 }
+    bo = bo + nlen
+    bo = copy_into(tmp, bo, ") = ", 4)
+    let rlen = fmt_i64(tmp, result_fib)
+    di = 0
+    loop di < rlen { set_byte(tmp, bo + di, _b(tmp, di)) di = di + 1 }
+    bo = bo + rlen
+    set_byte(tmp, bo, 10) bo = bo + 1
+    let blen = bo - 512
+
+    let hdr_end = resp_headers(resp, 200, "text/plain", 10, blen)
+    let pos = copy_region(resp, hdr_end, tmp, 512, blen)
+    ret pos
+}
+
+fn handle_status_route(resp: &i8, reqs: i64, start: i64) -> i64 {
+    let tmp = g_tmp
+    let bo = 512
+    bo = copy_into(tmp, bo, "jda-httpd status\nrequests: ", 27)
+    let nlen = fmt_i64(tmp, reqs)
+    let di = 0
+    loop di < nlen { set_byte(tmp, bo + di, _b(tmp, di)) di = di + 1 }
+    bo = bo + nlen
+    set_byte(tmp, bo, 10) bo = bo + 1
+
+    bo = copy_into(tmp, bo, "uptime: ", 8)
+    let now = get_time()
+    let up = now - start
+    let ulen = fmt_i64(tmp, up)
+    di = 0
+    loop di < ulen { set_byte(tmp, bo + di, _b(tmp, di)) di = di + 1 }
+    bo = bo + ulen
+    bo = copy_into(tmp, bo, "s\n", 2)
+    let blen = bo - 512
+
+    let hdr_end = resp_headers(resp, 200, "text/plain", 10, blen)
+    let pos = copy_region(resp, hdr_end, tmp, 512, blen)
+    ret pos
+}
+
+; --- Request Dispatch ---
+
+fn dispatch(req: &i8, rlen: i64, resp: &i8, reqs: i64, start: i64) -> i64 {
+    if rlen < 4 { ret handle_404(resp) }
+    if starts_with(req, 0, "GET ", 4) == 0 { ret handle_404(resp) }
+
+    let path_end = find_space(req, 4, rlen)
+    let qmark = find_char(req, 4, path_end, 63)
+    let pp_end = path_end
+    let qoff = 0
+    let qlen = 0
+    if qmark >= 0 {
+        pp_end = qmark
+        qoff = qmark + 1
+        qlen = path_end - qoff
+    }
+    let pp_len = pp_end - 4
+
+    if path_eq(req, 4, pp_len, "/", 1) == 1 { ret handle_index(resp) }
+    if path_eq(req, 4, pp_len, "/hello", 6) == 1 { ret handle_hello(resp) }
+    if path_eq(req, 4, pp_len, "/status", 7) == 1 { ret handle_status_route(resp, reqs, start) }
+    if path_eq(req, 4, pp_len, "/echo", 5) == 1 { ret handle_echo(resp, req, qoff, qlen) }
+    if path_eq(req, 4, pp_len, "/fib", 4) == 1 { ret handle_fib_route(resp, req, qoff, qlen) }
+
+    ret handle_404(resp)
+}
+
+; --- Main ---
+
+fn main(argc: i64, argv: &i64) -> i64 {
+    let port = 8080
+    if argc >= 2 {
+        let port_str: &i8 = argv[1]
+        port = parse_int(port_str, 0, 10)
+        if port == 0 { port = 8080 }
+    }
+
+    ; Pre-allocate ALL buffers here (no alloc_pages in helpers!)
+    let optbuf: &i64 = alloc_pages(1)
+    let addr: &i8 = alloc_pages(1)
+    let reqbuf: &i8 = alloc_pages(2)
+    let respbuf: &i8 = alloc_pages(4)
+    let tmp: &i8 = alloc_pages(2)
+    let logch: &i8 = alloc_pages(1)
+    g_tmp = tmp
+
+    let fd = sock_create()
+    if fd < 0 { print("ERROR: socket() failed\n") ret 1 }
+
+    sock_setsockopt(fd, optbuf)
+
+    build_sockaddr(addr, port)
+    let rc = sock_bind(fd, addr)
+    if rc < 0 { print("ERROR: bind() failed\n") ret 1 }
+
+    rc = sock_listen(fd)
+    if rc < 0 { print("ERROR: listen() failed\n") ret 1 }
+
+    let plen = fmt_i64(tmp, port)
+    print("jda-httpd listening on port ")
+    _print_buf(tmp, plen)
+    print("\n  GET /         - welcome page\n  GET /hello    - greeting\n  GET /status   - server stats\n  GET /echo?msg=hi - echo\n  GET /fib?n=30 - fibonacci\n\n")
+
+    let start = get_time()
+    let reqs = 0
+
+    let running = 1
+    loop running == 1 {
+        let client = sock_accept(fd)
+        if client >= 0 {
+            let n = sock_read(client, reqbuf, 8192)
+            if n > 0 {
+                reqs = reqs + 1
+
+                ; Log: "[N] METHOD /path"
+                print("[")
+                let rlen2 = fmt_i64(tmp, reqs)
+                _print_buf(tmp, rlen2)
+                print("] ")
+                let log_end = find_space(reqbuf, 0, n)
+                let pstart = log_end + 1
+                let pend = find_space(reqbuf, pstart, n)
+                let li = 0
+                loop li < pend {
+                    let ch = _b(reqbuf, li)
+                    if ch < 0 { ch = ch + 256 }
+                    if ch >= 32 {
+                        set_byte(logch, 0, ch)
+                        _print_buf(logch, 1)
+                    }
+                    li = li + 1
+                }
+                print("\n")
+
+                let resp_len = dispatch(reqbuf, n, respbuf, reqs, start)
+                sock_write(client, respbuf, resp_len)
+            }
+            sock_close(client)
+        }
+    }
+
+    sock_close(fd)
+    ret 0
+}
