@@ -2774,7 +2774,9 @@ fn str_match(src: &i8, s1: i64, s2: i64, len: i64) {
 fn try_escape(c: i8, next_c: i8) {
     if c == 92 {
         if next_c == 110 { ret 10 }
+        if next_c == 114 { ret 13 }
         if next_c == 116 { ret 9 }
+        if next_c == 48 { ret 0 }
         if next_c == 92 { ret 92 }
         if next_c == 34 { ret 34 }
     }
@@ -8058,6 +8060,11 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         let inner_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
         expect(TOK_RPAREN)
         ret inner_id
+    }
+    if t_type == TOK_STR {
+        let s_id = emit_strlit_raw(jfn, bb, tok_str_start_at(toks, pos[0]), tok_str_len_at(toks, pos[0]))
+        pos[0] = pos[0] + 1
+        ret s_id
     }
     ; Local array: type[N] — e.g. let regs = i32[7]
     if t_type == TOK_I64 or t_type == TOK_I32 or t_type == TOK_I8 {
