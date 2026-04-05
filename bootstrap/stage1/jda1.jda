@@ -434,6 +434,8 @@ let g_lambda_name_lens: &i64 = 0
 let g_top_main_idx = -1
 let g_lam_cur_idx = 0
 let g_dbg_main_lets = 0
+let g_const_gen_val = 0
+let g_pre_build_srclen = 0
 let g_iter_exit_bb = -1
 let g_iter_matched = 0
 let g_iter_result = -1
@@ -1019,15 +1021,26 @@ fn scan_generic_fns(toks: &Token, src: &i8, tok_cnt: i64) {
             let t2 = tok_type_at_raw(toks, i + 2)
             let t3 = tok_type_at_raw(toks, i + 3)
             let t4 = tok_type_at_raw(toks, i + 4)
-            if t1 == TOK_IDENT and t2 == TOK_LT and t3 == TOK_IDENT and t4 == TOK_GT {
-                ; Found generic fn: fn name<T>(
+            ; Check for type generic: fn name<T>( or const generic: fn name<const N>(
+            let is_type_gen = t1 == TOK_IDENT and t2 == TOK_LT and t3 == TOK_IDENT and t4 == TOK_GT
+            let is_const_gen = 0
+            if t1 == TOK_IDENT and t2 == TOK_LT and t3 == TOK_CONST {
+                if i + 6 < tok_cnt {
+                    let t5 = tok_type_at_raw(toks, i + 5)
+                    if t4 == TOK_IDENT and t5 == TOK_GT { is_const_gen = 1 }
+                }
+            }
+            if is_type_gen == 1 or is_const_gen == 1 {
+                ; Found generic fn
                 let fn_name_off = tok_str_start_at_raw(toks, i + 1)
                 let fn_name_len = tok_str_len_at_raw(toks, i + 1)
-                let tp_off = tok_str_start_at_raw(toks, i + 3)
-                let tp_len = tok_str_len_at_raw(toks, i + 3)
+                ; For const generic: param is at i+4, for type generic: param at i+3
+                let tp_idx = i + 3 + is_const_gen
+                let tp_off = tok_str_start_at_raw(toks, tp_idx)
+                let tp_len = tok_str_len_at_raw(toks, tp_idx)
                 ; Find matching closing brace
                 let tok_end = -1
-                let si = i + 5
+                let si = i + 5 + is_const_gen
                 loop si < tok_cnt {
                     if tok_type_at_raw(toks, si) == TOK_LBRACE {
                         let depth = 0
@@ -1048,13 +1061,14 @@ fn scan_generic_fns(toks: &Token, src: &i8, tok_cnt: i64) {
                     }
                 }
                 if tok_end > 0 and g_genfn_buf[0] < 32 {
-                    let p = g_genfn_buf[0] * 6 + 1
+                    let p = g_genfn_buf[0] * 7 + 1
                     g_genfn_buf[p] = fn_name_off
                     g_genfn_buf[p + 1] = fn_name_len
                     g_genfn_buf[p + 2] = tp_off
                     g_genfn_buf[p + 3] = tp_len
                     g_genfn_buf[p + 4] = i
                     g_genfn_buf[p + 5] = tok_end
+                    g_genfn_buf[p + 6] = is_const_gen
                     g_genfn_buf[0] = g_genfn_buf[0] + 1
                 }
                 i = tok_end + 1
@@ -1071,7 +1085,7 @@ fn scan_generic_fns(toks: &Token, src: &i8, tok_cnt: i64) {
 fn lookup_genfn(src: &i8, name_off: i64, name_len: i64) -> i64 {
     let gi = 0
     loop gi < g_genfn_buf[0] {
-        let p = gi * 6 + 1
+        let p = gi * 7 + 1
         if g_genfn_buf[p + 1] == name_len {
             if str_match(src, g_genfn_buf[p], name_off, name_len) == 1 {
                 ret gi
@@ -1080,6 +1094,68 @@ fn lookup_genfn(src: &i8, name_off: i64, name_len: i64) -> i64 {
         gi = gi + 1
     }
     ret -1
+}
+
+; Find the mangled generic fn name in the fn name table.
+; Sets g_const_gen_val to the found offset (or -1) and returns the found length.
+; gfn_off/gfn_len = original fn name, gc_type = TOK_I64/I32/I8/INT.
+; For type generics, returns first match. For const, verifies suffix matches g_const_gen_val.
+; Result: stores offset in g_found_mangle_off, length in g_found_mangle_len.
+let g_found_mangle_off = 0
+let g_found_mangle_len = 0
+let g_last_mangle_off = 0
+let g_last_mangle_len = 0
+
+fn find_mangled_fn(gfn_off: i64, gfn_len: i64, gc_type: i64) -> i64 {
+    let src = g_src_buf_ptr
+    g_found_mangle_off = 0
+    g_found_mangle_len = 0
+    ; For const generics, compute expected mangled name length and first suffix digit
+    let expect_len = 0
+    let expect_first = 0
+    if gc_type == TOK_INT {
+        let cv = g_const_gen_val
+        if cv < 10 {
+            expect_len = gfn_len + 2
+            expect_first = cv + 48
+        }
+        if cv >= 10 and cv < 100 {
+            expect_len = gfn_len + 3
+            expect_first = cv / 10 + 48
+        }
+        if cv >= 100 {
+            expect_len = gfn_len + 4
+            expect_first = cv / 100 + 48
+        }
+    }
+    let fi = 0
+    loop fi < g_top_fn_cnt {
+        let fo = load_i64_at(g_fn_name_off_tbl, fi)
+        let fl = load_i64_at(g_fn_name_len_tbl, fi)
+        if fl > gfn_len + 1 {
+            if str_match(src, fo, gfn_off, gfn_len) == 1 {
+                if load_i8_at(src, fo + gfn_len) == 95 {
+                    let ok = 0
+                    if gc_type == TOK_INT {
+                        ; Match by length + first suffix digit (single load_i8_at)
+                        if fl == expect_len {
+                            let first_d = load_i8_at(src, fo + gfn_len + 1)
+                            if first_d == expect_first { ok = 1 }
+                        }
+                    } else {
+                        ok = 1
+                    }
+                    if ok == 1 {
+                        g_found_mangle_off = fo
+                        g_found_mangle_len = fl
+                        ret 1
+                    }
+                }
+            }
+        }
+        fi = fi + 1
+    }
+    ret 0
 }
 
 ; Write type suffix bytes into src buffer at pos. Returns suffix length.
@@ -1104,11 +1180,40 @@ fn write_type_suffix(src: &i8, pos: i64, type_tok: i64) -> i64 {
     ret 0
 }
 
+; Convert integer to decimal string bytes at src[pos]. Returns length written.
+fn write_const_value_suffix(src: &i8, pos: i64, val: i64) -> i64 {
+    if val == 0 {
+        poke_byte(src, pos, 48)
+        ret 1
+    }
+    ; Write digits in reverse, then flip
+    let tmp_len = 0
+    let v = val
+    loop v > 0 {
+        let digit = v - (v / 10) * 10
+        poke_byte(src, pos + tmp_len, digit + 48)
+        tmp_len = tmp_len + 1
+        v = v / 10
+    }
+    ; Reverse the digits in place
+    let li = 0
+    let ri = tmp_len - 1
+    loop li < ri {
+        let lc = load_i8_at(src, pos + li)
+        let rc = load_i8_at(src, pos + ri)
+        poke_byte(src, pos + li, rc)
+        poke_byte(src, pos + ri, lc)
+        li = li + 1
+        ri = ri - 1
+    }
+    ret tmp_len
+}
+
 ; Build mangled name "name_type" in source buffer. Returns mangled name length.
 ; Writes at g_runtime_src_len, updates g_runtime_src_len after.
 fn build_mangle_name(gi: i64, type_tok: i64) -> i64 {
     let src = g_src_buf_ptr
-    let p = gi * 6 + 1
+    let p = gi * 7 + 1
     let fn_off = g_genfn_buf[p]
     let fn_len = g_genfn_buf[p + 1]
     let moff = g_runtime_src_len
@@ -1118,7 +1223,13 @@ fn build_mangle_name(gi: i64, type_tok: i64) -> i64 {
         mi = mi + 1
     }
     poke_byte(src, moff + fn_len, 95)
-    let slen = write_type_suffix(src, moff + fn_len + 1, type_tok)
+    let is_const = g_genfn_buf[p + 6]
+    let slen = 0
+    if is_const == 1 {
+        slen = write_const_value_suffix(src, moff + fn_len + 1, type_tok)
+    } else {
+        slen = write_type_suffix(src, moff + fn_len + 1, type_tok)
+    }
     let mlen = fn_len + 1 + slen
     ; Write "\nfn name " for FN_SCAN
     let woff = moff + mlen
@@ -1143,11 +1254,12 @@ fn build_mangle_name(gi: i64, type_tok: i64) -> i64 {
 fn copy_generic_toks(gi: i64, type_tok: i64, out: i64, moff: i64, mlen: i64) -> i64 {
     let toks = g_dbg_toks_init
     let src = g_src_buf_ptr
-    let p = gi * 6 + 1
+    let p = gi * 7 + 1
     let tp_off = g_genfn_buf[p + 2]
     let tp_len = g_genfn_buf[p + 3]
     let tok_start = g_genfn_buf[p + 4]
     let tok_end = g_genfn_buf[p + 5]
+    let is_const = g_genfn_buf[p + 6]
     ; Emit fn token as IDENT with "fn" text so main loop fallback picks it up
     ; (TOK_FN==0 causes comparison issues, so use IDENT + streq fallback)
     ; The "fn" text is at moff+mlen+1 in the source buffer (from build_mangle_name)
@@ -1164,9 +1276,12 @@ fn copy_generic_toks(gi: i64, type_tok: i64, out: i64, moff: i64, mlen: i64) -> 
     tok_set_len(toks, out, mlen)
     tok_set_imm(toks, out, 0)
     tok_set_line(toks, out, 0)
+    g_last_mangle_off = moff
+    g_last_mangle_len = mlen
     out = out + 1
-    ; Skip <T> (tok_start+2,+3,+4), copy rest
-    let si = tok_start + 5
+    ; Skip <T> or <const N> tokens, copy rest of body
+    let skip_cnt = 5 + is_const
+    let si = tok_start + skip_cnt
     loop si <= tok_end {
         let tt = tok_type_at_raw(toks, si)
         let ss = tok_str_start_at_raw(toks, si)
@@ -1176,13 +1291,19 @@ fn copy_generic_toks(gi: i64, type_tok: i64, out: i64, moff: i64, mlen: i64) -> 
             if str_match(src, ss, tp_off, tp_len) == 1 { is_tp = 1 }
         }
         if is_tp == 1 {
-            tok_set_type(toks, out, type_tok)
+            if is_const == 1 {
+                tok_set_type(toks, out, TOK_INT)
+                tok_set_imm(toks, out, type_tok)
+            } else {
+                tok_set_type(toks, out, type_tok)
+                tok_set_imm(toks, out, toks[si].imm)
+            }
         } else {
             tok_set_type(toks, out, tt)
+            tok_set_imm(toks, out, toks[si].imm)
         }
         tok_set_start(toks, out, ss)
         tok_set_len(toks, out, sl)
-        tok_set_imm(toks, out, toks[si].imm)
         tok_set_line(toks, out, 0)
         out = out + 1
         si = si + 1
@@ -1192,9 +1313,9 @@ fn copy_generic_toks(gi: i64, type_tok: i64, out: i64, moff: i64, mlen: i64) -> 
 
 ; Expand a generic function instantiation. Returns new tok_cnt.
 fn expand_generic(gi: i64, type_tok: i64, tok_cnt: i64) -> i64 {
-    let moff = g_runtime_src_len
+    g_pre_build_srclen = g_runtime_src_len
     let mlen = build_mangle_name(gi, type_tok)
-    ret copy_generic_toks(gi, type_tok, tok_cnt, moff, mlen)
+    ret copy_generic_toks(gi, type_tok, tok_cnt, g_pre_build_srclen, mlen)
 }
 
 ; Scan for generic call sites and expand all needed instantiations.
@@ -1211,12 +1332,15 @@ fn expand_all_generics(tok_cnt: i64) -> i64 {
             let t1 = tok_type_at_raw(toks, i + 1)
             let t2 = tok_type_at_raw(toks, i + 2)
             let t3 = tok_type_at_raw(toks, i + 3)
-            if t1 == TOK_LT and (t2 == TOK_I64 or t2 == TOK_I32 or t2 == TOK_I8) and t3 == TOK_GT {
+            if t1 == TOK_LT and (t2 == TOK_I64 or t2 == TOK_I32 or t2 == TOK_I8 or t2 == TOK_INT) and t3 == TOK_GT {
                 let call_name_off = tok_str_start_at_raw(toks, i)
                 let call_name_len = tok_str_len_at_raw(toks, i)
                 let gfi = lookup_genfn(src, call_name_off, call_name_len)
                 if gfi >= 0 {
-                    new_cnt = expand_generic(gfi, t2, new_cnt)
+                    ; For const generics, pass the immediate value; for type, pass type token
+                    let gen_arg = t2
+                    if t2 == TOK_INT { gen_arg = tok_imm_at(toks, i + 2) }
+                    new_cnt = expand_generic(gfi, gen_arg, new_cnt)
                 }
             }
         }
@@ -1225,7 +1349,7 @@ fn expand_all_generics(tok_cnt: i64) -> i64 {
     ; Hide original generic fn declarations (set all tokens to TOK_EOF)
     let gi = 0
     loop gi < g_genfn_buf[0] {
-        let gp = gi * 6 + 1
+        let gp = gi * 7 + 1
         let gts = g_genfn_buf[gp + 4]
         let gte = g_genfn_buf[gp + 5]
         let gti = gts
@@ -7631,6 +7755,33 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     ret expr_id
 }
 
+; Handle generic call: name<type/N>(args). Called when < follows an identifier.
+; pos[0] points to < token. t_start/t_len = identifier before <.
+fn codegen_generic_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let gc2 = tok_type_at(toks, pos[0] + 1)
+    let gc3 = tok_type_at(toks, pos[0] + 2)
+    let t_start = tok_str_start_at(toks, pos[0] - 1)
+    let t_len = tok_str_len_at(toks, pos[0] - 1)
+    if (gc2 == TOK_I64 or gc2 == TOK_I32 or gc2 == TOK_I8 or gc2 == TOK_INT) and gc3 == TOK_GT {
+        let gc_gi = lookup_genfn(src, t_start, t_len)
+        if gc_gi >= 0 {
+            if gc2 == TOK_INT { g_const_gen_val = tok_imm_at(toks, pos[0] + 1) }
+            pos[0] = pos[0] + 3
+            let gp = gc_gi * 7 + 1
+            let gfn_off = g_genfn_buf[gp]
+            let gfn_len = g_genfn_buf[gp + 1]
+            let found = find_mangled_fn(gfn_off, gfn_len, gc2)
+            if found == 1 {
+                tok_set_type(toks, pos[0] - 1, TOK_IDENT)
+                tok_set_start(toks, pos[0] - 1, g_found_mangle_off)
+                tok_set_len(toks, pos[0] - 1, g_found_mangle_len)
+            }
+            ret codegen_call_inline(toks, pos, stab, src, jfn, bb)
+        }
+    }
+    ret -1
+}
+
 fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let t_start = tok_str_start_at(toks, pos[0])
     let t_len = tok_str_len_at(toks, pos[0])
@@ -7654,36 +7805,10 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
         }
         ret codegen_call_inline(toks, pos, stab, src, jfn, bb)
     }
-    ; Generic call: name<type>(args) → skip <type>, call mangled name
+    ; Generic call: name<type>(args) or name<N>(args) → skip <type/N>, call mangled name
     if tok_type_at(toks, pos[0]) == TOK_LT and g_genfn_buf[0] > 0 {
-        let gc2 = tok_type_at(toks, pos[0] + 1)
-        let gc3 = tok_type_at(toks, pos[0] + 2)
-        if (gc2 == TOK_I64 or gc2 == TOK_I32 or gc2 == TOK_I8) and gc3 == TOK_GT {
-            let gc_gi = lookup_genfn(src, t_start, t_len)
-            if gc_gi >= 0 {
-                pos[0] = pos[0] + 3
-                ; Patch the > token (pos[0]-1) to have the mangled name for codegen_call_inline
-                let gp = gc_gi * 6 + 1
-                let gfn_off = g_genfn_buf[gp]
-                let gfn_len = g_genfn_buf[gp + 1]
-                ; Find mangled fn in fn name table
-                let gmfi = 0
-                loop gmfi < g_top_fn_cnt {
-                    let gm_off = load_i64_at(g_fn_name_off_tbl, gmfi)
-                    let gm_len = load_i64_at(g_fn_name_len_tbl, gmfi)
-                    if gm_len > gfn_len + 1 and str_match(src, gm_off, gfn_off, gfn_len) == 1 {
-                        if load_i8_at(src, gm_off + gfn_len) == 95 {
-                            tok_set_type(toks, pos[0] - 1, TOK_IDENT)
-                            tok_set_start(toks, pos[0] - 1, gm_off)
-                            tok_set_len(toks, pos[0] - 1, gm_len)
-                            gmfi = g_top_fn_cnt
-                        }
-                    }
-                    gmfi = gmfi + 1
-                }
-                ret codegen_call_inline(toks, pos, stab, src, jfn, bb)
-            }
-        }
+        let gc_result = codegen_generic_call_inline(toks, pos, stab, src, jfn, bb)
+        if gc_result != -1 { ret gc_result }
     }
     pos[0] = pos[0] - 1
     let slot = lookup_slot_name(jfn, t_start, t_len)
@@ -10567,42 +10692,24 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
         }
         ret live_codegen_call_inline(t, bb)
     }
-    ; Generic call: name<type>(args) → resolve to mangled name
+    ; Generic call: name<type>(args) or name<N>(args) → resolve to mangled name
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LT and g_genfn_buf[0] > 0 {
         let gc_t2 = tok_type_at_raw(g_dbg_toks_init, g_main_pos + 1)
         let gc_t3 = tok_type_at_raw(g_dbg_toks_init, g_main_pos + 2)
-        if (gc_t2 == TOK_I64 or gc_t2 == TOK_I32 or gc_t2 == TOK_I8) and gc_t3 == TOK_GT {
+        if (gc_t2 == TOK_I64 or gc_t2 == TOK_I32 or gc_t2 == TOK_I8 or gc_t2 == TOK_INT) and gc_t3 == TOK_GT {
             let gc_gi = lookup_genfn(g_src_buf_ptr, t.str_start, t.str_len)
             if gc_gi >= 0 {
-                ; Skip < type >
+                if gc_t2 == TOK_INT { g_const_gen_val = tok_imm_at(g_dbg_toks_init, g_main_pos + 1) }
                 g_main_pos = g_main_pos + 3
-                ; Build mangled name to look up the expanded function
-                let gp = gc_gi * 6 + 1
+                let gp = gc_gi * 7 + 1
                 let gfn_off = g_genfn_buf[gp]
                 let gfn_len = g_genfn_buf[gp + 1]
-                ; The mangled name was written at end of source buffer by expand_generic
-                ; Find it by scanning function name table
-                let mangled_t = Token{}
-                mangled_t.str_start = t.str_start
-                mangled_t.str_len = t.str_len
-                ; Search fn name table for the mangled version (name_type)
-                let mfi = 0
-                loop mfi < g_top_fn_cnt {
-                    let mf_off = load_i64_at(g_fn_name_off_tbl, mfi)
-                    let mf_len = load_i64_at(g_fn_name_len_tbl, mfi)
-                    ; Mangled name starts with original name + "_"
-                    if mf_len > gfn_len + 1 {
-                        if str_match(g_src_buf_ptr, mf_off, gfn_off, gfn_len) == 1 {
-                            if load_i8_at(g_src_buf_ptr, mf_off + gfn_len) == 95 {
-                                mangled_t.str_start = mf_off
-                                mangled_t.str_len = mf_len
-                                mfi = g_top_fn_cnt
-                            }
-                        }
-                    }
-                    mfi = mfi + 1
+                let found2 = find_mangled_fn(gfn_off, gfn_len, gc_t2)
+                if found2 == 1 {
+                    t.str_start = g_found_mangle_off
+                    t.str_len = g_found_mangle_len
                 }
-                ret live_codegen_call_inline(&mangled_t, bb)
+                ret live_codegen_call_inline(t, bb)
             }
         }
     }
