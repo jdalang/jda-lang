@@ -129,9 +129,16 @@ All three compile to **< 1.1 MB static ELF binaries** with zero external depende
 | **Fedora/RHEL** | [`.rpm` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo rpm -i jda-*.rpm` |
 | **Any Linux/macOS** | Shell script | `curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh \| sh` |
 
-**[→ Full installation guide](docs/getting-started/installation.md)** — all platforms, options, troubleshooting, uninstall
+**Multiple versions?** Use the [Jda Version Manager](docs/getting-started/installation.md#version-manager):
 
-See [docs/INSTALL.md](docs/INSTALL.md) for the full installation guide, troubleshooting, and building from source.
+```bash
+curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install-jdavm.sh | sh
+jdavm install latest
+jdavm install 0.1.1
+jdavm use 0.2.0
+```
+
+**[→ Full installation guide](docs/getting-started/installation.md)** — all platforms, options, troubleshooting, uninstall
 
 ## Building from Source
 
@@ -287,6 +294,52 @@ docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
 
 </details>
 
+## Tooling
+
+### VS Code Extension
+
+Syntax highlighting, LSP integration, and snippets for `.jda` files.
+
+```bash
+# Install from source
+cd tools/vscode-jda && code --install-extension .
+```
+
+Features: syntax highlighting, bracket matching, auto-indent, comment toggling, LSP hover/diagnostics/completion, and code snippets (`fn`, `struct`, `impl`, `for`, `match`).
+
+See [tools/vscode-jda/](tools/vscode-jda/) for details.
+
+### Version Manager (jdavm)
+
+Install and switch between multiple Jda versions — like rustup, nvm, or rvm.
+
+```bash
+# Install jdavm
+curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install-jdavm.sh | sh
+
+# Install and switch versions
+jdavm install latest         # download latest release
+jdavm install 0.1.1          # install older version
+jdavm use 0.2.0              # switch active version
+jdavm list                   # see installed versions
+```
+
+Works on **Linux** and **macOS** natively. On **Windows**, use inside WSL2.
+
+### CLI Tools
+
+| Tool | Command | Description |
+|------|---------|-------------|
+| Compiler | `jda build` / `jda run` | Compile and run `.jda` files |
+| Formatter | `jda fmt` | Format source code |
+| Test runner | `jda test` | Run test files with assertions |
+| Benchmarker | `jda bench` | Benchmark `fn bench_*` functions |
+| Doc generator | `jda doc` | Generate HTML/Markdown docs from comments |
+| Package manager | `jda pkg` | Install, search, and manage stdlib packages |
+| Fuzzer | `jda fuzz` | Fuzz test `fn fuzz_*` functions |
+| Race detector | `jda race` | Detect data races on globals |
+| LSP server | `jda-lsp` | Language Server Protocol for editors |
+
 ## Repository Layout
 
 ```
@@ -295,7 +348,7 @@ bootstrap/
   stage0/          Build system + jda0 (assembly bootstrap)
   stage1/          jda1 compiler source (jda1.jda — self-hosted)
 stdlib/            114 standard library packages
-tools/             CLI tools (jda, jda-doc, jda-test, jda-pkg, etc.)
+tools/             CLI tools (jda, jdavm, jda-doc, jda-test, jda-pkg, etc.)
 tests/             345 conformance tests (pass + fail)
 benchmarks/        Performance benchmarks (Jda vs C/Go/Rust/Python/Ruby)
 examples/          Example programs
