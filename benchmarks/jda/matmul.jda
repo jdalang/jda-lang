@@ -1,0 +1,41 @@
+fn main() -> i64 {
+    let n = 200
+    let a: &i64 = alloc_pages(100)
+    let b: &i64 = alloc_pages(100)
+    let c: &i64 = alloc_pages(100)
+    ; Initialize a and b
+    let i = 0
+    loop i < n {
+        let j = 0
+        loop j < n {
+            let idx = i * n + j
+            a[idx] = i + j
+            b[idx] = i * j + 1
+            c[idx] = 0
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ; Multiply c = a * b
+    i = 0
+    loop i < n {
+        let j = 0
+        loop j < n {
+            let sum = 0
+            let k = 0
+            loop k < n {
+                let ai = i * n + k
+                let bi = k * n + j
+                sum = sum + a[ai] * b[bi]
+                k = k + 1
+            }
+            let ci = i * n + j
+            c[ci] = sum
+            j = j + 1
+        }
+        i = i + 1
+    }
+    let check = c[99 * n + 99]
+    print("{check}\n")
+    ret 0
+}
