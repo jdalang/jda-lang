@@ -66,6 +66,8 @@ for test_file in "$TEST_DIR"/*.jda; do
         FAIL=$((FAIL + 1))
         FAILURES="$FAILURES\n  FAIL  $test_name (compile failed)"
         echo "  FAIL  $test_name (compile failed)"
+        echo "  CMD:  $JDA build $include_flag $test_file -o $bin_out"
+        echo "  ERR:  $compile_out" | tail -5
         continue
     fi
     chmod +x "$bin_out"
