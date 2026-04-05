@@ -52,8 +52,16 @@ for test_file in "$TEST_DIR"/*.jda; do
         continue
     fi
 
+    # Check for .include sidecar (e.g. regex_literal.include contains "stdlib/regex.jda")
+    include_file="$TEST_DIR/${test_name}.include"
+    include_flag=""
+    if [ -f "$include_file" ]; then
+        inc_path="$PROJECT_ROOT/$(cat "$include_file" | tr -d '[:space:]')"
+        include_flag="--include $inc_path"
+    fi
+
     # Compile
-    compile_out=$("$JDA" "$test_file" "$bin_out" 2>&1) || true
+    compile_out=$("$JDA" build $include_flag "$test_file" -o "$bin_out" 2>&1) || true
     if [ ! -f "$bin_out" ]; then
         FAIL=$((FAIL + 1))
         FAILURES="$FAILURES\n  FAIL  $test_name (compile failed)"

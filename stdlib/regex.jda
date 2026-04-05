@@ -1,0 +1,260 @@
+; =============================================================================
+; jda::regex -- Regular Expression Matching
+; =============================================================================
+; Backtracking regex engine. No external dependencies.
+;
+; Supported syntax:
+;   .        any character
+;   *        zero or more (greedy)
+;   +        one or more (greedy)
+;   ?        zero or one
+;   [abc]    character class
+;   [a-z]    character range
+;   [^abc]   negated class
+;   ^        start anchor
+;   $        end anchor
+;   \d       digit [0-9]
+;   \w       word char [a-zA-Z0-9_]
+;   \s       whitespace [ \t\n\r]
+;   \.       escaped literal
+;
+; Functions:
+;   regex_match(pat, pl, text, tl) -> 1 if full match, 0 otherwise
+;   regex_search(pat, pl, text, tl) -> position of first match, or -1
+;   regex_count(pat, pl, text, tl) -> count of non-overlapping matches
+;   re_match_at(pat, pl, text, tp, tl) -> match length at position, or -1
+; =============================================================================
+
+; Globals to reduce parameter count (max 6 args for correct calling convention)
+let g_re_pat: &i8 = 0
+let g_re_pl = 0
+let g_re_text: &i8 = 0
+let g_re_tl = 0
+
+;; Check if character matches \d, \w, \s escape.
+fn re_match_escape(pp: i64, ch: i64) -> i64 {
+    let code = g_re_pat[pp]
+    if code == 100 {
+        if ch >= 48 and ch <= 57 { ret 1 }
+        ret 0
+    }
+    if code == 119 {
+        if ch >= 97 and ch <= 122 { ret 1 }
+        if ch >= 65 and ch <= 90 { ret 1 }
+        if ch >= 48 and ch <= 57 { ret 1 }
+        if ch == 95 { ret 1 }
+        ret 0
+    }
+    if code == 115 {
+        if ch == 32 or ch == 9 or ch == 10 or ch == 13 { ret 1 }
+        ret 0
+    }
+    if ch == code { ret 1 }
+    ret 0
+}
+
+;; Check if ch is in character class. pp points after '[' or '[^'.
+fn re_match_class(pp: i64, ch: i64) -> i64 {
+    let pat = g_re_pat
+    let pl = g_re_pl
+    let i = pp
+    loop i < pl {
+        let c = pat[i]
+        if c == 93 { ret 0 }
+        if i + 2 < pl and pat[i + 1] == 45 and pat[i + 2] != 93 {
+            let lo = c
+            let hi = pat[i + 2]
+            if ch >= lo and ch <= hi { ret 1 }
+            i = i + 3
+        } else {
+            if ch == c { ret 1 }
+            i = i + 1
+        }
+    }
+    ret 0
+}
+
+;; Skip past [...] class. pp points after '['.
+fn re_skip_class(pp: i64) -> i64 {
+    let i = pp
+    loop i < g_re_pl {
+        if g_re_pat[i] == 93 { ret i + 1 }
+        i = i + 1
+    }
+    ret g_re_pl
+}
+
+;; Skip one pattern element.
+fn re_skip_elem(pp: i64) -> i64 {
+    if pp >= g_re_pl { ret pp }
+    let c = g_re_pat[pp]
+    if c == 92 { ret pp + 2 }
+    if c == 91 {
+        let inner = pp + 1
+        if inner < g_re_pl and g_re_pat[inner] == 94 { inner = inner + 1 }
+        ret re_skip_class(inner)
+    }
+    ret pp + 1
+}
+
+;; Does one pattern element at pp match character ch?
+fn re_char_match(pp: i64, ch: i64) -> i64 {
+    let c = g_re_pat[pp]
+    if c == 46 { ret 1 }
+    if c == 92 {
+        if pp + 1 < g_re_pl { ret re_match_escape(pp + 1, ch) }
+        ret 0
+    }
+    if c == 91 {
+        let inner = pp + 1
+        let negate = 0
+        if inner < g_re_pl and g_re_pat[inner] == 94 {
+            negate = 1
+            inner = inner + 1
+        }
+        let found = re_match_class(inner, ch)
+        if negate == 1 {
+            if found == 1 { ret 0 }
+            ret 1
+        }
+        ret found
+    }
+    if ch == c { ret 1 }
+    ret 0
+}
+
+;; Greedy star: match elem zero or more, then rest of pattern.
+fn re_match_star(ep: i64, rp: i64, tp: i64) -> i64 {
+    let text = g_re_text
+    let tl = g_re_tl
+    let pl = g_re_pl
+    let max_n = 0
+    let pos = tp
+    loop pos < tl {
+        let m = re_char_match(ep, text[pos])
+        if m == 0 { pos = tl }
+        if m == 1 {
+            max_n = max_n + 1
+            pos = pos + 1
+        }
+    }
+    let try_n = max_n + 1
+    loop try_n > 0 {
+        try_n = try_n - 1
+        let rest = re_match_here(rp, tp + try_n)
+        if rest >= 0 { ret try_n + rest }
+    }
+    ret 0 - 1
+}
+
+;; Plus: match one or more, then rest.
+fn re_match_plus(ep: i64, rp: i64, tp: i64) -> i64 {
+    if tp >= g_re_tl { ret 0 - 1 }
+    let m = re_char_match(ep, g_re_text[tp])
+    if m == 0 { ret 0 - 1 }
+    let star_r = re_match_star(ep, rp, tp + 1)
+    if star_r < 0 { ret 0 - 1 }
+    ret 1 + star_r
+}
+
+;; Optional: match zero or one, then rest.
+fn re_match_quest(ep: i64, rp: i64, tp: i64) -> i64 {
+    if tp < g_re_tl {
+        let m = re_char_match(ep, g_re_text[tp])
+        if m == 1 {
+            let rest = re_match_here(rp, tp + 1)
+            if rest >= 0 { ret 1 + rest }
+        }
+    }
+    let rest = re_match_here(rp, tp)
+    if rest >= 0 { ret rest }
+    ret 0 - 1
+}
+
+;; Core recursive matcher. Uses globals for pat/pl/text/tl.
+fn re_match_here(pp: i64, tp: i64) -> i64 {
+    if pp >= g_re_pl { ret 0 }
+
+    if g_re_pat[pp] == 36 {
+        if tp == g_re_tl { ret 0 }
+        ret 0 - 1
+    }
+
+    let ep_end = re_skip_elem(pp)
+
+    let has_quant = 0
+    let quant = 0
+    if ep_end < g_re_pl {
+        quant = g_re_pat[ep_end]
+        if quant == 42 { has_quant = 1 }
+        if quant == 43 { has_quant = 1 }
+        if quant == 63 { has_quant = 1 }
+    }
+
+    if has_quant == 1 {
+        let rp = ep_end + 1
+        if quant == 42 { ret re_match_star(pp, rp, tp) }
+        if quant == 43 { ret re_match_plus(pp, rp, tp) }
+        if quant == 63 { ret re_match_quest(pp, rp, tp) }
+    }
+
+    if tp >= g_re_tl { ret 0 - 1 }
+    let m = re_char_match(pp, g_re_text[tp])
+    if m == 0 { ret 0 - 1 }
+    let rest = re_match_here(ep_end, tp + 1)
+    if rest < 0 { ret 0 - 1 }
+    ret 1 + rest
+}
+
+;; Match at specific position. Sets up globals.
+fn re_match_at(pat: &i8, pl: i64, text: &i8, tp: i64, tl: i64) -> i64 {
+    g_re_pat = pat
+    g_re_pl = pl
+    g_re_text = text
+    g_re_tl = tl
+    let pp = 0
+    if pl > 0 and pat[0] == 94 {
+        if tp != 0 { ret 0 - 1 }
+        pp = 1
+    }
+    ret re_match_here(pp, tp)
+}
+
+;; Full match: pattern matches entire text?
+fn regex_match(pat: &i8, pl: i64, text: &i8, tl: i64) -> i64 {
+    let mlen = re_match_at(pat, pl, text, 0, tl)
+    if mlen == tl { ret 1 }
+    ret 0
+}
+
+;; Search: find first match position, or -1.
+fn regex_search(pat: &i8, pl: i64, text: &i8, tl: i64) -> i64 {
+    if pl > 0 and pat[0] == 94 {
+        let m = re_match_at(pat, pl, text, 0, tl)
+        if m >= 0 { ret 0 }
+        ret 0 - 1
+    }
+    let i = 0
+    loop i <= tl {
+        let m = re_match_at(pat, pl, text, i, tl)
+        if m >= 0 { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Count non-overlapping matches.
+fn regex_count(pat: &i8, pl: i64, text: &i8, tl: i64) -> i64 {
+    let count = 0
+    let i = 0
+    loop i <= tl {
+        let m = re_match_at(pat, pl, text, i, tl)
+        if m >= 0 {
+            count = count + 1
+            if m > 0 { i = i + m }
+            if m == 0 { i = i + 1 }
+        }
+        if m < 0 { i = i + 1 }
+    }
+    ret count
+}
