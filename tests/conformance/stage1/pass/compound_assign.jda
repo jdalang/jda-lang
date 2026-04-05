@@ -1,0 +1,40 @@
+fn main() -> i64 {
+    ; Test += -= *= /= %=
+    let x = 10
+    x += 5
+    if x == 15 { print "plus_eq ok\n" }
+    x -= 3
+    if x == 12 { print "minus_eq ok\n" }
+    x *= 2
+    if x == 24 { print "star_eq ok\n" }
+    x /= 6
+    if x == 4 { print "slash_eq ok\n" }
+    x %= 3
+    if x == 1 { print "pct_eq ok\n" }
+
+    ; Test compound assign inside if body (legacy path)
+    let y = 100
+    if y == 100 {
+        y += 50
+    }
+    if y == 150 { print "if_body ok\n" }
+
+    ; Test compound assign inside loop body
+    let sum = 0
+    let i = 0
+    loop i < 5 {
+        sum += i
+        i += 1
+    }
+    if sum == 10 { print "loop_body ok\n" }
+
+    ; Test f64 compound assignment
+    let acc: f64 = 0.0
+    let v: f64 = 3.0
+    acc += v
+    acc += v
+    let acci = f64_to_int(acc)
+    if acci == 6 { print "f64_plus_eq ok\n" }
+
+    ret 0
+}
