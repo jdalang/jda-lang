@@ -1,0 +1,590 @@
+; Jda Tensor Slicing & Broadcasting Library (Phase 9 M12)
+;
+; Provides NumPy-style slicing, broadcasting, and reshape for tensors.
+; All functions are pure Jda using tensor builtins — zero compiler changes.
+;
+; Uses only: tensor_new1, tensor_new2, tensor_get, tensor_set, tensor_len,
+;            tensor_shape, tensor_fill, tensor_free, f64_*
+;
+; Slicing convention (per dimension):
+;   start, stop, step  — Python-style half-open range [start, stop)
+;   Use -1 for "all" (e.g., stop=-1 means dimension length)
+;
+; Broadcasting rules (NumPy-compatible):
+;   1. Shapes are right-aligned
+;   2. Dimensions must be equal or one of them must be 1
+;   3. Size-1 dimensions are stretched to match
+
+; --- Reshape ---
+; Returns a new tensor with the same data but different shape.
+; Total element count must match.
+
+fn tensor_reshape_1d(t: i64, d0: i64) -> i64 {
+    let out = tensor_new1(d0)
+    let n = d0
+    let i = 0
+    loop i < n {
+        let v = tensor_get(t, i)
+        tensor_set(out, i, v)
+        i = i + 1
+    }
+    ret out
+}
+
+fn tensor_reshape_2d(t: i64, d0: i64, d1: i64) -> i64 {
+    let out = tensor_new2(d0, d1)
+    let n = d0 * d1
+    let i = 0
+    loop i < n {
+        let v = tensor_get(t, i)
+        tensor_set(out, i, v)
+        i = i + 1
+    }
+    ret out
+}
+
+; --- 1D Slicing ---
+; tensor_slice1d(t, start, stop, step) -> new tensor
+; stop=-1 means "to end", start=-1 means 0
+
+fn tensor_slice1d(t: i64, start: i64, stop: i64, step: i64) -> i64 {
+    let dim0 = tensor_shape(t, 0)
+    if start < 0 { start = 0 }
+    if stop < 0 { stop = dim0 }
+    if step < 1 { step = 1 }
+
+    ; Calculate output length
+    let len = 0
+    let idx = start
+    loop idx < stop {
+        len = len + 1
+        idx = idx + step
+    }
+
+    let out = tensor_new1(len)
+    let oi = 0
+    idx = start
+    loop idx < stop {
+        let v = tensor_get(t, idx)
+        tensor_set(out, oi, v)
+        oi = oi + 1
+        idx = idx + step
+    }
+    ret out
+}
+
+; --- 2D Slicing ---
+; tensor_slice2d(t, row_start, row_stop, col_start, col_stop) -> new 2D tensor
+; Use -1 for "all" on stop
+
+fn tensor_slice2d(t: i64, row_start: i64, row_stop: i64, col_start: i64, col_stop: i64) -> i64 {
+    let rows = tensor_shape(t, 0)
+    let cols = tensor_shape(t, 1)
+    if row_start < 0 { row_start = 0 }
+    if row_stop < 0 { row_stop = rows }
+    if col_start < 0 { col_start = 0 }
+    if col_stop < 0 { col_stop = cols }
+
+    let out_rows = row_stop - row_start
+    let out_cols = col_stop - col_start
+    let out = tensor_new2(out_rows, out_cols)
+
+    let r = 0
+    loop r < out_rows {
+        let c = 0
+        loop c < out_cols {
+            let src_idx = (row_start + r) * cols + (col_start + c)
+            let dst_idx = r * out_cols + c
+            let v = tensor_get(t, src_idx)
+            tensor_set(out, dst_idx, v)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    ret out
+}
+
+; --- Row/Column extraction ---
+
+fn tensor_row(t: i64, row: i64) -> i64 {
+    let cols = tensor_shape(t, 1)
+    let out = tensor_new1(cols)
+    let c = 0
+    loop c < cols {
+        let idx = row * cols + c
+        let v = tensor_get(t, idx)
+        tensor_set(out, c, v)
+        c = c + 1
+    }
+    ret out
+}
+
+fn tensor_col(t: i64, col: i64) -> i64 {
+    let rows = tensor_shape(t, 0)
+    let cols = tensor_shape(t, 1)
+    let out = tensor_new1(rows)
+    let r = 0
+    loop r < rows {
+        let idx = r * cols + col
+        let v = tensor_get(t, idx)
+        tensor_set(out, r, v)
+        r = r + 1
+    }
+    ret out
+}
+
+; --- Broadcasting: elementwise ops with broadcast ---
+;
+; broadcast_add_2d1d(a, b, out) — [M,N] + [N] row broadcast
+; broadcast_add_2d_col(a, b, out) — [M,N] + [M,1] column broadcast
+; broadcast_add_2d_row(a, b, out) — [M,N] + [1,N] row broadcast (2D+2D)
+
+fn broadcast_add_1d(a: i64, b: i64, out: i64) {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_add(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn broadcast_add_2d1d(a: i64, b: i64, out: i64) {
+    let rows = tensor_shape(a, 0)
+    let cols = tensor_shape(a, 1)
+    let r = 0
+    loop r < rows {
+        let c = 0
+        loop c < cols {
+            let idx = r * cols + c
+            let va = tensor_get(a, idx)
+            let vb = tensor_get(b, c)
+            let res = f64_add(va, vb)
+            tensor_set(out, idx, res)
+            c = c + 1
+        }
+        r = r + 1
+    }
+}
+
+fn broadcast_add_2d_col(a: i64, b: i64, out: i64) {
+    let rows = tensor_shape(a, 0)
+    let cols = tensor_shape(a, 1)
+    let r = 0
+    loop r < rows {
+        let bv = tensor_get(b, r)
+        let c = 0
+        loop c < cols {
+            let idx = r * cols + c
+            let va = tensor_get(a, idx)
+            let res = f64_add(va, bv)
+            tensor_set(out, idx, res)
+            c = c + 1
+        }
+        r = r + 1
+    }
+}
+
+fn broadcast_mul_1d(a: i64, b: i64, out: i64) {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_mul(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn broadcast_mul_2d1d(a: i64, b: i64, out: i64) {
+    let rows = tensor_shape(a, 0)
+    let cols = tensor_shape(a, 1)
+    let r = 0
+    loop r < rows {
+        let c = 0
+        loop c < cols {
+            let idx = r * cols + c
+            let va = tensor_get(a, idx)
+            let vb = tensor_get(b, c)
+            let res = f64_mul(va, vb)
+            tensor_set(out, idx, res)
+            c = c + 1
+        }
+        r = r + 1
+    }
+}
+
+fn broadcast_mul_2d_col(a: i64, b: i64, out: i64) {
+    let rows = tensor_shape(a, 0)
+    let cols = tensor_shape(a, 1)
+    let r = 0
+    loop r < rows {
+        let bv = tensor_get(b, r)
+        let c = 0
+        loop c < cols {
+            let idx = r * cols + c
+            let va = tensor_get(a, idx)
+            let res = f64_mul(va, bv)
+            tensor_set(out, idx, res)
+            c = c + 1
+        }
+        r = r + 1
+    }
+}
+
+; --- Scalar broadcast ops ---
+
+fn broadcast_scalar_add(t: i64, s: i64, out: i64) {
+    let n = tensor_len(t)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(t, i)
+        let r = f64_add(v, s)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn broadcast_scalar_mul(t: i64, s: i64, out: i64) {
+    let n = tensor_len(t)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(t, i)
+        let r = f64_mul(v, s)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn broadcast_scalar_sub(t: i64, s: i64, out: i64) {
+    let n = tensor_len(t)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(t, i)
+        let r = f64_sub(v, s)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn broadcast_scalar_div(t: i64, s: i64, out: i64) {
+    let n = tensor_len(t)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(t, i)
+        let r = f64_div(v, s)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+; --- Reduce along axis ---
+
+; tensor_sum_axis0(t, rows, cols) -> 1D tensor of shape [cols]
+; Sums across rows: out[c] = sum over r of t[r,c]
+fn tensor_sum_axis0(t: i64, rows: i64, cols: i64) -> i64 {
+    let out = tensor_new1(cols)
+    let zero = f64_from_int(0)
+    tensor_fill(out, zero)
+    let r = 0
+    loop r < rows {
+        let c = 0
+        loop c < cols {
+            let idx = r * cols + c
+            let v = tensor_get(t, idx)
+            let cur = tensor_get(out, c)
+            let s = f64_add(cur, v)
+            tensor_set(out, c, s)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    ret out
+}
+
+; tensor_sum_axis1(t, rows, cols) -> 1D tensor of shape [rows]
+; Sums across columns: out[r] = sum over c of t[r,c]
+fn tensor_sum_axis1(t: i64, rows: i64, cols: i64) -> i64 {
+    let out = tensor_new1(rows)
+    let r = 0
+    loop r < rows {
+        let acc = f64_from_int(0)
+        let c = 0
+        loop c < cols {
+            let idx = r * cols + c
+            let v = tensor_get(t, idx)
+            acc = f64_add(acc, v)
+            c = c + 1
+        }
+        tensor_set(out, r, acc)
+        r = r + 1
+    }
+    ret out
+}
+
+; tensor_mean_axis0(t, rows, cols) -> 1D tensor, mean across rows
+fn tensor_mean_axis0(t: i64, rows: i64, cols: i64) -> i64 {
+    let sums = tensor_sum_axis0(t, rows, cols)
+    let divisor = f64_from_int(rows)
+    let out = tensor_new1(cols)
+    let c = 0
+    loop c < cols {
+        let v = tensor_get(sums, c)
+        let m = f64_div(v, divisor)
+        tensor_set(out, c, m)
+        c = c + 1
+    }
+    tensor_free(sums)
+    ret out
+}
+
+; tensor_mean_axis1(t, rows, cols) -> 1D tensor, mean across columns
+fn tensor_mean_axis1(t: i64, rows: i64, cols: i64) -> i64 {
+    let sums = tensor_sum_axis1(t, rows, cols)
+    let divisor = f64_from_int(cols)
+    let out = tensor_new1(rows)
+    let r = 0
+    loop r < rows {
+        let v = tensor_get(sums, r)
+        let m = f64_div(v, divisor)
+        tensor_set(out, r, m)
+        r = r + 1
+    }
+    tensor_free(sums)
+    ret out
+}
+
+; --- Max along axis ---
+
+fn tensor_max_axis0(t: i64, rows: i64, cols: i64) -> i64 {
+    let out = tensor_new1(cols)
+    let c = 0
+    loop c < cols {
+        let mx = tensor_get(t, c)
+        let r = 1
+        loop r < rows {
+            let idx = r * cols + c
+            let v = tensor_get(t, idx)
+            if f64_gt(v, mx) == 1 {
+                mx = v
+            }
+            r = r + 1
+        }
+        tensor_set(out, c, mx)
+        c = c + 1
+    }
+    ret out
+}
+
+fn tensor_max_axis1(t: i64, rows: i64, cols: i64) -> i64 {
+    let out = tensor_new1(rows)
+    let r = 0
+    loop r < rows {
+        let mx = tensor_get(t, r * cols)
+        let c = 1
+        loop c < cols {
+            let idx = r * cols + c
+            let v = tensor_get(t, idx)
+            if f64_gt(v, mx) == 1 {
+                mx = v
+            }
+            c = c + 1
+        }
+        tensor_set(out, r, mx)
+        r = r + 1
+    }
+    ret out
+}
+
+; --- Concatenation ---
+
+; tensor_concat1d(a, b) -> new 1D tensor with a's elements then b's
+fn tensor_concat1d(a: i64, b: i64) -> i64 {
+    let a_len = tensor_len(a)
+    let b_len = tensor_len(b)
+    let total = a_len + b_len
+    let out = tensor_new1(total)
+    let i = 0
+    loop i < a_len {
+        let v = tensor_get(a, i)
+        tensor_set(out, i, v)
+        i = i + 1
+    }
+    let j = 0
+    loop j < b_len {
+        let v = tensor_get(b, j)
+        tensor_set(out, a_len + j, v)
+        j = j + 1
+    }
+    ret out
+}
+
+; tensor_vstack(a, b, cols) -> vertically stack two 2D tensors (same cols)
+fn tensor_vstack(a: i64, b: i64, cols: i64) -> i64 {
+    let a_rows = tensor_shape(a, 0)
+    let b_rows = tensor_shape(b, 0)
+    let out_rows = a_rows + b_rows
+    let out = tensor_new2(out_rows, cols)
+    let a_len = tensor_len(a)
+    let i = 0
+    loop i < a_len {
+        let v = tensor_get(a, i)
+        tensor_set(out, i, v)
+        i = i + 1
+    }
+    let b_len = tensor_len(b)
+    let j = 0
+    loop j < b_len {
+        let v = tensor_get(b, j)
+        tensor_set(out, a_len + j, v)
+        j = j + 1
+    }
+    ret out
+}
+
+; tensor_hstack(a, b) -> horizontally stack two 2D tensors (same rows)
+fn tensor_hstack(a: i64, b: i64) -> i64 {
+    let rows = tensor_shape(a, 0)
+    let a_cols = tensor_shape(a, 1)
+    let b_cols = tensor_shape(b, 1)
+    let out_cols = a_cols + b_cols
+    let out = tensor_new2(rows, out_cols)
+    let r = 0
+    loop r < rows {
+        let c = 0
+        loop c < a_cols {
+            let src = r * a_cols + c
+            let dst = r * out_cols + c
+            let v = tensor_get(a, src)
+            tensor_set(out, dst, v)
+            c = c + 1
+        }
+        c = 0
+        loop c < b_cols {
+            let src = r * b_cols + c
+            let dst = r * out_cols + a_cols + c
+            let v = tensor_get(b, src)
+            tensor_set(out, dst, v)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    ret out
+}
+
+; --- Where (conditional select) ---
+; tensor_where(cond, a, b, out)
+; out[i] = a[i] if cond[i] > 0, else b[i]
+
+fn tensor_where(cond: i64, a: i64, b: i64, out: i64) {
+    let n = tensor_len(a)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let cv = tensor_get(cond, i)
+        if f64_gt(cv, zero) == 1 {
+            let v = tensor_get(a, i)
+            tensor_set(out, i, v)
+        } else {
+            let v = tensor_get(b, i)
+            tensor_set(out, i, v)
+        }
+        i = i + 1
+    }
+}
+
+; --- Clamp ---
+; tensor_clamp(t, lo, hi, out) — clamp all elements to [lo, hi]
+
+fn tensor_clamp(t: i64, lo: i64, hi: i64, out: i64) {
+    let n = tensor_len(t)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(t, i)
+        if f64_gt(lo, v) == 1 {
+            tensor_set(out, i, lo)
+        } else {
+            if f64_gt(v, hi) == 1 {
+                tensor_set(out, i, hi)
+            } else {
+                tensor_set(out, i, v)
+            }
+        }
+        i = i + 1
+    }
+}
+
+; --- Arange ---
+; tensor_arange(start, stop, step) -> 1D tensor with [start, start+step, ...]
+
+fn tensor_arange(start: i64, stop: i64, step: i64) -> i64 {
+    ; Count elements
+    let count = 0
+    let cur = start
+    loop f64_lt(cur, stop) == 1 {
+        count = count + 1
+        cur = f64_add(cur, step)
+    }
+    let out = tensor_new1(count)
+    cur = start
+    let i = 0
+    loop i < count {
+        tensor_set(out, i, cur)
+        cur = f64_add(cur, step)
+        i = i + 1
+    }
+    ret out
+}
+
+; --- Linspace ---
+; tensor_linspace(start, stop, n) -> 1D tensor with n evenly spaced values
+
+fn tensor_linspace(start: i64, stop: i64, n: i64) -> i64 {
+    let out = tensor_new1(n)
+    if n == 1 {
+        tensor_set(out, 0, start)
+        ret out
+    }
+    let nm1 = f64_from_int(n - 1)
+    let range = f64_sub(stop, start)
+    let step_val = f64_div(range, nm1)
+    let i = 0
+    loop i < n {
+        let fi = f64_from_int(i)
+        let v = f64_add(start, f64_mul(fi, step_val))
+        tensor_set(out, i, v)
+        i = i + 1
+    }
+    ret out
+}
+
+; --- Copy ---
+
+fn tensor_copy_1d(t: i64) -> i64 {
+    let len = tensor_len(t)
+    let out = tensor_new1(len)
+    let i = 0
+    loop i < len {
+        let v = tensor_get(t, i)
+        tensor_set(out, i, v)
+        i = i + 1
+    }
+    ret out
+}
+
+fn tensor_copy_2d(t: i64) -> i64 {
+    let rows = tensor_shape(t, 0)
+    let cols = tensor_shape(t, 1)
+    let out = tensor_new2(rows, cols)
+    let n = tensor_len(t)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(t, i)
+        tensor_set(out, i, v)
+        i = i + 1
+    }
+    ret out
+}
