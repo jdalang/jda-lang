@@ -1,0 +1,52 @@
+fn test_write() -> i64 {
+    let w = fs_write_str("/tmp/jda_test_io.txt", "hello jda", 9)
+    if w == 9 { print "write ok" }
+    ret 0
+}
+
+fn test_slurp() -> i64 {
+    let buf: &i8 = fs_slurp("/tmp/jda_test_io.txt")
+    if buf != 0 {
+        let eq = buf_eq(buf, "hello jda", 9)
+        if eq == 1 { print "slurp ok" }
+    }
+    ret 0
+}
+
+fn test_size() -> i64 {
+    let sz = fs_file_size("/tmp/jda_test_io.txt")
+    if sz == 9 { print "size ok" }
+    ret 0
+}
+
+fn test_append() -> i64 {
+    fs_append_str("/tmp/jda_test_io.txt", "!", 1)
+    let sz = fs_file_size("/tmp/jda_test_io.txt")
+    if sz == 10 { print "append ok" }
+    ret 0
+}
+
+fn test_exists() -> i64 {
+    let ex = fs_exists("/tmp/jda_test_io.txt")
+    if ex == 1 { print "exists ok" }
+    ret 0
+}
+
+fn test_unlink() -> i64 {
+    let del = fs_unlink("/tmp/jda_test_io.txt")
+    let ex = fs_exists("/tmp/jda_test_io.txt")
+    if del == 0 {
+        if ex == 0 { print "unlink ok" }
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    test_write()
+    test_slurp()
+    test_size()
+    test_append()
+    test_exists()
+    test_unlink()
+    ret 0
+}

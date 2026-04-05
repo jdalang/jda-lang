@@ -1,0 +1,60 @@
+fn test_write_lines() -> i64 {
+    fs_write_str("/tmp/jda_test_lines.txt", "line1\nline2\nline3", 17)
+    ret 0
+}
+
+fn test_count_lines() -> i64 {
+    let buf: &i8 = fs_slurp("/tmp/jda_test_lines.txt")
+    let sz = fs_file_size("/tmp/jda_test_lines.txt")
+    let lc = buf_count_lines(buf, sz)
+    if lc == 3 { print "count ok" }
+    ret 0
+}
+
+fn test_line0() -> i64 {
+    let buf: &i8 = fs_slurp("/tmp/jda_test_lines.txt")
+    let sz = fs_file_size("/tmp/jda_test_lines.txt")
+    let s0 = buf_line_start(buf, sz, 0)
+    let l0 = buf_line_len(buf, sz, s0)
+    if s0 == 0 {
+        if l0 == 5 { print "line0 ok" }
+    }
+    ret 0
+}
+
+fn test_line1() -> i64 {
+    let buf: &i8 = fs_slurp("/tmp/jda_test_lines.txt")
+    let sz = fs_file_size("/tmp/jda_test_lines.txt")
+    let s1 = buf_line_start(buf, sz, 1)
+    let l1 = buf_line_len(buf, sz, s1)
+    if s1 == 6 {
+        if l1 == 5 { print "line1 ok" }
+    }
+    ret 0
+}
+
+fn test_line2() -> i64 {
+    let buf: &i8 = fs_slurp("/tmp/jda_test_lines.txt")
+    let sz = fs_file_size("/tmp/jda_test_lines.txt")
+    let s2 = buf_line_start(buf, sz, 2)
+    let l2 = buf_line_len(buf, sz, s2)
+    if s2 == 12 {
+        if l2 == 5 { print "line2 ok" }
+    }
+    ret 0
+}
+
+fn test_cleanup_lines() -> i64 {
+    fs_unlink("/tmp/jda_test_lines.txt")
+    ret 0
+}
+
+fn main() -> i64 {
+    test_write_lines()
+    test_count_lines()
+    test_line0()
+    test_line1()
+    test_line2()
+    test_cleanup_lines()
+    ret 0
+}
