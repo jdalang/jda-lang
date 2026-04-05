@@ -52,13 +52,8 @@ jobs:
 
       - name: Run ARM64 tool tests
         run: |
-          if command -v python3 &>/dev/null; then
-            echo "Python3 available: $(python3 --version)"
-            python3 tools/jda-arm64.sh --asm tests/conformance/stage1/pass/arm64_basic.jda > /dev/null
-            echo "ARM64 assembly generation: OK"
-          else
-            echo "SKIP: python3 not available"
-          fi
+          bash tools/jda-arm64.sh --asm tests/conformance/stage1/pass/arm64_basic.jda > /dev/null
+          echo "ARM64 assembly generation: OK"
 
   test-macos:
     name: Test (macOS)
@@ -75,16 +70,28 @@ jobs:
       - name: Run macOS tool tests
         run: |
           echo "Testing jda-macos assembly generation..."
-          python3 tools/jda-macos.sh --asm tests/conformance/stage1/pass/macos_basic.jda > /dev/null
+          bash tools/jda-macos.sh --asm tests/conformance/stage1/pass/macos_basic.jda > /dev/null
           echo "macOS assembly generation: OK"
 
       - name: Build and run native macOS binary
         run: |
           printf 'fn main() {\n  print "ci ok"\n  ret 0\n}\n' > /tmp/ci_test.jda
-          python3 tools/jda-macos.sh -o /tmp/ci_test /tmp/ci_test.jda
+          bash tools/jda-macos.sh -o /tmp/ci_test /tmp/ci_test.jda
           out="$(/tmp/ci_test)"
           test "$out" = "ci ok"
           echo "Native macOS binary execution: OK"
+
+  test-wasm:
+    name: Test (WebAssembly)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run WASM tool tests
+        run: |
+          bash tools/jda-wasm.sh --wat tests/conformance/stage1/pass/wasm_basic.jda > /dev/null
+          echo "WASM WAT generation: OK"
 
   benchmark:
     name: Benchmark regression check
