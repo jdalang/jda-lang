@@ -154,9 +154,9 @@ if [ -d "$FAIL_DIR" ]; then
 
         # Check for ; ARGS: directive in test file
         extra_args=""
-        args_line=$(grep '^; ARGS:' "$test_file" 2>/dev/null | head -1 || true)
+        args_line=$(grep '^// ARGS:' "$test_file" 2>/dev/null | head -1 || true)
         if [ -n "$args_line" ]; then
-            extra_args=$(echo "$args_line" | sed 's/^; ARGS: *//')
+            extra_args=$(echo "$args_line" | sed 's/^\/\/ ARGS: *//')
         fi
 
         # Compile — should fail
