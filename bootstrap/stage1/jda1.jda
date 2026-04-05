@@ -19652,7 +19652,7 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         jfn.var_alloc_sz[vidx] = ctrc_pages * 4096
     }
     // Linear types: mark variable as linear if its struct is linear
-    if bind_stype >= 1000 {
+    if bind_stype >= 1000 and bind_stype < TYPE_PTR_FLAG {
         let lin_sid = bind_stype - 1000
         if g_struct_is_linear[lin_sid] == 1 {
             let vidx2 = jfn.var_cnt - 1
