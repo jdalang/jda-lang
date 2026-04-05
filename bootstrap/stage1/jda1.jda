@@ -19558,7 +19558,11 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
     let rhs_id = -1
     let ctrc_pages = 0
     let rhs_t = tok_type_at_raw(toks0, g_main_pos)
-    if rhs_t == TOK_STR or rhs_t == TOK_RAW_STR {
+    if rhs_t == TOK_FLOAT {
+        bind_stype = TYPE_F64
+    } else if rhs_t == TOK_MINUS and tok_type_at_raw(toks0, g_main_pos + 1) == TOK_FLOAT {
+        bind_stype = TYPE_F64
+    } else if rhs_t == TOK_STR or rhs_t == TOK_RAW_STR {
         bind_stype = TYPE_PTR_I8
     } else if rhs_t == TOK_IDENT {
         let rhs_start0 = tok_str_start_at(toks0, g_main_pos)
