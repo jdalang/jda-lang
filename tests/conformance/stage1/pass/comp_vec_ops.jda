@@ -1,0 +1,52 @@
+fn main() -> i64 {
+    ; Test vec_sum: sum(range(5)) = 0+1+2+3+4 = 10
+    let v = range(5)
+    let s = vec_sum(v)
+    if s == 10 { print "sum ok" }
+
+    ; Test vec_min / vec_max
+    let v2 = vec_new(4)
+    vec_push(v2, 30)
+    vec_push(v2, 10)
+    vec_push(v2, 50)
+    vec_push(v2, 20)
+    let mn = vec_min(v2)
+    let mx = vec_max(v2)
+    if mn == 10 and mx == 50 { print "minmax ok" }
+
+    ; Test vec_slice: [0,1,2,3,4][1:4] = [1,2,3]
+    let sl = vec_slice(v, 1, 4)
+    let sn = vec_len(sl)
+    let sa = vec_get(sl, 0)
+    let sb = vec_get(sl, 2)
+    if sn == 3 and sa == 1 and sb == 3 { print "slice ok" }
+
+    ; Test vec_reverse: [0,1,2,3,4] -> [4,3,2,1,0]
+    let rv = vec_reverse(v)
+    let ra = vec_get(rv, 0)
+    let rb = vec_get(rv, 4)
+    if ra == 4 and rb == 0 { print "reverse ok" }
+
+    ; Test vec_sort: [30,10,50,20] -> [10,20,30,50]
+    let sorted = vec_sort(v2)
+    let s0 = vec_get(sorted, 0)
+    let s1 = vec_get(sorted, 1)
+    let s2 = vec_get(sorted, 2)
+    let s3 = vec_get(sorted, 3)
+    if s0 == 10 and s1 == 20 and s2 == 30 and s3 == 50 { print "sort ok" }
+
+    ; Test vec_concat: [1,2] + [3,4] = [1,2,3,4]
+    let a = vec_new(4)
+    vec_push(a, 1)
+    vec_push(a, 2)
+    let b = vec_new(4)
+    vec_push(b, 3)
+    vec_push(b, 4)
+    let cat = vec_concat(a, b)
+    let cn = vec_len(cat)
+    let c0 = vec_get(cat, 0)
+    let c3 = vec_get(cat, 3)
+    if cn == 4 and c0 == 1 and c3 == 4 { print "concat ok" }
+
+    ret 0
+}
