@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>http — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>http</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bignum.html">bignum</a> | <a href="bitops.html">bitops</a> | <a href="complex.html">complex</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <a href="crypto.html">crypto</a> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="digest.html">digest</a> | <a href="dns.html">dns</a> | <a href="encoding.html">encoding</a> | <a href="erb.html">erb</a> | <a href="file_io.html">file_io</a> | <a href="file_io_all.html">file_io_all</a> | <a href="fileutils.html">fileutils</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <a href="hashmap.html">hashmap</a> | <a href="heap.html">heap</a> | <strong>http</strong> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="marshal.html">marshal</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <a href="mutex.html">mutex</a> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="open3.html">open3</a> | <a href="optparse.html">optparse</a> | <a href="os.html">os</a> | <a href="pack.html">pack</a> | <a href="pathname.html">pathname</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <a href="process.html">process</a> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="range.html">range</a> | <a href="rational.html">rational</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="securerandom.html">securerandom</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <a href="signal.html">signal</a> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <a href="stringio.html">stringio</a> | <a href="stringscanner.html">stringscanner</a> | <a href="tcp.html">tcp</a> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <a href="tensor_slice.html">tensor_slice</a> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="tls.html">tls</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="weakref.html">weakref</a> | <a href="ws.html">ws</a> | <a href="yaml.html">yaml</a> | <a href="zlib.html">zlib</a></div>
+<ul class="toc"><li><span class="badge struct">struct</span><a href="#HttpRequest">HttpRequest</a></li><li><span class="badge struct">struct</span><a href="#Header">Header</a></li><li><span class="badge const">const</span><a href="#MAX_HEADERS">MAX_HEADERS</a></li><li><span class="badge struct">struct</span><a href="#HttpResponse">HttpResponse</a></li><li><span class="badge fn">fn</span><a href="#parse_request">parse_request</a></li><li><span class="badge fn">fn</span><a href="#send_response">send_response</a></li><li><span class="badge impl">impl</span><a href="#HttpRequest">HttpRequest</a></li><li><span class="badge fn">fn</span><a href="#read_token">read_token</a></li><li><span class="badge fn">fn</span><a href="#read_until">read_until</a></li><li><span class="badge fn">fn</span><a href="#read_until_crlf">read_until_crlf</a></li><li><span class="badge fn">fn</span><a href="#skip_sp">skip_sp</a></li><li><span class="badge fn">fn</span><a href="#skip_crlf">skip_crlf</a></li><li><span class="badge fn">fn</span><a href="#is_crlf">is_crlf</a></li><li><span class="badge fn">fn</span><a href="#find_char">find_char</a></li><li><span class="badge fn">fn</span><a href="#status_to_text">status_to_text</a></li><li><span class="badge fn">fn</span><a href="#tcp_write_raw">tcp_write_raw</a></li><li><span class="badge fn">fn</span><a href="#str_eq_ci">str_eq_ci</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="parse_request">
+  <span class="source-link">http.jda:45</span><span class="badge fn">fn</span><h3>parse_request</h3>
+  <code class="sig">fn parse_request(buf: []i8) -&gt; Result&lt;HttpRequest, []i8&gt;</code>
+</div>
+<div class="item fn" id="send_response">
+  <span class="source-link">http.jda:97</span><span class="badge fn">fn</span><h3>send_response</h3>
+  <code class="sig">fn send_response(fd: i32, resp: HttpResponse)</code>
+</div>
+<div class="item fn" id="read_token">
+  <span class="source-link">http.jda:156</span><span class="badge fn">fn</span><h3>read_token</h3>
+  <code class="sig">fn read_token(buf: []i8, pos: &amp;mut i64) -&gt; []i8</code>
+</div>
+<div class="item fn" id="read_until">
+  <span class="source-link">http.jda:164</span><span class="badge fn">fn</span><h3>read_until</h3>
+  <code class="sig">fn read_until(buf: []i8, pos: &amp;mut i64, delim: i8) -&gt; []i8</code>
+</div>
+<div class="item fn" id="read_until_crlf">
+  <span class="source-link">http.jda:172</span><span class="badge fn">fn</span><h3>read_until_crlf</h3>
+  <code class="sig">fn read_until_crlf(buf: []i8, pos: &amp;mut i64) -&gt; []i8</code>
+</div>
+<div class="item fn" id="skip_sp">
+  <span class="source-link">http.jda:180</span><span class="badge fn">fn</span><h3>skip_sp</h3>
+  <code class="sig">fn skip_sp(buf: []i8, pos: &amp;mut i64)</code>
+</div>
+<div class="item fn" id="skip_crlf">
+  <span class="source-link">http.jda:184</span><span class="badge fn">fn</span><h3>skip_crlf</h3>
+  <code class="sig">fn skip_crlf(buf: []i8, pos: &amp;mut i64)</code>
+</div>
+<div class="item fn" id="is_crlf">
+  <span class="source-link">http.jda:189</span><span class="badge fn">fn</span><h3>is_crlf</h3>
+  <code class="sig">fn is_crlf(buf: []i8, pos: i64) -&gt; bool</code>
+</div>
+<div class="item fn" id="find_char">
+  <span class="source-link">http.jda:193</span><span class="badge fn">fn</span><h3>find_char</h3>
+  <code class="sig">fn find_char(s: []i8, c: i8) -&gt; i64</code>
+</div>
+<div class="item fn" id="status_to_text">
+  <span class="source-link">http.jda:198</span><span class="badge fn">fn</span><h3>status_to_text</h3>
+  <code class="sig">fn status_to_text(code: i32) -&gt; []i8</code>
+</div>
+<div class="item fn" id="tcp_write_raw">
+  <span class="source-link">http.jda:220</span><span class="badge fn">fn</span><h3>tcp_write_raw</h3>
+  <code class="sig">fn tcp_write_raw(fd: i32, s: []i8)</code>
+</div>
+<div class="item fn" id="str_eq_ci">
+  <span class="source-link">http.jda:224</span><span class="badge fn">fn</span><h3>str_eq_ci</h3>
+  <code class="sig">fn str_eq_ci(a: []i8, b: []i8) -&gt; bool</code>
+</div>
+<h2>Structs</h2>
+<div class="item struct" id="HttpRequest">
+  <span class="source-link">http.jda:22</span><span class="badge struct">struct</span><h3>HttpRequest</h3>
+  <code class="sig">struct HttpRequest { method:  []i8       ; &quot;GET&quot;, &quot;POST&quot;, etc. — slice of raw buf, path:    []i8       ; &quot;/index.html&quot;, query:   []i8       ; &quot;key=val&amp;key2=val2&quot; (empty slice if no query), version: []i8       ; &quot;HTTP/1.1&quot;, headers: []Header   ; parsed headers (up to MAX_HEADERS), body:    []i8       ; request body (empty for GET/HEAD) }</code>
+</div>
+<div class="item struct" id="Header">
+  <span class="source-link">http.jda:27</span><span class="badge struct">struct</span><h3>Header</h3>
+  <code class="sig">struct Header { name:  []i8, value: []i8 }</code>
+</div>
+<div class="item struct" id="HttpResponse">
+  <span class="source-link">http.jda:38</span><span class="badge struct">struct</span><h3>HttpResponse</h3>
+  <code class="sig">struct HttpResponse { status:  i32, headers: []i8       ; raw header string (e.g. &quot;Content-Type: text/html\r\n&quot;), body:    []i8 }</code>
+</div>
+<h2>Constants</h2>
+<div class="item const" id="MAX_HEADERS">
+  <span class="source-link">http.jda:29</span><span class="badge const">const</span><h3>MAX_HEADERS</h3>
+  <code class="sig">const MAX_HEADERS = 32</code>
+</div>
+<h2>Implementations</h2>
+<div class="item impl" id="HttpRequest">
+  <span class="source-link">http.jda:131</span><span class="badge impl">impl</span><h3>HttpRequest</h3>
+  <code class="sig">impl HttpRequest</code><h4>Methods</h4><div class="method"><code class="sig">fn header(self, name: ref []i8) -&gt; []i8</code></div><div class="method"><code class="sig">fn content_length(self) -&gt; i64</code></div><div class="method"><code class="sig">fn is_keep_alive(self) -&gt; bool</code></div>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>
