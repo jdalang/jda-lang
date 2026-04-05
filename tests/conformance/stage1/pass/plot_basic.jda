@@ -1,0 +1,61 @@
+fn main() -> i64 {
+    ; === bar chart ===
+    let arr: &i64 = alloc_pages(1)
+    arr[0] = 2 arr[1] = 5 arr[2] = 3 arr[3] = 1
+    print "=== bars ===\n"
+    plot_bars(arr, 4, 10)
+
+    ; === summary ===
+    print "=== summary ===\n"
+    plot_summary(arr, 4)
+
+    ; === histogram ===
+    let data: &i64 = alloc_pages(1)
+    data[0] = 1 data[1] = 2 data[2] = 2 data[3] = 3 data[4] = 3
+    data[5] = 3 data[6] = 4 data[7] = 4 data[8] = 5 data[9] = 5
+    let bins: &i64 = alloc_pages(1)
+    print "=== hist ===\n"
+    plot_hist(data, 10, 5, 1, 6, 10, bins)
+
+    ; === line plot ===
+    let line: &i64 = alloc_pages(1)
+    line[0] = 1 line[1] = 3 line[2] = 5 line[3] = 4 line[4] = 2
+    print "=== line ===\n"
+    plot_line(line, 5, 5)
+
+    ; === scatter (inline point placement) ===
+    let xs: &i64 = alloc_pages(1)
+    let ys: &i64 = alloc_pages(1)
+    xs[0] = 0 ys[0] = 0
+    xs[1] = 2 ys[1] = 2
+    xs[2] = 4 ys[2] = 4
+    let grid: &i64 = alloc_pages(1)
+    let gi = 0
+    loop gi < 25 {
+        grid[gi] = 0
+        gi = gi + 1
+    }
+    gi = 0
+    loop gi < 3 {
+        let px = xs[gi]
+        let py = ys[gi]
+        let ry = 4 - py
+        let idx = ry * 5 + px
+        grid[idx] = 1
+        gi = gi + 1
+    }
+    print "=== scatter ===\n"
+    scatter_print(grid, 5, 5)
+
+    ; === heatmap ===
+    let heat: &i64 = alloc_pages(1)
+    heat[0] = 0 heat[1] = 3 heat[2] = 6 heat[3] = 9
+    heat[4] = 3 heat[5] = 6 heat[6] = 9 heat[7] = 6
+    heat[8] = 6 heat[9] = 9 heat[10] = 6 heat[11] = 3
+    heat[12] = 9 heat[13] = 6 heat[14] = 3 heat[15] = 0
+    print "=== heatmap ===\n"
+    plot_heatmap(heat, 4, 4)
+
+    print "done"
+    ret 0
+}
