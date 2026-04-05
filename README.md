@@ -40,32 +40,70 @@ jda0 (asm) → jda1 (374 KB) → jda1_sh2 (2.1 MB) → jda1_sh3
                                                     identical — fixed point
 ```
 
-## Quick Example
+## Real-World Examples
+
+**jda-grep** — ripgrep-style text search (~400 lines, 1 MB static binary)
 
 ```jda
-struct Point { x: i64  y: i64 }
-
-fn distance(a: &Point, b: &Point) -> i64 {
-    let dx = b.x - a.x
-    let dy = b.y - a.y
-    ret dx * dx + dy * dy
+fn search_file(path: &i8, pattern: &i8, pat_len: i64) -> i64 {
+    let fd = file_open(path, 0)
+    let buf = file_read_all(fd)
+    let matches = 0
+    let line_num = 1
+    for i in range(str_len(buf)) {
+        if substr_match(buf, i, pattern, pat_len) {
+            print_match(path, line_num, buf, i)
+            matches += 1
+        }
+        if byte_at(buf, i) == 10 { line_num += 1 }
+    }
+    file_close(fd)
+    ret matches
 }
+```
 
-fn main() -> i64 {
-    let p1 = Point{}
-    let p2 = Point{}
-    p1.x = 3   p1.y = 4
-    p2.x = 6   p2.y = 8
-    let d = distance(&p1, &p2)
-    print("{d}\n")
+**Log analyzer** — process GB-scale server logs natively
+
+```jda
+fn analyze_log(path: &i8) -> i64 {
+    let fd = file_open(path, 0)
+    let total = 0
+    let errors = 0
+    let latency_sum: f64 = 0.0
+    loop file_eof(fd) == 0 {
+        let line = file_read_line(fd)
+        total += 1
+        if str_contains(line, "ERROR") { errors += 1 }
+        let ms = parse_latency(line)
+        latency_sum = latency_sum + ms
+    }
+    let avg = latency_sum / int_to_f64(total)
+    print("Lines: {total}  Errors: {errors}\n")
+    print_f64("Avg latency: ", avg, " ms\n")
     ret 0
 }
 ```
 
-```bash
-$ jda run example.jda
-25
+**File search indexer** — build an in-memory index over a directory tree
+
+```jda
+fn index_directory(root: &i8) -> &HashMap {
+    let index = hashmap_new()
+    let files = find(root, "*.jda")
+    for i in range(vec_len(files)) {
+        let path = vec_get_str(files, i)
+        let content = file_read_all_str(path)
+        let words = str_split(content, " ")
+        for j in range(vec_len(words)) {
+            let w = vec_get_str(words, j)
+            hashmap_set(index, w, path)
+        }
+    }
+    ret index
+}
 ```
+
+All three compile to **< 1.1 MB static ELF binaries** with zero external dependencies.
 
 ## Language Features
 
