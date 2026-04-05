@@ -522,6 +522,14 @@ let g_ctx_heap: &i8 = 0
 let g_ctx: &LowerCtx = 0
 let g_pi64_char: i64 = 0
 
+; REPL state
+let g_repl_def_buf: &i8 = 0
+let g_repl_def_len = 0
+let g_repl_stmt_buf: &i8 = 0
+let g_repl_stmt_len = 0
+let g_repl_line_buf: &i8 = 0
+let g_repl_src_buf: &i8 = 0
+
 ; ============================================================
 ; 2. LEXER
 ; ============================================================
@@ -18956,6 +18964,7 @@ fn print_usage() {
     eprint("usage: jda build [--include <lib.jda>] <file.jda> [-o output]\n")
     eprint("       jda run [--include <lib.jda>] <file.jda>\n")
     eprint("       jda <input.jda> <output>   (legacy)\n")
+    eprint("       jda repl                              (interactive)\n")
     eprint("       jda --version\n")
     eprint("       jda --help\n")
 }
@@ -19134,12 +19143,191 @@ fn compile_lambda_fixups(ctx: &LowerCtx) {
     g_lam_merged_pos = mp
 }
 
+; ============================================================
+; REPL (Read-Eval-Print Loop)
+; ============================================================
+
+fn repl_starts_with(line: &i8, pfx: &i8, plen: i64) -> i64 {
+    let i = 0
+    loop i < plen {
+        if line[i] != pfx[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+fn repl_classify(line: &i8, len: i64) -> i64 {
+    if len >= 3 {
+        if line[0] == 102 and line[1] == 110 and line[2] == 32 { ret 1 }
+    }
+    if len >= 7 {
+        if repl_starts_with(line, "struct ", 7) == 1 { ret 1 }
+    }
+    if len >= 6 {
+        if repl_starts_with(line, "const ", 6) == 1 { ret 1 }
+    }
+    ret 0
+}
+
+fn repl_buf_copy(dst: &i8, doff: i64, src: &i8, soff: i64, len: i64) {
+    let i = 0
+    loop i < len {
+        poke_byte(dst, doff + i, src[soff + i])
+        i = i + 1
+    }
+}
+
+fn repl_buf_copy_cstr(dst: &i8, doff: i64, s: &i8) -> i64 {
+    let slen = cstr_len_max(s, 4096)
+    repl_buf_copy(dst, doff, s, 0, slen)
+    ret doff + slen
+}
+
+fn repl_compose_source() -> i64 {
+    let buf = g_repl_src_buf
+    let p = 0
+    repl_buf_copy(buf, 0, g_repl_def_buf, 0, g_repl_def_len)
+    p = g_repl_def_len
+    p = repl_buf_copy_cstr(buf, p, "fn main() {\n")
+    repl_buf_copy(buf, p, g_repl_stmt_buf, 0, g_repl_stmt_len)
+    p = p + g_repl_stmt_len
+    p = repl_buf_copy_cstr(buf, p, "}\n")
+    ret p
+}
+
+fn repl_write_tmp(buf: &i8, len: i64) {
+    let fd = syscall(2, "/tmp/jda_repl.jda", 577, 420)
+    if fd < 0 { ret 0 }
+    syscall(1, fd, buf, len)
+    syscall(3, fd, 0, 0)
+    ret 0
+}
+
+fn repl_fork_compile(self_path: &i8) -> i64 {
+    let pid = syscall(57, 0, 0, 0)
+    if pid == 0 {
+        let devnull = syscall(2, "/dev/null", 1, 0)
+        if devnull >= 0 { syscall(33, devnull, 1, 0) }
+        let argv = alloc_pages(1)
+        store_i64_at(argv, 0, self_path)
+        store_i64_at(argv, 1, "build")
+        store_i64_at(argv, 2, "/tmp/jda_repl.jda")
+        store_i64_at(argv, 3, "-o")
+        store_i64_at(argv, 4, "/tmp/jda_repl")
+        store_i64_at(argv, 5, 0)
+        let envp = alloc_pages(1)
+        store_i64_at(envp, 0, 0)
+        syscall(59, self_path, argv, envp)
+        syscall(60, 1, 0, 0)
+        ret 0
+    }
+    let status_buf = alloc_pages(1)
+    syscall(61, pid, status_buf, 0)
+    let status = status_buf[0]
+    let exit_code = status / 256
+    if exit_code == 0 { ret 1 }
+    ret 0
+}
+
+fn repl_fork_run() {
+    let pid = syscall(57, 0, 0, 0)
+    if pid == 0 {
+        let argv = alloc_pages(1)
+        store_i64_at(argv, 0, "/tmp/jda_repl")
+        store_i64_at(argv, 1, 0)
+        let envp = alloc_pages(1)
+        store_i64_at(envp, 0, 0)
+        syscall(59, "/tmp/jda_repl", argv, envp)
+        syscall(60, 1, 0, 0)
+    }
+    let status_buf = alloc_pages(1)
+    syscall(61, pid, status_buf, 0)
+}
+
+fn repl_is_quit(line: &i8, len: i64) -> i64 {
+    if len == 2 {
+        if line[0] == 58 and line[1] == 113 { ret 1 }
+    }
+    if len == 5 {
+        if repl_starts_with(line, ":quit", 5) == 1 { ret 1 }
+    }
+    ret 0
+}
+
+fn repl_append_line(line: &i8, line_len: i64) {
+    if repl_classify(line, line_len) == 1 {
+        repl_buf_copy(g_repl_def_buf, g_repl_def_len, line, 0, line_len)
+        g_repl_def_len = g_repl_def_len + line_len
+        poke_byte(g_repl_def_buf, g_repl_def_len, 10)
+        g_repl_def_len = g_repl_def_len + 1
+    } else {
+        repl_buf_copy(g_repl_stmt_buf, g_repl_stmt_len, line, 0, line_len)
+        g_repl_stmt_len = g_repl_stmt_len + line_len
+        poke_byte(g_repl_stmt_buf, g_repl_stmt_len, 10)
+        g_repl_stmt_len = g_repl_stmt_len + 1
+    }
+}
+
+fn repl_process_line(self_path: &i8, line: &i8, line_len: i64) -> i64 {
+    if line_len == 0 { ret 1 }
+    if repl_is_quit(line, line_len) == 1 { ret 0 }
+    let saved_def_len = g_repl_def_len
+    let saved_stmt_len = g_repl_stmt_len
+    repl_append_line(line, line_len)
+    let src_len = repl_compose_source()
+    repl_write_tmp(g_repl_src_buf, src_len)
+    let compile_ok = repl_fork_compile(self_path)
+    if compile_ok == 1 {
+        repl_fork_run()
+    } else {
+        g_repl_def_len = saved_def_len
+        g_repl_stmt_len = saved_stmt_len
+    }
+    ret 1
+}
+
+fn repl_check(argc: i64, argv_ptr: &i64) {
+    if argc >= 2 {
+        let a1 = get_argv(argv_ptr, 1)
+        if cstr_eq(a1, "repl") == 1 {
+            repl_run(argv_ptr)
+        }
+    }
+}
+
+fn repl_run(argv_ptr: &i64) {
+    g_repl_def_buf = alloc_pages(64)
+    g_repl_stmt_buf = alloc_pages(64)
+    g_repl_line_buf = alloc_pages(2)
+    g_repl_src_buf = alloc_pages(128)
+    g_repl_def_len = 0
+    g_repl_stmt_len = 0
+    let self_path = get_argv(argv_ptr, 0)
+    eprint("Jda REPL - type :q to quit\n")
+    let running = 1
+    loop running == 1 {
+        eprint("jda> ")
+        let nread = syscall(0, 0, g_repl_line_buf, 4096)
+        if nread <= 0 { running = 0 }
+        if running == 1 {
+            let line_len = nread
+            if line_len > 0 {
+                let last = line_len - 1
+                if g_repl_line_buf[last] == 10 { line_len = last }
+            }
+            running = repl_process_line(self_path, g_repl_line_buf, line_len)
+        }
+    }
+    syscall(60, 0, 0, 0)
+}
+
 fn main(argc: i64, argv_ptr: &i64) {
     let src_path: &i8 = 0
     let out_path: &i8 = 0
     let include_path: &i8 = 0
     let do_run = 0
     g_argv_base = argv_ptr
+    repl_check(argc, argv_ptr)
 
     if argc < 2 {
         print_usage()
