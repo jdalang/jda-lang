@@ -1,0 +1,10 @@
+; Test: program with shared global accessed from a single thread (no race).
+; The race detector (jda race) would detect races if accessed from multiple
+; threads, but this conformance test just verifies the program runs correctly.
+let g_counter = 0
+
+fn main() {
+    g_counter = 10
+    let x = g_counter + 5
+    print_int(x)
+}
