@@ -1,0 +1,94 @@
+; Test proper string type — stdlib/string.jda comprehensive test
+
+fn main() {
+    ; str_from_cstr — no manual length needed
+    let s = str_from_cstr("hello world")
+    let len = str_len(s)
+    print("{len}\n")
+
+    ; str_is_empty
+    let empty = str_new()
+    let e1 = str_is_empty(empty)
+    let e2 = str_is_empty(s)
+    print("{e1}\n")
+    print("{e2}\n")
+
+    ; str_cmp — use str_from_i64 to print since print() is unsigned
+    let a = str_from_cstr("apple")
+    let b = str_from_cstr("banana")
+    let c1 = str_cmp(a, b)
+    let c1s = str_from_i64(c1)
+    str_println(c1s)
+    let c2 = str_cmp(b, a)
+    print("{c2}\n")
+    let c3 = str_cmp(a, a)
+    print("{c3}\n")
+
+    ; str_trim
+    let padded = str_from("  hi  ", 6)
+    let trimmed = str_trim(padded)
+    str_println(trimmed)
+
+    ; str_trim_left / str_trim_right
+    let tl = str_trim_left(padded)
+    let tr = str_trim_right(padded)
+    let tl_len = str_len(tl)
+    let tr_len = str_len(tr)
+    print("{tl_len}\n")
+    print("{tr_len}\n")
+
+    ; str_replace
+    let orig = str_from_cstr("foo bar foo")
+    let old = str_from_cstr("foo")
+    let new_s = str_from_cstr("baz")
+    let replaced = str_replace(orig, old, new_s)
+    str_println(replaced)
+
+    ; str_repeat
+    let ha = str_from_cstr("ha")
+    let laugh = str_repeat(ha, 3)
+    str_println(laugh)
+
+    ; str_reverse
+    let fwd = str_from_cstr("abcd")
+    let rev = str_reverse(fwd)
+    str_println(rev)
+
+    ; str_from_i64
+    let n1 = str_from_i64(42)
+    str_println(n1)
+    let n2 = str_from_i64(0)
+    str_println(n2)
+    let neg7 = 0 - 7
+    let n3 = str_from_i64(neg7)
+    str_println(n3)
+
+    ; str_insert / str_remove
+    let base = str_from_cstr("helo")
+    let ins = str_from_cstr("l")
+    let fixed = str_insert(base, 3, ins)
+    str_println(fixed)
+
+    let removed = str_remove(fixed, 0, 1)
+    str_println(removed)
+
+    ; str_pad_left / str_pad_right
+    let num = str_from_cstr("42")
+    let padl = str_pad_left(num, 5, 48)
+    str_println(padl)
+    let padr = str_pad_right(num, 5, 46)
+    str_println(padr)
+
+    ; str_split / str_join
+    let csv = str_from_cstr("a,b,c")
+    let parts: &i64 = alloc_pages(1)
+    let cnt: &i64 = alloc_pages(1)
+    str_split(csv, 44, parts, cnt)
+    let nparts = cnt[0]
+    print("{nparts}\n")
+    let sep = str_from_cstr("-")
+    let joined = str_join(parts, nparts, sep)
+    str_println(joined)
+
+    print("ok\n")
+}
