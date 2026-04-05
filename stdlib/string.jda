@@ -1,0 +1,305 @@
+; =============================================================================
+; jda::string -- String Type
+; =============================================================================
+; Length-prefixed strings built on &i8 byte buffers. Immutable-style API
+; (operations return new strings).
+;
+; Memory layout per string (&i64):
+;   [0] length     (byte count)
+;   [1] capacity   (allocated bytes)
+;   [2] data_ptr   (&i8 — the byte buffer)
+;
+; Functions:
+;   str_new()                  -> &i64   empty string
+;   str_from(src, len)         -> &i64   copy from literal
+;   str_clone(s)               -> &i64   deep copy
+;   str_len(s)                 -> i64    byte length
+;   str_byte(s, idx)           -> i64    byte at index
+;   str_eq(a, b)               -> i64    content equality (1/0)
+;   str_concat(a, b)           -> &i64   concatenation
+;   str_append(s, src, len)    -> &i64   append literal bytes
+;   str_slice(s, start, end)   -> &i64   substring [start, end)
+;   str_contains(s, sub)       -> i64    1 if sub found
+;   str_index_of(s, sub)       -> i64    position or -1
+;   str_starts_with(s, pfx)    -> i64    1/0
+;   str_ends_with(s, sfx)      -> i64    1/0
+;   str_count(s, sub)          -> i64    non-overlapping count
+;   str_to_upper(s)            -> &i64   ASCII uppercase copy
+;   str_to_lower(s)            -> &i64   ASCII lowercase copy
+;   str_print(s)                         write to stdout
+; =============================================================================
+
+; Globals for byte-level access (compiler needs &i8 typed globals for
+; correct byte-sized loads — local &i8 vars from &i64 header loads
+; don't properly re-type).
+let g_str_a: &i8 = 0
+let g_str_b: &i8 = 0
+
+;; Internal: allocate a string with given capacity.
+fn str_alloc(cap: i64) -> &i64 {
+    let c = cap
+    if c < 16 { c = 16 }
+    let hdr: &i64 = alloc_pages(1)
+    let bytes = c
+    let pages = bytes / 4096
+    let rem = bytes - pages * 4096
+    if rem > 0 { pages = pages + 1 }
+    if pages == 0 { pages = 1 }
+    let data: &i8 = alloc_pages(pages)
+    hdr[0] = 0
+    hdr[1] = c
+    hdr[2] = data
+    ret hdr
+}
+
+;; Internal: copy n bytes using globals.
+fn str_copy(n: i64) {
+    let i = 0
+    loop i < n {
+        let b = g_str_a[i]
+        poke_byte(g_str_b, i, b)
+        i = i + 1
+    }
+}
+
+;; Internal: copy n bytes from g_str_a at off_a to g_str_b at off_b.
+fn str_copy_at(off_b: i64, off_a: i64, n: i64) {
+    let i = 0
+    loop i < n {
+        let b = g_str_a[off_a + i]
+        poke_byte(g_str_b, off_b + i, b)
+        i = i + 1
+    }
+}
+
+;; Create an empty string.
+fn str_new() -> &i64 {
+    ret str_alloc(16)
+}
+
+;; Create a string by copying bytes from a literal.
+fn str_from(src: &i8, len: i64) -> &i64 {
+    let s = str_alloc(len)
+    g_str_a = src
+    g_str_b = s[2]
+    str_copy(len)
+    s[0] = len
+    ret s
+}
+
+;; Deep copy a string.
+fn str_clone(s: &i64) -> &i64 {
+    let len = s[0]
+    let c = str_alloc(len)
+    g_str_a = s[2]
+    g_str_b = c[2]
+    str_copy(len)
+    c[0] = len
+    ret c
+}
+
+;; Get byte length.
+fn str_len(s: &i64) -> i64 {
+    ret s[0]
+}
+
+;; Get byte at index.
+fn str_byte(s: &i64, idx: i64) -> i64 {
+    g_str_a = s[2]
+    ret g_str_a[idx]
+}
+
+;; Content equality.
+fn str_eq(a: &i64, b: &i64) -> i64 {
+    let alen = a[0]
+    let blen = b[0]
+    if alen != blen { ret 0 }
+    g_str_a = a[2]
+    g_str_b = b[2]
+    let i = 0
+    loop i < alen {
+        if g_str_a[i] != g_str_b[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Concatenate two strings.
+fn str_concat(a: &i64, b: &i64) -> &i64 {
+    let alen = a[0]
+    let blen = b[0]
+    let total = alen + blen
+    let s = str_alloc(total)
+    ; Copy a's bytes
+    g_str_a = a[2]
+    g_str_b = s[2]
+    str_copy(alen)
+    ; Copy b's bytes after a
+    g_str_a = b[2]
+    g_str_b = s[2]
+    str_copy_at(alen, 0, blen)
+    s[0] = total
+    ret s
+}
+
+;; Append literal bytes to a string.
+fn str_append(s: &i64, src: &i8, len: i64) -> &i64 {
+    let slen = s[0]
+    let total = slen + len
+    let r = str_alloc(total)
+    ; Copy s's bytes
+    g_str_a = s[2]
+    g_str_b = r[2]
+    str_copy(slen)
+    ; Copy literal bytes after
+    g_str_a = src
+    g_str_b = r[2]
+    str_copy_at(slen, 0, len)
+    r[0] = total
+    ret r
+}
+
+;; Substring [start, end). Returns new string.
+fn str_slice(s: &i64, start: i64, end: i64) -> &i64 {
+    let slen = s[0]
+    let st = start
+    let en = end
+    if st < 0 { st = 0 }
+    if en > slen { en = slen }
+    if st >= en {
+        ret str_new()
+    }
+    let n = en - st
+    let r = str_alloc(n)
+    g_str_a = s[2]
+    g_str_b = r[2]
+    str_copy_at(0, st, n)
+    r[0] = n
+    ret r
+}
+
+;; Internal: check if sub matches at position pos in s.
+fn str_match_at(s: &i64, pos: i64, sub: &i64) -> i64 {
+    let slen = s[0]
+    let sublen = sub[0]
+    let end = pos + sublen
+    if end > slen { ret 0 }
+    g_str_a = s[2]
+    g_str_b = sub[2]
+    let i = 0
+    loop i < sublen {
+        if g_str_a[pos + i] != g_str_b[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Find first occurrence of sub in s. Returns position or -1.
+fn str_index_of(s: &i64, sub: &i64) -> i64 {
+    let slen = s[0]
+    let sublen = sub[0]
+    if sublen == 0 { ret 0 }
+    if sublen > slen { ret 0 - 1 }
+    let limit = slen - sublen
+    let i = 0
+    loop i <= limit {
+        if str_match_at(s, i, sub) == 1 { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Check if s contains sub.
+fn str_contains(s: &i64, sub: &i64) -> i64 {
+    let pos = str_index_of(s, sub)
+    let not_found = 0 - 1
+    if pos != not_found { ret 1 }
+    ret 0
+}
+
+;; Check if s starts with prefix.
+fn str_starts_with(s: &i64, pfx: &i64) -> i64 {
+    ret str_match_at(s, 0, pfx)
+}
+
+;; Check if s ends with suffix.
+fn str_ends_with(s: &i64, sfx: &i64) -> i64 {
+    let slen = s[0]
+    let sfxlen = sfx[0]
+    if sfxlen > slen { ret 0 }
+    let pos = slen - sfxlen
+    ret str_match_at(s, pos, sfx)
+}
+
+;; Count non-overlapping occurrences of sub in s.
+fn str_count(s: &i64, sub: &i64) -> i64 {
+    let slen = s[0]
+    let sublen = sub[0]
+    if sublen == 0 { ret 0 }
+    if sublen > slen { ret 0 }
+    let count = 0
+    let i = 0
+    let limit = slen - sublen
+    loop i <= limit {
+        let m = str_match_at(s, i, sub)
+        if m == 1 {
+            count = count + 1
+            i = i + sublen
+        }
+        if m == 0 {
+            i = i + 1
+        }
+    }
+    ret count
+}
+
+;; ASCII uppercase copy.
+fn str_to_upper(s: &i64) -> &i64 {
+    let len = s[0]
+    let r = str_alloc(len)
+    g_str_a = s[2]
+    g_str_b = r[2]
+    let i = 0
+    loop i < len {
+        let c = g_str_a[i]
+        if c >= 97 and c <= 122 {
+            let upper = c - 32
+            poke_byte(g_str_b, i, upper)
+        }
+        if c < 97 or c > 122 {
+            poke_byte(g_str_b, i, c)
+        }
+        i = i + 1
+    }
+    r[0] = len
+    ret r
+}
+
+;; ASCII lowercase copy.
+fn str_to_lower(s: &i64) -> &i64 {
+    let len = s[0]
+    let r = str_alloc(len)
+    g_str_a = s[2]
+    g_str_b = r[2]
+    let i = 0
+    loop i < len {
+        let c = g_str_a[i]
+        if c >= 65 and c <= 90 {
+            let lower = c + 32
+            poke_byte(g_str_b, i, lower)
+        }
+        if c < 65 or c > 90 {
+            poke_byte(g_str_b, i, c)
+        }
+        i = i + 1
+    }
+    r[0] = len
+    ret r
+}
+
+;; Write string to stdout.
+fn str_print(s: &i64) {
+    let len = s[0]
+    g_str_a = s[2]
+    syscall(1, 1, g_str_a, len)
+}
