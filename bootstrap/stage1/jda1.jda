@@ -516,6 +516,7 @@ let g_runtime_src_len: i64 = 0
 let g_src_buf_ptr: &i8 = 0
 let g_small_src_buf_ptr: &i8 = 0
 let g_out_path_ptr: &i8 = 0
+let g_src_filename: &i8 = 0
 let g_do_run: i64 = 0
 let g_jfn_heap: &i8 = 0
 let g_jfn: &JirFunction = 0
@@ -2450,13 +2451,24 @@ fn report_error_at(tok_idx: i64, msg: &i8) {
     ; Clamp line_len to avoid huge output
     if line_len > 200 { line_len = 200 }
 
-    ; error: <message>
-    eprint("error: ")
+    ; file.jda:line:col: error: <message>
+    if g_src_filename != 0 {
+        eprint(g_src_filename)
+        eprint(":")
+    }
+    eprint_i64(line)
+    eprint(":")
+    eprint_i64(col)
+    eprint(": error: ")
     eprint(msg)
     eprint("\n")
 
     ; --> <line>:<col>
     eprint("  --> ")
+    if g_src_filename != 0 {
+        eprint(g_src_filename)
+        eprint(":")
+    }
     eprint_i64(line)
     eprint(":")
     eprint_i64(col)
@@ -2488,6 +2500,18 @@ fn report_error(msg: &i8) {
 
 fn live_codegen_expr_inline(bb: i64) -> i64 {
     let r = live_codegen_binop_inline(0, bb)
+    ; Handle 'as <type>' cast — skip type annotation, return expression value unchanged
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_IDENT {
+        let as_s = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos)
+        let as_l = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos)
+        if as_l == 2 and streq(g_src_buf_ptr, as_s, 2, "as") == 1 {
+            g_main_pos = g_main_pos + 1
+            ; Skip '&' if present (pointer cast)
+            if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_AMP { g_main_pos = g_main_pos + 1 }
+            ; Skip the type token
+            g_main_pos = g_main_pos + 1
+        }
+    }
     ret r
 }
 
@@ -6591,7 +6615,20 @@ fn is_term_tok(tok: i32) -> i64 {
 }
 
 fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    ret codegen_or_inline(toks, pos, stab, src, jfn, bb)
+    let result = codegen_or_inline(toks, pos, stab, src, jfn, bb)
+    ; Handle 'as <type>' cast — skip type annotation, return expression value unchanged
+    if tok_type_at(toks, pos[0]) == TOK_IDENT {
+        let as_s = tok_str_start_at(toks, pos[0])
+        let as_l = tok_str_len_at(toks, pos[0])
+        if as_l == 2 and streq(src, as_s, 2, "as") == 1 {
+            pos[0] = pos[0] + 1
+            ; Skip '&' if present (pointer cast)
+            if tok_type_at(toks, pos[0]) == TOK_AMP { pos[0] = pos[0] + 1 }
+            ; Skip the type token (i64, i32, i8, or ident)
+            pos[0] = pos[0] + 1
+        }
+    }
+    ret result
 }
 
 fn codegen_or_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -7224,6 +7261,20 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
             pos[0] = pos[0] + 1
             ret emit_const(jfn, bb, TYPE_I64, cval)
         }
+        ; null literal
+        if t_len == 4 and streq(src, t_start, 4, "null") == 1 {
+            pos[0] = pos[0] + 1
+            ret emit_const(jfn, bb, TYPE_I64, 0)
+        }
+        ; true/false literals
+        if t_len == 4 and streq(src, t_start, 4, "true") == 1 {
+            pos[0] = pos[0] + 1
+            ret emit_const(jfn, bb, TYPE_I64, 1)
+        }
+        if t_len == 5 and streq(src, t_start, 5, "false") == 1 {
+            pos[0] = pos[0] + 1
+            ret emit_const(jfn, bb, TYPE_I64, 0)
+        }
         ; Enum variant: EnumName.Variant or EnumName.Variant(args)
         if tok_type_at(toks, pos[0] + 1) == TOK_DOT and g_enum_buf != 0 {
             let ev_start = tok_str_start_at(toks, pos[0] + 2)
@@ -7340,6 +7391,23 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
             }
             ret emit_const(jfn, bb, TYPE_I64, 0)
         }
+        ; StructName[N] — struct array allocation
+        if tok_type_at(toks, pos[0] + 1) == TOK_LBRACK {
+            let sa_sid = lookup_struct(stab, src, t_start, t_len)
+            if sa_sid >= 0 {
+                pos[0] = pos[0] + 2
+                let sa_count = tok_imm_at(toks, pos[0])
+                pos[0] = pos[0] + 1
+                if tok_type_at(toks, pos[0]) == TOK_RBRACK { pos[0] = pos[0] + 1 }
+                let sa_elem_sz = stab.sizes[sa_sid]
+                let sa_total = sa_count * sa_elem_sz
+                let sa_sz_id = emit_const(jfn, bb, TYPE_I64, sa_total)
+                let sa_ins = Instr{}
+                sa_ins.op = OP_ALLOC
+                sa_ins.operand0 = sa_sz_id
+                ret emit(jfn, bb, &sa_ins)
+            }
+        }
         ret -1
     }
     pos[0] = pos[0] + 1
@@ -7439,6 +7507,17 @@ fn codegen_arg_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         let acval = lookup_const(src, a_start, a_len)
         if acval != -1 {
             ret emit_const(jfn, bb, TYPE_I64, acval)
+        }
+        ; null literal
+        if a_len == 4 and streq(src, a_start, 4, "null") == 1 {
+            ret emit_const(jfn, bb, TYPE_I64, 0)
+        }
+        ; true/false literals
+        if a_len == 4 and streq(src, a_start, 4, "true") == 1 {
+            ret emit_const(jfn, bb, TYPE_I64, 1)
+        }
+        if a_len == 5 and streq(src, a_start, 5, "false") == 1 {
+            ret emit_const(jfn, bb, TYPE_I64, 0)
         }
         ret emit_const(jfn, bb, TYPE_I64, 0)
     }
@@ -10206,6 +10285,23 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
             ldg.op = OP_LOAD_MEM
             ldg.operand0 = addr
             ret emit(g_jfn, bb, &ldg)
+        }
+        ; StructName[N] — struct array allocation
+        if tok_type_at_raw(g_dbg_toks_init, g_main_pos + 1) == TOK_LBRACK {
+            let sa_sid = lookup_struct(g_stab_ptr, g_src_buf_ptr, t.str_start, t.str_len)
+            if sa_sid >= 0 {
+                g_main_pos = g_main_pos + 2
+                let sa_count = tok_imm_at(g_dbg_toks_init, g_main_pos)
+                g_main_pos = g_main_pos + 1
+                if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_RBRACK { g_main_pos = g_main_pos + 1 }
+                let sa_elem_sz = g_stab_ptr.sizes[sa_sid]
+                let sa_total = sa_count * sa_elem_sz
+                let sa_sz_id = emit_const(g_jfn, bb, TYPE_I64, sa_total)
+                let sa_ins = Instr{}
+                sa_ins.op = OP_ALLOC
+                sa_ins.operand0 = sa_sz_id
+                ret emit(g_jfn, bb, &sa_ins)
+            }
         }
         ret -1
     }
@@ -19419,6 +19515,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     }
 
     g_out_path_ptr = out_path
+    g_src_filename = src_path
 
     let src_buf = alloc_pages(256)  ; 1MB (supports --include prepend)
     g_src_buf_ptr = src_buf
@@ -19925,7 +20022,10 @@ fn main(argc: i64, argv_ptr: &i64) {
             ti_f = ti_f + 1
         }
         if found == 0 {
-            fill_bytes(code_buf + co_f - 1, 5, 0x90) ; NOP unresolved calls
+            eprint("error: undefined function: ")
+            eprint_src_range(src_buf, call_name, call_nlen)
+            eprint("\n")
+            syscall(60, 1, 0, 0)
         }
         ci_f = ci_f + 1
     }
