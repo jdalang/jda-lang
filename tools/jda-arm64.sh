@@ -598,13 +598,13 @@ function gen_expr(expr_id,    t, val, name, off, op, left_id, right_id, cond, na
         } else {
             emit("  mov x0, #" and_bits(val, 0xffff))
             if (val > 65535) {
-                emit("  movk x0, #" and_bits(rshift(val, 16), 0xffff) ", lsl #16")
+                emit("  movk x0, #" and_bits(_rshift(val, 16), 0xffff) ", lsl #16")
             }
             if (val + 0 > 4294967295) {
-                emit("  movk x0, #" and_bits(rshift(val, 32), 0xffff) ", lsl #32")
+                emit("  movk x0, #" and_bits(_rshift(val, 32), 0xffff) ", lsl #32")
             }
             if (val + 0 > 281474976710655) {
-                emit("  movk x0, #" and_bits(rshift(val, 48), 0xffff) ", lsl #48")
+                emit("  movk x0, #" and_bits(_rshift(val, 48), 0xffff) ", lsl #48")
             }
         }
 
@@ -657,7 +657,7 @@ function and_bits(a, b,    result, bit, pa, pb) {
     return result
 }
 
-function rshift(a, n,    i) {
+function _rshift(a, n,    i) {
     for (i = 0; i < n; i++) a = int(a / 2)
     return a
 }
