@@ -1,0 +1,77 @@
+fn main() -> i64 {
+    let d = 0
+    let arr: &i64 = alloc_pages(1)
+    arr[0] = 1 arr[1] = 2 arr[2] = 3 arr[3] = 4 arr[4] = 5
+
+    ; === apply1 ===
+    let double = fn(x: i64) -> i64 { ret x * 2 + d }
+    let r1 = apply1(double, 5)
+    if r1 == 10 { print "apply ok" }
+
+    ; === all_of ===
+    let pos = fn(x: i64) -> i64 { if x > 0 { ret 1 + d } ret d }
+    let a = all_of(pos, arr, 5)
+    if a == 1 { print "all ok" }
+
+    ; === any_of ===
+    let gt4 = fn(x: i64) -> i64 { if x > 4 { ret 1 + d } ret d }
+    let b = any_of(gt4, arr, 5)
+    if b == 1 { print "any ok" }
+
+    ; === count_of ===
+    let gt2 = fn(x: i64) -> i64 { if x > 2 { ret 1 + d } ret d }
+    let c = count_of(gt2, arr, 5)
+    if c == 3 { print "count ok" }
+
+    ; === find_idx ===
+    let gt3 = fn(x: i64) -> i64 { if x > 3 { ret 1 + d } ret d }
+    let fi = find_idx(gt3, arr, 5)
+    if fi == 3 { print "find ok" }
+
+    ; === tabulate ===
+    let sq = fn(x: i64) -> i64 { ret x * x + d }
+    let tab: &i64 = alloc_pages(1)
+    tabulate(sq, tab, 4)
+    let t3 = tab[3]
+    if t3 == 9 { print "tabulate ok" }
+
+    ; === map_arr ===
+    let out: &i64 = alloc_pages(1)
+    map_arr(double, arr, 5, out)
+    let m0 = out[0]
+    let m4 = out[4]
+    if m0 == 2 {
+        if m4 == 10 { print "map ok" }
+    }
+
+    ; === filter_arr ===
+    let filt: &i64 = alloc_pages(1)
+    let fc = filter_arr(gt3, arr, 5, filt)
+    if fc == 2 { print "filter ok" }
+
+    ; === pipeline ===
+    let inc = fn(x: i64) -> i64 { ret x + 1 + d }
+    let fns: &i64 = alloc_pages(1)
+    fns[0] = double
+    fns[1] = inc
+    let pr = pipeline(fns, 2, 5)
+    if pr == 11 { print "pipeline ok" }
+
+    ; === fold (2-arg closure) ===
+    let add = fn(a: i64, b: i64) -> i64 { ret a + b + d }
+    let total = fold(add, arr, 5, 0)
+    if total == 15 { print "fold ok" }
+
+    ; === zip_with ===
+    let arr2: &i64 = alloc_pages(1)
+    arr2[0] = 10 arr2[1] = 20 arr2[2] = 30 arr2[3] = 40 arr2[4] = 50
+    let zout: &i64 = alloc_pages(1)
+    zip_with(add, arr, arr2, 5, zout)
+    let z0 = zout[0]
+    let z4 = zout[4]
+    if z0 == 11 {
+        if z4 == 55 { print "zip ok" }
+    }
+
+    ret 0
+}
