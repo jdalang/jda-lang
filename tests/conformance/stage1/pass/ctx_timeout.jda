@@ -1,0 +1,14 @@
+; Timeout of 1 nanosecond — will expire immediately after busy work
+fn main() {
+    let bg = ctx_background()
+    let ctx = ctx_with_timeout(bg, 1)
+    ; Busy loop to ensure time passes
+    let i = 0
+    loop i < 1000 {
+        i = i + 1
+    }
+    let d = ctx_done(ctx)
+    let e = ctx_err(ctx)
+    print_int(d)
+    print_int(e)
+}
