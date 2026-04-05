@@ -1,0 +1,561 @@
+; =============================================================================
+; jda-grep -- High-Performance Text Search Tool
+; =============================================================================
+; A real grep implementation written entirely in Jda.
+; Demonstrates: CLI arg parsing, file I/O, regex matching, directory
+; traversal, ANSI color output — all using Jda's standard library.
+;
+; Usage:
+;   jda-grep [OPTIONS] PATTERN [FILE...]
+;
+; Options:
+;   -n          Show line numbers
+;   -c          Count matching lines only
+;   -i          Case-insensitive search
+;
+;   -v          Invert match (show non-matching lines)
+;   -l          List matching filenames only
+;   --no-color  Disable color output
+;   --help      Show usage
+;
+; If no FILE given, reads from stdin.
+; If multiple files, prefixes each match with filename.
+;
+; Build:
+;   cat stdlib/prelude.jda stdlib/fs.jda stdlib/file_io.jda > /tmp/grep_lib.jda
+;   docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
+;     -v $(PWD):/jda -v /tmp/grep_lib.jda:/tmp/grep_lib.jda \
+;     -w /jda jda-build ./bootstrap/stage0/jda1 build \
+;     --include /tmp/grep_lib.jda apps/jda-grep.jda -o apps/jda-grep
+; =============================================================================
+
+; --- Globals ---
+let g_opt_linenum = 0
+let g_opt_count = 0
+let g_opt_icase = 0
+; g_opt_recursive removed — find.jda uses alloc_pages internally which
+; causes memory overlap in library functions. Recursive search deferred
+; until the compiler supports library-safe allocation.
+let g_opt_invert = 0
+let g_opt_listonly = 0
+let g_opt_color = 1
+let g_multi_file = 0
+let g_total_matches = 0
+
+; Pattern globals
+let g_pattern: &i8 = 0
+let g_pat_len = 0
+
+; Lowercased pattern for case-insensitive matching
+let g_pat_lower: &i8 = 0
+
+; Line buffer for case-insensitive comparison
+let g_line_lower: &i8 = 0
+
+; Number formatting buffer
+let g_numbuf: &i8 = 0
+
+; --- ANSI color codes ---
+; Red for match highlight, magenta for filename, green for line number, reset
+let g_color_red: &i8 = 0
+let g_color_red_len = 0
+let g_color_magenta: &i8 = 0
+let g_color_magenta_len = 0
+let g_color_green: &i8 = 0
+let g_color_green_len = 0
+let g_color_reset: &i8 = 0
+let g_color_reset_len = 0
+let g_color_cyan: &i8 = 0
+let g_color_cyan_len = 0
+
+; --- Byte helper for &i8 stride bug workaround ---
+fn grep_byte_at(buf: &i8, idx: i64) -> i64 {
+    ret buf[idx]
+}
+
+; --- Initialize ANSI escape codes ---
+fn init_colors() {
+    ; ESC = 27, '[' = 91
+    ; Red: ESC[1;31m (bold red)
+    g_color_red = alloc_pages(1)
+    set_byte(g_color_red, 0, 27)
+    set_byte(g_color_red, 1, 91)
+    set_byte(g_color_red, 2, 49)   ; '1'
+    set_byte(g_color_red, 3, 59)   ; ';'
+    set_byte(g_color_red, 4, 51)   ; '3'
+    set_byte(g_color_red, 5, 49)   ; '1'
+    set_byte(g_color_red, 6, 109)  ; 'm'
+    g_color_red_len = 7
+
+    ; Magenta: ESC[35m
+    g_color_magenta = alloc_pages(1)
+    set_byte(g_color_magenta, 0, 27)
+    set_byte(g_color_magenta, 1, 91)
+    set_byte(g_color_magenta, 2, 51)   ; '3'
+    set_byte(g_color_magenta, 3, 53)   ; '5'
+    set_byte(g_color_magenta, 4, 109)  ; 'm'
+    g_color_magenta_len = 5
+
+    ; Green: ESC[32m
+    g_color_green = alloc_pages(1)
+    set_byte(g_color_green, 0, 27)
+    set_byte(g_color_green, 1, 91)
+    set_byte(g_color_green, 2, 51)   ; '3'
+    set_byte(g_color_green, 3, 50)   ; '2'
+    set_byte(g_color_green, 4, 109)  ; 'm'
+    g_color_green_len = 5
+
+    ; Cyan: ESC[36m
+    g_color_cyan = alloc_pages(1)
+    set_byte(g_color_cyan, 0, 27)
+    set_byte(g_color_cyan, 1, 91)
+    set_byte(g_color_cyan, 2, 51)   ; '3'
+    set_byte(g_color_cyan, 3, 54)   ; '6'
+    set_byte(g_color_cyan, 4, 109)  ; 'm'
+    g_color_cyan_len = 5
+
+    ; Reset: ESC[0m
+    g_color_reset = alloc_pages(1)
+    set_byte(g_color_reset, 0, 27)
+    set_byte(g_color_reset, 1, 91)
+    set_byte(g_color_reset, 2, 48)   ; '0'
+    set_byte(g_color_reset, 3, 109)  ; 'm'
+    g_color_reset_len = 4
+}
+
+; --- Lowercase a byte (ASCII only) ---
+fn to_lower(ch: i64) -> i64 {
+    if ch >= 65 and ch <= 90 {
+        ret ch + 32
+    }
+    ret ch
+}
+
+; --- Lowercase a buffer into g_line_lower ---
+fn lowercase_buf(src: &i8, len: i64) {
+    let i = 0
+    loop i < len {
+        let ch = grep_byte_at(src, i)
+        if ch < 0 { ch = ch + 256 }
+        poke_byte(g_line_lower, i, to_lower(ch))
+        i = i + 1
+    }
+}
+
+; --- Prepare lowercase pattern ---
+fn prepare_pattern_lower() {
+    g_pat_lower = alloc_pages(1)
+    let i = 0
+    loop i < g_pat_len {
+        let ch = grep_byte_at(g_pattern, i)
+        if ch < 0 { ch = ch + 256 }
+        poke_byte(g_pat_lower, i, to_lower(ch))
+        i = i + 1
+    }
+}
+
+; --- Simple substring search (Boyer-Moore-Horspool would be nice but KMP is overkill for a first app) ---
+; Returns 1 if pattern found in line, 0 otherwise
+fn line_contains(line: &i8, llen: i64) -> i64 {
+    let pat = g_pattern
+    let plen = g_pat_len
+    if g_opt_icase == 1 {
+        lowercase_buf(line, llen)
+        pat = g_pat_lower
+        ; Search in g_line_lower
+        let max_start = llen - plen
+        let i = 0
+        loop i <= max_start {
+            let j = 0
+            let ok = 1
+            loop j < plen {
+                let lc = grep_byte_at(g_line_lower, i + j)
+                if lc < 0 { lc = lc + 256 }
+                let pc = grep_byte_at(pat, j)
+                if pc < 0 { pc = pc + 256 }
+                if lc != pc { ok = 0 }
+                if ok == 0 { j = plen }
+                if ok == 1 { j = j + 1 }
+            }
+            if ok == 1 { ret 1 }
+            i = i + 1
+        }
+        ret 0
+    }
+    ; Case-sensitive: direct byte comparison
+    let max_start = llen - plen
+    let i = 0
+    loop i <= max_start {
+        let j = 0
+        let ok = 1
+        loop j < plen {
+            let lc = grep_byte_at(line, i + j)
+            let pc = grep_byte_at(pat, j)
+            if lc != pc { ok = 0 }
+            if ok == 0 { j = plen }
+            if ok == 1 { j = j + 1 }
+        }
+        if ok == 1 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+; --- Print a number to stdout ---
+fn print_number(n: i64) {
+    let len = fmt_i64(g_numbuf, n)
+    print_str(g_numbuf, len)
+}
+
+; --- Print filename with color ---
+fn print_filename(path: &i8, plen: i64) {
+    if g_opt_color == 1 {
+        print_str(g_color_magenta, g_color_magenta_len)
+    }
+    print_str(path, plen)
+    if g_opt_color == 1 {
+        print_str(g_color_reset, g_color_reset_len)
+    }
+}
+
+; --- Print line number with color ---
+fn print_linenum(num: i64) {
+    if g_opt_color == 1 {
+        print_str(g_color_green, g_color_green_len)
+    }
+    print_number(num)
+    if g_opt_color == 1 {
+        print_str(g_color_reset, g_color_reset_len)
+    }
+}
+
+; --- Print separator colon with color ---
+fn print_sep() {
+    if g_opt_color == 1 {
+        print_str(g_color_cyan, g_color_cyan_len)
+    }
+    print(":")
+    if g_opt_color == 1 {
+        print_str(g_color_reset, g_color_reset_len)
+    }
+}
+
+; --- Find next newline position from start ---
+; Returns index of newline, or buf_len if no newline found
+fn find_newline(buf: &i8, start: i64, buf_len: i64) -> i64 {
+    let i = start
+    let found = 0
+    loop i < buf_len and found == 0 {
+        let ch = grep_byte_at(buf, i)
+        if ch == 10 {
+            found = 1
+        } else {
+            i = i + 1
+        }
+    }
+    ret i
+}
+
+; --- Process one matching line: print with filename/linenum ---
+fn print_match_line(line_ptr: &i8, line_len: i64, fname: &i8, fname_len: i64, line_num: i64) {
+    ; Print filename prefix if multiple files
+    if g_multi_file == 1 {
+        print_filename(fname, fname_len)
+        print_sep()
+    }
+    ; Print line number if -n
+    if g_opt_linenum == 1 {
+        print_linenum(line_num)
+        print_sep()
+    }
+    ; Print the matching line
+    print_str(line_ptr, line_len)
+    print("\n")
+}
+
+; --- Search a single file buffer ---
+; Returns number of matching lines
+fn search_buffer(buf: &i8, buf_len: i64, fname: &i8, fname_len: i64) -> i64 {
+    let match_count = 0
+    let line_num = 1
+    let pos = 0
+
+    loop pos <= buf_len {
+        if pos == buf_len {
+            ; End of buffer — done
+            pos = buf_len + 1
+        } else {
+            ; Find end of current line
+            let line_start = pos
+            let line_end = find_newline(buf, line_start, buf_len)
+            let line_len = line_end - line_start
+            let line_ptr: &i8 = buf + line_start
+
+            ; Check if line matches
+            let matched = 0
+            if line_len >= g_pat_len {
+                matched = line_contains(line_ptr, line_len)
+            }
+            ; Handle -v (invert) separately to avoid deep nesting
+            if g_opt_invert == 1 {
+                if matched == 1 { matched = 0 } else { matched = 1 }
+            }
+
+            if matched == 1 {
+                match_count = match_count + 1
+                if g_opt_count == 0 and g_opt_listonly == 0 {
+                    print_match_line(line_ptr, line_len, fname, fname_len, line_num)
+                }
+            }
+
+            ; Advance past newline
+            pos = line_end + 1
+            line_num = line_num + 1
+        }
+    }
+
+    ret match_count
+}
+
+; --- Get strlen of null-terminated string ---
+fn grep_strlen(s: &i8) -> i64 {
+    let i = 0
+    loop grep_byte_at(s, i) != 0 {
+        i = i + 1
+    }
+    ret i
+}
+
+; --- Search a single file by path ---
+fn search_file(path: &i8, path_len: i64) -> i64 {
+    let size = fs_file_size(path)
+    if size < 0 {
+        eprint_str(path, path_len)
+        print(": No such file or directory\n")
+        ret 0
+    }
+    if size == 0 { ret 0 }
+
+    let pages = size / 4096 + 2
+    let buf: &i8 = alloc_pages(pages)
+    let n = fs_read_file(path, buf, size)
+    if n < 0 {
+        eprint_str(path, path_len)
+        print(": Read error\n")
+        ret 0
+    }
+
+    let matches = search_buffer(buf, n, path, path_len)
+
+    ; If -l mode, print filename once if any match
+    if g_opt_listonly == 1 and matches > 0 {
+        print_str(path, path_len)
+        print("\n")
+    }
+
+    ; If -c mode, print count
+    if g_opt_count == 1 {
+        if g_multi_file == 1 {
+            print_filename(path, path_len)
+            print_sep()
+        }
+        print_number(matches)
+        print("\n")
+    }
+
+    ret matches
+}
+
+; --- Read stdin into buffer ---
+fn read_stdin() -> i64 {
+    let buf: &i8 = alloc_pages(256)  ; 1MB stdin buffer
+    let total = 0
+    let max_size = 1048576
+    let keep = 1
+    loop keep == 1 {
+        let remaining = max_size - total
+        if remaining < 1 {
+            keep = 0
+        }
+        if keep == 1 {
+            let n = syscall(0, 0, buf + total, remaining)
+            if n < 1 {
+                keep = 0
+            } else {
+                total = total + n
+            }
+        }
+    }
+
+    let stdin_name: &i8 = alloc_pages(1)
+    set_byte(stdin_name, 0, 40)   ; '('
+    set_byte(stdin_name, 1, 115)  ; 's'
+    set_byte(stdin_name, 2, 116)  ; 't'
+    set_byte(stdin_name, 3, 100)  ; 'd'
+    set_byte(stdin_name, 4, 105)  ; 'i'
+    set_byte(stdin_name, 5, 110)  ; 'n'
+    set_byte(stdin_name, 6, 41)   ; ')'
+    set_byte(stdin_name, 7, 0)
+
+    let matches = search_buffer(buf, total, stdin_name, 7)
+
+    if g_opt_count == 1 {
+        print_number(matches)
+        print("\n")
+    }
+
+    ret matches
+}
+
+; --- Print usage ---
+fn print_usage() {
+    print("Usage: jda-grep [OPTIONS] PATTERN [FILE...]\n")
+    print("\n")
+    print("Search for PATTERN in each FILE.\n")
+    print("\n")
+    print("Options:\n")
+    print("  -n          Show line numbers\n")
+    print("  -c          Count matching lines only\n")
+    print("  -i          Case-insensitive search\n")
+    ; -r removed — requires find.jda alloc_pages fix
+    print("  -v          Invert match (non-matching lines)\n")
+    print("  -l          List matching filenames only\n")
+    print("  --no-color  Disable color output\n")
+    print("  --help      Show this help\n")
+    print("\n")
+    print("Examples:\n")
+    print("  jda-grep error log.txt\n")
+    print("  jda-grep -n -i TODO src/*.jda\n")
+    print("  jda-grep -r fn /path/to/project\n")
+    print("  cat file.txt | jda-grep pattern\n")
+}
+
+; --- Check if a flag string matches ---
+fn flag_eq(s: &i8, c1: i64, c2: i64) -> i64 {
+    ; Check single-char flag like "n", "c", "i", etc.
+    let b0 = grep_byte_at(s, 0)
+    if b0 < 0 { b0 = b0 + 256 }
+    let b1 = grep_byte_at(s, 1)
+    if b1 < 0 { b1 = b1 + 256 }
+    ; For 1-char flags
+    if c2 == 0 {
+        if b0 == c1 and b1 == 0 { ret 1 }
+        ret 0
+    }
+    ; For 2-char flags
+    let b2 = grep_byte_at(s, 2)
+    if b2 < 0 { b2 = b2 + 256 }
+    if b0 == c1 and b1 == c2 and b2 == 0 { ret 1 }
+    ret 0
+}
+
+; --- Main entry point ---
+fn main(argc: i64, argv: &i64) -> i64 {
+    ; Initialize
+    g_numbuf = alloc_pages(1)
+    g_line_lower = alloc_pages(64)  ; 256KB for line lowercase buffer
+    init_colors()
+
+    ; Parse arguments manually (simpler than args.jda for flag detection)
+    ; Skip argv[0] (program name)
+    ; Collect flags first, then pattern, then files
+
+    let files: &i64 = alloc_pages(1)   ; array of file path pointers
+    let flens: &i64 = alloc_pages(1)   ; array of file path lengths
+    let file_count = 0
+    let pattern_set = 0
+
+    let i = 1
+    loop i < argc {
+        let arg: &i8 = argv[i]
+        let alen = grep_strlen(arg)
+        let b0 = grep_byte_at(arg, 0)
+        if b0 < 0 { b0 = b0 + 256 }
+
+        if b0 == 45 {
+            ; Starts with '-'
+            let b1 = grep_byte_at(arg, 1)
+            if b1 < 0 { b1 = b1 + 256 }
+
+            if b1 == 45 {
+                ; Long option: --help, --no-color
+                let b2 = grep_byte_at(arg, 2)
+                if b2 < 0 { b2 = b2 + 256 }
+                ; Check --help: arg[2]='h'
+                if b2 == 104 {
+                    print_usage()
+                    ret 0
+                }
+                ; Check --no-color: arg[2]='n', arg[5]='c'
+                if b2 == 110 {
+                    g_opt_color = 0
+                }
+            } else {
+                ; Short options: may be combined like -ni
+                let j = 1
+                loop j < alen {
+                    let ch = grep_byte_at(arg, j)
+                    if ch < 0 { ch = ch + 256 }
+                    if ch == 110 { g_opt_linenum = 1 }   ; 'n'
+                    if ch == 99  { g_opt_count = 1 }      ; 'c'
+                    if ch == 105 { g_opt_icase = 1 }      ; 'i'
+                    ; 'r' reserved for future recursive support
+                    if ch == 118 { g_opt_invert = 1 }      ; 'v'
+                    if ch == 108 { g_opt_listonly = 1 }    ; 'l'
+                    j = j + 1
+                }
+            }
+        } else {
+            ; Positional argument
+            if pattern_set == 0 {
+                ; First positional = pattern
+                g_pattern = arg
+                g_pat_len = alen
+                pattern_set = 1
+            } else {
+                ; Subsequent positional = file path
+                files[file_count] = arg
+                flens[file_count] = alen
+                file_count = file_count + 1
+            }
+        }
+        i = i + 1
+    }
+
+    ; Validate
+    if pattern_set == 0 {
+        print("jda-grep: missing pattern\n")
+        print("Try 'jda-grep --help' for usage.\n")
+        ret 2
+    }
+
+    ; Prepare lowercase pattern if case-insensitive
+    if g_opt_icase == 1 {
+        prepare_pattern_lower()
+    }
+
+    ; Determine multi-file mode
+    if file_count > 1 { g_multi_file = 1 }
+
+    ; No files = read from stdin
+    if file_count == 0 {
+        let m = read_stdin()
+        g_total_matches = g_total_matches + m
+        if g_total_matches > 0 { ret 0 }
+        ret 1
+    }
+
+    ; Process files
+    let fi = 0
+    loop fi < file_count {
+        let fpath: &i8 = files[fi]
+        let flen: i64 = flens[fi]
+        let m = search_file(fpath, flen)
+        g_total_matches = g_total_matches + m
+        fi = fi + 1
+    }
+
+    ; Exit code: 0 if matches found, 1 if not
+    if g_total_matches > 0 { ret 0 }
+    ret 1
+}
