@@ -7,7 +7,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | autograd | Automatic differentiation — forward/backward pass, gradient tape |
 | avx512_ops | AVX-512 SIMD vector operations — add, mul, fma, reduce |
 | comprehension | List/dict comprehensions — range, map, filter, sort, zip, enumerate |
-| context | Go-style context — cancel, timeout, deadline, parent chain |
+| context | Context — cancel, timeout, deadline, parent chain |
 | crypto | Cryptographic primitives — SHA-256, HMAC, constant-time compare |
 | dataclass | Data class utilities — comparison combinators (le/gt/ge/cmp), validation |
 | decorator | Higher-order functions — apply, fold, map, filter, find, pipeline, zip_with |
@@ -16,6 +16,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | fs | Filesystem primitives — open, close, read, write, stat, mkdir, unlink |
 | hashmap | Hash map — open addressing, linear probing, string keys, rehash |
 | io | I/O utilities — buffered read/write, stdin/stdout helpers |
+| iter | Chainable iterator adapters — map, filter, take, skip, fold, collect |
 | json | JSON parser/serializer — parse, stringify, get/set by key |
 | math | Math functions — abs, min, max, clamp, pow, sqrt, gcd, lcm |
 | nn | Neural network — layers, activations, loss functions, SGD optimizer |
