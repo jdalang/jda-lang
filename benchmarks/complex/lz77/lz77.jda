@@ -1,59 +1,39 @@
-// LZ77 compression benchmark — compress + decompress 1MB
+// LZ77 compression benchmark — compress + decompress 1MB of pseudo-random text
+// Reports compressed size, ratio, round-trip verification, and timing.
 
 let g_rng = 42
 let g_data: &i8
 let g_comp: &i8
 let g_decomp: &i8
 
-fn _sb(buf: &i8, idx: i64) -> i64 {
-    ret buf[idx]
-}
+fn _sb(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-fn _clk(buf: &i8) -> i64 {
-    let r = syscall(228, 1, buf, 0, 0)
-    ret r
-}
+fn _clk(buf: &i8) -> i64 { ret syscall(228, 1, buf, 0, 0) }
 
 fn now_ms(ts: &i8) -> i64 {
     _clk(ts)
-    let s = ts[0]
-    let ptr = ts + 8
-    let ns = ptr[0]
-    let ms = s * 1000 + ns / 1000000
-    ret ms
-}
-
-fn imod(a: i64, b: i64) -> i64 {
-    let d = a / b
-    let r = d * b
-    ret a - r
+    let s = ts[0]; let ptr = ts + 8; let ns = ptr[0]
+    ret s * 1000 + ns / 1000000
 }
 
 fn nrand() -> i64 {
-    let s = g_rng * 1103515245 + 12345
-    let r = s & 2147483647
-    g_rng = r
-    ret r
+    g_rng = (g_rng * 1103515245 + 12345) & 2147483647
+    ret g_rng
 }
 
 fn gen_data(size: i64) {
     let pos = 0
     loop pos < size {
-        let r = nrand()
-        let rm = imod(r, 3)
+        let rm = nrand() % 3
         if rm == 0 {
-            let ch = 97 + imod(nrand(), 26)
-            poke_byte(g_data, pos, ch)
+            poke_byte(g_data, pos, 97 + nrand() % 26)
             pos = pos + 1
         }
         if rm == 1 {
-            // Short run of random chars
-            let n = 1 + imod(nrand(), 8)
-            let j = 0
+            let n = 1 + nrand() % 8; let j = 0
             loop j < n {
                 if pos < size {
-                    let ch = 97 + imod(nrand(), 26)
-                    poke_byte(g_data, pos, ch)
+                    poke_byte(g_data, pos, 97 + nrand() % 26)
                     pos = pos + 1
                 }
                 j = j + 1
@@ -61,24 +41,19 @@ fn gen_data(size: i64) {
         }
         if rm == 2 {
             if pos > 20 {
-                let src = imod(nrand(), pos - 1)
-                let n = 3 + imod(nrand(), 20)
-                let j = 0
+                let src = nrand() % (pos - 1)
+                let n = 3 + nrand() % 20; let j = 0
                 loop j < n {
                     if pos < size {
                         let diff = pos - src
-                        let si = imod(j, diff)
-                        let bidx = src + si
-                        let ch = _sb(g_data, bidx)
+                        let ch = _sb(g_data, src + j % diff)
                         poke_byte(g_data, pos, ch)
                         pos = pos + 1
                     }
                     j = j + 1
                 }
-            }
-            if pos <= 20 {
-                let ch = 97 + imod(nrand(), 26)
-                poke_byte(g_data, pos, ch)
+            } else {
+                poke_byte(g_data, pos, 97 + nrand() % 26)
                 pos = pos + 1
             }
         }
@@ -86,109 +61,69 @@ fn gen_data(size: i64) {
 }
 
 fn lz77_compress(slen: i64) -> i64 {
-    let sp = 0
-    let dp = 0
-    let WINDOW = 4096
-    let AHEAD = 258
+    let sp = 0; let dp = 0
+    let WINDOW = 4096; let AHEAD = 258
     loop sp < slen {
-        let best_off = 0
-        let best_len = 0
+        let best_off = 0; let best_len = 0
         let ws = sp - WINDOW
         if ws < 0 { ws = 0 }
         let i = ws
         loop i < sp {
             let l = 0
-            let tmp_ml = slen - sp
-            let ml = tmp_ml - 1
+            let tmp = slen - sp; let ml = tmp - 1
             if ml > AHEAD { ml = AHEAD }
             let go = 1
             loop go == 1 {
                 if l >= ml { go = 0 }
                 if go == 1 {
-                    let a = _sb(g_data, i + l)
-                    let b = _sb(g_data, sp + l)
-                    if a != b { go = 0 }
+                    if _sb(g_data, i + l) != _sb(g_data, sp + l) { go = 0 }
                     if go == 1 { l = l + 1 }
                 }
             }
-            if l > best_len {
-                best_len = l
-                best_off = sp - i
-            }
+            if l > best_len { best_len = l; best_off = sp - i }
             i = i + 1
         }
         if best_len >= 3 {
-            poke_byte(g_comp, dp, 1)
-            dp = dp + 1
-            let hi = best_off / 256
-            let lo = imod(best_off, 256)
-            poke_byte(g_comp, dp, hi)
-            dp = dp + 1
-            poke_byte(g_comp, dp, lo)
-            dp = dp + 1
-            let bl = imod(best_len, 256)
-            poke_byte(g_comp, dp, bl)
-            dp = dp + 1
+            poke_byte(g_comp, dp, 1); dp = dp + 1
+            poke_byte(g_comp, dp, best_off / 256); dp = dp + 1
+            poke_byte(g_comp, dp, best_off % 256); dp = dp + 1
+            poke_byte(g_comp, dp, best_len % 256); dp = dp + 1
             sp = sp + best_len
-            let at_end = 0
-            if sp >= slen { at_end = 1 }
-            if at_end == 0 {
-                let ch = _sb(g_data, sp)
-                poke_byte(g_comp, dp, ch)
-                dp = dp + 1
-                sp = sp + 1
+            if sp < slen {
+                poke_byte(g_comp, dp, _sb(g_data, sp)); dp = dp + 1; sp = sp + 1
+            } else {
+                poke_byte(g_comp, dp, 0); dp = dp + 1
             }
-            if at_end == 1 {
-                poke_byte(g_comp, dp, 0)
-                dp = dp + 1
-            }
-        }
-        if best_len < 3 {
-            poke_byte(g_comp, dp, 0)
-            dp = dp + 1
-            let ch = _sb(g_data, sp)
-            poke_byte(g_comp, dp, ch)
-            dp = dp + 1
-            sp = sp + 1
+        } else {
+            poke_byte(g_comp, dp, 0); dp = dp + 1
+            poke_byte(g_comp, dp, _sb(g_data, sp)); dp = dp + 1; sp = sp + 1
         }
     }
     ret dp
 }
 
 fn lz77_decomp(csz: i64) -> i64 {
-    let sp = 0
-    let dp = 0
+    let sp = 0; let dp = 0
     loop sp < csz {
         let tag = _sb(g_comp, sp)
         if tag == 1 {
             sp = sp + 1
-            let h = _sb(g_comp, sp)
-            let sp1 = sp + 1
-            let lo = _sb(g_comp, sp1)
+            let h = _sb(g_comp, sp); let lo = _sb(g_comp, sp + 1)
             let offset = h * 256 + lo
             sp = sp + 2
-            let length = _sb(g_comp, sp)
-            sp = sp + 1
-            let nxt = _sb(g_comp, sp)
-            sp = sp + 1
-            let start = dp - offset
-            let j = 0
+            let length = _sb(g_comp, sp); sp = sp + 1
+            let nxt = _sb(g_comp, sp); sp = sp + 1
+            let start = dp - offset; let j = 0
             loop j < length {
-                let si = start + j
-                let ch = _sb(g_decomp, si)
-                poke_byte(g_decomp, dp, ch)
-                dp = dp + 1
-                j = j + 1
+                poke_byte(g_decomp, dp, _sb(g_decomp, start + j))
+                dp = dp + 1; j = j + 1
             }
-            poke_byte(g_decomp, dp, nxt)
-            dp = dp + 1
+            poke_byte(g_decomp, dp, nxt); dp = dp + 1
         }
         if tag == 0 {
             sp = sp + 1
-            let ch = _sb(g_comp, sp)
-            poke_byte(g_decomp, dp, ch)
-            dp = dp + 1
-            sp = sp + 1
+            poke_byte(g_decomp, dp, _sb(g_comp, sp))
+            dp = dp + 1; sp = sp + 1
         }
     }
     ret dp
@@ -213,17 +148,11 @@ fn main() -> i64 {
     let ok = 1
     if dsz != DSIZE { ok = 0 }
     if ok == 1 {
-        let i = 0
-        let go = 1
+        let i = 0; let go = 1
         loop go == 1 {
             if i >= DSIZE { go = 0 }
             if go == 1 {
-                let a = _sb(g_data, i)
-                let b = _sb(g_decomp, i)
-                if a != b {
-                    ok = 0
-                    go = 0
-                }
+                if _sb(g_data, i) != _sb(g_decomp, i) { ok = 0; go = 0 }
                 i = i + 1
             }
         }
@@ -233,17 +162,8 @@ fn main() -> i64 {
     let elapsed = t1 - t0
     let ratio = csz * 100 / DSIZE
 
-    print("original: ")
-    print("{DSIZE}")
-    print("\ncompressed: ")
-    print("{csz}")
-    print("\nratio: ")
-    print("{ratio}")
-    print("%\nverified: ")
-    if ok == 1 { print("yes") }
-    if ok == 0 { print("no") }
-    print("\ntime: ")
-    print("{elapsed}")
-    print(" ms\n")
+    print("original: {DSIZE}\ncompressed: {csz}\nratio: {ratio}%\n")
+    if ok == 1 { print("verified: yes\n") } else { print("verified: no\n") }
+    print("time: {elapsed} ms\n")
     ret 0
 }
