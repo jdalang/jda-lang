@@ -44,6 +44,7 @@ Commands:
   run     Compile and execute a .jda file
   repl    Start the interactive REPL
   test    Run test files with assertions
+  fuzz    Fuzz test fn fuzz_* functions with random inputs
   fmt     Format .jda source files
   doc     Generate documentation from doc comments
   pkg     Package manager (init, add, build, deps)
@@ -176,6 +177,9 @@ case "$CMD" in
         ;;
     test)
         exec "$SCRIPT_DIR/jda-test.sh" "$@"
+        ;;
+    fuzz)
+        exec python3 "$SCRIPT_DIR/jda-fuzz.sh" "$@"
         ;;
     fmt)
         exec "$SCRIPT_DIR/jda-fmt.sh" "$@"
