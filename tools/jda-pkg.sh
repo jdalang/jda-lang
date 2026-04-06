@@ -577,6 +577,72 @@ cmd_check() {
     fi
 }
 
+# ─── install (copy stdlib package to local project) ────────────────────────
+
+cmd_install() {
+    local name="${1:-}"
+    [ -n "$name" ] || die "usage: jda-pkg.sh install <package-name>"
+
+    local stdlib_dir="$SCRIPT_DIR/../stdlib"
+    local pkg_file="$stdlib_dir/${name}.jda"
+
+    if [ ! -f "$pkg_file" ]; then
+        die "unknown stdlib package: $name (see 'jda-pkg.sh search')"
+    fi
+
+    mkdir -p lib
+
+    if [ -f "lib/${name}.jda" ]; then
+        echo "Already installed: lib/${name}.jda"
+    else
+        cp "$pkg_file" "lib/${name}.jda"
+        echo "Installed: lib/${name}.jda"
+    fi
+
+    case "$name" in
+        sort|set|queue|ring|heap)
+            if [ ! -f "lib/vec.jda" ]; then
+                echo "  hint: '$name' depends on vec — run 'jda-pkg.sh install vec'"
+            fi
+            ;;
+        uuid)
+            if [ ! -f "lib/math.jda" ]; then
+                echo "  hint: '$name' depends on math — run 'jda-pkg.sh install math'"
+            fi
+            if [ ! -f "lib/bitops.jda" ]; then
+                echo "  hint: '$name' depends on bitops — run 'jda-pkg.sh install bitops'"
+            fi
+            ;;
+    esac
+}
+
+# ─── list (list installed packages) ────────────────────────────────────────
+
+cmd_list() {
+    if [ ! -d "lib" ]; then
+        echo "No packages installed (lib/ not found)."
+        return
+    fi
+
+    local count=0
+    echo "Installed packages:"
+    for f in lib/*.jda; do
+        if [ -f "$f" ]; then
+            local name
+            name="$(basename "$f" .jda)"
+            printf "  %-24s %s\n" "$name" "$f"
+            count=$((count + 1))
+        fi
+    done
+
+    if [ "$count" -eq 0 ]; then
+        echo "  (none)"
+    else
+        echo ""
+        echo "$count package(s) installed."
+    fi
+}
+
 # ─── search (search stdlib packages) ────────────────────────────────────────
 
 cmd_search() {
@@ -622,6 +688,8 @@ if [ $# -lt 1 ]; then
     echo "  jda-pkg.sh deps                       List dependencies"
     echo "  jda-pkg.sh tree                       Dependency tree"
     echo "  jda-pkg.sh check                      Verify manifest & lockfile"
+    echo "  jda-pkg.sh install <name>              Install stdlib package to lib/"
+    echo "  jda-pkg.sh list                       List installed packages"
     echo "  jda-pkg.sh clean                      Remove build artifacts & cache"
     echo "  jda-pkg.sh search [query]             Search stdlib packages"
     exit 1
@@ -640,6 +708,8 @@ case "$CMD" in
     deps)   cmd_deps "$@" ;;
     tree)   cmd_tree "$@" ;;
     check)  cmd_check "$@" ;;
+    install) cmd_install "$@" ;;
+    list)   cmd_list "$@" ;;
     clean)  cmd_clean "$@" ;;
     search) cmd_search "$@" ;;
     *)      die "unknown command: $CMD" ;;

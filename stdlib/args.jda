@@ -1,0 +1,183 @@
+; =============================================================================
+; jda::args -- CLI Argument Parser
+; =============================================================================
+; Parse command-line arguments from argv. Supports flags (--flag), options
+; (--key=value or --key value), and positional arguments.
+;
+; Memory layout per ArgParser (&i64):
+;   [0] argc
+;   [1] argv_ptr (from program start)
+;   [2] positional_count
+;   [3] positional_vec (vec of &i8 pointers)
+;   [4] flag_count
+;   [5] flag_names (vec of &i8 pointers)
+;   [6] opt_count
+;   [7] opt_names (vec of &i8 pointers)
+;   [8] opt_values (vec of &i8 pointers)
+;
+; Functions:
+;   args_new(argc, argv)       -> &i64  create parser from argc/argv
+;   args_parse(ap)                      parse all arguments
+;   args_has_flag(ap, flag, flen) -> i64  1 if --flag present
+;   args_get_opt(ap, key, klen)   -> &i8  value for --key=val (0 if absent)
+;   args_positional(ap, idx)      -> &i8  positional arg at index
+;   args_positional_count(ap)     -> i64  number of positional args
+;   args_argc(ap)                 -> i64  total argc
+; =============================================================================
+
+;; Internal: compare two C strings up to len bytes.
+fn args_str_eq(a: &i8, b: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ca = load_i8_at(a, i)
+        let cb = load_i8_at(b, i)
+        if ca != cb { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Internal: strlen of a C string (null-terminated).
+fn args_strlen(s: &i8) -> i64 {
+    let i = 0
+    loop load_i8_at(s, i) != 0 {
+        i = i + 1
+    }
+    ret i
+}
+
+;; Internal: find '=' in a C string, return index or -1.
+fn args_find_eq(s: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        if load_i8_at(s, i) == 61 { ret i }  ; '='
+        i = i + 1
+    }
+    ret -1
+}
+
+;; Create argument parser.
+fn args_new(argc: i64, argv: &i64) -> &i64 {
+    let ap: &i64 = alloc_pages(1)
+    ap[0] = argc
+    ap[1] = argv
+    ap[2] = 0  ; positional count
+    ap[3] = vec_new(16)  ; positional pointers
+    ap[4] = 0  ; flag count
+    ap[5] = vec_new(16)  ; flag name pointers
+    ap[6] = 0  ; opt count
+    ap[7] = vec_new(16)  ; opt name pointers
+    ap[8] = vec_new(16)  ; opt value pointers
+    ret ap
+}
+
+;; Parse all arguments (skip argv[0] which is the program name).
+fn args_parse(ap: &i64) {
+    let argc = ap[0]
+    let argv: &i64 = ap[1]
+    let i = 1  ; skip program name
+    loop i < argc {
+        let arg: &i8 = argv[i]
+        let alen = args_strlen(arg)
+        ; Check if starts with "--"
+        if alen >= 2 and load_i8_at(arg, 0) == 45 and load_i8_at(arg, 1) == 45 {
+            ; Skip the "--" prefix
+            let name_start = 2
+            let eq_pos = args_find_eq(arg, alen)
+            if eq_pos >= 0 {
+                ; --key=value format
+                let flags = ap[5]
+                let opts = ap[7]
+                let vals = ap[8]
+                ; Store pointer to name (at offset 2) and length
+                vec_push(opts, arg + name_start)
+                vec_push(vals, arg + eq_pos + 1)
+                ap[6] = ap[6] + 1
+            } else {
+                ; --flag (no value)
+                let flags = ap[5]
+                vec_push(flags, arg + name_start)
+                ap[4] = ap[4] + 1
+            }
+        } else {
+            if alen >= 1 and load_i8_at(arg, 0) == 45 {
+                ; -f short flag
+                let flags = ap[5]
+                vec_push(flags, arg + 1)
+                ap[4] = ap[4] + 1
+            } else {
+                ; Positional argument
+                let pos = ap[3]
+                vec_push(pos, arg)
+                ap[2] = ap[2] + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
+;; Check if a flag is present.
+fn args_has_flag(ap: &i64, flag: &i8, flen: i64) -> i64 {
+    let flags: &i64 = ap[5]
+    let count = ap[4]
+    let data: &i64 = flags[2]
+    let i = 0
+    loop i < count {
+        let f: &i8 = data[i]
+        let fl = args_strlen(f)
+        if fl == flen {
+            if args_str_eq(f, flag, flen) == 1 { ret 1 }
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Get option value for --key=val. Returns 0 if not found.
+fn args_get_opt(ap: &i64, key: &i8, klen: i64) -> &i8 {
+    let names: &i64 = ap[7]
+    let vals: &i64 = ap[8]
+    let count = ap[6]
+    let ndata: &i64 = names[2]
+    let vdata: &i64 = vals[2]
+    let i = 0
+    loop i < count {
+        let n: &i8 = ndata[i]
+        ; Compare up to '=' or end
+        let nlen = 0
+        loop load_i8_at(n, nlen) != 0 and load_i8_at(n, nlen) != 61 {
+            nlen = nlen + 1
+        }
+        if nlen == klen {
+            if args_str_eq(n, key, klen) == 1 {
+                let v: &i8 = vdata[i]
+                ret v
+            }
+        }
+        i = i + 1
+    }
+    let null: &i8 = 0
+    ret null
+}
+
+;; Get positional argument at index.
+fn args_positional(ap: &i64, idx: i64) -> &i8 {
+    let pos: &i64 = ap[3]
+    if idx >= ap[2] {
+        let null: &i8 = 0
+        ret null
+    }
+    let data: &i64 = pos[2]
+    let p: &i8 = data[idx]
+    ret p
+}
+
+;; Number of positional arguments.
+fn args_positional_count(ap: &i64) -> i64 {
+    ret ap[2]
+}
+
+;; Total argc.
+fn args_argc(ap: &i64) -> i64 {
+    ret ap[0]
+}
