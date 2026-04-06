@@ -1,0 +1,222 @@
+; =============================================================================
+; jda::matrix -- Integer Matrix Operations
+; =============================================================================
+; 2D matrix of i64 values. Row-major layout.
+;
+; Memory layout per matrix (&i64):
+;   [0] rows
+;   [1] cols
+;   [2] data_ptr (&i64)
+;
+; Functions:
+;   mat_new(rows, cols)            -> &i64  create zero matrix
+;   mat_get(m, r, c)              -> i64   element at (r, c)
+;   mat_set(m, r, c, val)                  set element at (r, c)
+;   mat_rows(m)                   -> i64   row count
+;   mat_cols(m)                   -> i64   column count
+;   mat_add(a, b)                 -> &i64  element-wise addition
+;   mat_sub(a, b)                 -> &i64  element-wise subtraction
+;   mat_mul(a, b)                 -> &i64  matrix multiplication
+;   mat_scale(m, s)               -> &i64  scalar multiplication
+;   mat_transpose(m)              -> &i64  transpose
+;   mat_identity(n)               -> &i64  n x n identity matrix
+;   mat_trace(m)                  -> i64   sum of diagonal
+;   mat_eq(a, b)                  -> i64   1 if same dimensions and values
+;   mat_copy(m)                   -> &i64  deep copy
+;   mat_fill(m, val)                       fill all elements with val
+; =============================================================================
+
+fn mat_pages_for(n: i64) -> i64 {
+    let bytes = n * 8
+    let pages = bytes / 4096
+    let rem = bytes - pages * 4096
+    if rem > 0 { pages = pages + 1 }
+    if pages == 0 { pages = 1 }
+    ret pages
+}
+
+;; Create a rows x cols matrix initialized to 0.
+fn mat_new(rows: i64, cols: i64) -> &i64 {
+    let hdr: &i64 = alloc_pages(1)
+    let total = rows * cols
+    let data: &i64 = alloc_pages(mat_pages_for(total))
+    let i = 0
+    loop i < total {
+        data[i] = 0
+        i = i + 1
+    }
+    hdr[0] = rows
+    hdr[1] = cols
+    hdr[2] = data
+    ret hdr
+}
+
+fn mat_rows(m: &i64) -> i64 { ret m[0] }
+fn mat_cols(m: &i64) -> i64 { ret m[1] }
+
+fn mat_get(m: &i64, r: i64, c: i64) -> i64 {
+    let data: &i64 = m[2]
+    let cols = m[1]
+    ret data[r * cols + c]
+}
+
+fn mat_set(m: &i64, r: i64, c: i64, val: i64) {
+    let data: &i64 = m[2]
+    let cols = m[1]
+    data[r * cols + c] = val
+}
+
+fn mat_add(a: &i64, b: &i64) -> &i64 {
+    let rows = a[0]
+    let cols = a[1]
+    let out = mat_new(rows, cols)
+    let adata: &i64 = a[2]
+    let bdata: &i64 = b[2]
+    let odata: &i64 = out[2]
+    let total = rows * cols
+    let i = 0
+    loop i < total {
+        odata[i] = adata[i] + bdata[i]
+        i = i + 1
+    }
+    ret out
+}
+
+fn mat_sub(a: &i64, b: &i64) -> &i64 {
+    let rows = a[0]
+    let cols = a[1]
+    let out = mat_new(rows, cols)
+    let adata: &i64 = a[2]
+    let bdata: &i64 = b[2]
+    let odata: &i64 = out[2]
+    let total = rows * cols
+    let i = 0
+    loop i < total {
+        odata[i] = adata[i] - bdata[i]
+        i = i + 1
+    }
+    ret out
+}
+
+fn mat_mul(a: &i64, b: &i64) -> &i64 {
+    let ar = a[0]
+    let ac = a[1]
+    let bc = b[1]
+    let out = mat_new(ar, bc)
+    let adata: &i64 = a[2]
+    let bdata: &i64 = b[2]
+    let odata: &i64 = out[2]
+    let i = 0
+    loop i < ar {
+        let j = 0
+        loop j < bc {
+            let sum = 0
+            let k = 0
+            loop k < ac {
+                sum = sum + adata[i * ac + k] * bdata[k * bc + j]
+                k = k + 1
+            }
+            odata[i * bc + j] = sum
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret out
+}
+
+fn mat_scale(m: &i64, s: i64) -> &i64 {
+    let rows = m[0]
+    let cols = m[1]
+    let out = mat_new(rows, cols)
+    let mdata: &i64 = m[2]
+    let odata: &i64 = out[2]
+    let total = rows * cols
+    let i = 0
+    loop i < total {
+        odata[i] = mdata[i] * s
+        i = i + 1
+    }
+    ret out
+}
+
+fn mat_transpose(m: &i64) -> &i64 {
+    let rows = m[0]
+    let cols = m[1]
+    let out = mat_new(cols, rows)
+    let mdata: &i64 = m[2]
+    let odata: &i64 = out[2]
+    let i = 0
+    loop i < rows {
+        let j = 0
+        loop j < cols {
+            odata[j * rows + i] = mdata[i * cols + j]
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret out
+}
+
+fn mat_identity(n: i64) -> &i64 {
+    let m = mat_new(n, n)
+    let data: &i64 = m[2]
+    let i = 0
+    loop i < n {
+        data[i * n + i] = 1
+        i = i + 1
+    }
+    ret m
+}
+
+fn mat_trace(m: &i64) -> i64 {
+    let n = m[0]
+    let cols = m[1]
+    if cols < n { n = cols }
+    let data: &i64 = m[2]
+    let sum = 0
+    let i = 0
+    loop i < n {
+        sum = sum + data[i * cols + i]
+        i = i + 1
+    }
+    ret sum
+}
+
+fn mat_eq(a: &i64, b: &i64) -> i64 {
+    if a[0] != b[0] { ret 0 }
+    if a[1] != b[1] { ret 0 }
+    let total = a[0] * a[1]
+    let adata: &i64 = a[2]
+    let bdata: &i64 = b[2]
+    let i = 0
+    loop i < total {
+        if adata[i] != bdata[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+fn mat_copy(m: &i64) -> &i64 {
+    let rows = m[0]
+    let cols = m[1]
+    let out = mat_new(rows, cols)
+    let mdata: &i64 = m[2]
+    let odata: &i64 = out[2]
+    let total = rows * cols
+    let i = 0
+    loop i < total {
+        odata[i] = mdata[i]
+        i = i + 1
+    }
+    ret out
+}
+
+fn mat_fill(m: &i64, val: i64) {
+    let total = m[0] * m[1]
+    let data: &i64 = m[2]
+    let i = 0
+    loop i < total {
+        data[i] = val
+        i = i + 1
+    }
+}
