@@ -1,0 +1,231 @@
+; =============================================================================
+; jda::ipaddr -- IP Address Parsing and Manipulation
+; =============================================================================
+; Parse and manipulate IPv4 addresses. Stored as 32-bit integers.
+;
+; Functions:
+;   ip_parse(src, len)             -> i64   parse "1.2.3.4" to i64 (0 on error)
+;   ip_format(addr, dst)           -> i64   format i64 to "1.2.3.4", return len
+;   ip_octet(addr, n)              -> i64   get nth octet (0=MSB, 3=LSB)
+;   ip_from_octets(a, b, c, d)    -> i64   build from 4 octets
+;   ip_is_private(addr)            -> i64   1 if RFC 1918 private
+;   ip_is_loopback(addr)           -> i64   1 if 127.0.0.0/8
+;   ip_is_multicast(addr)          -> i64   1 if 224.0.0.0/4
+;   ip_network(addr, prefix)       -> i64   network address for CIDR
+;   ip_broadcast(addr, prefix)     -> i64   broadcast address for CIDR
+;   ip_in_subnet(addr, net, prefix) -> i64  1 if addr in subnet
+;   ip_to_sockaddr(addr, port, dst) -> i64  write sockaddr_in to dst, return 16
+; =============================================================================
+
+;; Build IP from 4 octets.
+fn ip_from_octets(a: i64, b: i64, c: i64, d: i64) -> i64 {
+    ret a * 16777216 + b * 65536 + c * 256 + d
+}
+
+;; Get octet n (0=first/MSB, 3=last/LSB).
+fn ip_octet(addr: i64, n: i64) -> i64 {
+    if n == 0 { ret addr / 16777216 }
+    if n == 1 {
+        let r = addr / 65536
+        ret r - (r / 256) * 256
+    }
+    if n == 2 {
+        let r = addr / 256
+        ret r - (r / 256) * 256
+    }
+    ret addr - (addr / 256) * 256
+}
+
+;; Parse "a.b.c.d" string to integer.
+fn ip_parse(src: &i8, len: i64) -> i64 {
+    let octets: &i64 = alloc_pages(1)
+    octets[0] = 0
+    octets[1] = 0
+    octets[2] = 0
+    octets[3] = 0
+    let oi = 0
+    let val = 0
+    let i = 0
+    loop i < len {
+        let ch = load_i8_at(src, i)
+        if ch == 46 {  ; '.'
+            if oi >= 4 { ret 0 }
+            octets[oi] = val
+            oi = oi + 1
+            val = 0
+        } else {
+            if ch >= 48 and ch <= 57 {
+                val = val * 10 + ch - 48
+            } else {
+                ret 0  ; invalid char
+            }
+        }
+        i = i + 1
+    }
+    if oi != 3 { ret 0 }
+    octets[3] = val
+    ret ip_from_octets(octets[0], octets[1], octets[2], octets[3])
+}
+
+;; Internal: write integer digits to buffer, return length.
+fn ip_write_int(val: i64, dst: &i8, off: i64) -> i64 {
+    if val == 0 {
+        poke_byte(dst, off, 48)
+        ret 1
+    }
+    let buf: &i8 = alloc_pages(1)
+    let pos = 0
+    let tmp = val
+    loop tmp > 0 {
+        let d = tmp - (tmp / 10) * 10
+        poke_byte(buf, pos, d + 48)
+        pos = pos + 1
+        tmp = tmp / 10
+    }
+    ; Reverse copy to dst
+    let i = 0
+    loop i < pos {
+        let ri = pos - 1 - i
+        poke_byte(dst, off + i, load_i8_at(buf, ri))
+        i = i + 1
+    }
+    ret pos
+}
+
+;; Format integer IP to "a.b.c.d" string. Returns length.
+fn ip_format(addr: i64, dst: &i8) -> i64 {
+    let pos = 0
+    let oi = 0
+    loop oi < 4 {
+        if oi > 0 {
+            poke_byte(dst, pos, 46)  ; '.'
+            pos = pos + 1
+        }
+        let octet = ip_octet(addr, oi)
+        let written = ip_write_int(octet, dst, pos)
+        pos = pos + written
+        oi = oi + 1
+    }
+    ret pos
+}
+
+;; Is this a private (RFC 1918) address?
+fn ip_is_private(addr: i64) -> i64 {
+    let a = ip_octet(addr, 0)
+    let b = ip_octet(addr, 1)
+    if a == 10 { ret 1 }                           ; 10.0.0.0/8
+    if a == 172 and b >= 16 and b <= 31 { ret 1 }  ; 172.16.0.0/12
+    if a == 192 and b == 168 { ret 1 }              ; 192.168.0.0/16
+    ret 0
+}
+
+;; Is this a loopback address?
+fn ip_is_loopback(addr: i64) -> i64 {
+    if ip_octet(addr, 0) == 127 { ret 1 }
+    ret 0
+}
+
+;; Is this a multicast address?
+fn ip_is_multicast(addr: i64) -> i64 {
+    let a = ip_octet(addr, 0)
+    if a >= 224 and a <= 239 { ret 1 }
+    ret 0
+}
+
+;; Internal: create subnet mask from prefix length.
+fn ip_mask(prefix: i64) -> i64 {
+    if prefix <= 0 { ret 0 }
+    if prefix >= 32 { ret 4294967295 }
+    ; mask = (2^prefix - 1) << (32 - prefix)
+    let ones = 1
+    let i = 1
+    loop i < prefix {
+        ones = ones * 2 + 1
+        i = i + 1
+    }
+    let shift = 32 - prefix
+    let mul = 1
+    i = 0
+    loop i < shift {
+        mul = mul * 2
+        i = i + 1
+    }
+    ret ones * mul
+}
+
+;; Network address for addr/prefix.
+fn ip_network(addr: i64, prefix: i64) -> i64 {
+    let mask = ip_mask(prefix)
+    ; Bitwise AND via arithmetic
+    let result = 0
+    let bit = 0
+    let va = addr
+    let vm = mask
+    loop bit < 32 {
+        let da = va - (va / 2) * 2
+        let dm = vm - (vm / 2) * 2
+        if da == 1 and dm == 1 {
+            let p = 1
+            let j = 0
+            loop j < bit { p = p * 2 j = j + 1 }
+            result = result + p
+        }
+        va = va / 2
+        vm = vm / 2
+        bit = bit + 1
+    }
+    ret result
+}
+
+;; Broadcast address for addr/prefix.
+fn ip_broadcast(addr: i64, prefix: i64) -> i64 {
+    let net = ip_network(addr, prefix)
+    let mask = ip_mask(prefix)
+    let inv_mask = 4294967295 - mask
+    ; net | inv_mask via arithmetic
+    let result = 0
+    let bit = 0
+    let vn = net
+    let vi = inv_mask
+    loop bit < 32 {
+        let dn = vn - (vn / 2) * 2
+        let di = vi - (vi / 2) * 2
+        if dn == 1 or di == 1 {
+            let p = 1
+            let j = 0
+            loop j < bit { p = p * 2 j = j + 1 }
+            result = result + p
+        }
+        vn = vn / 2
+        vi = vi / 2
+        bit = bit + 1
+    }
+    ret result
+}
+
+;; Check if addr is within network/prefix.
+fn ip_in_subnet(addr: i64, net: i64, prefix: i64) -> i64 {
+    if ip_network(addr, prefix) == ip_network(net, prefix) { ret 1 }
+    ret 0
+}
+
+;; Write struct sockaddr_in (16 bytes) to dst for use with connect/bind.
+;; AF_INET=2, port in network byte order.
+fn ip_to_sockaddr(addr: i64, port: i64, dst: &i8) -> i64 {
+    ; sin_family = AF_INET (2)
+    poke_byte(dst, 0, 2)
+    poke_byte(dst, 1, 0)
+    ; sin_port (network byte order = big-endian)
+    poke_byte(dst, 2, port / 256)
+    let port_lo = port - (port / 256) * 256
+    poke_byte(dst, 3, port_lo)
+    ; sin_addr (network byte order)
+    poke_byte(dst, 4, ip_octet(addr, 0))
+    poke_byte(dst, 5, ip_octet(addr, 1))
+    poke_byte(dst, 6, ip_octet(addr, 2))
+    poke_byte(dst, 7, ip_octet(addr, 3))
+    ; sin_zero (8 bytes padding)
+    let i = 8
+    loop i < 16 { poke_byte(dst, i, 0) i = i + 1 }
+    ret 16
+}
