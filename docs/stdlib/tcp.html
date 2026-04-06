@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tcp — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>tcp</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bitops.html">bitops</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <a href="crypto.html">crypto</a> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="file_io.html">file_io</a> | <a href="file_io_all.html">file_io_all</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <a href="hashmap.html">hashmap</a> | <a href="heap.html">heap</a> | <a href="http.html">http</a> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="os.html">os</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <a href="process.html">process</a> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <strong>tcp</strong> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <a href="tensor_slice.html">tensor_slice</a> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="ws.html">ws</a></div>
+<ul class="toc"><li><span class="badge const">const</span><a href="#SYS_SOCKET">SYS_SOCKET</a></li><li><span class="badge const">const</span><a href="#SYS_BIND">SYS_BIND</a></li><li><span class="badge const">const</span><a href="#SYS_LISTEN">SYS_LISTEN</a></li><li><span class="badge const">const</span><a href="#SYS_ACCEPT4">SYS_ACCEPT4</a></li><li><span class="badge const">const</span><a href="#SYS_CONNECT">SYS_CONNECT</a></li><li><span class="badge const">const</span><a href="#SYS_SENDTO">SYS_SENDTO</a></li><li><span class="badge const">const</span><a href="#SYS_RECVFROM">SYS_RECVFROM</a></li><li><span class="badge const">const</span><a href="#SYS_CLOSE">SYS_CLOSE</a></li><li><span class="badge const">const</span><a href="#SYS_SETSOCKOPT">SYS_SETSOCKOPT</a></li><li><span class="badge const">const</span><a href="#SYS_FCNTL">SYS_FCNTL</a></li><li><span class="badge const">const</span><a href="#AF_INET">AF_INET</a></li><li><span class="badge const">const</span><a href="#SOCK_STREAM">SOCK_STREAM</a></li><li><span class="badge const">const</span><a href="#SOCK_NONBLOCK">SOCK_NONBLOCK</a></li><li><span class="badge const">const</span><a href="#SOL_SOCKET">SOL_SOCKET</a></li><li><span class="badge const">const</span><a href="#SO_REUSEADDR">SO_REUSEADDR</a></li><li><span class="badge const">const</span><a href="#SO_REUSEPORT">SO_REUSEPORT</a></li><li><span class="badge const">const</span><a href="#IPPROTO_TCP">IPPROTO_TCP</a></li><li><span class="badge const">const</span><a href="#TCP_NODELAY">TCP_NODELAY</a></li><li><span class="badge const">const</span><a href="#F_SETFL">F_SETFL</a></li><li><span class="badge const">const</span><a href="#O_NONBLOCK">O_NONBLOCK</a></li><li><span class="badge const">const</span><a href="#EAGAIN">EAGAIN</a></li><li><span class="badge struct">struct</span><a href="#SockAddrIn">SockAddrIn</a></li><li><span class="badge struct">struct</span><a href="#TcpStream">TcpStream</a></li><li><span class="badge struct">struct</span><a href="#TcpListener">TcpListener</a></li><li><span class="badge impl">impl</span><a href="#TcpListener">TcpListener</a></li><li><span class="badge impl">impl</span><a href="#TcpStream">TcpStream</a></li><li><span class="badge fn">fn</span><a href="#tcp_close_fd">tcp_close_fd</a></li><li><span class="badge fn">fn</span><a href="#ip_to_u32">ip_to_u32</a></li><li><span class="badge fn">fn</span><a href="#htons">htons</a></li><li><span class="badge fn">fn</span><a href="#ntohs">ntohs</a></li><li><span class="badge fn">fn</span><a href="#htonl">htonl</a></li><li><span class="badge fn">fn</span><a href="#ntohl">ntohl</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="tcp_close_fd">
+  <span class="source-link">tcp.jda:202</span><span class="badge fn">fn</span><h3>tcp_close_fd</h3>
+  <code class="sig">fn tcp_close_fd(fd: i32)</code>
+</div>
+<div class="item fn" id="ip_to_u32">
+  <span class="source-link">tcp.jda:207</span><span class="badge fn">fn</span><h3>ip_to_u32</h3>
+  <code class="sig">fn ip_to_u32(s: ref []i8) -&gt; u32</code>
+</div>
+<div class="item fn" id="htons">
+  <span class="source-link">tcp.jda:218</span><span class="badge fn">fn</span><h3>htons</h3>
+  <code class="sig">fn htons(x: u16) -&gt; u16 =&gt; ((x &amp; 0xFF) &lt;&lt; 8) | (x &gt;&gt; 8)</code>
+</div>
+<div class="item fn" id="ntohs">
+  <span class="source-link">tcp.jda:219</span><span class="badge fn">fn</span><h3>ntohs</h3>
+  <code class="sig">fn ntohs(x: u16) -&gt; u16 =&gt; htons(x)</code>
+</div>
+<div class="item fn" id="htonl">
+  <span class="source-link">tcp.jda:220</span><span class="badge fn">fn</span><h3>htonl</h3>
+  <code class="sig">fn htonl(x: u32) -&gt; u32 =&gt; ((x &amp; 0xFF) &lt;&lt; 24) | (((x&gt;&gt;8) &amp; 0xFF) &lt;&lt; 16) | (((x&gt;&gt;16) &amp; 0xFF) &lt;&lt; 8) | (x &gt;&gt; 24)</code>
+</div>
+<div class="item fn" id="ntohl">
+  <span class="source-link">tcp.jda:221</span><span class="badge fn">fn</span><h3>ntohl</h3>
+  <code class="sig">fn ntohl(x: u32) -&gt; u32 =&gt; htonl(x)</code>
+</div>
+<h2>Structs</h2>
+<div class="item struct" id="SockAddrIn">
+  <span class="source-link">tcp.jda:56</span><span class="badge struct">struct</span><h3>SockAddrIn</h3>
+  <code class="sig">struct SockAddrIn { sin_family: u16     ; AF_INET = 2, sin_port:   u16     ; port in network byte order (big-endian), sin_addr:   u32     ; IPv4 address in network byte order, sin_zero:   [8]u8   ; padding }</code>
+</div>
+<div class="item struct" id="TcpStream">
+  <span class="source-link">tcp.jda:65</span><span class="badge struct">struct</span><h3>TcpStream</h3>
+  <code class="sig">struct TcpStream { fd:        i32, peer_addr: u32, peer_port: u16 }</code>
+</div>
+<div class="item struct" id="TcpListener">
+  <span class="source-link">tcp.jda:73</span><span class="badge struct">struct</span><h3>TcpListener</h3>
+  <code class="sig">struct TcpListener { fd:        i32, local_port: u16 }</code>
+</div>
+<h2>Constants</h2>
+<div class="item const" id="SYS_SOCKET">
+  <span class="source-link">tcp.jda:22</span><span class="badge const">const</span><h3>SYS_SOCKET</h3>
+  <code class="sig">const SYS_SOCKET     = 41</code>
+</div>
+<div class="item const" id="SYS_BIND">
+  <span class="source-link">tcp.jda:23</span><span class="badge const">const</span><h3>SYS_BIND</h3>
+  <code class="sig">const SYS_BIND       = 49</code>
+</div>
+<div class="item const" id="SYS_LISTEN">
+  <span class="source-link">tcp.jda:24</span><span class="badge const">const</span><h3>SYS_LISTEN</h3>
+  <code class="sig">const SYS_LISTEN     = 50</code>
+</div>
+<div class="item const" id="SYS_ACCEPT4">
+  <span class="source-link">tcp.jda:25</span><span class="badge const">const</span><h3>SYS_ACCEPT4</h3>
+  <code class="sig">const SYS_ACCEPT4    = 288</code>
+</div>
+<div class="item const" id="SYS_CONNECT">
+  <span class="source-link">tcp.jda:26</span><span class="badge const">const</span><h3>SYS_CONNECT</h3>
+  <code class="sig">const SYS_CONNECT    = 42</code>
+</div>
+<div class="item const" id="SYS_SENDTO">
+  <span class="source-link">tcp.jda:27</span><span class="badge const">const</span><h3>SYS_SENDTO</h3>
+  <code class="sig">const SYS_SENDTO     = 44</code>
+</div>
+<div class="item const" id="SYS_RECVFROM">
+  <span class="source-link">tcp.jda:28</span><span class="badge const">const</span><h3>SYS_RECVFROM</h3>
+  <code class="sig">const SYS_RECVFROM   = 45</code>
+</div>
+<div class="item const" id="SYS_CLOSE">
+  <span class="source-link">tcp.jda:29</span><span class="badge const">const</span><h3>SYS_CLOSE</h3>
+  <code class="sig">const SYS_CLOSE      = 3</code>
+</div>
+<div class="item const" id="SYS_SETSOCKOPT">
+  <span class="source-link">tcp.jda:30</span><span class="badge const">const</span><h3>SYS_SETSOCKOPT</h3>
+  <code class="sig">const SYS_SETSOCKOPT = 54</code>
+</div>
+<div class="item const" id="SYS_FCNTL">
+  <span class="source-link">tcp.jda:31</span><span class="badge const">const</span><h3>SYS_FCNTL</h3>
+  <code class="sig">const SYS_FCNTL      = 72</code>
+</div>
+<div class="item const" id="AF_INET">
+  <span class="source-link">tcp.jda:34</span><span class="badge const">const</span><h3>AF_INET</h3>
+  <code class="sig">const AF_INET      = 2</code>
+</div>
+<div class="item const" id="SOCK_STREAM">
+  <span class="source-link">tcp.jda:35</span><span class="badge const">const</span><h3>SOCK_STREAM</h3>
+  <code class="sig">const SOCK_STREAM  = 1</code>
+</div>
+<div class="item const" id="SOCK_NONBLOCK">
+  <span class="source-link">tcp.jda:36</span><span class="badge const">const</span><h3>SOCK_NONBLOCK</h3>
+  <code class="sig">const SOCK_NONBLOCK = 2048    ; create non-blocking socket directly</code>
+</div>
+<div class="item const" id="SOL_SOCKET">
+  <span class="source-link">tcp.jda:37</span><span class="badge const">const</span><h3>SOL_SOCKET</h3>
+  <code class="sig">const SOL_SOCKET   = 1</code>
+</div>
+<div class="item const" id="SO_REUSEADDR">
+  <span class="source-link">tcp.jda:38</span><span class="badge const">const</span><h3>SO_REUSEADDR</h3>
+  <code class="sig">const SO_REUSEADDR = 2</code>
+</div>
+<div class="item const" id="SO_REUSEPORT">
+  <span class="source-link">tcp.jda:39</span><span class="badge const">const</span><h3>SO_REUSEPORT</h3>
+  <code class="sig">const SO_REUSEPORT = 15</code>
+</div>
+<div class="item const" id="IPPROTO_TCP">
+  <span class="source-link">tcp.jda:40</span><span class="badge const">const</span><h3>IPPROTO_TCP</h3>
+  <code class="sig">const IPPROTO_TCP  = 6</code>
+</div>
+<div class="item const" id="TCP_NODELAY">
+  <span class="source-link">tcp.jda:41</span><span class="badge const">const</span><h3>TCP_NODELAY</h3>
+  <code class="sig">const TCP_NODELAY  = 1</code>
+</div>
+<div class="item const" id="F_SETFL">
+  <span class="source-link">tcp.jda:42</span><span class="badge const">const</span><h3>F_SETFL</h3>
+  <code class="sig">const F_SETFL      = 4</code>
+</div>
+<div class="item const" id="O_NONBLOCK">
+  <span class="source-link">tcp.jda:43</span><span class="badge const">const</span><h3>O_NONBLOCK</h3>
+  <code class="sig">const O_NONBLOCK   = 2048</code>
+</div>
+<div class="item const" id="EAGAIN">
+  <span class="source-link">tcp.jda:46</span><span class="badge const">const</span><h3>EAGAIN</h3>
+  <code class="sig">const EAGAIN = 11</code>
+</div>
+<h2>Implementations</h2>
+<div class="item impl" id="TcpListener">
+  <span class="source-link">tcp.jda:78</span><span class="badge impl">impl</span><h3>TcpListener</h3>
+  <code class="sig">impl TcpListener</code><h4>Methods</h4><div class="method"><code class="sig">fn bind(addr: ref []i8, port: u16) -&gt; Result&lt;own TcpListener, []i8&gt;</code></div><div class="method"><code class="sig">fn accept(self) -&gt; Result&lt;own TcpStream, []i8&gt;</code></div><div class="method"><code class="sig">fn close(self)</code></div>
+</div>
+<div class="item impl" id="TcpStream">
+  <span class="source-link">tcp.jda:147</span><span class="badge impl">impl</span><h3>TcpStream</h3>
+  <code class="sig">impl TcpStream</code><h4>Methods</h4><div class="method"><code class="sig">fn connect(addr: ref []i8, port: u16) -&gt; Result&lt;own TcpStream, []i8&gt;</code></div><div class="method"><code class="sig">fn read(self, buf: []mut i8, max: i64) -&gt; i64</code></div><div class="method"><code class="sig">fn write(self, buf: ref []i8, len: i64) -&gt; i64</code></div><div class="method"><code class="sig">fn close(self)</code></div>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>
