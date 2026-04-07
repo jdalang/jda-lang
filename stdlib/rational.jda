@@ -3,9 +3,8 @@
 ; =============================================================================
 ; Exact rational numbers (numerator/denominator). Auto-simplified via GCD.
 ;
-; Memory layout per Rational (&i64):
-;   [0] num    (numerator)
-;   [1] den    (denominator, always > 0)
+; Memory layout: global pool of i64 pairs [num, den] at indices 2*n, 2*n+1.
+; Each rational is a &i64 pointer into the pool.
 ;
 ; Functions:
 ;   rat_new(num, den)        -> &i64  create and simplify
@@ -24,13 +23,36 @@
 ;   rat_to_str(a, out)       -> i64   format as "num/den" string
 ; =============================================================================
 
+let _rat_pool: &i64 = 0
+let _rat_pool_idx = 0
+let _rat_tmp: &i8 = 0
+
+;; Internal: ensure pool is allocated.
+fn _rat_init() -> i64 {
+    if _rat_pool == 0 {
+        _rat_pool = alloc_pages(4)
+        _rat_tmp = alloc_pages(1)
+    }
+    ret 0
+}
+
+;; Internal: allocate a rational slot from pool, returns &i64 pointing to [num, den].
+fn _rat_slot() -> &i64 {
+    let byte_off = _rat_pool_idx * 16
+    _rat_pool_idx = _rat_pool_idx + 1
+    let base: &i64 = _rat_pool
+    let addr: &i64 = base + byte_off
+    ret addr
+}
+
 ;; Internal: GCD (Euclidean algorithm).
 fn _rat_gcd(a: i64, b: i64) -> i64 {
     if a < 0 { a = 0 - a }
     if b < 0 { b = 0 - b }
     loop b != 0 {
         let t = b
-        b = a - (a / b) * b
+        let q = a / b
+        b = a - q * b
         a = t
     }
     ret a
@@ -44,19 +66,30 @@ fn _rat_abs(x: i64) -> i64 {
 
 ;; Create rational number, auto-simplified.
 fn rat_new(num: i64, den: i64) -> &i64 {
-    let r: &i64 = alloc_pages(1)
+    _rat_init()
     if den == 0 { den = 1 }
     ; Normalize sign: denominator always positive
     if den < 0 {
         num = 0 - num
         den = 0 - den
     }
-    ; Simplify
-    let g = _rat_gcd(_rat_abs(num), den)
-    if g > 1 {
-        num = num / g
-        den = den / g
+    ; Inline GCD to avoid function call clobbering stack
+    let ga = num
+    if ga < 0 { ga = 0 - ga }
+    let gb = den
+    if gb < 0 { gb = 0 - gb }
+    loop gb != 0 {
+        let gt = gb
+        let gq = ga / gb
+        gb = ga - gq * gb
+        ga = gt
     }
+    ; ga is now gcd
+    if ga > 1 {
+        num = num / ga
+        den = den / ga
+    }
+    let r = _rat_slot()
     r[0] = num
     r[1] = den
     ret r
@@ -64,26 +97,38 @@ fn rat_new(num: i64, den: i64) -> &i64 {
 
 ;; Add: a/b + c/d = (ad + bc) / bd.
 fn rat_add(a: &i64, b: &i64) -> &i64 {
-    let num = a[0] * b[1] + b[0] * a[1]
-    let den = a[1] * b[1]
+    let an = a[0]
+    let ad = a[1]
+    let bn = b[0]
+    let bd = b[1]
+    let num = an * bd + bn * ad
+    let den = ad * bd
     ret rat_new(num, den)
 }
 
 ;; Subtract: a/b - c/d = (ad - bc) / bd.
 fn rat_sub(a: &i64, b: &i64) -> &i64 {
-    let num = a[0] * b[1] - b[0] * a[1]
-    let den = a[1] * b[1]
+    let an = a[0]
+    let ad = a[1]
+    let bn = b[0]
+    let bd = b[1]
+    let num = an * bd - bn * ad
+    let den = ad * bd
     ret rat_new(num, den)
 }
 
 ;; Multiply: (a/b) * (c/d) = ac / bd.
 fn rat_mul(a: &i64, b: &i64) -> &i64 {
-    ret rat_new(a[0] * b[0], a[1] * b[1])
+    let num = a[0] * b[0]
+    let den = a[1] * b[1]
+    ret rat_new(num, den)
 }
 
 ;; Divide: (a/b) / (c/d) = ad / bc.
 fn rat_div(a: &i64, b: &i64) -> &i64 {
-    ret rat_new(a[0] * b[1], a[1] * b[0])
+    let num = a[0] * b[1]
+    let den = a[1] * b[0]
+    ret rat_new(num, den)
 }
 
 ;; Compare: returns -1, 0, or 1.
@@ -139,11 +184,13 @@ fn _rat_write_int(val: i64, out: &i8, off: i64) -> i64 {
     let neg = 0
     let v = val
     if v < 0 { neg = 1  v = 0 - v }
-    let tmp: &i8 = alloc_pages(1)
+    let tmp: &i8 = _rat_tmp
     let ti = 0
     loop v > 0 {
-        poke_byte(tmp, ti, 48 + (v - (v / 10) * 10))
-        v = v / 10
+        let d = v / 10
+        let r = v - d * 10
+        poke_byte(tmp, ti, 48 + r)
+        v = d
         ti = ti + 1
     }
     let pos = off
@@ -162,6 +209,7 @@ fn _rat_write_int(val: i64, out: &i8, off: i64) -> i64 {
 
 ;; Format as "num/den" string. Returns length.
 fn rat_to_str(a: &i64, out: &i8) -> i64 {
+    _rat_init()
     let pos = _rat_write_int(a[0], out, 0)
     if a[1] != 1 {
         poke_byte(out, pos, 47)  ; '/'
