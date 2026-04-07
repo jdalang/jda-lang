@@ -1,0 +1,68 @@
+fn _zf_test_byte(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+fn main() -> i64 {
+    ; Create a ZIP with two stored files
+    let archive: &i8 = alloc_pages(16)
+    let h = zip_create(archive)
+
+    ; Add "a.txt" with content "AB"
+    let name1: &i8 = alloc_pages(1)
+    poke_byte(name1, 0, 97)   ; a
+    poke_byte(name1, 1, 46)   ; .
+    poke_byte(name1, 2, 116)  ; t
+    poke_byte(name1, 3, 120)  ; x
+    poke_byte(name1, 4, 116)  ; t
+    let data1: &i8 = alloc_pages(1)
+    poke_byte(data1, 0, 65)   ; A
+    poke_byte(data1, 1, 66)   ; B
+    zip_add(h, name1, 5, data1, 2)
+
+    ; Add "b.txt" with content "XYZ"
+    let name2: &i8 = alloc_pages(1)
+    poke_byte(name2, 0, 98)   ; b
+    poke_byte(name2, 1, 46)   ; .
+    poke_byte(name2, 2, 116)  ; t
+    poke_byte(name2, 3, 120)  ; x
+    poke_byte(name2, 4, 116)  ; t
+    let data2: &i8 = alloc_pages(1)
+    poke_byte(data2, 0, 88)   ; X
+    poke_byte(data2, 1, 89)   ; Y
+    poke_byte(data2, 2, 90)   ; Z
+    zip_add(h, name2, 5, data2, 3)
+
+    let total = zip_finish(h)
+    print("archive created\n")
+
+    ; Now read it back
+    let rh = zip_open(archive, total)
+    let cnt = zip_count(rh)
+    print("entries: {cnt}\n")
+
+    let out: &i8 = alloc_pages(1)
+
+    ; Entry 0 name
+    let nlen0 = zip_entry_name(rh, 0, out)
+    syscall(1, 1, out, nlen0)
+    print("\n")
+
+    ; Entry 0 size
+    let size0 = zip_entry_size(rh, 0)
+    print("size0: {size0}\n")
+
+    ; Entry 0 data
+    let dlen0 = zip_entry_data(rh, 0, out)
+    syscall(1, 1, out, dlen0)
+    print("\n")
+
+    ; Entry 1 name
+    let nlen1 = zip_entry_name(rh, 1, out)
+    syscall(1, 1, out, nlen1)
+    print("\n")
+
+    ; Entry 1 data
+    let dlen1 = zip_entry_data(rh, 1, out)
+    syscall(1, 1, out, dlen1)
+    print("\n")
+
+    ret 0
+}

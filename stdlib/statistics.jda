@@ -1,0 +1,180 @@
+; =============================================================================
+; jda::statistics -- Statistical Functions (Integer-Scaled)
+; =============================================================================
+; Mean, median, mode, variance, stdev using scaled integers (x10000).
+;
+; Functions:
+;   stat_sum(data, n)                  -> i64  sum of values
+;   stat_mean_x10k(data, n)            -> i64  mean * 10000
+;   stat_median(data, n)               -> i64  median value (middle element)
+;   stat_mode(data, n)                 -> i64  most frequent value
+;   stat_min(data, n)                  -> i64  minimum
+;   stat_max(data, n)                  -> i64  maximum
+;   stat_range(data, n)                -> i64  max - min
+;   stat_variance_x10k(data, n)        -> i64  variance * 10000
+;   stat_stdev_x10k(data, n)           -> i64  stdev * 10000
+;   stat_percentile(data, n, p)        -> i64  p-th percentile (p=0..100)
+; =============================================================================
+
+;; Sum of all values.
+fn stat_sum(data: &i64, n: i64) -> i64 {
+    let s = 0
+    let i = 0
+    loop i < n {
+        s = s + data[i]
+        i = i + 1
+    }
+    ret s
+}
+
+;; Mean * 10000.
+fn stat_mean_x10k(data: &i64, n: i64) -> i64 {
+    if n == 0 { ret 0 }
+    let s = stat_sum(data, n)
+    ret s * 10000 / n
+}
+
+;; Internal: simple insertion sort for small arrays.
+fn _stat_sort(data: &i64, n: i64, out: &i64) {
+    let i = 0
+    loop i < n {
+        out[i] = data[i]
+        i = i + 1
+    }
+    i = 1
+    loop i < n {
+        let key = out[i]
+        let j = i - 1
+        let moving = 1
+        loop moving == 1 {
+            if j < 0 { moving = 0 }
+            if moving == 1 {
+                if out[j] > key {
+                    out[j + 1] = out[j]
+                    j = j - 1
+                } else {
+                    moving = 0
+                }
+            }
+        }
+        out[j + 1] = key
+        i = i + 1
+    }
+}
+
+;; Median (middle value of sorted data).
+fn stat_median(data: &i64, n: i64) -> i64 {
+    if n == 0 { ret 0 }
+    let sorted: &i64 = alloc_pages(1)
+    _stat_sort(data, n, sorted)
+    let mid = n / 2
+    ret sorted[mid]
+}
+
+;; Mode (most frequent value). Uses O(n^2) counting to avoid alloc_pages overlap.
+fn stat_mode(data: &i64, n: i64) -> i64 {
+    if n == 0 { ret 0 }
+    let best_val = data[0]
+    let best_count = 0
+    let i = 0
+    loop i < n {
+        let val = data[i]
+        let count = 0
+        let j = 0
+        loop j < n {
+            if data[j] == val {
+                count = count + 1
+            }
+            j = j + 1
+        }
+        if count > best_count {
+            best_count = count
+            best_val = val
+        }
+        i = i + 1
+    }
+    ret best_val
+}
+
+;; Minimum value.
+fn stat_min(data: &i64, n: i64) -> i64 {
+    if n == 0 { ret 0 }
+    let m = data[0]
+    let i = 1
+    loop i < n {
+        if data[i] < m { m = data[i] }
+        i = i + 1
+    }
+    ret m
+}
+
+;; Maximum value.
+fn stat_max(data: &i64, n: i64) -> i64 {
+    if n == 0 { ret 0 }
+    let m = data[0]
+    let i = 1
+    loop i < n {
+        if data[i] > m { m = data[i] }
+        i = i + 1
+    }
+    ret m
+}
+
+;; Range (max - min).
+fn stat_range(data: &i64, n: i64) -> i64 {
+    let lo = stat_min(data, n)
+    let hi = stat_max(data, n)
+    ret hi - lo
+}
+
+;; Variance * 10000. Uses sum of squared deviations.
+fn stat_variance_x10k(data: &i64, n: i64) -> i64 {
+    if n <= 1 { ret 0 }
+    let mean = stat_sum(data, n) * 1000 / n
+    let sum_sq = 0
+    let i = 0
+    loop i < n {
+        let diff = data[i] * 1000 - mean
+        let sq = diff * diff
+        sum_sq = sum_sq + sq
+        i = i + 1
+    }
+    ; sum_sq is in units of 1000^2 = 1000000
+    ; variance = sum_sq / n, scaled to x10000 = sum_sq * 10000 / (n * 1000000)
+    ret sum_sq * 10 / (n * 1000)
+}
+
+;; Integer square root (helper for stdev).
+fn _stat_isqrt(n: i64) -> i64 {
+    if n <= 0 { ret 0 }
+    let x = n
+    let y = (x + 1) / 2
+    let running = 1
+    loop running == 1 {
+        if y >= x { running = 0 }
+        if running == 1 {
+            x = y
+            y = (x + n / x) / 2
+        }
+    }
+    ret x
+}
+
+;; Standard deviation * 10000.
+fn stat_stdev_x10k(data: &i64, n: i64) -> i64 {
+    let var = stat_variance_x10k(data, n)
+    ; stdev_x10k = sqrt(var * 10000^2 / 10000) = sqrt(var * 10000)
+    let scaled = var * 10000
+    ret _stat_isqrt(scaled)
+}
+
+;; Percentile (0-100). Returns value at that percentile.
+fn stat_percentile(data: &i64, n: i64, p: i64) -> i64 {
+    if n == 0 { ret 0 }
+    let sorted: &i64 = alloc_pages(1)
+    _stat_sort(data, n, sorted)
+    let idx = p * n / 100
+    if idx >= n { idx = n - 1 }
+    if idx < 0 { idx = 0 }
+    ret sorted[idx]
+}

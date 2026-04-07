@@ -1,0 +1,217 @@
+; =============================================================================
+; jda::datetime -- Date, Time, and DateTime Functions
+; =============================================================================
+; Date (days since epoch), time (seconds), datetime (unix timestamp).
+;
+; Functions:
+;   dt_date(year, month, day)          -> i64  days since 1970-01-01
+;   dt_year(d)                         -> i64  extract year from days
+;   dt_month(d)                        -> i64  extract month (1-12)
+;   dt_day(d)                          -> i64  extract day (1-31)
+;   dt_weekday(d)                      -> i64  0=Thu,1=Fri..6=Wed (epoch=Thu)
+;   dt_is_leap(year)                   -> i64  1 if leap year
+;   dt_days_in_month(year, month)      -> i64  28-31
+;   dt_now()                           -> i64  current unix timestamp (seconds)
+;   dt_from_ts(ts)                     -> i64  timestamp to days
+;   dt_format(ts, out, max)            -> i64  "YYYY-MM-DD HH:MM:SS"
+;   dt_diff(a, b)                      -> i64  seconds between timestamps
+;   dt_add_days(ts, days)              -> i64  add days to timestamp
+; =============================================================================
+
+;; Internal: get current time via time(2) syscall 201.
+fn _dt_time_syscall() -> i64 {
+    ret syscall(201, 0, 0, 0)
+}
+
+;; Check if year is a leap year.
+fn dt_is_leap(year: i64) -> i64 {
+    if year % 400 == 0 { ret 1 }
+    if year % 100 == 0 { ret 0 }
+    if year % 4 == 0 { ret 1 }
+    ret 0
+}
+
+;; Days in a given month (1-12).
+fn dt_days_in_month(year: i64, month: i64) -> i64 {
+    if month == 2 {
+        if dt_is_leap(year) == 1 { ret 29 }
+        ret 28
+    }
+    if month == 4 { ret 30 }
+    if month == 6 { ret 30 }
+    if month == 9 { ret 30 }
+    if month == 11 { ret 30 }
+    ret 31
+}
+
+;; Convert year/month/day to days since epoch (1970-01-01 = day 0).
+fn dt_date(year: i64, month: i64, day: i64) -> i64 {
+    let days = 0
+    ; Add years
+    let y = 1970
+    loop y < year {
+        if dt_is_leap(y) == 1 { days = days + 366 } else { days = days + 365 }
+        y = y + 1
+    }
+    ; Add months
+    let m = 1
+    loop m < month {
+        days = days + dt_days_in_month(year, m)
+        m = m + 1
+    }
+    ; Add days (day 1 = first day)
+    days = days + day - 1
+    ret days
+}
+
+;; Extract year from days since epoch.
+fn dt_year(d: i64) -> i64 {
+    let y = 1970
+    let remaining = d
+    let running = 1
+    loop running == 1 {
+        let ydays = 365
+        if dt_is_leap(y) == 1 { ydays = 366 }
+        if remaining < ydays { running = 0 }
+        if running == 1 {
+            remaining = remaining - ydays
+            y = y + 1
+        }
+    }
+    ret y
+}
+
+;; Internal: remaining days after subtracting full years.
+fn _dt_day_of_year(d: i64) -> i64 {
+    let y = 1970
+    let remaining = d
+    let running = 1
+    loop running == 1 {
+        let ydays = 365
+        if dt_is_leap(y) == 1 { ydays = 366 }
+        if remaining < ydays { running = 0 }
+        if running == 1 {
+            remaining = remaining - ydays
+            y = y + 1
+        }
+    }
+    ret remaining
+}
+
+;; Extract month from days since epoch.
+fn dt_month(d: i64) -> i64 {
+    let y = dt_year(d)
+    let doy = _dt_day_of_year(d)
+    let m = 1
+    let running = 1
+    loop running == 1 {
+        let mdays = dt_days_in_month(y, m)
+        if doy < mdays { running = 0 }
+        if running == 1 {
+            doy = doy - mdays
+            m = m + 1
+            if m > 12 { running = 0 }
+        }
+    }
+    ret m
+}
+
+;; Extract day-of-month from days since epoch.
+fn dt_day(d: i64) -> i64 {
+    let y = dt_year(d)
+    let doy = _dt_day_of_year(d)
+    let m = 1
+    let running = 1
+    loop running == 1 {
+        let mdays = dt_days_in_month(y, m)
+        if doy < mdays { running = 0 }
+        if running == 1 {
+            doy = doy - mdays
+            m = m + 1
+            if m > 12 { running = 0 }
+        }
+    }
+    ret doy + 1
+}
+
+;; Day of week: 0=Thu (epoch was Thursday), 1=Fri, ..., 6=Wed.
+;; More useful: (dt_weekday(d) + 3) % 7 gives 0=Mon..6=Sun.
+fn dt_weekday(d: i64) -> i64 {
+    let w = d % 7
+    if w < 0 { w = w + 7 }
+    ret w
+}
+
+;; Current unix timestamp in seconds.
+fn dt_now() -> i64 {
+    ret _dt_time_syscall()
+}
+
+;; Convert unix timestamp to days since epoch.
+fn dt_from_ts(ts: i64) -> i64 {
+    ret ts / 86400
+}
+
+;; Internal: write 2-digit number to buffer.
+fn _dt_write2(out: &i8, pos: i64, val: i64) {
+    let d1 = val / 10
+    let d2 = val % 10
+    poke_byte(out, pos, d1 + 48)
+    poke_byte(out, pos + 1, d2 + 48)
+}
+
+;; Internal: write 4-digit number to buffer.
+fn _dt_write4(out: &i8, pos: i64, val: i64) {
+    let d1 = val / 1000
+    let rem1 = val % 1000
+    let d2 = rem1 / 100
+    let rem2 = rem1 % 100
+    let d3 = rem2 / 10
+    let d4 = rem2 % 10
+    poke_byte(out, pos, d1 + 48)
+    poke_byte(out, pos + 1, d2 + 48)
+    poke_byte(out, pos + 2, d3 + 48)
+    poke_byte(out, pos + 3, d4 + 48)
+}
+
+;; Format timestamp as "YYYY-MM-DD HH:MM:SS". Returns length (always 19).
+fn dt_format(ts: i64, out: &i8, max: i64) -> i64 {
+    let days = ts / 86400
+    let rem = ts % 86400
+    let hour = rem / 3600
+    let rem2 = rem % 3600
+    let minute = rem2 / 60
+    let second = rem2 % 60
+    let year = dt_year(days)
+    let month = dt_month(days)
+    let day = dt_day(days)
+    _dt_write4(out, 0, year)
+    poke_byte(out, 4, 45)
+    _dt_write2(out, 5, month)
+    poke_byte(out, 7, 45)
+    _dt_write2(out, 8, day)
+    poke_byte(out, 10, 32)
+    _dt_write2(out, 11, hour)
+    poke_byte(out, 13, 58)
+    _dt_write2(out, 14, minute)
+    poke_byte(out, 16, 58)
+    _dt_write2(out, 17, second)
+    ret 19
+}
+
+;; Difference between two timestamps in seconds.
+fn dt_diff(a: i64, b: i64) -> i64 {
+    let d = a - b
+    if d < 0 { d = 0 - d }
+    ret d
+}
+
+;; Add days to a timestamp.
+fn dt_add_days(ts: i64, days: i64) -> i64 {
+    ret ts + days * 86400
+}
+
+;; Add hours to a timestamp.
+fn dt_add_hours(ts: i64, hours: i64) -> i64 {
+    ret ts + hours * 3600
+}

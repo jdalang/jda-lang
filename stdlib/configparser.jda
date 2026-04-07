@@ -1,0 +1,472 @@
+; =============================================================================
+; jda::configparser -- INI File Parser
+; =============================================================================
+; Simple INI format parser with sections, keys, and values.
+; Supports [section] headers, key=value pairs, and ; comments.
+;
+; Memory layout per IniHandle (&i64):
+;   [0] entry_count
+;   [1] section_offsets  (&i64)
+;   [2] section_lengths  (&i64)
+;   [3] key_offsets      (&i64)
+;   [4] key_lengths      (&i64)
+;   [5] val_offsets       (&i64)
+;   [6] val_lengths       (&i64)
+;   [7] data_buf          (&i8 — copy of source)
+;   [8] data_len
+;   [9] cur_sec_off       (current section offset during parse)
+;   [10] cur_sec_len      (current section length during parse)
+;
+; Functions:
+;   ini_parse(buf, len)                             -> &i64  parse INI data
+;   ini_get(h, sec, slen, key, klen, out)          -> i64   get value string
+;   ini_get_i64(h, sec, slen, key, klen)           -> i64   get value as int
+;   ini_has_section(h, sec, slen)                  -> i64   1 if section exists
+;   ini_set(h, sec, slen, key, klen, val, vlen)    -> i64   set value
+;   ini_write(h, out, max)                         -> i64   serialize to INI
+;   ini_count(h)                                    -> i64   number of entries
+; =============================================================================
+
+;; Internal byte reader.
+fn _ini_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: copy bytes from src+off to dst, length len.
+fn _ini_copy(dst: &i8, src: &i8, off: i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ch = _ini_byte_at(src, off + i)
+        poke_byte(dst, i, ch)
+        i = i + 1
+    }
+    ret len
+}
+
+;; Internal: compare two byte ranges for equality.
+fn _ini_eq(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i64 {
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        let ca = _ini_byte_at(a, aoff + i)
+        let cb = _ini_byte_at(b, boff + i)
+        if ca != cb { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Internal: skip whitespace at pos. Returns new pos.
+fn _ini_skip_ws(buf: &i8, pos: i64, len: i64) -> i64 {
+    let running = 1
+    loop running == 1 and pos < len {
+        let ch = _ini_byte_at(buf, pos)
+        if ch == 32 or ch == 9 { pos = pos + 1 } else { running = 0 }
+    }
+    ret pos
+}
+
+;; Internal: skip to end of line. Returns pos after newline.
+fn _ini_skip_line(buf: &i8, pos: i64, len: i64) -> i64 {
+    let found = 0
+    loop found == 0 and pos < len {
+        let ch = _ini_byte_at(buf, pos)
+        pos = pos + 1
+        if ch == 10 { found = 1 }
+    }
+    ret pos
+}
+
+;; Internal: add one entry. Val info passed via h[11], h[12].
+fn _ini_add_entry(h: &i64, sec_off: i64, sec_len: i64, key_off: i64, key_len: i64) -> i64 {
+    let count = h[0]
+    let sec_offs: &i64 = h[1]
+    let sec_lens: &i64 = h[2]
+    let key_offs: &i64 = h[3]
+    let key_lens: &i64 = h[4]
+    let val_offs: &i64 = h[5]
+    let val_lens: &i64 = h[6]
+    let val_off = h[11]
+    let val_len = h[12]
+    sec_offs[count] = sec_off
+    sec_lens[count] = sec_len
+    key_offs[count] = key_off
+    key_lens[count] = key_len
+    val_offs[count] = val_off
+    val_lens[count] = val_len
+    h[0] = count + 1
+    ret count + 1
+}
+
+;; Internal: parse section header. Sets h[9], h[10]. Returns pos after line.
+fn _ini_parse_section(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
+    ; pos points to '[', skip it
+    pos = pos + 1
+    let start = pos
+    let found = 0
+    loop found == 0 and pos < len {
+        let ch = _ini_byte_at(buf, pos)
+        if ch == 93 { found = 1 } else { pos = pos + 1 }
+    }
+    h[9] = start
+    h[10] = pos - start
+    pos = pos + 1
+    pos = _ini_skip_line(buf, pos, len)
+    ret pos
+}
+
+;; Internal: trim trailing whitespace. Returns new end position.
+fn _ini_trim_end(buf: &i8, start: i64, end_pos: i64) -> i64 {
+    let e = end_pos
+    let trimming = 1
+    loop trimming == 1 and e > start {
+        let tmp = e - 1
+        let ch = _ini_byte_at(buf, tmp)
+        if ch == 32 or ch == 9 { e = tmp } else { trimming = 0 }
+    }
+    ret e
+}
+
+;; Internal: parse key=value line. Returns pos after line.
+fn _ini_parse_kv(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
+    let key_start = pos
+    let found_eq = 0
+    loop found_eq == 0 and pos < len {
+        let ch = _ini_byte_at(buf, pos)
+        if ch == 61 { found_eq = 1 }
+        if ch == 10 { found_eq = 2 }
+        if found_eq == 0 { pos = pos + 1 }
+    }
+    if found_eq != 1 {
+        pos = _ini_skip_line(buf, pos, len)
+        ret pos
+    }
+    let key_end = _ini_trim_end(buf, key_start, pos)
+    pos = pos + 1
+    ; Skip leading ws of value
+    pos = _ini_skip_ws(buf, pos, len)
+    let val_start = pos
+    ; Scan to end of line
+    let at_eol = 0
+    loop at_eol == 0 and pos < len {
+        let vc = _ini_byte_at(buf, pos)
+        if vc == 10 or vc == 13 { at_eol = 1 } else { pos = pos + 1 }
+    }
+    let val_end = _ini_trim_end(buf, val_start, pos)
+    let klen = key_end - key_start
+    let vlen = val_end - val_start
+    let sec_off = h[9]
+    let sec_len = h[10]
+    h[11] = val_start
+    h[12] = vlen
+    _ini_add_entry(h, sec_off, sec_len, key_start, klen)
+    if pos < len { pos = pos + 1 }
+    ret pos
+}
+
+;; Parse INI data from buf. Returns handle.
+fn ini_parse(buf: &i8, len: i64) -> &i64 {
+    let h: &i64 = alloc_pages(1)
+    let sec_offs: &i64 = alloc_pages(1)
+    let sec_lens: &i64 = alloc_pages(1)
+    let key_offs: &i64 = alloc_pages(1)
+    let key_lens: &i64 = alloc_pages(1)
+    let val_offs: &i64 = alloc_pages(1)
+    let val_lens: &i64 = alloc_pages(1)
+    let data: &i8 = alloc_pages(4)
+    let ci = 0
+    loop ci < len {
+        let cb = _ini_byte_at(buf, ci)
+        poke_byte(data, ci, cb)
+        ci = ci + 1
+    }
+    h[0] = 0
+    h[1] = sec_offs
+    h[2] = sec_lens
+    h[3] = key_offs
+    h[4] = key_lens
+    h[5] = val_offs
+    h[6] = val_lens
+    h[7] = data
+    h[8] = len
+    h[9] = 0
+    h[10] = 0
+
+    let pos = 0
+    loop pos < len {
+        pos = _ini_skip_ws(data, pos, len)
+        if pos >= len { ret h }
+        let ch = _ini_byte_at(data, pos)
+        if ch == 10 or ch == 13 {
+            pos = pos + 1
+        }
+        if ch == 59 or ch == 35 {
+            pos = _ini_skip_line(data, pos, len)
+        }
+        if ch == 91 {
+            pos = _ini_parse_section(h, data, pos, len)
+        }
+        if ch >= 33 and ch != 91 and ch != 59 and ch != 35 and ch != 10 and ch != 13 {
+            pos = _ini_parse_kv(h, data, pos, len)
+        }
+    }
+    ret h
+}
+
+;; Alias for compatibility.
+fn ini_parse_full(buf: &i8, len: i64) -> &i64 {
+    ret ini_parse(buf, len)
+}
+
+;; Number of entries in the INI handle.
+fn ini_count(h: &i64) -> i64 {
+    ret h[0]
+}
+
+;; Get value for section+key. Copies to out, returns length. -1 if not found.
+fn ini_get(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64, out: &i8) -> i64 {
+    let data: &i8 = h[7]
+    let count = h[0]
+    let sec_offs: &i64 = h[1]
+    let sec_lens: &i64 = h[2]
+    let key_offs: &i64 = h[3]
+    let key_lens: &i64 = h[4]
+    let val_offs: &i64 = h[5]
+    let val_lens: &i64 = h[6]
+    let i = 0
+    loop i < count {
+        let s_match = _ini_eq(sec, 0, slen, data, sec_offs[i], sec_lens[i])
+        if s_match == 1 {
+            let k_match = _ini_eq(key, 0, klen, data, key_offs[i], key_lens[i])
+            if k_match == 1 {
+                let voff = val_offs[i]
+                let vlen = val_lens[i]
+                _ini_copy(out, data, voff, vlen)
+                ret vlen
+            }
+        }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Get value as i64. Returns 0 if not found.
+;; Parses directly from data buffer to avoid alloc_pages overlap.
+fn ini_get_i64(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64) -> i64 {
+    let data: &i8 = h[7]
+    let count = h[0]
+    let sec_offs: &i64 = h[1]
+    let sec_lens: &i64 = h[2]
+    let key_offs: &i64 = h[3]
+    let key_lens: &i64 = h[4]
+    let val_offs: &i64 = h[5]
+    let val_lens: &i64 = h[6]
+    let i = 0
+    loop i < count {
+        let s_match = _ini_eq(sec, 0, slen, data, sec_offs[i], sec_lens[i])
+        if s_match == 1 {
+            let k_match = _ini_eq(key, 0, klen, data, key_offs[i], key_lens[i])
+            if k_match == 1 {
+                let voff = val_offs[i]
+                let vlen = val_lens[i]
+                let result = 0
+                let neg = 0
+                let j = 0
+                if vlen > 0 {
+                    let first = _ini_byte_at(data, voff)
+                    if first == 45 { neg = 1 j = 1 }
+                }
+                loop j < vlen {
+                    let ch = _ini_byte_at(data, voff + j)
+                    if ch >= 48 and ch <= 57 {
+                        result = result * 10 + ch - 48
+                    }
+                    j = j + 1
+                }
+                if neg == 1 { result = 0 - result }
+                ret result
+            }
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Check if section exists. Returns 1 if found, 0 otherwise.
+fn ini_has_section(h: &i64, sec: &i8, slen: i64) -> i64 {
+    let data: &i8 = h[7]
+    let count = h[0]
+    let sec_offs: &i64 = h[1]
+    let sec_lens: &i64 = h[2]
+    let i = 0
+    loop i < count {
+        let eq = _ini_eq(sec, 0, slen, data, sec_offs[i], sec_lens[i])
+        if eq == 1 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Set a value for section+key. Overwrites if exists, appends if new.
+;; Val and vlen passed via h[11], h[12] to avoid 7-arg limit.
+fn ini_set(h: &i64, sec: &i8, slen: i64, key: &i8, klen: i64) -> i64 {
+    let val: &i8 = h[13]
+    let vlen = h[12]
+    let data: &i8 = h[7]
+    let count = h[0]
+    let sec_offs: &i64 = h[1]
+    let sec_lens: &i64 = h[2]
+    let key_offs: &i64 = h[3]
+    let key_lens: &i64 = h[4]
+    let val_offs: &i64 = h[5]
+    let val_lens: &i64 = h[6]
+    let dlen = h[8]
+    ; Search for existing entry
+    let i = 0
+    loop i < count {
+        let s_match = _ini_eq(sec, 0, slen, data, sec_offs[i], sec_lens[i])
+        if s_match == 1 {
+            let k_match = _ini_eq(key, 0, klen, data, key_offs[i], key_lens[i])
+            if k_match == 1 {
+                ; Overwrite: copy val to end of data
+                let new_off = dlen
+                let vi = 0
+                loop vi < vlen {
+                    let vc = _ini_byte_at(val, vi)
+                    poke_byte(data, dlen, vc)
+                    dlen = dlen + 1
+                    vi = vi + 1
+                }
+                val_offs[i] = new_off
+                val_lens[i] = vlen
+                h[8] = dlen
+                ret 1
+            }
+        }
+        i = i + 1
+    }
+    ; Append new entry
+    let s_off = dlen
+    let si = 0
+    loop si < slen {
+        let sc = _ini_byte_at(sec, si)
+        poke_byte(data, dlen, sc)
+        dlen = dlen + 1
+        si = si + 1
+    }
+    let k_off = dlen
+    let ki = 0
+    loop ki < klen {
+        let kc = _ini_byte_at(key, ki)
+        poke_byte(data, dlen, kc)
+        dlen = dlen + 1
+        ki = ki + 1
+    }
+    let v_off = dlen
+    let vi2 = 0
+    loop vi2 < vlen {
+        let vc2 = _ini_byte_at(val, vi2)
+        poke_byte(data, dlen, vc2)
+        dlen = dlen + 1
+        vi2 = vi2 + 1
+    }
+    sec_offs[count] = s_off
+    sec_lens[count] = slen
+    key_offs[count] = k_off
+    key_lens[count] = klen
+    val_offs[count] = v_off
+    val_lens[count] = vlen
+    h[0] = count + 1
+    h[8] = dlen
+    ret 1
+}
+
+;; Internal: write section's key=value pairs.
+fn _ini_write_section_kvs(h: &i64, out: &i8, pos: i64, data: &i8, sec_off: i64, sec_len: i64) -> i64 {
+    let count = h[0]
+    let sec_offs: &i64 = h[1]
+    let sec_lens: &i64 = h[2]
+    let key_offs: &i64 = h[3]
+    let key_lens: &i64 = h[4]
+    let val_offs: &i64 = h[5]
+    let val_lens: &i64 = h[6]
+    let j = 0
+    loop j < count {
+        let eq = _ini_eq(data, sec_off, sec_len, data, sec_offs[j], sec_lens[j])
+        if eq == 1 {
+            let ko = key_offs[j]
+            let kl = key_lens[j]
+            let ki = 0
+            loop ki < kl {
+                let kc = _ini_byte_at(data, ko + ki)
+                poke_byte(out, pos, kc)
+                pos = pos + 1
+                ki = ki + 1
+            }
+            poke_byte(out, pos, 61)
+            pos = pos + 1
+            let vo = val_offs[j]
+            let vl = val_lens[j]
+            let vi = 0
+            loop vi < vl {
+                let vc = _ini_byte_at(data, vo + vi)
+                poke_byte(out, pos, vc)
+                pos = pos + 1
+                vi = vi + 1
+            }
+            poke_byte(out, pos, 10)
+            pos = pos + 1
+        }
+        j = j + 1
+    }
+    ret pos
+}
+
+;; Write INI data to out buffer. Returns length written.
+fn ini_write(h: &i64, out: &i8, max: i64) -> i64 {
+    let data: &i8 = h[7]
+    let count = h[0]
+    let sec_offs: &i64 = h[1]
+    let sec_lens: &i64 = h[2]
+    let written_secs: &i64 = alloc_pages(1)
+    let ws_count = 0
+    let pos = 0
+    let i = 0
+
+    loop i < count {
+        let so = sec_offs[i]
+        let sl = sec_lens[i]
+        let already = 0
+        let wi = 0
+        loop wi < ws_count {
+            let prev_idx = written_secs[wi]
+            let eq = _ini_eq(data, so, sl, data, sec_offs[prev_idx], sec_lens[prev_idx])
+            if eq == 1 { already = 1 }
+            wi = wi + 1
+        }
+        if already == 0 {
+            if sl > 0 {
+                if pos > 0 {
+                    poke_byte(out, pos, 10)
+                    pos = pos + 1
+                }
+                poke_byte(out, pos, 91)
+                pos = pos + 1
+                let si = 0
+                loop si < sl {
+                    let sc = _ini_byte_at(data, so + si)
+                    poke_byte(out, pos, sc)
+                    pos = pos + 1
+                    si = si + 1
+                }
+                poke_byte(out, pos, 93)
+                pos = pos + 1
+                poke_byte(out, pos, 10)
+                pos = pos + 1
+            }
+            written_secs[ws_count] = i
+            ws_count = ws_count + 1
+            pos = _ini_write_section_kvs(h, out, pos, data, so, sl)
+        }
+        i = i + 1
+    }
+    ret pos
+}

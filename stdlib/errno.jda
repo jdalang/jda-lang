@@ -1,0 +1,140 @@
+; =============================================================================
+; jda::errno -- Named Error Constants and Descriptions
+; =============================================================================
+; Standard Linux errno constants with name/description lookup.
+;
+; Functions:
+;   errno_name(code, out)              -> i64  write errno name, return length
+;   errno_desc(code, out)              -> i64  write description, return length
+;   errno_from_name(name, nlen)        -> i64  lookup code by name (-1 if unknown)
+; =============================================================================
+
+;; Internal: copy string literal to output buffer.
+fn _errno_copy(dst: &i8, src: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        poke_byte(dst, i, src[i])
+        i = i + 1
+    }
+    ret len
+}
+
+;; Internal byte reader helper.
+fn _errno_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: compare two strings.
+fn _errno_streq(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        if a[i] != b[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Get the name string for an errno code. Returns length written, -1 if unknown.
+fn errno_name(code: i64, out: &i8) -> i64 {
+    if code == 1 { ret _errno_copy(out, "EPERM", 5) }
+    if code == 2 { ret _errno_copy(out, "ENOENT", 6) }
+    if code == 3 { ret _errno_copy(out, "ESRCH", 5) }
+    if code == 4 { ret _errno_copy(out, "EINTR", 5) }
+    if code == 5 { ret _errno_copy(out, "EIO", 3) }
+    if code == 6 { ret _errno_copy(out, "ENXIO", 5) }
+    if code == 7 { ret _errno_copy(out, "E2BIG", 5) }
+    if code == 9 { ret _errno_copy(out, "EBADF", 5) }
+    if code == 10 { ret _errno_copy(out, "ECHILD", 6) }
+    if code == 11 { ret _errno_copy(out, "EAGAIN", 6) }
+    if code == 12 { ret _errno_copy(out, "ENOMEM", 6) }
+    if code == 13 { ret _errno_copy(out, "EACCES", 6) }
+    if code == 14 { ret _errno_copy(out, "EFAULT", 6) }
+    if code == 16 { ret _errno_copy(out, "EBUSY", 5) }
+    if code == 17 { ret _errno_copy(out, "EEXIST", 6) }
+    if code == 18 { ret _errno_copy(out, "EXDEV", 5) }
+    if code == 19 { ret _errno_copy(out, "ENODEV", 6) }
+    if code == 20 { ret _errno_copy(out, "ENOTDIR", 7) }
+    if code == 21 { ret _errno_copy(out, "EISDIR", 6) }
+    if code == 22 { ret _errno_copy(out, "EINVAL", 6) }
+    if code == 23 { ret _errno_copy(out, "ENFILE", 6) }
+    if code == 24 { ret _errno_copy(out, "EMFILE", 6) }
+    if code == 25 { ret _errno_copy(out, "ENOTTY", 6) }
+    if code == 27 { ret _errno_copy(out, "EFBIG", 5) }
+    if code == 28 { ret _errno_copy(out, "ENOSPC", 6) }
+    if code == 29 { ret _errno_copy(out, "ESPIPE", 6) }
+    if code == 30 { ret _errno_copy(out, "EROFS", 5) }
+    if code == 31 { ret _errno_copy(out, "EMLINK", 6) }
+    if code == 32 { ret _errno_copy(out, "EPIPE", 5) }
+    if code == 33 { ret _errno_copy(out, "EDOM", 4) }
+    if code == 34 { ret _errno_copy(out, "ERANGE", 6) }
+    if code == 36 { ret _errno_copy(out, "ENAMETOOLONG", 12) }
+    if code == 38 { ret _errno_copy(out, "ENOSYS", 6) }
+    if code == 39 { ret _errno_copy(out, "ENOTEMPTY", 9) }
+    if code == 110 { ret _errno_copy(out, "ETIMEDOUT", 9) }
+    if code == 111 { ret _errno_copy(out, "ECONNREFUSED", 12) }
+    if code == 104 { ret _errno_copy(out, "ECONNRESET", 10) }
+    if code == 115 { ret _errno_copy(out, "EINPROGRESS", 11) }
+    ret -1
+}
+
+;; Get a human-readable description for an errno code.
+fn errno_desc(code: i64, out: &i8) -> i64 {
+    if code == 1 { ret _errno_copy(out, "Operation not permitted", 23) }
+    if code == 2 { ret _errno_copy(out, "No such file or directory", 25) }
+    if code == 3 { ret _errno_copy(out, "No such process", 15) }
+    if code == 4 { ret _errno_copy(out, "Interrupted system call", 23) }
+    if code == 5 { ret _errno_copy(out, "Input/output error", 18) }
+    if code == 9 { ret _errno_copy(out, "Bad file descriptor", 19) }
+    if code == 10 { ret _errno_copy(out, "No child processes", 18) }
+    if code == 11 { ret _errno_copy(out, "Resource temporarily unavailable", 32) }
+    if code == 12 { ret _errno_copy(out, "Cannot allocate memory", 22) }
+    if code == 13 { ret _errno_copy(out, "Permission denied", 17) }
+    if code == 14 { ret _errno_copy(out, "Bad address", 11) }
+    if code == 16 { ret _errno_copy(out, "Device or resource busy", 23) }
+    if code == 17 { ret _errno_copy(out, "File exists", 11) }
+    if code == 20 { ret _errno_copy(out, "Not a directory", 15) }
+    if code == 21 { ret _errno_copy(out, "Is a directory", 14) }
+    if code == 22 { ret _errno_copy(out, "Invalid argument", 16) }
+    if code == 24 { ret _errno_copy(out, "Too many open files", 19) }
+    if code == 28 { ret _errno_copy(out, "No space left on device", 23) }
+    if code == 30 { ret _errno_copy(out, "Read-only file system", 21) }
+    if code == 32 { ret _errno_copy(out, "Broken pipe", 11) }
+    if code == 34 { ret _errno_copy(out, "Numerical result out of range", 29) }
+    if code == 36 { ret _errno_copy(out, "File name too long", 18) }
+    if code == 38 { ret _errno_copy(out, "Function not implemented", 24) }
+    if code == 39 { ret _errno_copy(out, "Directory not empty", 19) }
+    if code == 110 { ret _errno_copy(out, "Connection timed out", 20) }
+    if code == 111 { ret _errno_copy(out, "Connection refused", 18) }
+    if code == 104 { ret _errno_copy(out, "Connection reset by peer", 24) }
+    ret -1
+}
+
+;; Lookup errno code by name string. Returns code or -1 if unknown.
+fn errno_from_name(name: &i8, nlen: i64) -> i64 {
+    if _errno_streq(name, nlen, "EPERM", 5) == 1 { ret 1 }
+    if _errno_streq(name, nlen, "ENOENT", 6) == 1 { ret 2 }
+    if _errno_streq(name, nlen, "ESRCH", 5) == 1 { ret 3 }
+    if _errno_streq(name, nlen, "EINTR", 5) == 1 { ret 4 }
+    if _errno_streq(name, nlen, "EIO", 3) == 1 { ret 5 }
+    if _errno_streq(name, nlen, "EBADF", 5) == 1 { ret 9 }
+    if _errno_streq(name, nlen, "EAGAIN", 6) == 1 { ret 11 }
+    if _errno_streq(name, nlen, "ENOMEM", 6) == 1 { ret 12 }
+    if _errno_streq(name, nlen, "EACCES", 6) == 1 { ret 13 }
+    if _errno_streq(name, nlen, "EFAULT", 6) == 1 { ret 14 }
+    if _errno_streq(name, nlen, "EBUSY", 5) == 1 { ret 16 }
+    if _errno_streq(name, nlen, "EEXIST", 6) == 1 { ret 17 }
+    if _errno_streq(name, nlen, "ENODEV", 6) == 1 { ret 19 }
+    if _errno_streq(name, nlen, "ENOTDIR", 7) == 1 { ret 20 }
+    if _errno_streq(name, nlen, "EISDIR", 6) == 1 { ret 21 }
+    if _errno_streq(name, nlen, "EINVAL", 6) == 1 { ret 22 }
+    if _errno_streq(name, nlen, "EMFILE", 6) == 1 { ret 24 }
+    if _errno_streq(name, nlen, "ENOSPC", 6) == 1 { ret 28 }
+    if _errno_streq(name, nlen, "EROFS", 5) == 1 { ret 30 }
+    if _errno_streq(name, nlen, "EPIPE", 5) == 1 { ret 32 }
+    if _errno_streq(name, nlen, "ERANGE", 6) == 1 { ret 34 }
+    if _errno_streq(name, nlen, "ENOSYS", 6) == 1 { ret 38 }
+    if _errno_streq(name, nlen, "ENOTEMPTY", 9) == 1 { ret 39 }
+    if _errno_streq(name, nlen, "ETIMEDOUT", 9) == 1 { ret 110 }
+    if _errno_streq(name, nlen, "ECONNREFUSED", 12) == 1 { ret 111 }
+    if _errno_streq(name, nlen, "ECONNRESET", 10) == 1 { ret 104 }
+    ret -1
+}
