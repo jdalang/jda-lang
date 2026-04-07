@@ -1,0 +1,32 @@
+fn _sr_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+fn main() -> i64 {
+    let buf: &i8 = alloc_pages(1)
+
+    ; Generate random bytes
+    let n = srand_bytes(buf, 16)
+    if n == 16 { print("bytes ok") }
+    print("\n")
+
+    ; Generate hex
+    let hex: &i8 = alloc_pages(1)
+    let hlen = srand_hex(hex, 8)
+    print("{hlen}\n")
+
+    ; Generate UUID
+    let uuid: &i8 = alloc_pages(1)
+    let ulen = srand_uuid4(uuid)
+    print("{ulen}\n")
+
+    ; Check UUID format: 8-4-4-4-12 with dashes
+    let d1 = _sr_byte_at(uuid, 8)
+    let d2 = _sr_byte_at(uuid, 13)
+    let d3 = _sr_byte_at(uuid, 18)
+    let d4 = _sr_byte_at(uuid, 23)
+    if d1 == 45 and d2 == 45 and d3 == 45 and d4 == 45 {
+        print("uuid format ok")
+    }
+    print("\n")
+
+    ret 0
+}

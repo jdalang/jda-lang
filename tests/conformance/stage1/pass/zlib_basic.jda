@@ -1,0 +1,30 @@
+fn _zb_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+fn main() -> i64 {
+    ; CRC-32 of "hello"
+    let crc = zlib_crc32("hello", 5)
+    if crc != 0 { print("crc ok") }
+    print("\n")
+
+    ; Adler-32
+    let adler = zlib_adler32("hello", 5)
+    if adler > 0 { print("adler ok") }
+    print("\n")
+
+    ; Compress and decompress
+    let comp: &i8 = alloc_pages(1)
+    let clen = zlib_compress("AAAAAAAAAA", 10, comp, 4096)
+    if clen > 0 { print("compress ok") }
+    print("\n")
+
+    let decomp: &i8 = alloc_pages(1)
+    let dlen = zlib_decompress(comp, clen, decomp, 4096)
+    print("{dlen}\n")
+
+    ; Verify first byte is 'A' (65)
+    let fb = _zb_byte_at(decomp, 0)
+    if fb == 65 { print("1") } else { print("0") }
+    print("\n")
+
+    ret 0
+}

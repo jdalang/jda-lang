@@ -1,0 +1,142 @@
+; =============================================================================
+; jda::signal -- Signal Handling
+; =============================================================================
+; Register signal handlers, ignore/reset signals, raise signals.
+; Extends process.jda's signal constants with user-facing handler API.
+;
+; Functions:
+;   sig_action(signum, handler)      -> i64  set handler function pointer
+;   sig_ignore(signum)               -> i64  ignore signal
+;   sig_default(signum)              -> i64  restore default handler
+;   sig_raise(signum)                -> i64  send signal to self
+;   sig_kill(pid, signum)            -> i64  send signal to process
+;   sig_block(signum)                -> i64  block signal
+;   sig_unblock(signum)              -> i64  unblock signal
+;   sig_pending()                    -> i64  check pending blocked signals
+; =============================================================================
+
+; Signal number constants (duplicated from process.jda for standalone use)
+const SIG_HUP    =  1
+const SIG_INT    =  2
+const SIG_QUIT   =  3
+const SIG_ILL    =  4
+const SIG_TRAP   =  5
+const SIG_ABRT   =  6
+const SIG_BUS    =  7
+const SIG_FPE    =  8
+const SIG_KILL   =  9
+const SIG_USR1   = 10
+const SIG_SEGV   = 11
+const SIG_USR2   = 12
+const SIG_PIPE   = 13
+const SIG_ALRM   = 14
+const SIG_TERM   = 15
+const SIG_CHLD   = 17
+const SIG_CONT   = 18
+const SIG_STOP   = 19
+const SIG_TSTP   = 20
+const SIG_WINCH  = 28
+
+; Disposition constants
+const SIG_DFL_VAL = 0
+const SIG_IGN_VAL = 1
+
+; SA_RESTORER flag (required on x86-64 Linux)
+const SA_RESTORER = 67108864
+
+;; Internal: single-syscall wrappers
+
+fn _sig_rt_sigaction(sig: i64, act: &i64, old: &i64) -> i64 {
+    ; rt_sigaction(sig, act, oldact, sigsetsize=8)
+    ret syscall(13, sig, act, old)
+}
+
+fn _sig_getpid() -> i64 {
+    ret syscall(39, 0, 0, 0)
+}
+
+fn _sig_kill_raw(pid: i64, sig: i64) -> i64 {
+    ret syscall(62, pid, sig, 0)
+}
+
+fn _sig_rt_sigprocmask(how: i64, set: &i64, old: &i64) -> i64 {
+    ret syscall(14, how, set, old)
+}
+
+fn _sig_rt_sigpending(set: &i64) -> i64 {
+    ret syscall(127, set, 8, 0)
+}
+
+;; Set signal handler. handler = function pointer.
+;; Returns 0 on success, -1 on error.
+fn sig_action(signum: i64, handler: i64) -> i64 {
+    ; Build sigaction struct: handler, flags, restorer, mask
+    let act: &i64 = alloc_pages(1)
+    act[0] = handler       ; sa_handler
+    act[1] = SA_RESTORER   ; sa_flags (need restorer on x86-64)
+    act[2] = 0             ; sa_restorer (kernel will set)
+    act[3] = 0             ; sa_mask[0]
+    act[4] = 0             ; sa_mask[1]
+    ret _sig_rt_sigaction(signum, act, 0)
+}
+
+;; Ignore a signal.
+fn sig_ignore(signum: i64) -> i64 {
+    let act: &i64 = alloc_pages(1)
+    act[0] = SIG_IGN_VAL
+    act[1] = 0
+    act[2] = 0
+    act[3] = 0
+    ret _sig_rt_sigaction(signum, act, 0)
+}
+
+;; Restore default signal handler.
+fn sig_default(signum: i64) -> i64 {
+    let act: &i64 = alloc_pages(1)
+    act[0] = SIG_DFL_VAL
+    act[1] = 0
+    act[2] = 0
+    act[3] = 0
+    ret _sig_rt_sigaction(signum, act, 0)
+}
+
+;; Send signal to self.
+fn sig_raise(signum: i64) -> i64 {
+    let pid = _sig_getpid()
+    ret _sig_kill_raw(pid, signum)
+}
+
+;; Send signal to another process.
+fn sig_kill(pid: i64, signum: i64) -> i64 {
+    ret _sig_kill_raw(pid, signum)
+}
+
+;; Block a signal. how=0 (SIG_BLOCK).
+fn sig_block(signum: i64) -> i64 {
+    let set: &i64 = alloc_pages(1)
+    ; Set bit for signum (1-based)
+    let bit = 1
+    let sh = signum - 1
+    let si = 0
+    loop si < sh { bit = bit * 2   si = si + 1 }
+    set[0] = bit
+    ret _sig_rt_sigprocmask(0, set, 0)
+}
+
+;; Unblock a signal. how=1 (SIG_UNBLOCK).
+fn sig_unblock(signum: i64) -> i64 {
+    let set: &i64 = alloc_pages(1)
+    let bit = 1
+    let sh = signum - 1
+    let si = 0
+    loop si < sh { bit = bit * 2   si = si + 1 }
+    set[0] = bit
+    ret _sig_rt_sigprocmask(1, set, 0)
+}
+
+;; Check if any signals are pending. Returns bitmask.
+fn sig_pending() -> i64 {
+    let set: &i64 = alloc_pages(1)
+    _sig_rt_sigpending(set)
+    ret set[0]
+}

@@ -1,0 +1,34 @@
+fn main() -> i64 {
+    let data: &i64 = alloc_pages(1)
+    data[0] = 42
+
+    let wr = weakref_new(data)
+    let alive = weakref_alive(wr)
+    print("{alive}\n")
+
+    ; Deref
+    let ptr: &i64 = weakref_deref(wr)
+    let val = ptr[0]
+    print("{val}\n")
+
+    ; Release
+    weakref_release(wr)
+    alive = weakref_alive(wr)
+    print("{alive}\n")
+    let d = weakref_deref(wr)
+    print("{d}\n")
+
+    ; Registry
+    let reg = weakref_registry_new()
+    let w1 = weakref_new(100)
+    let w2 = weakref_new(200)
+    let w3 = weakref_new(300)
+    weakref_register(reg, w1)
+    weakref_register(reg, w2)
+    weakref_register(reg, w3)
+    weakref_release(w2)
+    let dead = weakref_sweep(reg)
+    print("{dead}\n")
+
+    ret 0
+}
