@@ -1,0 +1,168 @@
+; =============================================================================
+; jda::diff -- Sequence Comparison and Diff
+; =============================================================================
+; Longest common subsequence, similarity ratio, and unified diff.
+;
+; Functions:
+;   diff_lcs_len(a, alen, b, blen)     -> i64  LCS length
+;   diff_ratio(a, alen, b, blen)       -> i64  similarity * 10000
+;   diff_lines(a, alen, b, blen, out, max) -> i64  unified diff output
+; =============================================================================
+
+;; Internal byte reader.
+fn _diff_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Compute Longest Common Subsequence length.
+;; Uses O(n*m) DP. Max input ~200 chars (limited by alloc_pages).
+fn diff_lcs_len(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
+    ; DP table: (alen+1) * (blen+1) entries
+    let cols = blen + 1
+    let rows = alen + 1
+    let dp: &i64 = alloc_pages(16)
+    ; Initialize to 0 (alloc_pages returns zeroed memory)
+    ; Fill DP
+    let i = 1
+    loop i <= alen {
+        let j = 1
+        loop j <= blen {
+            let ac = _diff_byte_at(a, i - 1)
+            let bc = _diff_byte_at(b, j - 1)
+            let idx = i * cols + j
+            if ac == bc {
+                let prev = i - 1
+                let pidx = prev * cols + j - 1
+                dp[idx] = dp[pidx] + 1
+            } else {
+                let up_idx = (i - 1) * cols + j
+                let left_idx = i * cols + j - 1
+                let up = dp[up_idx]
+                let left = dp[left_idx]
+                if up > left {
+                    dp[idx] = up
+                } else {
+                    dp[idx] = left
+                }
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    let result_idx = alen * cols + blen
+    ret dp[result_idx]
+}
+
+;; Compute similarity ratio * 10000.
+;; ratio = 2 * lcs_len / (alen + blen) * 10000
+fn diff_ratio(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
+    let total = alen + blen
+    if total == 0 { ret 10000 }
+    let lcs = diff_lcs_len(a, alen, b, blen)
+    let numerator = 2 * lcs * 10000
+    ret numerator / total
+}
+
+;; Simple line-by-line diff output. Lines prefixed with +/- / (space).
+;; Compares byte-by-byte (not line-aware for simplicity).
+;; Returns length written to out.
+fn diff_lines(a: &i8, alen: i64, b: &i8, blen: i64, out: &i8, max: i64) -> i64 {
+    let opos = 0
+    ; Split a into lines and compare with b lines
+    ; Simple approach: show - for a lines, + for b lines if different
+    let ai = 0
+    let bi = 0
+    let running = 1
+    loop running == 1 {
+        if ai >= alen {
+            if bi >= blen { running = 0 }
+        }
+        if running == 1 {
+            ; Find end of current line in a
+            let a_line_start = ai
+            let a_line_end = ai
+            if ai < alen {
+                let scanning = 1
+                loop scanning == 1 {
+                    if a_line_end >= alen { scanning = 0 }
+                    if scanning == 1 {
+                        let ab = _diff_byte_at(a, a_line_end)
+                        if ab == 10 { scanning = 0 } else { a_line_end = a_line_end + 1 }
+                    }
+                }
+            }
+            ; Find end of current line in b
+            let b_line_start = bi
+            let b_line_end = bi
+            if bi < blen {
+                let scanning = 1
+                loop scanning == 1 {
+                    if b_line_end >= blen { scanning = 0 }
+                    if scanning == 1 {
+                        let bb = _diff_byte_at(b, b_line_end)
+                        if bb == 10 { scanning = 0 } else { b_line_end = b_line_end + 1 }
+                    }
+                }
+            }
+            ; Compare lines
+            let a_len = a_line_end - a_line_start
+            let b_len = b_line_end - b_line_start
+            let same = 0
+            if a_len == b_len {
+                same = 1
+                let k = 0
+                loop k < a_len {
+                    let ca = _diff_byte_at(a, a_line_start + k)
+                    let cb = _diff_byte_at(b, b_line_start + k)
+                    if ca != cb { same = 0 }
+                    k = k + 1
+                }
+            }
+            if same == 1 {
+                ; Same line
+                poke_byte(out, opos, 32)
+                opos = opos + 1
+                let k = 0
+                loop k < a_len {
+                    let c = _diff_byte_at(a, a_line_start + k)
+                    poke_byte(out, opos, c)
+                    opos = opos + 1
+                    k = k + 1
+                }
+                poke_byte(out, opos, 10)
+                opos = opos + 1
+                if a_line_end < alen { ai = a_line_end + 1 } else { ai = alen }
+                if b_line_end < blen { bi = b_line_end + 1 } else { bi = blen }
+            } else {
+                ; Different: show - then +
+                if ai < alen {
+                    poke_byte(out, opos, 45)
+                    opos = opos + 1
+                    let k = 0
+                    loop k < a_len {
+                        let c = _diff_byte_at(a, a_line_start + k)
+                        poke_byte(out, opos, c)
+                        opos = opos + 1
+                        k = k + 1
+                    }
+                    poke_byte(out, opos, 10)
+                    opos = opos + 1
+                    if a_line_end < alen { ai = a_line_end + 1 } else { ai = alen }
+                }
+                if bi < blen {
+                    poke_byte(out, opos, 43)
+                    opos = opos + 1
+                    let k = 0
+                    loop k < b_len {
+                        let c = _diff_byte_at(b, b_line_start + k)
+                        poke_byte(out, opos, c)
+                        opos = opos + 1
+                        k = k + 1
+                    }
+                    poke_byte(out, opos, 10)
+                    opos = opos + 1
+                    if b_line_end < blen { bi = b_line_end + 1 } else { bi = blen }
+                }
+            }
+        }
+    }
+    ret opos
+}

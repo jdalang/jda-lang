@@ -1,0 +1,109 @@
+fn main() -> i64 {
+    ; Build HTTP response:
+    ; "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nhello"
+    let resp: &i8 = alloc_pages(1)
+    let p = 0
+    ; "HTTP/1.1 200 OK\r\n"
+    poke_byte(resp, p, 72) p = p + 1   ; H
+    poke_byte(resp, p, 84) p = p + 1   ; T
+    poke_byte(resp, p, 84) p = p + 1   ; T
+    poke_byte(resp, p, 80) p = p + 1   ; P
+    poke_byte(resp, p, 47) p = p + 1   ; /
+    poke_byte(resp, p, 49) p = p + 1   ; 1
+    poke_byte(resp, p, 46) p = p + 1   ; .
+    poke_byte(resp, p, 49) p = p + 1   ; 1
+    poke_byte(resp, p, 32) p = p + 1   ; space
+    poke_byte(resp, p, 50) p = p + 1   ; 2
+    poke_byte(resp, p, 48) p = p + 1   ; 0
+    poke_byte(resp, p, 48) p = p + 1   ; 0
+    poke_byte(resp, p, 32) p = p + 1   ; space
+    poke_byte(resp, p, 79) p = p + 1   ; O
+    poke_byte(resp, p, 75) p = p + 1   ; K
+    poke_byte(resp, p, 13) p = p + 1   ; CR
+    poke_byte(resp, p, 10) p = p + 1   ; LF
+    ; "Content-Type: text/html\r\n"
+    poke_byte(resp, p, 67) p = p + 1   ; C
+    poke_byte(resp, p, 111) p = p + 1  ; o
+    poke_byte(resp, p, 110) p = p + 1  ; n
+    poke_byte(resp, p, 116) p = p + 1  ; t
+    poke_byte(resp, p, 101) p = p + 1  ; e
+    poke_byte(resp, p, 110) p = p + 1  ; n
+    poke_byte(resp, p, 116) p = p + 1  ; t
+    poke_byte(resp, p, 45) p = p + 1   ; -
+    poke_byte(resp, p, 84) p = p + 1   ; T
+    poke_byte(resp, p, 121) p = p + 1  ; y
+    poke_byte(resp, p, 112) p = p + 1  ; p
+    poke_byte(resp, p, 101) p = p + 1  ; e
+    poke_byte(resp, p, 58) p = p + 1   ; :
+    poke_byte(resp, p, 32) p = p + 1   ; space
+    poke_byte(resp, p, 116) p = p + 1  ; t
+    poke_byte(resp, p, 101) p = p + 1  ; e
+    poke_byte(resp, p, 120) p = p + 1  ; x
+    poke_byte(resp, p, 116) p = p + 1  ; t
+    poke_byte(resp, p, 47) p = p + 1   ; /
+    poke_byte(resp, p, 104) p = p + 1  ; h
+    poke_byte(resp, p, 116) p = p + 1  ; t
+    poke_byte(resp, p, 109) p = p + 1  ; m
+    poke_byte(resp, p, 108) p = p + 1  ; l
+    poke_byte(resp, p, 13) p = p + 1   ; CR
+    poke_byte(resp, p, 10) p = p + 1   ; LF
+    ; "\r\n" (end headers)
+    poke_byte(resp, p, 13) p = p + 1   ; CR
+    poke_byte(resp, p, 10) p = p + 1   ; LF
+    ; "hello"
+    poke_byte(resp, p, 104) p = p + 1  ; h
+    poke_byte(resp, p, 101) p = p + 1  ; e
+    poke_byte(resp, p, 108) p = p + 1  ; l
+    poke_byte(resp, p, 108) p = p + 1  ; l
+    poke_byte(resp, p, 111) p = p + 1  ; o
+
+    let h = http_parse_response(resp, p)
+    let status = http_resp_status(h)
+    print("status: {status}\n")
+
+    let boff = http_resp_body_offset(h)
+    print("body off: {boff}\n")
+
+    let blen = http_resp_body_len(h)
+    print("body len: {blen}\n")
+
+    ; Get Content-Type header
+    let hname: &i8 = alloc_pages(1)
+    poke_byte(hname, 0, 67)   ; C
+    poke_byte(hname, 1, 111)  ; o
+    poke_byte(hname, 2, 110)  ; n
+    poke_byte(hname, 3, 116)  ; t
+    poke_byte(hname, 4, 101)  ; e
+    poke_byte(hname, 5, 110)  ; n
+    poke_byte(hname, 6, 116)  ; t
+    poke_byte(hname, 7, 45)   ; -
+    poke_byte(hname, 8, 84)   ; T
+    poke_byte(hname, 9, 121)  ; y
+    poke_byte(hname, 10, 112) ; p
+    poke_byte(hname, 11, 101) ; e
+    let hval: &i8 = alloc_pages(1)
+    let hvlen = http_resp_header(h, hname, 12, hval)
+    print("header len: {hvlen}\n")
+    syscall(1, 1, hval, hvlen)
+    print("\n")
+
+    ; Build GET request for example.com /test
+    let host: &i8 = alloc_pages(1)
+    poke_byte(host, 0, 101)  ; e
+    poke_byte(host, 1, 120)  ; x
+    poke_byte(host, 2, 46)   ; .
+    poke_byte(host, 3, 99)   ; c
+    poke_byte(host, 4, 111)  ; o
+    poke_byte(host, 5, 109)  ; m
+    let path: &i8 = alloc_pages(1)
+    poke_byte(path, 0, 47)   ; /
+    poke_byte(path, 1, 116)  ; t
+    poke_byte(path, 2, 101)  ; e
+    poke_byte(path, 3, 115)  ; s
+    poke_byte(path, 4, 116)  ; t
+    let reqout: &i8 = alloc_pages(1)
+    let rlen = http_build_get_request(host, 6, path, 5, reqout)
+    print("req len: {rlen}\n")
+
+    ret 0
+}

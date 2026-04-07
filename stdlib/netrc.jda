@@ -1,0 +1,276 @@
+; =============================================================================
+; jda::netrc -- .netrc File Parser
+; =============================================================================
+; Parses the .netrc format used for storing machine credentials.
+; Supports `machine <host> login <user> password <pass>` entries
+; and `default` entries (stored with empty host).
+;
+; Memory layout per NetrcHandle (&i64):
+;   [0] count          (number of entries)
+;   [1] host_offs      (&i64 — byte offsets into data)
+;   [2] host_lens      (&i64 — byte lengths of host)
+;   [3] login_offs     (&i64 — byte offsets into data)
+;   [4] login_lens     (&i64 — byte lengths of login)
+;   [5] pass_offs      (&i64 — byte offsets into data)
+;   [6] pass_lens      (&i64 — byte lengths of password)
+;   [7] data           (&i8 — copy of source)
+;   [8] data_len
+;
+; Functions:
+;   netrc_parse(buf, len)           -> &i64  parse .netrc data
+;   netrc_count(h)                  -> i64   number of entries
+;   netrc_lookup(h, host, hlen)     -> i64   entry index or -1
+;   netrc_login(h, idx, out)        -> i64   copy login to out, return len
+;   netrc_password(h, idx, out)     -> i64   copy password to out, return len
+; =============================================================================
+
+;; Internal byte reader.
+fn _netrc_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: copy bytes from src+off to dst, length len.
+fn _netrc_copy(dst: &i8, src: &i8, off: i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ch = _netrc_byte_at(src, off + i)
+        poke_byte(dst, i, ch)
+        i = i + 1
+    }
+    ret len
+}
+
+;; Internal: compare bytes.
+fn _netrc_eq(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i64 {
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        let ca = _netrc_byte_at(a, aoff + i)
+        let cb = _netrc_byte_at(b, boff + i)
+        if ca != cb { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Internal: check if ch is whitespace (space=32, tab=9, newline=10, cr=13).
+fn _netrc_is_ws(ch: i64) -> i64 {
+    if ch == 32 { ret 1 }
+    if ch == 9 { ret 1 }
+    if ch == 10 { ret 1 }
+    if ch == 13 { ret 1 }
+    ret 0
+}
+
+;; Internal: skip whitespace, return new position.
+fn _netrc_skip_ws(buf: &i8, pos: i64, len: i64) -> i64 {
+    let running = 1
+    loop running == 1 {
+        if pos >= len { running = 0 }
+        if running == 1 {
+            let ch = _netrc_byte_at(buf, pos)
+            let ws = _netrc_is_ws(ch)
+            if ws == 1 { pos = pos + 1 } else { running = 0 }
+        }
+    }
+    ret pos
+}
+
+;; Internal: read a token starting at pos, return end position.
+;; Token is delimited by whitespace.
+fn _netrc_token_end(buf: &i8, pos: i64, len: i64) -> i64 {
+    let running = 1
+    loop running == 1 {
+        if pos >= len { running = 0 }
+        if running == 1 {
+            let ch = _netrc_byte_at(buf, pos)
+            let ws = _netrc_is_ws(ch)
+            if ws == 1 { running = 0 } else { pos = pos + 1 }
+        }
+    }
+    ret pos
+}
+
+;; Internal: check if token at buf[off..off+tlen] matches "machine" (7 chars).
+fn _netrc_is_machine(buf: &i8, off: i64, tlen: i64) -> i64 {
+    if tlen != 7 { ret 0 }
+    if _netrc_byte_at(buf, off) != 109 { ret 0 }
+    if _netrc_byte_at(buf, off + 1) != 97 { ret 0 }
+    if _netrc_byte_at(buf, off + 2) != 99 { ret 0 }
+    if _netrc_byte_at(buf, off + 3) != 104 { ret 0 }
+    if _netrc_byte_at(buf, off + 4) != 105 { ret 0 }
+    if _netrc_byte_at(buf, off + 5) != 110 { ret 0 }
+    if _netrc_byte_at(buf, off + 6) != 101 { ret 0 }
+    ret 1
+}
+
+;; Internal: check if token is "default" (7 chars).
+fn _netrc_is_default(buf: &i8, off: i64, tlen: i64) -> i64 {
+    if tlen != 7 { ret 0 }
+    if _netrc_byte_at(buf, off) != 100 { ret 0 }
+    if _netrc_byte_at(buf, off + 1) != 101 { ret 0 }
+    if _netrc_byte_at(buf, off + 2) != 102 { ret 0 }
+    if _netrc_byte_at(buf, off + 3) != 97 { ret 0 }
+    if _netrc_byte_at(buf, off + 4) != 117 { ret 0 }
+    if _netrc_byte_at(buf, off + 5) != 108 { ret 0 }
+    if _netrc_byte_at(buf, off + 6) != 116 { ret 0 }
+    ret 1
+}
+
+;; Internal: check if token is "login" (5 chars).
+fn _netrc_is_login(buf: &i8, off: i64, tlen: i64) -> i64 {
+    if tlen != 5 { ret 0 }
+    if _netrc_byte_at(buf, off) != 108 { ret 0 }
+    if _netrc_byte_at(buf, off + 1) != 111 { ret 0 }
+    if _netrc_byte_at(buf, off + 2) != 103 { ret 0 }
+    if _netrc_byte_at(buf, off + 3) != 105 { ret 0 }
+    if _netrc_byte_at(buf, off + 4) != 110 { ret 0 }
+    ret 1
+}
+
+;; Internal: check if token is "password" (8 chars).
+fn _netrc_is_password(buf: &i8, off: i64, tlen: i64) -> i64 {
+    if tlen != 8 { ret 0 }
+    if _netrc_byte_at(buf, off) != 112 { ret 0 }
+    if _netrc_byte_at(buf, off + 1) != 97 { ret 0 }
+    if _netrc_byte_at(buf, off + 2) != 115 { ret 0 }
+    if _netrc_byte_at(buf, off + 3) != 115 { ret 0 }
+    if _netrc_byte_at(buf, off + 4) != 119 { ret 0 }
+    if _netrc_byte_at(buf, off + 5) != 111 { ret 0 }
+    if _netrc_byte_at(buf, off + 6) != 114 { ret 0 }
+    if _netrc_byte_at(buf, off + 7) != 100 { ret 0 }
+    ret 1
+}
+
+;; Parse .netrc data. Returns handle.
+fn netrc_parse(buf: &i8, len: i64) -> &i64 {
+    let h: &i64 = alloc_pages(1)
+    let host_offs: &i64 = alloc_pages(1)
+    let host_lens: &i64 = alloc_pages(1)
+    let login_offs: &i64 = alloc_pages(1)
+    let login_lens: &i64 = alloc_pages(1)
+    let pass_offs: &i64 = alloc_pages(1)
+    let pass_lens: &i64 = alloc_pages(1)
+    let data: &i8 = alloc_pages(1)
+    ; Copy source data
+    let ci = 0
+    loop ci < len {
+        let cb = _netrc_byte_at(buf, ci)
+        poke_byte(data, ci, cb)
+        ci = ci + 1
+    }
+    h[0] = 0
+    h[1] = host_offs
+    h[2] = host_lens
+    h[3] = login_offs
+    h[4] = login_lens
+    h[5] = pass_offs
+    h[6] = pass_lens
+    h[7] = data
+    h[8] = len
+    let count = 0
+    let cur_entry = 0 - 1
+    let pos = 0
+    let running = 1
+    loop running == 1 {
+        pos = _netrc_skip_ws(data, pos, len)
+        if pos >= len { running = 0 }
+        if running == 1 {
+            let tok_start = pos
+            pos = _netrc_token_end(data, pos, len)
+            let tlen = pos - tok_start
+            let is_mach = _netrc_is_machine(data, tok_start, tlen)
+            if is_mach == 1 {
+                ; Next token is host
+                pos = _netrc_skip_ws(data, pos, len)
+                let hs = pos
+                pos = _netrc_token_end(data, pos, len)
+                let hl = pos - hs
+                host_offs[count] = hs
+                host_lens[count] = hl
+                login_offs[count] = 0
+                login_lens[count] = 0
+                pass_offs[count] = 0
+                pass_lens[count] = 0
+                cur_entry = count
+                count = count + 1
+            }
+            let is_def = _netrc_is_default(data, tok_start, tlen)
+            if is_def == 1 {
+                ; Default entry with empty host
+                host_offs[count] = 0
+                host_lens[count] = 0
+                login_offs[count] = 0
+                login_lens[count] = 0
+                pass_offs[count] = 0
+                pass_lens[count] = 0
+                cur_entry = count
+                count = count + 1
+            }
+            let is_log = _netrc_is_login(data, tok_start, tlen)
+            if is_log == 1 {
+                if cur_entry >= 0 {
+                    pos = _netrc_skip_ws(data, pos, len)
+                    let ls = pos
+                    pos = _netrc_token_end(data, pos, len)
+                    let ll = pos - ls
+                    login_offs[cur_entry] = ls
+                    login_lens[cur_entry] = ll
+                }
+            }
+            let is_pass = _netrc_is_password(data, tok_start, tlen)
+            if is_pass == 1 {
+                if cur_entry >= 0 {
+                    pos = _netrc_skip_ws(data, pos, len)
+                    let ps = pos
+                    pos = _netrc_token_end(data, pos, len)
+                    let pl = pos - ps
+                    pass_offs[cur_entry] = ps
+                    pass_lens[cur_entry] = pl
+                }
+            }
+        }
+    }
+    h[0] = count
+    ret h
+}
+
+;; Number of entries.
+fn netrc_count(h: &i64) -> i64 {
+    ret h[0]
+}
+
+;; Look up entry by host. Returns index or -1.
+fn netrc_lookup(h: &i64, host: &i8, hlen: i64) -> i64 {
+    let count = h[0]
+    let host_offs: &i64 = h[1]
+    let host_lens: &i64 = h[2]
+    let data: &i8 = h[7]
+    let i = 0
+    loop i < count {
+        let eq = _netrc_eq(data, host_offs[i], host_lens[i], host, 0, hlen)
+        if eq == 1 { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Copy login at index to out. Returns length.
+fn netrc_login(h: &i64, idx: i64, out: &i8) -> i64 {
+    let login_offs: &i64 = h[3]
+    let login_lens: &i64 = h[4]
+    let data: &i8 = h[7]
+    let len = login_lens[idx]
+    let off = login_offs[idx]
+    let copied = _netrc_copy(out, data, off, len)
+    ret copied
+}
+
+;; Copy password at index to out. Returns length.
+fn netrc_password(h: &i64, idx: i64, out: &i8) -> i64 {
+    let pass_offs: &i64 = h[5]
+    let pass_lens: &i64 = h[6]
+    let data: &i8 = h[7]
+    let len = pass_lens[idx]
+    let off = pass_offs[idx]
+    let copied = _netrc_copy(out, data, off, len)
+    ret copied
+}

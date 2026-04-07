@@ -1,0 +1,73 @@
+; =============================================================================
+; jda::copy -- Deep Copy Utilities
+; =============================================================================
+; Deep copy for byte buffers, i64 arrays, and vec-like structures.
+;
+; Functions:
+;   copy_bytes(dst, src, n)            -> i64  raw byte copy
+;   copy_i64_array(src, len)           -> &i64 copy i64 array
+;   copy_vec(src)                      -> &i64 deep copy vec [len,cap,data]
+;   copy_buf(src, len)                 -> &i8  copy byte buffer
+; =============================================================================
+
+;; Internal byte reader.
+fn _cp_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Copy n bytes from src to dst. Returns n.
+fn copy_bytes(dst: &i8, src: &i8, n: i64) -> i64 {
+    let i = 0
+    loop i < n {
+        let b = _cp_byte_at(src, i)
+        poke_byte(dst, i, b)
+        i = i + 1
+    }
+    ret n
+}
+
+;; Copy an i64 array of given length. Returns new array pointer.
+fn copy_i64_array(src: &i64, len: i64) -> &i64 {
+    let pages = len / 512 + 1
+    let dst: &i64 = alloc_pages(pages)
+    let i = 0
+    loop i < len {
+        dst[i] = src[i]
+        i = i + 1
+    }
+    ret dst
+}
+
+;; Deep copy a vec structure.
+;; Vec layout: [0]=len, [1]=cap, [2..]=data
+fn copy_vec(src: &i64) -> &i64 {
+    let len = src[0]
+    let cap = src[1]
+    let total = cap + 2
+    let pages = total / 512 + 1
+    let dst: &i64 = alloc_pages(pages)
+    dst[0] = len
+    dst[1] = cap
+    let i = 0
+    loop i < len {
+        dst[i + 2] = src[i + 2]
+        i = i + 1
+    }
+    ret dst
+}
+
+;; Copy a byte buffer. Returns new buffer.
+fn copy_buf(src: &i8, len: i64) -> &i8 {
+    let pages = len / 4096 + 1
+    let dst: &i8 = alloc_pages(pages)
+    copy_bytes(dst, src, len)
+    ret dst
+}
+
+;; Copy n i64 values from src+soff to dst+doff.
+fn copy_i64_range(dst: &i64, doff: i64, src: &i64, soff: i64, n: i64) -> i64 {
+    let i = 0
+    loop i < n {
+        dst[doff + i] = src[soff + i]
+        i = i + 1
+    }
+    ret n
+}
