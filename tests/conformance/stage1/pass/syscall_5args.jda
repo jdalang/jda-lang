@@ -1,0 +1,27 @@
+; Test syscall with 5 data args: setsockopt(fd, level, optname, &val, len)
+; syscall(54, fd, 1, 2, optval_ptr, 4)
+fn main() -> i64 {
+    ; Create a socket first: syscall(41, AF_INET=2, SOCK_STREAM=1, 0)
+    let fd = syscall(41, 2, 1, 0)
+    if fd < 0 {
+        print("socket_fail\n")
+        ret 1
+    }
+    print("socket_ok\n")
+
+    ; setsockopt needs 5 data args:
+    ; syscall(54, fd, SOL_SOCKET=1, SO_REUSEADDR=2, &val, sizeof=4)
+    let buf: &i64 = alloc_pages(1)
+    buf[0] = 1
+    let rc = syscall(54, fd, 1, 2, buf, 4)
+    if rc == 0 {
+        print("setsockopt_ok\n")
+    } else {
+        print("setsockopt_fail\n")
+    }
+
+    ; Close
+    syscall(3, fd, 0, 0)
+    print("done\n")
+    ret 0
+}
