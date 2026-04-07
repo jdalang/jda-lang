@@ -9,9 +9,9 @@
 | Language | Compiler | Version |
 |----------|----------|---------|
 | C | gcc | -O2 |
-| Go | go build | default |
-| Rust | rustc | -O (release) |
 | Jda | jda1 | Stage 1 bootstrap |
+| Rust | rustc | -O (release) |
+| Go | go build | default |
 | Python | python3 | 3.10 (interpreted) |
 | Ruby | ruby | 3.0 (interpreted) |
 
@@ -19,18 +19,18 @@
 
 ## Runtime Performance (ms, lower is better)
 
-| Benchmark | C | Go | Rust | **Jda** | Python | Ruby |
-|-----------|----:|-----:|------:|--------:|-------:|-----:|
-| fib(35) | 40 | 127 | 64 | **148** | 2,824 | 1,315 |
-| sieve 1M | 28 | 34 | 32 | **24** | 435 | 409 |
-| sum 100M | 58 | 81 | 30 | **49** | 8,109 | 3,610 |
-| matmul 200x200 | 30 | 41 | 33 | **39** | 2,297 | 997 |
+| Benchmark | C | **Jda** | Rust | Go | Python | Ruby |
+|-----------|----:|--------:|------:|-----:|-------:|-----:|
+| sieve 1M | 28 | **24** | 32 | 34 | 435 | 409 |
+| matmul 200x200 | 30 | **39** | 33 | 41 | 2,297 | 997 |
+| sum 100M | 58 | **49** | 30 | 81 | 8,109 | 3,610 |
+| fib(35) | 40 | **148** | 64 | 127 | 2,824 | 1,315 |
 
 ### Key Takeaways — Runtime
 
 - **Sieve of Eratosthenes**: Jda is the **fastest** — beating C (0.86x), Go (0.71x), and Rust (0.75x). The byte-array sieve maps perfectly to Jda's native memory model.
-- **Sum Loop**: Jda **beats C** (0.84x) and Go (0.60x) — NOP fallthrough pass + ADD imm8 encoding + loop register promotion make Jda's tight loop faster than gcc -O2.
 - **Matrix Multiply**: Jda is **1.3x C** and **0.95x Go** — competitive with systems languages for cache-friendly workloads.
+- **Sum Loop**: Jda **beats C** (0.84x) and Go (0.60x) — NOP fallthrough pass + ADD imm8 encoding + loop register promotion make Jda's tight loop faster than gcc -O2.
 - **Fibonacci**: Jda is **3.7x C** — recursive function call overhead is the main cost. Still **19x faster than Python** and **9x faster than Ruby**.
 - **Average vs Python**: Jda is **~53x faster** across all benchmarks.
 - **Average vs Ruby**: Jda is **~24x faster** across all benchmarks.
@@ -40,12 +40,12 @@
 
 ## Compilation Speed (ms, lower is better)
 
-| Benchmark | C (gcc) | Go | Rust | **Jda** |
-|-----------|--------:|----:|------:|--------:|
-| fib(35) | 497 | 313 | 1,256 | **42** |
-| sieve 1M | 478 | 295 | 1,545 | **42** |
-| sum 100M | 433 | 308 | 1,199 | **40** |
-| matmul 200x200 | 476 | 302 | 1,589 | **42** |
+| Benchmark | C (gcc) | **Jda** | Rust | Go |
+|-----------|--------:|--------:|------:|----:|
+| sieve 1M | 478 | **42** | 1,545 | 295 |
+| matmul 200x200 | 476 | **42** | 1,589 | 302 |
+| sum 100M | 433 | **40** | 1,199 | 308 |
+| fib(35) | 497 | **42** | 1,256 | 313 |
 
 ### Key Takeaways — Compilation
 
@@ -58,12 +58,12 @@
 
 ## Binary Size (bytes)
 
-| Benchmark | C | Go | Rust | **Jda** |
-|-----------|------:|----------:|---------:|--------:|
-| fib(35) | 16,000 | 1,763,407 | 3,954,712 | **1,049,328** |
-| sieve 1M | 16,064 | 1,763,478 | 3,954,520 | **1,049,935** |
-| sum 100M | 16,008 | 1,763,350 | 3,954,552 | **1,049,093** |
-| matmul 200x200 | 16,088 | 1,763,670 | 3,955,464 | **1,050,449** |
+| Benchmark | C | **Jda** | Rust | Go |
+|-----------|------:|--------:|---------:|----------:|
+| sieve 1M | 16,064 | **1,049,935** | 3,954,520 | 1,763,478 |
+| matmul 200x200 | 16,088 | **1,050,449** | 3,955,464 | 1,763,670 |
+| sum 100M | 16,008 | **1,049,093** | 3,954,552 | 1,763,350 |
+| fib(35) | 16,000 | **1,049,328** | 3,954,712 | 1,763,407 |
 
 ### Key Takeaways — Binary Size
 
@@ -85,15 +85,6 @@
 | Dependencies | Needs gcc + libc | **Zero — bootstrapped from assembly** | Jda wins |
 | Ecosystem | Mature | Growing (114 stdlib packages) | C wins |
 
-### Jda vs Go
-| Metric | Go | Jda | Verdict |
-|--------|-----|-----|---------|
-| Runtime | 34–127ms | 24–148ms | **Jda wins 3 of 4** (sieve, sum, matmul) |
-| Compilation | 305ms avg | **42ms avg (7x faster)** | Jda wins |
-| Binary size | 1.76 MB | **1.05 MB (40% smaller)** | Jda wins |
-| Concurrency | Goroutines + channels | J-Threads + channels | Comparable |
-| GC | Yes (pause risk) | **No GC** | Jda wins |
-
 ### Jda vs Rust
 | Metric | Rust | Jda | Verdict |
 |--------|------|-----|---------|
@@ -102,6 +93,15 @@
 | Binary size | 3.95 MB | **1.05 MB (3.8x smaller)** | Jda wins |
 | Learning curve | Steep (borrow checker) | **Simple — no lifetimes, no borrow checker** | Jda wins |
 | Safety | Memory safe | Manual memory | Rust wins |
+
+### Jda vs Go
+| Metric | Go | Jda | Verdict |
+|--------|-----|-----|---------|
+| Runtime | 34–127ms | 24–148ms | **Jda wins 3 of 4** (sieve, sum, matmul) |
+| Compilation | 305ms avg | **42ms avg (7x faster)** | Jda wins |
+| Binary size | 1.76 MB | **1.05 MB (40% smaller)** | Jda wins |
+| Concurrency | Goroutines + channels | J-Threads + channels | Comparable |
+| GC | Yes (pause risk) | **No GC** | Jda wins |
 
 ### Jda vs Python
 | Metric | Python | Jda | Verdict |
@@ -160,9 +160,9 @@ All benchmarks implement identical algorithms across all languages:
 
 | Benchmark | Description | Complexity |
 |-----------|-------------|------------|
-| **fib(35)** | Naive recursive Fibonacci | Tests function call overhead |
 | **sieve 1M** | Sieve of Eratosthenes to 1,000,000 | Tests array access + branching |
-| **sum 100M** | Sum integers 0..100,000,000 | Tests tight loop + integer arithmetic |
 | **matmul 200x200** | Dense matrix multiplication | Tests nested loops + memory access patterns |
+| **sum 100M** | Sum integers 0..100,000,000 | Tests tight loop + integer arithmetic |
+| **fib(35)** | Naive recursive Fibonacci | Tests function call overhead |
 
 Source code: [`benchmarks/`](benchmarks/) — identical algorithms in C, Go, Rust, Jda, Python, Ruby.
