@@ -15,6 +15,7 @@ set -euo pipefail
 
 OUTPUT_DIR="docs"
 JSON_MODE=0
+MD_MODE=0
 TARGETS=()
 
 if [[ $# -eq 0 ]]; then
@@ -25,6 +26,7 @@ if [[ $# -eq 0 ]]; then
     echo "  jda-doc.sh <dir/>                   Generate docs for all .jda files"
     echo "  jda-doc.sh --output <dir> <src>     Write HTML to specified directory"
     echo "  jda-doc.sh --json <file.jda>        Output doc data as JSON"
+    echo "  jda-doc.sh --markdown <dir> <src>   Generate Markdown docs (GitHub)"
     exit 1
 fi
 
@@ -36,6 +38,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --json)
             JSON_MODE=1
+            shift
+            ;;
+        --markdown)
+            MD_MODE=1
             shift
             ;;
         *)
