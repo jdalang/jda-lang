@@ -501,6 +501,8 @@ let g_promo_header = -1
 let g_promo_body_end = -1
 let g_promo_exit = -1
 let g_cur_block_idx = -1
+let g_cur_instr_idx = -1
+let g_fused_cmp_cc = -1
 let g_cand_slots: &i64 = 0
 let g_cand_load: &i64 = 0
 let g_cand_store: &i64 = 0
@@ -12585,6 +12587,15 @@ fn emit_mov_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
 
 ; MOV r64, imm64:  REX.W B8+rd imm64
 fn emit_mov_imm64(out: &i8, pos: &i64, dst: i32, imm: i64) {
+    ; Optimization: use 32-bit MOV for small non-negative constants (5-6 bytes vs 10)
+    if imm >= 0 and imm < 2147483648 {
+        if dst >= 8 {
+            emit_byte(out, pos, 0x41)
+        }
+        emit_byte(out, pos, 0xB8 + (mod8(dst)))
+        emit_i32_le(out, pos, imm)
+        ret ok(0)
+    }
     let b = 0
     if dst >= 8 { b = 1 }
     emit_byte(out, pos, 72 + b)
@@ -12739,6 +12750,13 @@ fn emit_je_rel32(out: &i8, pos: &i64, rel: i64) {
 fn emit_jne_rel32(out: &i8, pos: &i64, rel: i64) {
     emit_byte(out, pos, 0x0F)
     emit_byte(out, pos, 0x85)
+    emit_i32_le(out, pos, rel)
+}
+
+; Jcc rel32 — general conditional jump by condition code
+fn emit_jcc_rel32(out: &i8, pos: &i64, cc: i64, rel: i64) {
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x80 + cc)
     emit_i32_le(out, pos, rel)
 }
 
@@ -13512,9 +13530,11 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
             st_promo_r = promo_reg_for_slot(ins.operand1)
         }
         if st_promo_r != -1 {
-            ; Promoted: update pinned register AND store to memory
+            ; Promoted: update pinned register; skip memory store inside loop
             emit_mov_rr(out, pos, st_promo_r, src_r)
-            emit_store_spill(out, pos, ins.operand1, src_r)
+            if g_cur_block_idx < g_promo_header or g_cur_block_idx > g_promo_body_end {
+                emit_store_spill(out, pos, ins.operand1, src_r)
+            }
         } else {
             emit_store_spill(out, pos, ins.operand1, src_r)
         }
@@ -13685,6 +13705,32 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         if ins.op == OP_CMP_LTE { cc = 0xE }
         if ins.op == OP_CMP_GT { cc = 0xF }
         if ins.op == OP_CMP_GTE { cc = 0xD }
+        ; Branch fusion: if CMP result used only once AND the very next
+        ; non-dead instruction is OP_BR using this result, skip setcc
+        ; and let BR emit jcc directly using CPU flags
+        if ctx.use_cnt[ins.id] == 1 {
+            let can_fuse = 0
+            let ni = g_cur_instr_idx + 1
+            let blk_cnt = jfn.blocks[g_cur_block_idx].instr_cnt
+            loop ni < blk_cnt {
+                if jfn.blocks[g_cur_block_idx].instrs[ni].dead == 0 {
+                    if jfn.blocks[g_cur_block_idx].instrs[ni].op == OP_BR {
+                        if jfn.blocks[g_cur_block_idx].instrs[ni].operand0 == ins.id {
+                            can_fuse = 1
+                        }
+                    }
+                    ni = blk_cnt
+                } else {
+                    ni = ni + 1
+                }
+            }
+            if can_fuse == 1 {
+                g_fused_cmp_cc = cc
+                consume_use(ctx, ins.operand0)
+                consume_use(ctx, ins.operand1)
+                ret 1
+            }
+        }
         emit_setcc_r12(out, pos, cc)
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
@@ -13814,6 +13860,22 @@ fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_br = 0
     if ins.op == OP_BR { is_br = 1 }
     if is_br == 1 {
+        if g_fused_cmp_cc != -1 {
+            ; Branch fusion: flags already set by CMP, emit jcc directly
+            ; Invert condition code (XOR 1 flips lowest bit)
+            let inv_cc = g_fused_cmp_cc + 1
+            let fcc_even = g_fused_cmp_cc / 2
+            fcc_even = fcc_even * 2
+            if fcc_even != g_fused_cmp_cc {
+                inv_cc = g_fused_cmp_cc - 1
+            }
+            lower_branch_fixup(ctx, pos, ins.bb_target1, pos[0] + 2, 0)
+            emit_jcc_rel32(out, pos, inv_cc, 0)
+            lower_branch_fixup(ctx, pos, ins.bb_target0, pos[0] + 1, 0)
+            emit_jmp_rel32(out, pos, 0)
+            g_fused_cmp_cc = -1
+            ret 1
+        }
         let cond_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         emit_cmp_zero(out, pos, cond_r)
         lower_branch_fixup(ctx, pos, ins.bb_target1, pos[0] + 2, 0)
@@ -18198,11 +18260,13 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     bb.label_off = pos[0]
     let i = 0
     loop i < bb.instr_cnt {
+        g_cur_instr_idx = i
         if jfn.blocks[bb.id].instrs[i].dead == 0 {
             lower_instr(jfn.blocks[bb.id].instrs[i], ctx, jfn, out, pos)
         }
         i = i + 1
     }
+    g_cur_instr_idx = -1
 }
 
 fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -> i64 {
@@ -19613,11 +19677,41 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
     }
 }
 
+fn _emit_promo_preloads(out: &i8, pos: &i64) {
+    ; Preload promoted slots from memory into pinned registers
+    if g_promo_cnt >= 1 {
+        emit_load_spill(out, pos, PHYS_R13, g_promo_slot0)
+    }
+    if g_promo_cnt >= 2 {
+        emit_load_spill(out, pos, PHYS_R14, g_promo_slot1)
+    }
+    if g_promo_cnt >= 3 {
+        emit_load_spill(out, pos, PHYS_R15, g_promo_slot2)
+    }
+}
+
+fn _emit_promo_writebacks(out: &i8, pos: &i64) {
+    ; Write pinned registers back to memory after loop
+    if g_promo_cnt >= 1 {
+        emit_store_spill(out, pos, g_promo_slot0, PHYS_R13)
+    }
+    if g_promo_cnt >= 2 {
+        emit_store_spill(out, pos, g_promo_slot1, PHYS_R14)
+    }
+    if g_promo_cnt >= 3 {
+        emit_store_spill(out, pos, g_promo_slot2, PHYS_R15)
+    }
+}
+
 fn lower_fn_emit_blocks(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
     let i = 0
     loop i < jfn.block_cnt {
         ctx.bb_offsets[i] = pos[0]
         g_cur_block_idx = i
+        ; Emit writebacks at start of exit block (promoted regs → memory)
+        if g_promo_cnt > 0 and i == g_promo_exit {
+            _emit_promo_writebacks(out, pos)
+        }
         lower_block(jfn.blocks[i], ctx, jfn, out, pos)
         i = i + 1
     }
@@ -19672,6 +19766,7 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
 
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
     g_lower_is_main = is_main
+    g_fused_cmp_cc = -1
     let fn_start = pos[0]
     lower_fn_emit_prologue(jfn, out, pos, is_main)
     lower_fn_store_params(jfn, out, pos)

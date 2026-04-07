@@ -23,15 +23,15 @@
 |-----------|----:|-----:|------:|--------:|-------:|-----:|
 | fib(35) | 40 | 130 | 64 | **160** | 2,934 | 1,335 |
 | sieve 1M | 28 | 32 | 31 | **23** | 437 | 417 |
-| sum 100M | 26 | 80 | 29 | **174** | 8,450 | 3,762 |
-| matmul 200x200 | 29 | 42 | 33 | **47** | 2,427 | 1,027 |
+| sum 100M | 26 | 80 | 29 | **156** | 8,450 | 3,762 |
+| matmul 200x200 | 29 | 42 | 33 | **44** | 2,427 | 1,027 |
 
 ### Key Takeaways — Runtime
 
 - **Sieve of Eratosthenes**: Jda is the **fastest** — beating C (0.82x), Go (0.72x), and Rust (0.74x). The byte-array sieve maps perfectly to Jda's native memory model.
-- **Matrix Multiply**: Jda is **1.6x C** and **1.1x Go** — competitive with systems languages for cache-friendly workloads.
+- **Matrix Multiply**: Jda is **1.5x C** and **1.0x Go** — competitive with systems languages for cache-friendly workloads.
 - **Fibonacci**: Jda is **4.0x C** — recursive function call overhead is the main cost. Still **18x faster than Python** and **8x faster than Ruby**.
-- **Sum Loop**: Jda is **6.7x C** — loop register promotion reduced this from 10.9x. Still **49x faster than Python** and **22x faster than Ruby**.
+- **Sum Loop**: Jda is **6.0x C** — branch fusion + loop register promotion reduced this from 10.9x. Still **54x faster than Python** and **24x faster than Ruby**.
 - **Average vs Python**: Jda is **~33x faster** across all benchmarks.
 - **Average vs Ruby**: Jda is **~16x faster** across all benchmarks.
 
@@ -78,7 +78,7 @@
 ### Jda vs C
 | Metric | C | Jda | Verdict |
 |--------|---|-----|---------|
-| Runtime | Fastest overall | 0.82x–6.7x slower | C wins on raw speed |
+| Runtime | Fastest overall | 0.82x–6.0x slower | C wins on raw speed |
 | Compilation | 493ms avg | **43ms avg (11.5x faster)** | Jda wins |
 | Binary size | 16 KB (dynamic) | 1 MB (static) | C wins (but dynamically linked) |
 | Dependencies | Needs gcc + libc | **Zero — bootstrapped from assembly** | Jda wins |
@@ -87,7 +87,7 @@
 ### Jda vs Go
 | Metric | Go | Jda | Verdict |
 |--------|-----|-----|---------|
-| Runtime | 1.0–3.0x slower than C | 0.82x–6.7x slower than C | Mixed |
+| Runtime | 1.0–3.0x slower than C | 0.82x–6.0x slower than C | Mixed |
 | Compilation | 735ms avg | **43ms avg (17x faster)** | Jda wins |
 | Binary size | 1.76 MB | **1.05 MB (40% smaller)** | Jda wins |
 | Concurrency | Goroutines + channels | J-Threads + channels | Comparable |
@@ -96,7 +96,7 @@
 ### Jda vs Rust
 | Metric | Rust | Jda | Verdict |
 |--------|------|-----|---------|
-| Runtime | Near C speed | 0.82x–6.7x slower than C | Rust wins on raw speed |
+| Runtime | Near C speed | 0.82x–6.0x slower than C | Rust wins on raw speed |
 | Compilation | 1,526ms avg | **43ms avg (35.5x faster)** | Jda wins |
 | Binary size | 3.95 MB | **1.05 MB (3.8x smaller)** | Jda wins |
 | Learning curve | Steep (borrow checker) | **Simple — no lifetimes, no borrow checker** | Jda wins |
@@ -105,7 +105,7 @@
 ### Jda vs Python
 | Metric | Python | Jda | Verdict |
 |--------|--------|-----|---------|
-| Runtime | 437–8,450ms | **23–174ms (33x faster avg)** | Jda wins |
+| Runtime | 437–8,450ms | **23–160ms (36x faster avg)** | Jda wins |
 | Startup | ~30ms interpreter | **<1ms native binary** | Jda wins |
 | Typing | Dynamic | Static | Different trade-offs |
 | Ecosystem | Massive (PyPI) | Growing (114 packages) | Python wins |
@@ -113,7 +113,7 @@
 ### Jda vs Ruby
 | Metric | Ruby | Jda | Verdict |
 |--------|------|-----|---------|
-| Runtime | 417–3,762ms | **23–174ms (16x faster avg)** | Jda wins |
+| Runtime | 417–3,762ms | **23–160ms (17x faster avg)** | Jda wins |
 | Startup | ~50ms interpreter | **<1ms native binary** | Jda wins |
 | Syntax | Elegant | Clean, C-like | Comparable |
 | Ecosystem | Mature (gems) | Growing (114 packages) | Ruby wins |
@@ -124,7 +124,7 @@
 
 1. **Fastest compiler in the benchmark** — 11-36x faster than gcc, Go, or Rust. Edit-compile-run cycles feel instant.
 
-2. **Competitive runtime performance** — Beats C on sieve, matches Go on matrix multiply, and is 16-33x faster than Python/Ruby.
+2. **Competitive runtime performance** — Beats C on sieve, matches Go on matrix multiply, and is 17-36x faster than Python/Ruby.
 
 3. **Zero dependencies** — Bootstrapped entirely from assembly. No C compiler, no runtime, no GC. A single static binary runs anywhere on Linux x86-64.
 
