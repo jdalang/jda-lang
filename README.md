@@ -25,7 +25,7 @@
 - **Beats C on sieve benchmark** — competitive native code from a self-hosted compiler
 - **16–33x faster than Python/Ruby** — compiled performance with scripting-speed iteration
 - **114 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, and more
-- **350 conformance tests** — all passing
+- **345 conformance tests** — all passing
 - **Cross-platform** — native on Linux, Docker-based on macOS/Windows
 - **Built-in concurrency** — goroutine-style green threads with channels
 - **ML primitives** — tensors, autograd, neural networks, AVX-512 acceleration
@@ -77,7 +77,7 @@ $ jda run example.jda
 
 **Concurrency**: spawn/channels, green threads, deadlock detection, atomic ops
 
-**Compiler**: SSA IR, constant folding, DCE, tail call optimization, peephole opts, register allocator with spill, x86-64 native codegen, ELF output
+**Compiler**: SSA IR, constant folding, DCE, tail call optimization, loop register promotion, peephole opts, register allocator with spill, x86-64 native codegen, ELF output
 
 ## Installation
 
@@ -149,7 +149,7 @@ docker build --platform linux/amd64 -t jda-build docker/
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make stage1
 
-# Run the test suite (350 tests)
+# Run the test suite (345 tests)
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda jda-build bash tools/run_tests.sh
 
@@ -295,7 +295,7 @@ bootstrap/
   stage1/          jda1 compiler source (jda1.jda — self-hosted)
 stdlib/            114 standard library packages
 tools/             CLI tools (jda, jda-doc, jda-test, jda-pkg, etc.)
-tests/             350 conformance tests (pass + fail)
+tests/             345 conformance tests (pass + fail)
 benchmarks/        Performance benchmarks (Jda vs C/Go/Rust/Python/Ruby)
 examples/          Example programs
 docs/
