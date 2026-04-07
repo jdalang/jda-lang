@@ -21,7 +21,7 @@
 
 | Benchmark | C | Go | Rust | **Jda** | Python | Ruby |
 |-----------|----:|-----:|------:|--------:|-------:|-----:|
-| fib(35) | 40 | 130 | 64 | **160** | 2,934 | 1,335 |
+| fib(35) | 40 | 130 | 64 | **145** | 2,934 | 1,335 |
 | sieve 1M | 28 | 32 | 31 | **23** | 437 | 417 |
 | sum 100M | 26 | 80 | 29 | **156** | 8,450 | 3,762 |
 | matmul 200x200 | 29 | 42 | 33 | **44** | 2,427 | 1,027 |
@@ -30,7 +30,7 @@
 
 - **Sieve of Eratosthenes**: Jda is the **fastest** — beating C (0.82x), Go (0.72x), and Rust (0.74x). The byte-array sieve maps perfectly to Jda's native memory model.
 - **Matrix Multiply**: Jda is **1.5x C** and **1.0x Go** — competitive with systems languages for cache-friendly workloads.
-- **Fibonacci**: Jda is **4.0x C** — recursive function call overhead is the main cost. Still **18x faster than Python** and **8x faster than Ruby**.
+- **Fibonacci**: Jda is **3.6x C** — recursive function call overhead is the main cost. Still **20x faster than Python** and **9x faster than Ruby**.
 - **Sum Loop**: Jda is **6.0x C** — branch fusion + loop register promotion reduced this from 10.9x. Still **54x faster than Python** and **24x faster than Ruby**.
 - **Average vs Python**: Jda is **~33x faster** across all benchmarks.
 - **Average vs Ruby**: Jda is **~16x faster** across all benchmarks.
@@ -105,7 +105,7 @@
 ### Jda vs Python
 | Metric | Python | Jda | Verdict |
 |--------|--------|-----|---------|
-| Runtime | 437–8,450ms | **23–160ms (36x faster avg)** | Jda wins |
+| Runtime | 437–8,450ms | **23–145ms (36x faster avg)** | Jda wins |
 | Startup | ~30ms interpreter | **<1ms native binary** | Jda wins |
 | Typing | Dynamic | Static | Different trade-offs |
 | Ecosystem | Massive (PyPI) | Growing (114 packages) | Python wins |
@@ -113,7 +113,7 @@
 ### Jda vs Ruby
 | Metric | Ruby | Jda | Verdict |
 |--------|------|-----|---------|
-| Runtime | 417–3,762ms | **23–160ms (17x faster avg)** | Jda wins |
+| Runtime | 417–3,762ms | **23–145ms (17x faster avg)** | Jda wins |
 | Startup | ~50ms interpreter | **<1ms native binary** | Jda wins |
 | Syntax | Elegant | Clean, C-like | Comparable |
 | Ecosystem | Mature (gems) | Growing (114 packages) | Ruby wins |

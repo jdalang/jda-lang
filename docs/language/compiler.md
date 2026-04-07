@@ -74,6 +74,10 @@ Converts AST to SSA-based intermediate representation:
 ### 5. Optimization
 - **Constant folding**: Evaluate constant expressions at compile time
 - **Dead code elimination**: Remove unused instructions
+- **Tail call optimization**: Convert tail-recursive calls to jumps
+- **Peephole optimization**: Strength-reduce mul/div by powers of 2 to shifts
+- **Loop register promotion**: Hoist loop variables into callee-saved registers (R13/R14/R15)
+- **Single-arg call optimization**: Direct MOV to RDI instead of push/pop for 1-argument calls
 - Applied per-function on the JIR
 
 ### 6. Register Allocation
