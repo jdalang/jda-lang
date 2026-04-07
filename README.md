@@ -290,6 +290,7 @@ docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
 ## Repository Layout
 
 ```
+apps/              Real applications (jda-grep)
 bootstrap/
   stage0/          Build system + jda0 (assembly bootstrap)
   stage1/          jda1 compiler source (jda1.jda — self-hosted)
