@@ -7384,6 +7384,13 @@ fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
             for_si.operand0 = for_z
             for_si.operand1 = for_s
             emit(jfn, cur, &for_si)
+            ; Spill limit to stack slot so it survives loop body calls
+            let for_ls = alloc_slot(jfn)
+            let for_sl = Instr{}
+            for_sl.op = OP_STORE
+            for_sl.operand0 = for_lim
+            for_sl.operand1 = for_ls
+            emit(jfn, cur, &for_sl)
             let for_hd = create_block_live(jfn)
             emit_jmp(jfn, cur, for_hd)
             let for_bd = create_block_live(jfn)
@@ -7392,7 +7399,11 @@ fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
             for_ldc.op = OP_LOAD
             for_ldc.operand0 = for_s
             let for_cv = emit(jfn, for_hd, &for_ldc)
-            let for_cmp = emit_binop(jfn, for_hd, OP_CMP_LT, for_cv, for_lim)
+            let for_lld = Instr{}
+            for_lld.op = OP_LOAD
+            for_lld.operand0 = for_ls
+            let for_lim_r = emit(jfn, for_hd, &for_lld)
+            let for_cmp = emit_binop(jfn, for_hd, OP_CMP_LT, for_cv, for_lim_r)
             emit_br(jfn, for_hd, for_cmp, for_bd, for_ex)
             if tok_type_at(toks, pos[0]) == TOK_LBRACE { pos[0] = pos[0] + 1 }
             let for_be = live_compile_block(toks, pos, stab, src, jfn, for_bd)
@@ -19303,6 +19314,13 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         for_st_init.operand0 = for_zero
                         for_st_init.operand1 = for_slot
                         emit(jfn, cur, &for_st_init)
+                        ; Spill limit to stack slot so it survives loop body calls
+                        let for_lim_slot = alloc_slot(jfn)
+                        let for_st_lim = Instr{}
+                        for_st_lim.op = OP_STORE
+                        for_st_lim.operand0 = for_limit
+                        for_st_lim.operand1 = for_lim_slot
+                        emit(jfn, cur, &for_st_lim)
                         ; Build loop: cond block, body block, merge block
                         let for_start = create_block_live(jfn)
                         emit_jmp(jfn, cur, for_start)
@@ -19310,12 +19328,16 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         let for_merge = create_block_live(jfn)
                         let for_saved_ctrl = g_loop_ctrl
                         g_loop_ctrl = for_merge
-                        ; Cond: i < limit
+                        ; Cond: i < limit (reload limit from stack)
                         let for_ld_cond = Instr{}
                         for_ld_cond.op = OP_LOAD
                         for_ld_cond.operand0 = for_slot
                         let for_cur_val = emit(jfn, for_start, &for_ld_cond)
-                        let for_cmp = emit_binop(jfn, for_start, OP_CMP_LT, for_cur_val, for_limit)
+                        let for_ld_lim = Instr{}
+                        for_ld_lim.op = OP_LOAD
+                        for_ld_lim.operand0 = for_lim_slot
+                        let for_limit_r = emit(jfn, for_start, &for_ld_lim)
+                        let for_cmp = emit_binop(jfn, for_start, OP_CMP_LT, for_cur_val, for_limit_r)
                         emit_br(jfn, for_start, for_cmp, for_body, for_merge)
                         ; Body
                         if tok_type_at_raw(toks0, g_main_pos) == TOK_LBRACE { g_main_pos = g_main_pos + 1 }
