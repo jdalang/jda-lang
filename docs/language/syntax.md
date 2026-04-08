@@ -5,6 +5,12 @@
 ```jda
 ; Single-line comment
 ;; Documentation comment (extracted by jda-doc)
+
+/* Multi-line comment */
+/*
+ * Block comment
+ * spanning multiple lines
+ */
 ```
 
 ## Variables
@@ -64,16 +70,28 @@ loop i < 10 {
 
 **Note**: Unconditional loops use a guard variable: `loop run == 1 { ... }`
 
-### Break/Continue
-
-Use guard variables for early exit:
+### For Loops
 
 ```jda
-let done = 0
+for i in range(10) { ... }         ; i = 0, 1, ..., 9
+for i in range(3, 7) { ... }       ; i = 3, 4, 5, 6
+```
+
+### Break/Continue
+
+```jda
+; break exits the loop immediately
 let i = 0
-loop i < 100 and done == 0 {
-    if arr[i] == target { done = 1 }
-    if done == 0 { i = i + 1 }
+loop i < 100 {
+    if i == 10 { break }
+    i = i + 1
+}
+
+; continue skips to the next iteration
+let sum = 0
+for i in range(10) {
+    if i % 2 != 0 { continue }
+    sum += i
 }
 ```
 
@@ -81,9 +99,9 @@ loop i < 100 and done == 0 {
 
 | Category | Operators |
 |----------|-----------|
-| Arithmetic | `+`, `-`, `*`, `/` |
+| Arithmetic | `+`, `-`, `*`, `/`, `%` |
 | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` |
-| Logical | `and`, `or` |
+| Logical | `and`, `or`, `not` |
 | Address-of | `&` (prefix) |
 | Index | `[]` |
 | Field access | `.` |
@@ -95,6 +113,26 @@ print("hello world\n")    ; newline escape
 print("tab\there")         ; tab
 print("quote: \"hi\"")     ; escaped quotes
 print("backslash: \\")     ; escaped backslash
+```
+
+### Multi-line Strings
+
+Strings can span multiple lines — literal newlines are preserved:
+
+```jda
+print("line 1
+line 2
+line 3
+")
+```
+
+### Raw Strings
+
+Raw strings (prefixed with `r`) do not process escape sequences:
+
+```jda
+let path = r"C:\Users\docs\file.txt"   ; backslashes preserved
+print(r"no \n escape here\n")          ; prints literal \n
 ```
 
 ## Inline Assembly
