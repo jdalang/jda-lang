@@ -68,13 +68,13 @@ Neural network training benchmark — Jda vs Python head-to-head comparison. Tra
 | 2 | Sine Approximation | 1→16→1 MLP | 10,000 |
 | 3 | Matrix Multiply | 64×64 matmul | 10 iters |
 
-### Performance (x86-64 Linux)
+### Performance (x86-64 Linux, best of 3)
 
 | Task | Jda | Python (no NumPy) | Speedup |
 |------|-----|-------------------|---------|
-| XOR training | 35 ms | 407 ms | **~12x** |
-| Sine training | 512 ms | 7,839 ms | **~15x** |
-| 64×64 matmul | 2.5 ms | 35 ms | **~14x** |
+| XOR training (5K epochs) | 21 ms | 778 ms | **~37x** |
+| Sine training (10K epochs) | 439 ms | 15,347 ms | **~35x** |
+| 64×64 matmul (per iter) | 3 ms | 75 ms | **~25x** |
 
 Both implementations use identical algorithms (same loop structure, same SGD, same loss function). The only difference is the runtime: Jda compiles to native x86-64 machine code, Python interprets through CPython.
 
@@ -101,5 +101,5 @@ bash apps/run-ml-benchmark.sh
 
 ### Dependencies
 
-Jda: only `time.jda` for benchmarking. All tensor/f64 operations are compiler builtins.
+Jda: all tensor/f64 operations are compiler builtins. 486 lines (vs Python's 363).
 Python: only stdlib (`math`, `time`, `random`). No NumPy.
