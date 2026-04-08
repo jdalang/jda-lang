@@ -22,6 +22,8 @@ DefaultGroupName=Jda
 AllowNoIcons=yes
 OutputDir=..\dist
 OutputBaseFilename=jda-{#MyAppVersion}-windows-setup
+SetupIconFile=jda-icon.ico
+UninstallDisplayIcon={app}\jda-icon.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -40,6 +42,8 @@ Source: "..\stdlib\net\*.jda"; DestDir: "{app}\stdlib\net"; Flags: ignoreversion
 ; Tools
 Source: "..\tools\jda"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\tools\*.sh"; DestDir: "{app}\tools"; Flags: ignoreversion
+; Icon
+Source: "jda-icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Version
 Source: "..\VERSION"; DestDir: "{app}"; Flags: ignoreversion
 ; Wrapper scripts
