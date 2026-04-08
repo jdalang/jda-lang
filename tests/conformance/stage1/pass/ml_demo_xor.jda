@@ -1,0 +1,299 @@
+; ML demo smoke test: XOR training with 2→4→1 MLP converges in 2000 epochs
+
+fn linear_forward(x: i64, w: i64, bias: i64, out: i64) -> i64 {
+    let batch = tensor_shape(x, 0)
+    let in_f = tensor_shape(x, 1)
+    let out_f = tensor_shape(w, 0)
+    let i = 0
+    loop i < batch {
+        let j = 0
+        loop j < out_f {
+            let acc = tensor_get(bias, j)
+            let k = 0
+            loop k < in_f {
+                let x_idx = i * in_f + k
+                let w_idx = j * in_f + k
+                let xv = tensor_get(x, x_idx)
+                let wv = tensor_get(w, w_idx)
+                let prod = f64_mul(xv, wv)
+                acc = f64_add(acc, prod)
+                k = k + 1
+            }
+            let o_idx = i * out_f + j
+            tensor_set(out, o_idx, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn backward_weights(x: i64, w: i64, grad_out: i64, grad_w: i64) -> i64 {
+    let batch = tensor_shape(x, 0)
+    let in_f = tensor_shape(x, 1)
+    let out_f = tensor_shape(w, 0)
+    let j = 0
+    loop j < out_f {
+        let k = 0
+        loop k < in_f {
+            let acc = f64_from_int(0)
+            let i = 0
+            loop i < batch {
+                let go_idx = i * out_f + j
+                let x_idx = i * in_f + k
+                let gov = tensor_get(grad_out, go_idx)
+                let xv = tensor_get(x, x_idx)
+                let prod = f64_mul(gov, xv)
+                acc = f64_add(acc, prod)
+                i = i + 1
+            }
+            let gw_idx = j * in_f + k
+            let old = tensor_get(grad_w, gw_idx)
+            let nv = f64_add(old, acc)
+            tensor_set(grad_w, gw_idx, nv)
+            k = k + 1
+        }
+        j = j + 1
+    }
+    ret 0
+}
+
+fn backward_bias(grad_out: i64, grad_b: i64, batch: i64, out_f: i64) -> i64 {
+    let j = 0
+    loop j < out_f {
+        let acc = f64_from_int(0)
+        let i = 0
+        loop i < batch {
+            let go_idx = i * out_f + j
+            let gov = tensor_get(grad_out, go_idx)
+            acc = f64_add(acc, gov)
+            i = i + 1
+        }
+        let old = tensor_get(grad_b, j)
+        let nv = f64_add(old, acc)
+        tensor_set(grad_b, j, nv)
+        j = j + 1
+    }
+    ret 0
+}
+
+fn backward_input(w: i64, grad_out: i64, grad_in: i64) -> i64 {
+    let batch = tensor_shape(grad_in, 0)
+    let in_f = tensor_shape(grad_in, 1)
+    let out_f = tensor_shape(w, 0)
+    let i = 0
+    loop i < batch {
+        let k = 0
+        loop k < in_f {
+            let acc = f64_from_int(0)
+            let j = 0
+            loop j < out_f {
+                let go_idx = i * out_f + j
+                let w_idx = j * in_f + k
+                let gov = tensor_get(grad_out, go_idx)
+                let wv = tensor_get(w, w_idx)
+                let prod = f64_mul(gov, wv)
+                acc = f64_add(acc, prod)
+                j = j + 1
+            }
+            let gi_idx = i * in_f + k
+            let old = tensor_get(grad_in, gi_idx)
+            let nv = f64_add(old, acc)
+            tensor_set(grad_in, gi_idx, nv)
+            k = k + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn relu_forward(a: i64, out: i64) -> i64 {
+    let n = tensor_len(a)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        if f64_gt(v, zero) == 1 { tensor_set(out, i, v) }
+        else { tensor_set(out, i, zero) }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn relu_backward(pre: i64, grad_out: i64, grad_in: i64) -> i64 {
+    let n = tensor_len(pre)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let pre_v = tensor_get(pre, i)
+        if f64_gt(pre_v, zero) == 1 {
+            let go_v = tensor_get(grad_out, i)
+            tensor_set(grad_in, i, go_v)
+        } else {
+            tensor_set(grad_in, i, zero)
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn mse_backward(pred: i64, target: i64, grad_out: i64) -> i64 {
+    let n = tensor_len(pred)
+    let two_c = f64_from_int(2)
+    let n_c = f64_from_int(n)
+    let scale = f64_div(two_c, n_c)
+    let i = 0
+    loop i < n {
+        let pv = tensor_get(pred, i)
+        let tv = tensor_get(target, i)
+        let d = f64_sub(pv, tv)
+        let g = f64_mul(scale, d)
+        tensor_set(grad_out, i, g)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn sgd_step(params: i64, grads: i64, lr: i64) -> i64 {
+    let n = tensor_len(params)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let p = tensor_get(params, i)
+        let g = tensor_get(grads, i)
+        let update = f64_mul(lr, g)
+        let np = f64_sub(p, update)
+        tensor_set(params, i, np)
+        tensor_set(grads, i, zero)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    let zero_f = f64_from_int(0)
+    let one_f = f64_from_int(1)
+    let two_f = f64_from_int(2)
+
+    let x = tensor_new2(4, 2)
+    tensor_set(x, 0, zero_f)
+    tensor_set(x, 1, zero_f)
+    tensor_set(x, 2, zero_f)
+    tensor_set(x, 3, one_f)
+    tensor_set(x, 4, one_f)
+    tensor_set(x, 5, zero_f)
+    tensor_set(x, 6, one_f)
+    tensor_set(x, 7, one_f)
+
+    let y = tensor_new2(4, 1)
+    tensor_set(y, 0, zero_f)
+    tensor_set(y, 1, one_f)
+    tensor_set(y, 2, one_f)
+    tensor_set(y, 3, zero_f)
+
+    let w1 = tensor_new2(4, 2)
+    let b1 = tensor_new1(4)
+    let gw1 = tensor_new2(4, 2)
+    let gb1 = tensor_new1(4)
+    let w2 = tensor_new2(1, 4)
+    let b2 = tensor_new1(1)
+    let gw2 = tensor_new2(1, 4)
+    let gb2 = tensor_new1(1)
+
+    ; XOR-friendly init
+    let neg1 = f64_neg(one_f)
+    let v05 = f64_div(one_f, two_f)
+    tensor_set(w1, 0, one_f)
+    tensor_set(w1, 1, one_f)
+    tensor_set(w1, 2, one_f)
+    tensor_set(w1, 3, neg1)
+    tensor_set(w1, 4, neg1)
+    tensor_set(w1, 5, one_f)
+    tensor_set(w1, 6, v05)
+    tensor_set(w1, 7, v05)
+    let three_f = f64_from_int(3)
+    let vm15 = f64_div(three_f, two_f)
+    let vm15n = f64_neg(vm15)
+    tensor_set(b1, 0, vm15n)
+    tensor_set(b1, 1, zero_f)
+    tensor_set(b1, 2, zero_f)
+    tensor_set(b1, 3, zero_f)
+    let neg2 = f64_neg(two_f)
+    tensor_set(w2, 0, neg2)
+    tensor_set(w2, 1, one_f)
+    tensor_set(w2, 2, one_f)
+    tensor_set(w2, 3, zero_f)
+    tensor_set(b2, 0, zero_f)
+
+    let h1 = tensor_new2(4, 4)
+    let h1r = tensor_new2(4, 4)
+    let out = tensor_new2(4, 1)
+    let g_out = tensor_new2(4, 1)
+    let g_h1r = tensor_new2(4, 4)
+    let g_h1 = tensor_new2(4, 4)
+    let g_x = tensor_new2(4, 2)
+
+    let ten_f = f64_from_int(10)
+    let lr = f64_div(one_f, ten_f)
+    let epoch = 0
+    loop epoch < 2000 {
+        linear_forward(x, w1, b1, h1)
+        relu_forward(h1, h1r)
+        linear_forward(h1r, w2, b2, out)
+        mse_backward(out, y, g_out)
+        tensor_fill(gw2, zero_f)
+        tensor_fill(gb2, zero_f)
+        tensor_fill(g_h1r, zero_f)
+        backward_weights(h1r, w2, g_out, gw2)
+        backward_bias(g_out, gb2, 4, 1)
+        backward_input(w2, g_out, g_h1r)
+        relu_backward(h1, g_h1r, g_h1)
+        tensor_fill(gw1, zero_f)
+        tensor_fill(gb1, zero_f)
+        tensor_fill(g_x, zero_f)
+        backward_weights(x, w1, g_h1, gw1)
+        backward_bias(g_h1, gb1, 4, 4)
+        backward_input(w1, g_h1, g_x)
+        sgd_step(w1, gw1, lr)
+        sgd_step(b1, gb1, lr)
+        sgd_step(w2, gw2, lr)
+        sgd_step(b2, gb2, lr)
+        epoch = epoch + 1
+    }
+
+    linear_forward(x, w1, b1, h1)
+    relu_forward(h1, h1r)
+    linear_forward(h1r, w2, b2, out)
+
+    let half = f64_div(one_f, two_f)
+    let p0 = tensor_get(out, 0)
+    let p1 = tensor_get(out, 1)
+    let p2 = tensor_get(out, 2)
+    let p3 = tensor_get(out, 3)
+    let c0 = f64_gt(half, p0)
+    let c1 = f64_gt(p1, half)
+    let c2 = f64_gt(p2, half)
+    let c3 = f64_gt(half, p3)
+    if c0 == 1 and c1 == 1 and c2 == 1 and c3 == 1 {
+        print "ml demo xor ok"
+    }
+
+    tensor_free(x)
+    tensor_free(y)
+    tensor_free(w1)
+    tensor_free(b1)
+    tensor_free(gw1)
+    tensor_free(gb1)
+    tensor_free(w2)
+    tensor_free(b2)
+    tensor_free(gw2)
+    tensor_free(gb2)
+    tensor_free(h1)
+    tensor_free(h1r)
+    tensor_free(out)
+    tensor_free(g_out)
+    tensor_free(g_h1r)
+    tensor_free(g_h1)
+    tensor_free(g_x)
+    ret 0
+}

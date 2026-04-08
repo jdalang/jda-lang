@@ -138,7 +138,7 @@ The compiler source `bootstrap/stage1/jda1.jda` is a single file organized as:
 
 ## Conformance Tests
 
-341 pass tests + 6 fail tests in `tests/conformance/stage1/`:
+342 pass tests + 6 fail tests in `tests/conformance/stage1/`:
 
 ```
 tests/conformance/stage1/pass/    # Programs that should compile and run
