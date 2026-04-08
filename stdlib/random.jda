@@ -1,0 +1,56 @@
+; =============================================================================
+; jda::random -- Pseudo-Random Number Generation (LCG)
+; =============================================================================
+; Deterministic PRNG for simulations, ML, games. NOT cryptographic.
+; For crypto randomness, use securerandom.
+;
+; Uses Linear Congruential Generator: state = state * 6364136223846793005 + 1
+;
+; Functions:
+;   rng_seed(s)           -- set PRNG state
+;   rng_seed_time()       -- seed from monotonic clock
+;   rng_next() -> i64     -- next raw 64-bit value
+;   rng_range(lo, hi) -> i64  -- random integer in [lo, hi)
+;   rng_float_x10k() -> i64   -- random value in [0, 10000) for scaled floats
+; =============================================================================
+
+let g_rng_state = 0
+
+fn rng_seed(s: i64) {
+    g_rng_state = s
+    if g_rng_state == 0 { g_rng_state = 1 }
+}
+
+fn _rng_time_now_ns() -> i64 {
+    let buf0 = 0
+    let buf1 = 0
+    syscall(228, 1, &buf0, 0)
+    ret buf0 * 1000000000 + buf1
+}
+
+fn rng_seed_time() {
+    let t = _rng_time_now_ns()
+    if t == 0 { t = 42 }
+    rng_seed(t)
+}
+
+fn rng_next() -> i64 {
+    if g_rng_state == 0 { g_rng_state = 1 }
+    ; LCG: state = state * 6364136223846793005 + 1
+    g_rng_state = g_rng_state * 6364136223846793005 + 1
+    ret g_rng_state
+}
+
+fn rng_range(lo: i64, hi: i64) -> i64 {
+    let r = rng_next()
+    if r < 0 { r = 0 - r }
+    let span = hi - lo
+    if span <= 0 { ret lo }
+    ret lo + r % span
+}
+
+fn rng_float_x10k() -> i64 {
+    let r = rng_next()
+    if r < 0 { r = 0 - r }
+    ret r % 10000
+}

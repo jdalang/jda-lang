@@ -1,0 +1,62 @@
+; =============================================================================
+; jda::float_fmt -- Float Formatting Utilities
+; =============================================================================
+; Print and format f64 values as decimal strings.
+; Since jda has no printf, these helpers format floats manually.
+;
+; Functions:
+;   print_f64(val: f64)               -- print f64 with 4 decimal places
+;   print_f64_prec(val: f64, prec: i64)  -- print f64 with N decimal places
+;   f64_abs(val: f64) -> f64          -- absolute value
+; =============================================================================
+
+fn f64_abs(val: f64) -> f64 {
+    let vi = f64_to_int(val)
+    if vi < 0 {
+        let neg: f64 = 0.0 - val
+        ret neg
+    }
+    ret val
+}
+
+fn print_f64_prec(val: f64, prec: i64) {
+    ; Handle negative
+    let is_neg = 0
+    let v = val
+    let vi_check = f64_to_int(v)
+    if vi_check < 0 {
+        print "-"
+        v = f64_abs(v)
+        is_neg = 1
+    }
+    ; Integer part
+    let int_part = f64_to_int(v)
+    print "{int_part}"
+    print "."
+    ; Fractional part: multiply by 10^prec, convert to int
+    let scale: f64 = 1.0
+    let pi = 0
+    loop pi < prec {
+        let ten: f64 = 10.0
+        scale = scale * ten
+        pi = pi + 1
+    }
+    let int_f: f64 = f64_from_int(int_part)
+    let frac_f: f64 = v - int_f
+    let frac_scaled: f64 = frac_f * scale
+    let frac_int = f64_to_int(frac_scaled)
+    if frac_int < 0 { frac_int = 0 - frac_int }
+    ; Pad with leading zeros
+    let threshold = f64_to_int(scale) / 10
+    loop threshold > 1 {
+        if frac_int < threshold {
+            print "0"
+        }
+        threshold = threshold / 10
+    }
+    print "{frac_int}"
+}
+
+fn print_f64(val: f64) {
+    print_f64_prec(val, 4)
+}
