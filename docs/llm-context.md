@@ -34,16 +34,20 @@ jda run hello.jda
 | `&T` | Pointer/reference to T | `let p: &i64 = &x` |
 | `&i8` | Byte buffer / C-string pointer | `let s: &i8 = "hello"` |
 
-There is no `bool` type. Use `i64` with `0`/`1`. There is no `u64` — all integers are signed.
+There is no dedicated `bool` type — `true` compiles to `1` and `false` compiles to `0` (both i64). There is no `u64` — all integers are signed.
 
 ## Variables
 
 ```jda
 let x = 42              ; mutable variable, type inferred as i64
 let name = "hello"      ; string literal (&i8 pointer)
+let flag = true         ; boolean literal (true=1, false=0)
+let ch = 'A'            ; char literal (ASCII value 65)
 let pi: f64 = 3.14      ; explicit type annotation
 const MAX = 100         ; compile-time constant
 ```
+
+Char literals (`'x'`) produce the ASCII integer value. Supported escapes: `'\n'`→10, `'\t'`→9, `'\r'`→13, `'\0'`→0, `'\\'`→92, `'\''`→39.
 
 All variables are mutable. There is no `mut` keyword.
 
@@ -405,9 +409,15 @@ let path = r"C:\Users\file.txt"
 
 ## Standard Library (114 packages)
 
-Include with `--include`:
+Use `import` in source (preferred):
+```jda
+import "vec"
+import "sort"
+```
+
+Or use `--include` on CLI (legacy):
 ```bash
-jda build --include stdlib/vec.jda --include stdlib/sort.jda myapp.jda
+jda build --include stdlib/vec.jda myapp.jda
 ```
 
 ### Data Structures
