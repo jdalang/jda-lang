@@ -1,0 +1,168 @@
+; =============================================================================
+; jda::slice -- Slice / Dynamic View
+; =============================================================================
+; A slice is a view into an array: pointer + offset + length. Does not
+; own the underlying data.
+;
+; Memory layout (&i64):
+;   [0] data_ptr  (&i64 — the backing array)
+;   [1] offset    (start index into backing array)
+;   [2] length    (number of visible elements)
+;
+; Functions:
+;   slice_new(data, off, len)  -> &i64   create slice view
+;   slice_from(data, n)        -> &i64   view of entire array (off=0)
+;   slice_len(s)               -> i64    length
+;   slice_get(s, i)            -> i64    element at index i
+;   slice_set(s, i, val)                 set element (mutates backing)
+;   slice_sub(s, start, end)   -> &i64   sub-slice [start, end)
+;   slice_first(s)             -> i64    first element
+;   slice_last(s)              -> i64    last element
+;   slice_eq(a, b)             -> i64    element-wise equality
+;   slice_contains(s, val)     -> i64    1 if found
+;   slice_index_of(s, val)     -> i64    first index or -1
+;   slice_sum(s)               -> i64    sum of elements
+;   slice_copy_to(s, dst)                copy to raw array
+;   slice_print(s)                       print as [1, 2, 3]
+;   slice_println(s)                     print + newline
+; =============================================================================
+
+;; Create a slice view.
+fn slice_new(data: &i64, off: i64, len: i64) -> &i64 {
+    let s: &i64 = alloc_pages(1)
+    s[0] = data
+    s[1] = off
+    s[2] = len
+    ret s
+}
+
+;; View of entire array (offset 0, length n).
+fn slice_from(data: &i64, n: i64) -> &i64 {
+    ret slice_new(data, 0, n)
+}
+
+;; Get length.
+fn slice_len(s: &i64) -> i64 {
+    ret s[2]
+}
+
+;; Get element at index i (relative to slice start).
+fn slice_get(s: &i64, i: i64) -> i64 {
+    let data: &i64 = s[0]
+    let off = s[1]
+    let idx = off + i
+    ret data[idx]
+}
+
+;; Set element at index i (mutates backing array).
+fn slice_set(s: &i64, i: i64, val: i64) {
+    let data: &i64 = s[0]
+    let off = s[1]
+    let idx = off + i
+    data[idx] = val
+}
+
+;; Sub-slice [start, end) relative to this slice.
+fn slice_sub(s: &i64, start: i64, end: i64) -> &i64 {
+    let off = s[1]
+    let new_off = off + start
+    let new_len = end - start
+    let data: &i64 = s[0]
+    ret slice_new(data, new_off, new_len)
+}
+
+;; First element.
+fn slice_first(s: &i64) -> i64 {
+    ret slice_get(s, 0)
+}
+
+;; Last element.
+fn slice_last(s: &i64) -> i64 {
+    let len = s[2]
+    let last = len - 1
+    ret slice_get(s, last)
+}
+
+;; Element-wise equality.
+fn slice_eq(a: &i64, b: &i64) -> i64 {
+    let alen = a[2]
+    let blen = b[2]
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        let va = slice_get(a, i)
+        let vb = slice_get(b, i)
+        if va != vb { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Check if value is in slice.
+fn slice_contains(s: &i64, val: i64) -> i64 {
+    let n = s[2]
+    let i = 0
+    loop i < n {
+        let v = slice_get(s, i)
+        if v == val { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Find first index of value, or -1.
+fn slice_index_of(s: &i64, val: i64) -> i64 {
+    let n = s[2]
+    let i = 0
+    loop i < n {
+        let v = slice_get(s, i)
+        if v == val { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Sum of elements.
+fn slice_sum(s: &i64) -> i64 {
+    let n = s[2]
+    let total = 0
+    let i = 0
+    loop i < n {
+        let v = slice_get(s, i)
+        total = total + v
+        i = i + 1
+    }
+    ret total
+}
+
+;; Copy slice elements to a raw array.
+fn slice_copy_to(s: &i64, dst: &i64) {
+    let n = s[2]
+    let i = 0
+    loop i < n {
+        let v = slice_get(s, i)
+        dst[i] = v
+        i = i + 1
+    }
+}
+
+;; Print as [1, 2, 3].
+fn slice_print(s: &i64) {
+    let n = s[2]
+    print("[")
+    let i = 0
+    loop i < n {
+        let v = slice_get(s, i)
+        print("{v}")
+        let last = n - 1
+        if i < last { print(", ") }
+        i = i + 1
+    }
+    print("]")
+}
+
+;; Print + newline.
+fn slice_println(s: &i64) {
+    slice_print(s)
+    print("\n")
+}
