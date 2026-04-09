@@ -1,24 +1,24 @@
-; =============================================================================
-; jda::observer -- Publish/Subscribe Event Pattern
-; =============================================================================
-; Lightweight event system. Publishers emit events, subscribers receive them.
-;
-; Memory layout per EventBus (&i64):
-;   [0] topic_count
-;   [1] topic_ids      (&i64 — topic id per slot)
-;   [2] handler_vecs   (&i64 — vec of handler fn pointers per topic)
-;   [3] max_topics
-;
-; Functions:
-;   obs_new(max_topics)            -> &i64  create event bus
-;   obs_subscribe(bus, topic, fn_ptr)       subscribe handler to topic
-;   obs_emit(bus, topic, data)              emit event to all subscribers
-;   obs_emit_i(bus, topic, val)             emit integer event
-;   obs_unsubscribe_all(bus, topic)         remove all handlers for topic
-;   obs_subscriber_count(bus, topic) -> i64 number of subscribers for topic
-; =============================================================================
+// =============================================================================
+// jda::observer -- Publish/Subscribe Event Pattern
+// =============================================================================
+// Lightweight event system. Publishers emit events, subscribers receive them.
 
-;; Create an event bus.
+// Memory layout per EventBus (&i64):
+//   [0] topic_count
+//   [1] topic_ids      (&i64 — topic id per slot)
+//   [2] handler_vecs   (&i64 — vec of handler fn pointers per topic)
+//   [3] max_topics
+
+// Functions:
+//   obs_new(max_topics)            -> &i64  create event bus
+//   obs_subscribe(bus, topic, fn_ptr)       subscribe handler to topic
+//   obs_emit(bus, topic, data)              emit event to all subscribers
+//   obs_emit_i(bus, topic, val)             emit integer event
+//   obs_unsubscribe_all(bus, topic)         remove all handlers for topic
+//   obs_subscriber_count(bus, topic) -> i64 number of subscribers for topic
+// =============================================================================
+
+// Create an event bus.
 fn obs_new(max_topics: i64) -> &i64 {
     let bus: &i64 = alloc_pages(1)
     let pages = max_topics * 8 / 4096 + 1
@@ -37,7 +37,7 @@ fn obs_new(max_topics: i64) -> &i64 {
     ret bus
 }
 
-;; Internal: find or create slot for topic.
+// Internal: find or create slot for topic.
 fn obs_find_topic(bus: &i64, topic: i64) -> i64 {
     let ids: &i64 = bus[1]
     let count = bus[0]
@@ -46,8 +46,8 @@ fn obs_find_topic(bus: &i64, topic: i64) -> i64 {
         if ids[i] == topic { ret i }
         i = i + 1
     }
-    ; Create new slot
-    if count >= bus[3] { ret -1 }  ; full
+    // Create new slot
+    if count >= bus[3] { ret -1 }  // full
     ids[count] = topic
     let handlers: &i64 = bus[2]
     handlers[count] = vec_new(4)
@@ -55,8 +55,8 @@ fn obs_find_topic(bus: &i64, topic: i64) -> i64 {
     ret count
 }
 
-;; Subscribe a handler function pointer to a topic.
-;; Handler signature: fn(data: i64) or fn(data: &i64)
+// Subscribe a handler function pointer to a topic.
+// Handler signature: fn(data: i64) or fn(data: &i64)
 fn obs_subscribe(bus: &i64, topic: i64, fn_ptr: i64) {
     let slot = obs_find_topic(bus, topic)
     if slot < 0 { ret }
@@ -65,8 +65,8 @@ fn obs_subscribe(bus: &i64, topic: i64, fn_ptr: i64) {
     vec_push(hvec, fn_ptr)
 }
 
-;; Emit an event to all subscribers of a topic.
-;; Calls each handler with the data argument.
+// Emit an event to all subscribers of a topic.
+// Calls each handler with the data argument.
 fn obs_emit_i(bus: &i64, topic: i64, val: i64) {
     let ids: &i64 = bus[1]
     let count = bus[0]
@@ -79,8 +79,8 @@ fn obs_emit_i(bus: &i64, topic: i64, val: i64) {
             let hi = 0
             loop hi < hlen {
                 let fp = vec_get(hvec, hi)
-                ; Call the handler with val
-                ; Using indirect call via closure mechanism
+                // Call the handler with val
+                // Using indirect call via closure mechanism
                 call_closure(fp, val)
                 hi = hi + 1
             }
@@ -90,7 +90,7 @@ fn obs_emit_i(bus: &i64, topic: i64, val: i64) {
     }
 }
 
-;; Remove all handlers for a topic.
+// Remove all handlers for a topic.
 fn obs_unsubscribe_all(bus: &i64, topic: i64) {
     let ids: &i64 = bus[1]
     let count = bus[0]
@@ -106,7 +106,7 @@ fn obs_unsubscribe_all(bus: &i64, topic: i64) {
     }
 }
 
-;; Number of subscribers for a topic.
+// Number of subscribers for a topic.
 fn obs_subscriber_count(bus: &i64, topic: i64) -> i64 {
     let ids: &i64 = bus[1]
     let count = bus[0]

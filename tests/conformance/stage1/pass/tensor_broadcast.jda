@@ -1,5 +1,5 @@
 fn main() -> i64 {
-    ; --- Test 1: same-shape add ---
+    // --- Test 1: same-shape add ---
     let a = tensor_new1(3)
     let b = tensor_new1(3)
     let out = tensor_new1(3)
@@ -11,7 +11,7 @@ fn main() -> i64 {
         tensor_set(b, i, vb)
         i = i + 1
     }
-    ; a=[1,2,3], b=[10,20,30]
+    // a=[1,2,3], b=[10,20,30]
     broadcast_add_1d(a, b, out)
     let r0 = f64_to_int(tensor_get(out, 0))
     let r1 = f64_to_int(tensor_get(out, 1))
@@ -23,23 +23,23 @@ fn main() -> i64 {
     tensor_free(b)
     tensor_free(out)
 
-    ; --- Test 2: [2,3] + [3] row broadcast ---
+    // --- Test 2: [2,3] + [3] row broadcast ---
     let m = tensor_new2(2, 3)
     let v = tensor_new1(3)
     let mo = tensor_new2(2, 3)
-    ; m = [[1,2,3],[4,5,6]]
+    // m = [[1,2,3],[4,5,6]]
     tensor_set(m, 0, f64_from_int(1))
     tensor_set(m, 1, f64_from_int(2))
     tensor_set(m, 2, f64_from_int(3))
     tensor_set(m, 3, f64_from_int(4))
     tensor_set(m, 4, f64_from_int(5))
     tensor_set(m, 5, f64_from_int(6))
-    ; v = [10,20,30]
+    // v = [10,20,30]
     tensor_set(v, 0, f64_from_int(10))
     tensor_set(v, 1, f64_from_int(20))
     tensor_set(v, 2, f64_from_int(30))
     broadcast_add_2d1d(m, v, mo)
-    ; expect [[11,22,33],[14,25,36]]
+    // expect [[11,22,33],[14,25,36]]
     let e0 = f64_to_int(tensor_get(mo, 0))
     let e1 = f64_to_int(tensor_get(mo, 1))
     let e2 = f64_to_int(tensor_get(mo, 2))
@@ -51,12 +51,12 @@ fn main() -> i64 {
     }
     tensor_free(v)
 
-    ; --- Test 3: [2,3] + [2,1] column broadcast ---
+    // --- Test 3: [2,3] + [2,1] column broadcast ---
     let cv = tensor_new2(2, 1)
     tensor_set(cv, 0, f64_from_int(100))
     tensor_set(cv, 1, f64_from_int(200))
     broadcast_add_2d_col(m, cv, mo)
-    ; expect [[101,102,103],[204,205,206]]
+    // expect [[101,102,103],[204,205,206]]
     let c0 = f64_to_int(tensor_get(mo, 0))
     let c1 = f64_to_int(tensor_get(mo, 1))
     let c2 = f64_to_int(tensor_get(mo, 2))
@@ -68,7 +68,7 @@ fn main() -> i64 {
     }
     tensor_free(cv)
 
-    ; --- Test 4: scalar broadcast ---
+    // --- Test 4: scalar broadcast ---
     let so = tensor_new2(2, 3)
     broadcast_scalar_add(m, f64_from_int(100), so)
     let s0 = f64_to_int(tensor_get(so, 0))

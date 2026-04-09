@@ -1,6 +1,6 @@
-; Transformer Demo: 1-layer transformer forward pass
-; seq=2, d_model=2, heads=1, d_ff=4, vocab=4
-; tokens=[1, 2] -> embed -> attention -> add&norm -> FFN -> logits
+// Transformer Demo: 1-layer transformer forward pass
+// seq=2, d_model=2, heads=1, d_ff=4, vocab=4
+// tokens=[1, 2] -> embed -> attention -> add&norm -> FFN -> logits
 
 fn row_max(x: i64, base: i64, cols: i64) -> i64 {
     let mx = tensor_get(x, base)
@@ -228,7 +228,7 @@ fn main() -> i64 {
     let v01 = f64_div(one, ten)
     let v02 = f64_div(two, ten)
 
-    ; ── Embedding table [4, 2] ──
+    // ── Embedding table [4, 2] ──
     let embed = tensor_new2(4, 2)
     tensor_set(embed, 0, v01)
     tensor_set(embed, 1, v02)
@@ -239,19 +239,19 @@ fn main() -> i64 {
     tensor_set(embed, 6, v08)
     tensor_set(embed, 7, v09)
 
-    ; ── Lookup tokens [1, 2] → x[2,2] ──
-    ; tok 1 → [1.0, 0.5], tok 2 → [0.3, 1.5]
+    // ── Lookup tokens [1, 2] → x[2,2] ──
+    // tok 1 → [1.0, 0.5], tok 2 → [0.3, 1.5]
     let x = tensor_new2(2, 2)
     tensor_set(x, 0, one)
     tensor_set(x, 1, v05)
     tensor_set(x, 2, v03)
     tensor_set(x, 3, v15)
 
-    ; ── Self-attention: Q=K=V=x ──
+    // ── Self-attention: Q=K=V=x ──
     let attn_out = tensor_new2(2, 2)
     attention_fwd(x, x, x, attn_out, 2, 2)
 
-    ; ── Residual add: res = x + attn_out ──
+    // ── Residual add: res = x + attn_out ──
     let res1 = tensor_new2(2, 2)
     let ri = 0
     loop ri < 4 {
@@ -262,7 +262,7 @@ fn main() -> i64 {
         ri = ri + 1
     }
 
-    ; ── Layer norm per row ──
+    // ── Layer norm per row ──
     let norm1 = tensor_new2(2, 2)
     let ln_gamma = tensor_new1(2)
     let ln_beta = tensor_new1(2)
@@ -270,7 +270,7 @@ fn main() -> i64 {
     tensor_fill(ln_beta, zero)
     let row_buf = tensor_new1(2)
     let nrow_buf = tensor_new1(2)
-    ; Norm row 0
+    // Norm row 0
     let t0 = tensor_get(res1, 0)
     let t1 = tensor_get(res1, 1)
     tensor_set(row_buf, 0, t0)
@@ -280,7 +280,7 @@ fn main() -> i64 {
     let n1 = tensor_get(nrow_buf, 1)
     tensor_set(norm1, 0, n0)
     tensor_set(norm1, 1, n1)
-    ; Norm row 1
+    // Norm row 1
     let t2 = tensor_get(res1, 2)
     let t3 = tensor_get(res1, 3)
     tensor_set(row_buf, 0, t2)
@@ -291,7 +291,7 @@ fn main() -> i64 {
     tensor_set(norm1, 2, n2)
     tensor_set(norm1, 3, n3)
 
-    ; ── FFN: linear(2→4) → relu → linear(4→2) ──
+    // ── FFN: linear(2→4) → relu → linear(4→2) ──
     let w1 = tensor_new2(4, 2)
     let b1 = tensor_new1(4)
     tensor_set(w1, 0, v05)
@@ -325,7 +325,7 @@ fn main() -> i64 {
     let ffn_out = tensor_new2(2, 2)
     linear_fwd(h_relu, w2, b2, ffn_out)
 
-    ; ── Output logits: linear(2→4) ──
+    // ── Output logits: linear(2→4) ──
     let w_out = tensor_new2(4, 2)
     let b_out = tensor_new1(4)
     tensor_set(w_out, 0, one)
@@ -341,7 +341,7 @@ fn main() -> i64 {
     let logits = tensor_new2(2, 4)
     linear_fwd(ffn_out, w_out, b_out, logits)
 
-    ; Verify: different tokens produce different logits
+    // Verify: different tokens produce different logits
     let l0 = tensor_get(logits, 0)
     let l4 = tensor_get(logits, 4)
     let diff0 = f64_sub(l0, l4)
@@ -351,7 +351,7 @@ fn main() -> i64 {
         print "pos diff ok"
     }
 
-    ; Check logits are finite and non-zero
+    // Check logits are finite and non-zero
     let sum_abs = f64_from_int(0)
     let si = 0
     loop si < 8 {
@@ -364,7 +364,7 @@ fn main() -> i64 {
         print "logits ok"
     }
 
-    ; Softmax logits row 0 → probabilities sum to 1
+    // Softmax logits row 0 → probabilities sum to 1
     let probs = tensor_new1(4)
     let logit_row = tensor_new1(4)
     let li = 0

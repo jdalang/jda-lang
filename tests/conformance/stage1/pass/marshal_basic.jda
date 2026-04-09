@@ -1,19 +1,19 @@
 fn main() -> i64 {
     let buf: &i8 = alloc_pages(1)
 
-    ; Marshal i64
+    // Marshal i64
     let off = marshal_i64(buf, 0, 42)
     print("{off}\n")
 
-    ; Unmarshal i64
+    // Unmarshal i64
     let val = unmarshal_i64(buf, 0)
     print("{val}\n")
 
-    ; Marshal string
+    // Marshal string
     off = marshal_str(buf, 0, "hello", 5)
     print("{off}\n")
 
-    ; Unmarshal string
+    // Unmarshal string
     let out: &i8 = alloc_pages(1)
     let slen = unmarshal_str_len(buf, 0)
     print("{slen}\n")
@@ -21,12 +21,12 @@ fn main() -> i64 {
     syscall(1, 1, out, slen)
     print("\n")
 
-    ; Marshal nil
+    // Marshal nil
     off = marshal_nil(buf, 0)
     let t = unmarshal_type(buf, 0)
     print("{t}\n")
 
-    ; Skip test
+    // Skip test
     off = marshal_i64(buf, 0, 100)
     let next = unmarshal_skip(buf, 0)
     print("{next}\n")

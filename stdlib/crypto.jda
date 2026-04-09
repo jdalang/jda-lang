@@ -1,28 +1,28 @@
-; =============================================================================
-; jda::crypto — Cryptographic primitives
-; =============================================================================
-; AES-128/256 (ECB/CTR/GCM), SHA-256, SHA-1, HMAC-SHA256, ChaCha20-Poly1305
-;
-; All implementations are pure Jda — no libc, no OpenSSL, no system crypto.
-; Constant-time where noted.
-; =============================================================================
+// =============================================================================
+// jda::crypto — Cryptographic primitives
+// =============================================================================
+// AES-128/256 (ECB/CTR/GCM), SHA-256, SHA-1, HMAC-SHA256, ChaCha20-Poly1305
 
-; ============================================================
-; 1. SHA-256
-; ============================================================
-; FIPS 180-4 compliant 256-bit message digest.
+// All implementations are pure Jda — no libc, no OpenSSL, no system crypto.
+// Constant-time where noted.
+// =============================================================================
 
-const SHA256_BLOCK  = 64    ; bytes per block
-const SHA256_DIGEST = 32    ; bytes in output
+// ============================================================
+// 1. SHA-256
+// ============================================================
+// FIPS 180-4 compliant 256-bit message digest.
+
+const SHA256_BLOCK  = 64    // bytes per block
+const SHA256_DIGEST = 32    // bytes in output
 
 struct Sha256Ctx {
-    state:   u32[8]          ; H0-H7
-    count:   u64             ; total bytes hashed
-    buf:     u8[64]          ; partial block
+    state:   u32[8]          // H0-H7
+    count:   u64             // total bytes hashed
+    buf:     u8[64]          // partial block
     buf_len: i64
 }
 
-; SHA-256 round constants K[0..63]
+// SHA-256 round constants K[0..63]
 fn sha256_k(i: i64) -> u32 {
     let k = u32[64]
     k[0]  = 0x428A2F98   k[1]  = 0x71374491   k[2]  = 0xB5C0FBCF   k[3]  = 0xE9B5DBA5
@@ -48,7 +48,7 @@ fn rotr32(x: u32, n: u32) -> u32 { ret (x >> n) | (x << (32 - n)) }
 
 fn sha256_transform(ctx: &Sha256Ctx, blk: &u8) {
     let w = u32[64]
-    ; Load message schedule
+    // Load message schedule
     let i = 0
     loop i < 16 {
         let o = i * 4
@@ -117,11 +117,11 @@ fn sha256_update(ctx: &Sha256Ctx, data: &u8, len: i64) {
 fn sha256_final(ctx: &Sha256Ctx, out: &u8) {
     let bit_len = ctx.count * 8
 
-    ; Append 0x80 pad byte
+    // Append 0x80 pad byte
     ctx.buf[ctx.buf_len] = 0x80
     ctx.buf_len = ctx.buf_len + 1
 
-    ; Pad to 56 bytes (leaving 8 for length)
+    // Pad to 56 bytes (leaving 8 for length)
     if ctx.buf_len > 56 {
         loop ctx.buf_len < 64 { ctx.buf[ctx.buf_len] = 0   ctx.buf_len = ctx.buf_len + 1 }
         sha256_transform(ctx, &ctx.buf)
@@ -129,14 +129,14 @@ fn sha256_final(ctx: &Sha256Ctx, out: &u8) {
     }
     loop ctx.buf_len < 56 { ctx.buf[ctx.buf_len] = 0   ctx.buf_len = ctx.buf_len + 1 }
 
-    ; Append big-endian bit length
+    // Append big-endian bit length
     ctx.buf[56] = (bit_len >> 56) & 0xFF   ctx.buf[57] = (bit_len >> 48) & 0xFF
     ctx.buf[58] = (bit_len >> 40) & 0xFF   ctx.buf[59] = (bit_len >> 32) & 0xFF
     ctx.buf[60] = (bit_len >> 24) & 0xFF   ctx.buf[61] = (bit_len >> 16) & 0xFF
     ctx.buf[62] = (bit_len >>  8) & 0xFF   ctx.buf[63] =  bit_len        & 0xFF
     sha256_transform(ctx, &ctx.buf)
 
-    ; Output big-endian state
+    // Output big-endian state
     let i = 0
     loop i < 8 {
         let s = ctx.state[i]
@@ -148,7 +148,7 @@ fn sha256_final(ctx: &Sha256Ctx, out: &u8) {
     }
 }
 
-; One-shot SHA-256
+// One-shot SHA-256
 fn sha256(data: &u8, len: i64, out: &u8) {
     let ctx = Sha256Ctx{}
     sha256_init(&ctx)
@@ -156,9 +156,9 @@ fn sha256(data: &u8, len: i64, out: &u8) {
     sha256_final(&ctx, out)
 }
 
-; ============================================================
-; 2. SHA-1  (needed for WebSocket handshake)
-; ============================================================
+// ============================================================
+// 2. SHA-1  (needed for WebSocket handshake)
+// ============================================================
 
 const SHA1_DIGEST = 20
 
@@ -261,17 +261,17 @@ fn sha1(data: &u8, len: i64, out: &u8) {
     sha1_final(&ctx, out)
 }
 
-; ============================================================
-; 3. HMAC-SHA256
-; ============================================================
-; HMAC(K, m) = SHA256((K⊕opad) || SHA256((K⊕ipad) || m))
+// ============================================================
+// 3. HMAC-SHA256
+// ============================================================
+// HMAC(K, m) = SHA256((K⊕opad) || SHA256((K⊕ipad) || m))
 
 fn hmac_sha256(key: &u8, key_len: i64, msg: &u8, msg_len: i64, out: &u8) {
     let k_block = u8[64]
     let i_block = u8[64]
     let o_block = u8[64]
 
-    ; Derive block-length key
+    // Derive block-length key
     if key_len > 64 {
         sha256(key, key_len, &k_block)
     } else {
@@ -279,7 +279,7 @@ fn hmac_sha256(key: &u8, key_len: i64, msg: &u8, msg_len: i64, out: &u8) {
         loop i < key_len { k_block[i] = key[i]   i = i + 1 }
     }
 
-    ; Compute inner and outer padded keys
+    // Compute inner and outer padded keys
     let i = 0
     loop i < 64 {
         i_block[i] = k_block[i] ^ 0x36
@@ -287,7 +287,7 @@ fn hmac_sha256(key: &u8, key_len: i64, msg: &u8, msg_len: i64, out: &u8) {
         i = i + 1
     }
 
-    ; Inner hash: SHA256(i_block || msg)
+    // Inner hash: SHA256(i_block || msg)
     let inner = u8[32]
     let ictx = Sha256Ctx{}
     sha256_init(&ictx)
@@ -295,7 +295,7 @@ fn hmac_sha256(key: &u8, key_len: i64, msg: &u8, msg_len: i64, out: &u8) {
     sha256_update(&ictx, msg, msg_len)
     sha256_final(&ictx, &inner)
 
-    ; Outer hash: SHA256(o_block || inner)
+    // Outer hash: SHA256(o_block || inner)
     let octx = Sha256Ctx{}
     sha256_init(&octx)
     sha256_update(&octx, &o_block, 64)
@@ -303,17 +303,17 @@ fn hmac_sha256(key: &u8, key_len: i64, msg: &u8, msg_len: i64, out: &u8) {
     sha256_final(&octx, out)
 }
 
-; ============================================================
-; 4. AES-128 / AES-256
-; ============================================================
-; AES (FIPS 197) with ECB, CTR, and GCM modes.
+// ============================================================
+// 4. AES-128 / AES-256
+// ============================================================
+// AES (FIPS 197) with ECB, CTR, and GCM modes.
 
 const AES_BLOCK = 16
 
-; AES S-Box
+// AES S-Box
 fn aes_sbox(x: u8) -> u8 {
     let s = u8[256]
-    ; Forward S-box (affine transform of GF(2^8) multiplicative inverse)
+    // Forward S-box (affine transform of GF(2^8) multiplicative inverse)
     s[0]=0x63  s[1]=0x7C  s[2]=0x77  s[3]=0x7B  s[4]=0xF2  s[5]=0x6B  s[6]=0x6F  s[7]=0xC5
     s[8]=0x30  s[9]=0x01  s[10]=0x67 s[11]=0x2B s[12]=0xFE s[13]=0xD7 s[14]=0xAB s[15]=0x76
     s[16]=0xCA s[17]=0x82 s[18]=0xC9 s[19]=0x7D s[20]=0xFA s[21]=0x59 s[22]=0x47 s[23]=0xF0
@@ -349,7 +349,7 @@ fn aes_sbox(x: u8) -> u8 {
     ret s[x]
 }
 
-; GF(2^8) multiply by 2 (xtime)
+// GF(2^8) multiply by 2 (xtime)
 fn xtime(x: u8) -> u8 {
     if (x & 0x80) != 0 { ret ((x << 1) ^ 0x1B) & 0xFF }
     ret x << 1
@@ -370,9 +370,9 @@ fn gf_mul(a: u8, b: u8) -> u8 {
 }
 
 struct AesCtx {
-    round_keys: u8[240]    ; enough for AES-256 (15×16 bytes)
-    nr:         i32        ; number of rounds: 10 for AES-128, 14 for AES-256
-    nk:         i32        ; key size in u32 words: 4 or 8
+    round_keys: u8[240]    // enough for AES-256 (15×16 bytes)
+    nr:         i32        // number of rounds: 10 for AES-128, 14 for AES-256
+    nk:         i32        // key size in u32 words: 4 or 8
 }
 
 fn aes_key_expand(ctx: &AesCtx, key: &u8, key_len: i32) {
@@ -381,11 +381,11 @@ fn aes_key_expand(ctx: &AesCtx, key: &u8, key_len: i32) {
     ctx.nk = nk
     ctx.nr = nr
 
-    ; Copy original key
+    // Copy original key
     let i = 0
     loop i < key_len { ctx.round_keys[i] = key[i]   i = i + 1 }
 
-    ; Rcon table
+    // Rcon table
     let rcon = u8[11]
     rcon[1]=0x01 rcon[2]=0x02 rcon[3]=0x04 rcon[4]=0x08 rcon[5]=0x10
     rcon[6]=0x20 rcon[7]=0x40 rcon[8]=0x80 rcon[9]=0x1B rcon[10]=0x36
@@ -398,7 +398,7 @@ fn aes_key_expand(ctx: &AesCtx, key: &u8, key_len: i32) {
         let tmp2 = ctx.round_keys[(i-1)*4+2]
         let tmp3 = ctx.round_keys[(i-1)*4+3]
         if i % nk == 0 {
-            ; RotWord + SubWord + Rcon
+            // RotWord + SubWord + Rcon
             let t = tmp0
             tmp0 = aes_sbox(tmp1) ^ rcon[i/nk]
             tmp1 = aes_sbox(tmp2)
@@ -449,7 +449,7 @@ fn aes_mix_columns(state: &u8) {
     }
 }
 
-; AES block encrypt (ECB single block)
+// AES block encrypt (ECB single block)
 fn aes_encrypt_block(ctx: &AesCtx, inp: &u8, out: &u8) {
     let state = u8[16]
     let i = 0
@@ -471,7 +471,7 @@ fn aes_encrypt_block(ctx: &AesCtx, inp: &u8, out: &u8) {
     loop i < 16 { out[i] = state[i]   i = i + 1 }
 }
 
-; AES-CTR mode encrypt/decrypt (same operation)
+// AES-CTR mode encrypt/decrypt (same operation)
 fn aes_ctr(ctx: &AesCtx, nonce: &u8, inp: &u8, len: i64, out: &u8) {
     let ctr = u8[16]
     let keystream = u8[16]
@@ -489,7 +489,7 @@ fn aes_ctr(ctx: &AesCtx, nonce: &u8, inp: &u8, len: i64, out: &u8) {
             j = j + 1
         }
         off = off + blk
-        ; Increment counter (big-endian, last 4 bytes)
+        // Increment counter (big-endian, last 4 bytes)
         ctr[15] = ctr[15] + 1
         if ctr[15] == 0 {
             ctr[14] = ctr[14] + 1
@@ -501,14 +501,14 @@ fn aes_ctr(ctx: &AesCtx, nonce: &u8, inp: &u8, len: i64, out: &u8) {
     }
 }
 
-; Convenience: AES-128-CTR
+// Convenience: AES-128-CTR
 fn aes128_ctr_init(ctx: &AesCtx, key: &u8) { aes_key_expand(ctx, key, 16) }
 fn aes256_ctr_init(ctx: &AesCtx, key: &u8) { aes_key_expand(ctx, key, 32) }
 
-; ============================================================
-; 5. CHACHA20-POLY1305
-; ============================================================
-; RFC 7539 authenticated encryption.
+// ============================================================
+// 5. CHACHA20-POLY1305
+// ============================================================
+// RFC 7539 authenticated encryption.
 
 fn chacha20_quarter_round(a: &u32, b: &u32, c: &u32, d: &u32) {
     a[0] = a[0] + b[0]   d[0] = d[0] ^ a[0]   d[0] = rotl32(d[0], 16)
@@ -519,7 +519,7 @@ fn chacha20_quarter_round(a: &u32, b: &u32, c: &u32, d: &u32) {
 
 fn chacha20_block(key: &u32, counter: u32, nonce: &u32, out: &u32) {
     let s = u32[16]
-    ; "expa" "nd 3" "2-by" "te k"
+    // "expa" "nd 3" "2-by" "te k"
     s[0]  = 0x61707865   s[1]  = 0x3320646E
     s[2]  = 0x79622D32   s[3]  = 0x6B206574
     s[4]  = key[0]       s[5]  = key[1]       s[6]  = key[2]   s[7]  = key[3]
@@ -531,15 +531,15 @@ fn chacha20_block(key: &u32, counter: u32, nonce: &u32, out: &u32) {
     let i = 0
     loop i < 16 { working[i] = s[i]   i = i + 1 }
 
-    ; 20 rounds (10 double-rounds)
+    // 20 rounds (10 double-rounds)
     let r = 0
     loop r < 10 {
-        ; Column rounds
+        // Column rounds
         chacha20_quarter_round(&working[0],  &working[4],  &working[8],  &working[12])
         chacha20_quarter_round(&working[1],  &working[5],  &working[9],  &working[13])
         chacha20_quarter_round(&working[2],  &working[6],  &working[10], &working[14])
         chacha20_quarter_round(&working[3],  &working[7],  &working[11], &working[15])
-        ; Diagonal rounds
+        // Diagonal rounds
         chacha20_quarter_round(&working[0],  &working[5],  &working[10], &working[15])
         chacha20_quarter_round(&working[1],  &working[6],  &working[11], &working[12])
         chacha20_quarter_round(&working[2],  &working[7],  &working[8],  &working[13])
@@ -586,20 +586,20 @@ fn chacha20_encrypt(key: &u8, nonce: &u8, counter: u32,
     }
 }
 
-; Poly1305 one-time MAC
+// Poly1305 one-time MAC
 struct Poly1305Ctx {
-    r:   u32[5]    ; clamped key r (130-bit)
-    h:   u32[5]    ; accumulator
-    pad: u32[4]    ; s (pad key)
+    r:   u32[5]    // clamped key r (130-bit)
+    h:   u32[5]    // accumulator
+    pad: u32[4]    // s (pad key)
 }
 
 fn poly1305_init(ctx: &Poly1305Ctx, key: &u8) {
-    ; Clamp r
+    // Clamp r
     ctx.r[0] = ((key[0] as u32) | ((key[1] as u32)<<8) | ((key[2] as u32)<<16) | ((key[3] as u32)<<24)) & 0x0FFFFFFF
     ctx.r[1] = ((key[4] as u32) | ((key[5] as u32)<<8) | ((key[6] as u32)<<16) | ((key[7] as u32)<<24)) & 0x0FFFFFFC
     ctx.r[2] = ((key[8] as u32) | ((key[9] as u32)<<8) | ((key[10] as u32)<<16)| ((key[11] as u32)<<24)) & 0x0FFFFFFC
     ctx.r[3] = ((key[12] as u32)| ((key[13] as u32)<<8)| ((key[14] as u32)<<16)| ((key[15] as u32)<<24)) & 0x0FFFFFFC
-    ; s (pad)
+    // s (pad)
     ctx.pad[0] = (key[16] as u32)|((key[17] as u32)<<8)|((key[18] as u32)<<16)|((key[19] as u32)<<24)
     ctx.pad[1] = (key[20] as u32)|((key[21] as u32)<<8)|((key[22] as u32)<<16)|((key[23] as u32)<<24)
     ctx.pad[2] = (key[24] as u32)|((key[25] as u32)<<8)|((key[26] as u32)<<16)|((key[27] as u32)<<24)
@@ -608,17 +608,17 @@ fn poly1305_init(ctx: &Poly1305Ctx, key: &u8) {
     loop i < 5 { ctx.h[i] = 0   i = i + 1 }
 }
 
-; Full Poly1305 MAC (processes all data at once for simplicity)
+// Full Poly1305 MAC (processes all data at once for simplicity)
 fn poly1305_mac(key: &u8, msg: &u8, msg_len: i64, out: &u8) {
     let ctx = Poly1305Ctx{}
     poly1305_init(&ctx, key)
-    ; Process 16-byte blocks with simple 130-bit accumulation
-    ; (simplified implementation — production use should use 64-bit arithmetic)
+    // Process 16-byte blocks with simple 130-bit accumulation
+    // (simplified implementation — production use should use 64-bit arithmetic)
     let off = 0
     loop off < msg_len {
         let n = 16
         if msg_len - off < 16 { n = msg_len - off }
-        ; Add 2^128 (or 2^(8n) for last block)
+        // Add 2^128 (or 2^(8n) for last block)
         let m = u32[5]
         let i = 0
         loop i < n {
@@ -628,7 +628,7 @@ fn poly1305_mac(key: &u8, msg: &u8, msg_len: i64, out: &u8) {
             i = i + 1
         }
         if n == 16 { m[4] = 1 } else { m[n / 4] = m[n / 4] | (1 << ((n % 4) * 8)) }
-        ; h += m
+        // h += m
         let carry = 0
         i = 0
         loop i < 5 {
@@ -637,11 +637,11 @@ fn poly1305_mac(key: &u8, msg: &u8, msg_len: i64, out: &u8) {
             carry = sum >> 32
             i = i + 1
         }
-        ; h *= r mod 2^130-5 (simplified — multiply + reduce)
-        ; Full implementation elided for brevity; insert schoolbook multiply here
+        // h *= r mod 2^130-5 (simplified — multiply + reduce)
+        // Full implementation elided for brevity; insert schoolbook multiply here
         off = off + 16
     }
-    ; h += s (pad)
+    // h += s (pad)
     let carry = 0
     let i = 0
     loop i < 4 {
@@ -655,12 +655,12 @@ fn poly1305_mac(key: &u8, msg: &u8, msg_len: i64, out: &u8) {
     }
 }
 
-; ChaCha20-Poly1305 AEAD encrypt (RFC 7539)
+// ChaCha20-Poly1305 AEAD encrypt (RFC 7539)
 fn chacha20_poly1305_seal(key: &u8, nonce: &u8,
                           plaintext: &u8, pt_len: i64,
                           aad: &u8, aad_len: i64,
                           ciphertext: &u8, tag: &u8) {
-    ; Generate one-time Poly1305 key: chacha20_block(key, counter=0)
+    // Generate one-time Poly1305 key: chacha20_block(key, counter=0)
     let otk_block = u8[64]
     let otk_nonce = u32[3]
     let otk_key   = u32[8]
@@ -687,11 +687,11 @@ fn chacha20_poly1305_seal(key: &u8, nonce: &u8,
         i = i + 1
     }
 
-    ; Encrypt with counter starting at 1
+    // Encrypt with counter starting at 1
     chacha20_encrypt(key, nonce, 1, plaintext, pt_len, ciphertext)
 
-    ; Compute Poly1305 MAC over: aad || pad || ciphertext || pad || len(aad) || len(ct)
-    ; (Build the mac_data buffer manually)
+    // Compute Poly1305 MAC over: aad || pad || ciphertext || pad || len(aad) || len(ct)
+    // (Build the mac_data buffer manually)
     let mac_buf = u8[4096]
     let mp = 0
     i = 0
@@ -700,7 +700,7 @@ fn chacha20_poly1305_seal(key: &u8, nonce: &u8,
     i = 0
     loop i < pt_len  { mac_buf[mp] = ciphertext[i]  mp = mp + 1   i = i + 1 }
     loop mp % 16 != 0 { mac_buf[mp] = 0             mp = mp + 1 }
-    ; lengths as little-endian u64
+    // lengths as little-endian u64
     let al = aad_len as u64
     let cl = pt_len  as u64
     let j = 0
@@ -711,17 +711,17 @@ fn chacha20_poly1305_seal(key: &u8, nonce: &u8,
     poly1305_mac(&otk_block, &mac_buf, mp, tag)
 }
 
-; Verify + decrypt (returns ok(0) or err("tag mismatch"))
+// Verify + decrypt (returns ok(0) or err("tag mismatch"))
 fn chacha20_poly1305_open(key: &u8, nonce: &u8,
                           ciphertext: &u8, ct_len: i64,
                           aad: &u8, aad_len: i64,
                           tag: &u8,
                           plaintext: &u8) -> Result<i32, &i8> {
-    ; Re-compute expected tag
+    // Re-compute expected tag
     let expected = u8[16]
     let tmp = u8[4096]
     chacha20_poly1305_seal(key, nonce, ciphertext, ct_len, aad, aad_len, &tmp, &expected)
-    ; Constant-time tag compare
+    // Constant-time tag compare
     let diff = 0
     let i = 0
     loop i < 16 { diff = diff | (tag[i] ^ expected[i])   i = i + 1 }
@@ -730,11 +730,11 @@ fn chacha20_poly1305_open(key: &u8, nonce: &u8,
     ret ok(0)
 }
 
-; ============================================================
-; 6. UTILITIES
-; ============================================================
+// ============================================================
+// 6. UTILITIES
+// ============================================================
 
-; Constant-time memory compare (returns 0 if equal)
+// Constant-time memory compare (returns 0 if equal)
 fn ct_memcmp(a: &u8, b: &u8, len: i64) -> i32 {
     let diff = 0
     let i = 0
@@ -742,7 +742,7 @@ fn ct_memcmp(a: &u8, b: &u8, len: i64) -> i32 {
     ret diff
 }
 
-; Hex-encode bytes to output buffer (out must be 2*len bytes)
+// Hex-encode bytes to output buffer (out must be 2*len bytes)
 fn hex_encode(inp: &u8, len: i64, out: &i8) {
     let hex = "0123456789abcdef"
     let i = 0
@@ -754,7 +754,7 @@ fn hex_encode(inp: &u8, len: i64, out: &i8) {
     out[len*2] = 0
 }
 
-; Base64-encode (RFC 4648, standard alphabet)
+// Base64-encode (RFC 4648, standard alphabet)
 fn base64_encode(inp: &u8, in_len: i64, out: &i8) -> i64 {
     let alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     let op = 0

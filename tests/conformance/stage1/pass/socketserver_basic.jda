@@ -1,20 +1,20 @@
 fn main() -> i64 {
-    ; Parse "127.0.0.1:8080"
+    // Parse "127.0.0.1:8080"
     let addr: &i8 = alloc_pages(1)
-    poke_byte(addr, 0, 49)   ; 1
-    poke_byte(addr, 1, 50)   ; 2
-    poke_byte(addr, 2, 55)   ; 7
-    poke_byte(addr, 3, 46)   ; .
-    poke_byte(addr, 4, 48)   ; 0
-    poke_byte(addr, 5, 46)   ; .
-    poke_byte(addr, 6, 48)   ; 0
-    poke_byte(addr, 7, 46)   ; .
-    poke_byte(addr, 8, 49)   ; 1
-    poke_byte(addr, 9, 58)   ; :
-    poke_byte(addr, 10, 56)  ; 8
-    poke_byte(addr, 11, 48)  ; 0
-    poke_byte(addr, 12, 56)  ; 8
-    poke_byte(addr, 13, 48)  ; 0
+    poke_byte(addr, 0, 49)   // 1
+    poke_byte(addr, 1, 50)   // 2
+    poke_byte(addr, 2, 55)   // 7
+    poke_byte(addr, 3, 46)   // .
+    poke_byte(addr, 4, 48)   // 0
+    poke_byte(addr, 5, 46)   // .
+    poke_byte(addr, 6, 48)   // 0
+    poke_byte(addr, 7, 46)   // .
+    poke_byte(addr, 8, 49)   // 1
+    poke_byte(addr, 9, 58)   // :
+    poke_byte(addr, 10, 56)  // 8
+    poke_byte(addr, 11, 48)  // 0
+    poke_byte(addr, 12, 56)  // 8
+    poke_byte(addr, 13, 48)  // 0
     let h = srv_parse_addr(addr, 14)
     let port = srv_addr_port(h)
     print("port: {port}\n")
@@ -25,36 +25,36 @@ fn main() -> i64 {
     syscall(1, 1, out, clen)
     print("\n")
 
-    ; Parse "localhost:3000"
+    // Parse "localhost:3000"
     let addr2: &i8 = alloc_pages(1)
-    poke_byte(addr2, 0, 108)  ; l
-    poke_byte(addr2, 1, 111)  ; o
-    poke_byte(addr2, 2, 99)   ; c
-    poke_byte(addr2, 3, 97)   ; a
-    poke_byte(addr2, 4, 108)  ; l
-    poke_byte(addr2, 5, 104)  ; h
-    poke_byte(addr2, 6, 111)  ; o
-    poke_byte(addr2, 7, 115)  ; s
-    poke_byte(addr2, 8, 116)  ; t
-    poke_byte(addr2, 9, 58)   ; :
-    poke_byte(addr2, 10, 51)  ; 3
-    poke_byte(addr2, 11, 48)  ; 0
-    poke_byte(addr2, 12, 48)  ; 0
-    poke_byte(addr2, 13, 48)  ; 0
+    poke_byte(addr2, 0, 108)  // l
+    poke_byte(addr2, 1, 111)  // o
+    poke_byte(addr2, 2, 99)   // c
+    poke_byte(addr2, 3, 97)   // a
+    poke_byte(addr2, 4, 108)  // l
+    poke_byte(addr2, 5, 104)  // h
+    poke_byte(addr2, 6, 111)  // o
+    poke_byte(addr2, 7, 115)  // s
+    poke_byte(addr2, 8, 116)  // t
+    poke_byte(addr2, 9, 58)   // :
+    poke_byte(addr2, 10, 51)  // 3
+    poke_byte(addr2, 11, 48)  // 0
+    poke_byte(addr2, 12, 48)  // 0
+    poke_byte(addr2, 13, 48)  // 0
     let h2 = srv_parse_addr(addr2, 14)
     let port2 = srv_addr_port(h2)
     print("port2: {port2}\n")
     let hlen2 = srv_addr_host_len(h2)
     print("host2 len: {hlen2}\n")
 
-    ; Create TCP server
+    // Create TCP server
     let srv = srv_tcp_new(9090, 64)
     let sp = srv_addr_port(srv)
     print("srv port: {sp}\n")
     let shlen = srv_addr_host_len(srv)
     print("srv host len: {shlen}\n")
 
-    ; Start returns stub -1
+    // Start returns stub -1
     let started = srv_tcp_start(srv)
     print("start: {started}\n")
 

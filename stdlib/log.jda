@@ -1,24 +1,24 @@
-; =============================================================================
-; jda::log -- Structured Logging
-; =============================================================================
-; Leveled logging with timestamps. Output goes to stderr (fd 2).
-;
-; Levels: TRACE=0, DEBUG=1, INFO=2, WARN=3, ERROR=4, FATAL=5
-;
-; Functions:
-;   log_set_level(level)           set minimum log level
-;   log_trace(msg)                 log at TRACE level
-;   log_debug(msg)                 log at DEBUG level
-;   log_info(msg)                  log at INFO level
-;   log_warn(msg)                  log at WARN level
-;   log_error(msg)                 log at ERROR level
-;   log_fatal(msg)                 log at FATAL level (then exit 1)
-;   log_trace_i(msg, val)          log with integer value
-;   log_debug_i(msg, val)          log with integer value
-;   log_info_i(msg, val)           log with integer value
-;   log_warn_i(msg, val)           log with integer value
-;   log_error_i(msg, val)          log with integer value
-; =============================================================================
+// =============================================================================
+// jda::log -- Structured Logging
+// =============================================================================
+// Leveled logging with timestamps. Output goes to stderr (fd 2).
+
+// Levels: TRACE=0, DEBUG=1, INFO=2, WARN=3, ERROR=4, FATAL=5
+
+// Functions:
+//   log_set_level(level)           set minimum log level
+//   log_trace(msg)                 log at TRACE level
+//   log_debug(msg)                 log at DEBUG level
+//   log_info(msg)                  log at INFO level
+//   log_warn(msg)                  log at WARN level
+//   log_error(msg)                 log at ERROR level
+//   log_fatal(msg)                 log at FATAL level (then exit 1)
+//   log_trace_i(msg, val)          log with integer value
+//   log_debug_i(msg, val)          log with integer value
+//   log_info_i(msg, val)           log with integer value
+//   log_warn_i(msg, val)           log with integer value
+//   log_error_i(msg, val)          log with integer value
+// =============================================================================
 
 const LOG_TRACE = 0
 const LOG_DEBUG = 1
@@ -27,24 +27,24 @@ const LOG_WARN  = 3
 const LOG_ERROR = 4
 const LOG_FATAL = 5
 
-let g_log_level = 2  ; default: INFO
+let g_log_level = 2  // default: INFO
 
-;; Set minimum log level.
+// Set minimum log level.
 fn log_set_level(level: i64) {
     g_log_level = level
 }
 
-;; Internal: write a string to stderr.
+// Internal: write a string to stderr.
 fn log_write_stderr(msg: &i8, len: i64) {
     syscall(1, 2, msg, len)
 }
 
-;; Internal: write an integer to stderr.
+// Internal: write an integer to stderr.
 fn log_write_int_stderr(val: i64) {
     let buf: &i8 = alloc_pages(1)
     let v = val
     if v < 0 {
-        let minus = 45  ; '-'
+        let minus = 45  // '-'
         poke_byte(buf, 0, minus)
         log_write_stderr(buf, 1)
         v = 0 - v
@@ -54,7 +54,7 @@ fn log_write_int_stderr(val: i64) {
         log_write_stderr(buf, 1)
         ret
     }
-    ; Write digits in reverse
+    // Write digits in reverse
     let pos = 0
     let tmp = v
     loop tmp > 0 {
@@ -63,7 +63,7 @@ fn log_write_int_stderr(val: i64) {
         pos = pos + 1
         tmp = tmp / 10
     }
-    ; Reverse
+    // Reverse
     let lo = 0
     let hi = pos - 1
     loop lo < hi {
@@ -77,7 +77,7 @@ fn log_write_int_stderr(val: i64) {
     log_write_stderr(buf, pos)
 }
 
-;; Internal: write level prefix.
+// Internal: write level prefix.
 fn log_write_level(level: i64) {
     if level == 0 { log_write_stderr("[TRACE] ", 8) }
     if level == 1 { log_write_stderr("[DEBUG] ", 8) }
@@ -87,20 +87,20 @@ fn log_write_level(level: i64) {
     if level == 5 { log_write_stderr("[FATAL] ", 8) }
 }
 
-;; Internal: write timestamp (seconds since epoch).
+// Internal: write timestamp (seconds since epoch).
 fn log_write_timestamp() {
     let ts: &i64 = alloc_pages(1)
-    syscall(228, 0, ts, 0)  ; clock_gettime(CLOCK_REALTIME)
+    syscall(228, 0, ts, 0)  // clock_gettime(CLOCK_REALTIME)
     log_write_int_stderr(ts[0])
     log_write_stderr(".", 1)
-    let ms = ts[1] / 1000000  ; nanoseconds to milliseconds
+    let ms = ts[1] / 1000000  // nanoseconds to milliseconds
     if ms < 10 { log_write_stderr("00", 2) }
     if ms >= 10 and ms < 100 { log_write_stderr("0", 1) }
     log_write_int_stderr(ms)
     log_write_stderr(" ", 1)
 }
 
-;; Internal: log a message at given level.
+// Internal: log a message at given level.
 fn log_msg(level: i64, msg: &i8, len: i64) {
     if level < g_log_level { ret }
     log_write_timestamp()
@@ -109,7 +109,7 @@ fn log_msg(level: i64, msg: &i8, len: i64) {
     log_write_stderr("\n", 1)
 }
 
-;; Internal: log message + integer at given level.
+// Internal: log message + integer at given level.
 fn log_msg_i(level: i64, msg: &i8, len: i64, val: i64) {
     if level < g_log_level { ret }
     log_write_timestamp()

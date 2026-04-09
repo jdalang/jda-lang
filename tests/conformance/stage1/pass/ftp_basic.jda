@@ -1,85 +1,85 @@
 fn main() -> i64 {
     let out: &i8 = alloc_pages(1)
 
-    ; Test USER command
+    // Test USER command
     let user: &i8 = alloc_pages(1)
-    poke_byte(user, 0, 106)  ; j
-    poke_byte(user, 1, 111)  ; o
-    poke_byte(user, 2, 101)  ; e
+    poke_byte(user, 0, 106)  // j
+    poke_byte(user, 1, 111)  // o
+    poke_byte(user, 2, 101)  // e
     let n = ftp_format_user(user, 3, out)
     let plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test PASS command
+    // Test PASS command
     let pass: &i8 = alloc_pages(1)
-    poke_byte(pass, 0, 120)  ; x
-    poke_byte(pass, 1, 121)  ; y
+    poke_byte(pass, 0, 120)  // x
+    poke_byte(pass, 1, 121)  // y
     n = ftp_format_pass(pass, 2, out)
     plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test CWD command
+    // Test CWD command
     let path: &i8 = alloc_pages(1)
-    poke_byte(path, 0, 47)   ; /
-    poke_byte(path, 1, 116)  ; t
+    poke_byte(path, 0, 47)   // /
+    poke_byte(path, 1, 116)  // t
     n = ftp_format_cwd(path, 2, out)
     plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test LIST command
+    // Test LIST command
     n = ftp_format_list(out)
     plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test RETR command
+    // Test RETR command
     let fname: &i8 = alloc_pages(1)
-    poke_byte(fname, 0, 97)   ; a
-    poke_byte(fname, 1, 46)   ; .
-    poke_byte(fname, 2, 116)  ; t
+    poke_byte(fname, 0, 97)   // a
+    poke_byte(fname, 1, 46)   // .
+    poke_byte(fname, 2, 116)  // t
     n = ftp_format_retr(fname, 3, out)
     plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test parse reply: "230 Login OK"
+    // Test parse reply: "230 Login OK"
     let reply: &i8 = alloc_pages(1)
-    poke_byte(reply, 0, 50)   ; 2
-    poke_byte(reply, 1, 51)   ; 3
-    poke_byte(reply, 2, 48)   ; 0
+    poke_byte(reply, 0, 50)   // 2
+    poke_byte(reply, 1, 51)   // 3
+    poke_byte(reply, 2, 48)   // 0
     let code = ftp_parse_reply(reply, 3)
     print("{code}\n")
 
-    ; Test PASV: "227 Entering Passive Mode (127,0,0,1,4,1)."
+    // Test PASV: "227 Entering Passive Mode (127,0,0,1,4,1)."
     let pasv: &i8 = alloc_pages(1)
     let q = 0
-    ; "227 ("
-    poke_byte(pasv, q, 50) q = q + 1   ; 2
-    poke_byte(pasv, q, 50) q = q + 1   ; 2
-    poke_byte(pasv, q, 55) q = q + 1   ; 7
-    poke_byte(pasv, q, 32) q = q + 1   ; space
-    poke_byte(pasv, q, 40) q = q + 1   ; (
-    ; 1,2,3,4,
-    poke_byte(pasv, q, 49) q = q + 1   ; 1
-    poke_byte(pasv, q, 44) q = q + 1   ; ,
-    poke_byte(pasv, q, 50) q = q + 1   ; 2
-    poke_byte(pasv, q, 44) q = q + 1   ; ,
-    poke_byte(pasv, q, 51) q = q + 1   ; 3
-    poke_byte(pasv, q, 44) q = q + 1   ; ,
-    poke_byte(pasv, q, 52) q = q + 1   ; 4
-    poke_byte(pasv, q, 44) q = q + 1   ; ,
-    ; 4,1)
-    poke_byte(pasv, q, 52) q = q + 1   ; 4
-    poke_byte(pasv, q, 44) q = q + 1   ; ,
-    poke_byte(pasv, q, 49) q = q + 1   ; 1
-    poke_byte(pasv, q, 41) q = q + 1   ; )
+    // "227 ("
+    poke_byte(pasv, q, 50) q = q + 1   // 2
+    poke_byte(pasv, q, 50) q = q + 1   // 2
+    poke_byte(pasv, q, 55) q = q + 1   // 7
+    poke_byte(pasv, q, 32) q = q + 1   // space
+    poke_byte(pasv, q, 40) q = q + 1   // (
+    // 1,2,3,4,
+    poke_byte(pasv, q, 49) q = q + 1   // 1
+    poke_byte(pasv, q, 44) q = q + 1   // ,
+    poke_byte(pasv, q, 50) q = q + 1   // 2
+    poke_byte(pasv, q, 44) q = q + 1   // ,
+    poke_byte(pasv, q, 51) q = q + 1   // 3
+    poke_byte(pasv, q, 44) q = q + 1   // ,
+    poke_byte(pasv, q, 52) q = q + 1   // 4
+    poke_byte(pasv, q, 44) q = q + 1   // ,
+    // 4,1)
+    poke_byte(pasv, q, 52) q = q + 1   // 4
+    poke_byte(pasv, q, 44) q = q + 1   // ,
+    poke_byte(pasv, q, 49) q = q + 1   // 1
+    poke_byte(pasv, q, 41) q = q + 1   // )
     let port_buf: &i64 = alloc_pages(1)
     let ok = ftp_parse_pasv(pasv, q, port_buf)
     print("{ok}\n")
-    ; Port = 4*256 + 1 = 1025
+    // Port = 4*256 + 1 = 1025
     let port = port_buf[0]
     print("{port}\n")
 

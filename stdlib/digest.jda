@@ -1,18 +1,18 @@
-; =============================================================================
-; jda::digest -- Message Digest Algorithms
-; =============================================================================
-; MD5 (RFC 1321) and SHA-512 (RFC 6234). Extends crypto.jda which already
-; provides SHA-256 and SHA-1.
-;
-; Functions:
-;   md5(data, len, out)              MD5 hash (16 bytes output)
-;   md5_hex(data, len, out) -> i64   MD5 as 32-char hex string
-;   sha512(data, len, out)           SHA-512 hash (64 bytes output)
-;   sha512_hex(data, len, out)-> i64 SHA-512 as 128-char hex string
-;   digest_hex(hash, hlen, out)      Convert any hash to hex string
-; =============================================================================
+// =============================================================================
+// jda::digest -- Message Digest Algorithms
+// =============================================================================
+// MD5 (RFC 1321) and SHA-512 (RFC 6234). Extends crypto.jda which already
+// provides SHA-256 and SHA-1.
 
-;; Internal: byte copy.
+// Functions:
+//   md5(data, len, out)              MD5 hash (16 bytes output)
+//   md5_hex(data, len, out) -> i64   MD5 as 32-char hex string
+//   sha512(data, len, out)           SHA-512 hash (64 bytes output)
+//   sha512_hex(data, len, out)-> i64 SHA-512 as 128-char hex string
+//   digest_hex(hash, hlen, out)      Convert any hash to hex string
+// =============================================================================
+
+// Internal: byte copy.
 fn _dig_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
     let i = 0
     loop i < n {
@@ -21,13 +21,13 @@ fn _dig_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
     }
 }
 
-;; Internal: hex digit.
+// Internal: hex digit.
 fn _dig_hex(v: i64) -> i64 {
     if v < 10 { ret v + 48 }
     ret v - 10 + 97
 }
 
-;; Convert binary hash to hex string. Returns hex length (2 * hlen).
+// Convert binary hash to hex string. Returns hex length (2 * hlen).
 fn digest_hex(hash: &i8, hlen: i64, out: &i8) -> i64 {
     let i = 0
     loop i < hlen {
@@ -40,13 +40,13 @@ fn digest_hex(hash: &i8, hlen: i64, out: &i8) -> i64 {
     ret hlen * 2
 }
 
-; =============================================================================
-; MD5 (RFC 1321) — 128-bit hash
-; =============================================================================
+// =============================================================================
+// MD5 (RFC 1321) — 128-bit hash
+// =============================================================================
 
-;; Internal: MD5 per-round shift amounts.
+// Internal: MD5 per-round shift amounts.
 fn _md5_s(i: i64) -> i64 {
-    ; 4 rounds of 16, each with 4 shift values cycled
+    // 4 rounds of 16, each with 4 shift values cycled
     let tbl: &i64 = alloc_pages(1)
     tbl[0] = 7    tbl[1] = 12   tbl[2] = 17   tbl[3] = 22
     tbl[4] = 5    tbl[5] = 9    tbl[6] = 14   tbl[7] = 20
@@ -58,7 +58,7 @@ fn _md5_s(i: i64) -> i64 {
     ret tbl[round * 4 + sub_idx]
 }
 
-;; Internal: MD5 sine-derived constants (T[i] = floor(2^32 * abs(sin(i+1)))).
+// Internal: MD5 sine-derived constants (T[i] = floor(2^32 * abs(sin(i+1)))).
 fn _md5_t(i: i64) -> i64 {
     let t: &i64 = alloc_pages(1)
     t[0]  = 3614090360  t[1]  = 3905402710  t[2]  = 606105819   t[3]  = 3250441966
@@ -80,17 +80,17 @@ fn _md5_t(i: i64) -> i64 {
     ret t[i]
 }
 
-;; Internal: 32-bit left rotate.
+// Internal: 32-bit left rotate.
 fn _md5_rotl(x: i64, n: i64) -> i64 {
-    let mask = 4294967295  ; 0xFFFFFFFF
+    let mask = 4294967295  // 0xFFFFFFFF
     let xm = x - (x / (mask + 1)) * (mask + 1)
     if xm < 0 { xm = xm + mask + 1 }
-    ; left shift
+    // left shift
     let left = xm
     let si = 0
     loop si < n { left = left * 2   si = si + 1 }
     left = left - (left / (mask + 1)) * (mask + 1)
-    ; right shift
+    // right shift
     let right = xm
     let rs = 32 - n
     si = 0
@@ -98,7 +98,7 @@ fn _md5_rotl(x: i64, n: i64) -> i64 {
     ret (left + right) - ((left + right) / (mask + 1)) * (mask + 1)
 }
 
-;; Internal: read 32-bit LE from buffer.
+// Internal: read 32-bit LE from buffer.
 fn _md5_read32(buf: &i8, off: i64) -> i64 {
     let b0 = buf[off]
     let b1 = buf[off + 1]
@@ -111,7 +111,7 @@ fn _md5_read32(buf: &i8, off: i64) -> i64 {
     ret b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
 }
 
-;; Internal: write 32-bit LE to buffer.
+// Internal: write 32-bit LE to buffer.
 fn _md5_write32(buf: &i8, off: i64, val: i64) {
     poke_byte(buf, off, val - (val / 256) * 256)
     let v1 = val / 256
@@ -122,15 +122,15 @@ fn _md5_write32(buf: &i8, off: i64, val: i64) {
     poke_byte(buf, off + 3, v3 - (v3 / 256) * 256)
 }
 
-;; MD5 hash. out must be 16 bytes.
+// MD5 hash. out must be 16 bytes.
 fn md5(data: &i8, len: i64, out: &i8) {
     let mask = 4294967295
-    let a0 = 1732584193   ; 0x67452301
-    let b0 = 4023233417   ; 0xEFCDAB89
-    let c0 = 2562383102   ; 0x98BADCFE
-    let d0 = 271733878    ; 0x10325476
+    let a0 = 1732584193   // 0x67452301
+    let b0 = 4023233417   // 0xEFCDAB89
+    let c0 = 2562383102   // 0x98BADCFE
+    let d0 = 271733878    // 0x10325476
 
-    ; Pad message: append 1 bit, zeros, 64-bit length
+    // Pad message: append 1 bit, zeros, 64-bit length
     let padded_len = len + 1 + 8
     let block_count = padded_len / 64
     let rem = padded_len - block_count * 64
@@ -139,13 +139,13 @@ fn md5(data: &i8, len: i64, out: &i8) {
 
     let msg: &i8 = alloc_pages(total / 4096 + 1)
     _dig_copy(msg, 0, data, 0, len)
-    poke_byte(msg, len, 128)  ; 0x80
-    ; Zero fill already done by alloc_pages
-    ; Append length in bits as 64-bit LE
+    poke_byte(msg, len, 128)  // 0x80
+    // Zero fill already done by alloc_pages
+    // Append length in bits as 64-bit LE
     let bit_len = len * 8
     _md5_write32(msg, total - 8, bit_len)
 
-    ; Process each 64-byte block
+    // Process each 64-byte block
     let bi = 0
     loop bi < block_count {
         let off = bi * 64
@@ -169,8 +169,8 @@ fn md5(data: &i8, len: i64, out: &i8) {
                 f = (b - (b / (mask + 1)) * (mask + 1))
                 let not_b = mask - f
                 f = (f - (f / (mask + 1)) * (mask + 1)) * (c - (c / (mask + 1)) * (mask + 1)) / (mask + 1)
-                ; f = (b AND c) OR (NOT b AND d)
-                ; Simplified: use arithmetic
+                // f = (b AND c) OR (NOT b AND d)
+                // Simplified: use arithmetic
                 let bc = b * c
                 let nbd = (mask - b + mask + 1) * d
                 f = bc + nbd
@@ -183,7 +183,7 @@ fn md5(data: &i8, len: i64, out: &i8) {
                 g = (5 * i + 1) - ((5 * i + 1) / 16) * 16
             }
             if i >= 32 and i < 48 {
-                ; F = B xor C xor D (approximate with addition mod 2^32)
+                // F = B xor C xor D (approximate with addition mod 2^32)
                 f = b + c + d
                 f = f - (f / (mask + 1)) * (mask + 1)
                 g = (3 * i + 5) - ((3 * i + 5) / 16) * 16
@@ -217,21 +217,21 @@ fn md5(data: &i8, len: i64, out: &i8) {
     _md5_write32(out, 12, d0)
 }
 
-;; MD5 as hex string. Returns 32.
+// MD5 as hex string. Returns 32.
 fn md5_hex(data: &i8, len: i64, out: &i8) -> i64 {
     let hash: &i8 = alloc_pages(1)
     md5(data, len, hash)
     ret digest_hex(hash, 16, out)
 }
 
-; =============================================================================
-; SHA-512 (RFC 6234) — 512-bit hash
-; =============================================================================
-; SHA-512 uses 64-bit words. We implement using i64 arithmetic.
+// =============================================================================
+// SHA-512 (RFC 6234) — 512-bit hash
+// =============================================================================
+// SHA-512 uses 64-bit words. We implement using i64 arithmetic.
 
-;; SHA-512 round constants (first 16 of 80).
+// SHA-512 round constants (first 16 of 80).
 fn _sha512_k(i: i64) -> i64 {
-    ; For brevity, we provide the first 16 and derive the rest
+    // For brevity, we provide the first 16 and derive the rest
     let k: &i64 = alloc_pages(1)
     k[0]  = 4794697086780616226   k[1]  = 8158064640168781261
     k[2]  = 13096744586834688815  k[3]  = 16840607885511220156
@@ -242,17 +242,17 @@ fn _sha512_k(i: i64) -> i64 {
     k[12] = 8268148722764581231   k[13] = 9286055187155687089
     k[14] = 11230858885718282966  k[15] = 13951009754708518548
     if i < 16 { ret k[i] }
-    ; For full SHA-512 we'd need all 80 constants
-    ; Simplified: return a hash of the index as placeholder
+    // For full SHA-512 we'd need all 80 constants
+    // Simplified: return a hash of the index as placeholder
     ret k[i - (i / 16) * 16] + i * 2654435769
 }
 
-;; SHA-512 hash. out must be 64 bytes.
-;; Note: Simplified implementation — produces a 512-bit digest using
-;; the SHA-512 algorithm structure. For production use, prefer the
-;; full implementation in crypto.jda's SHA-256 + this for SHA-512.
+// SHA-512 hash. out must be 64 bytes.
+// Note: Simplified implementation — produces a 512-bit digest using
+// the SHA-512 algorithm structure. For production use, prefer the
+// full implementation in crypto.jda's SHA-256 + this for SHA-512.
 fn sha512(data: &i8, len: i64, out: &i8) {
-    ; Initial hash values (first 8 primes, fractional parts of square roots)
+    // Initial hash values (first 8 primes, fractional parts of square roots)
     let h0 = 7640891576956012808
     let h1 = 13503953896175478587
     let h2 = 4354685564936845355
@@ -262,7 +262,7 @@ fn sha512(data: &i8, len: i64, out: &i8) {
     let h6 = 2270897969802886507
     let h7 = 6620516959819538809
 
-    ; Pad: append 0x80, zeros, 128-bit length (we use 64-bit portion)
+    // Pad: append 0x80, zeros, 128-bit length (we use 64-bit portion)
     let padded_len = len + 1 + 16
     let blocks = padded_len / 128
     let brem = padded_len - blocks * 128
@@ -272,7 +272,7 @@ fn sha512(data: &i8, len: i64, out: &i8) {
     let msg: &i8 = alloc_pages(total / 4096 + 1)
     _dig_copy(msg, 0, data, 0, len)
     poke_byte(msg, len, 128)
-    ; Write bit length at end (simplified: 64-bit at offset total-8)
+    // Write bit length at end (simplified: 64-bit at offset total-8)
     let bit_len = len * 8
     let bi_idx = 0
     let bv = bit_len
@@ -282,9 +282,9 @@ fn sha512(data: &i8, len: i64, out: &i8) {
         bi_idx = bi_idx + 1
     }
 
-    ; Process blocks (simplified single-block for short messages)
-    ; Full SHA-512 would process all blocks with message schedule
-    ; For now, hash the padded data using a mixing function
+    // Process blocks (simplified single-block for short messages)
+    // Full SHA-512 would process all blocks with message schedule
+    // For now, hash the padded data using a mixing function
     let i = 0
     loop i < total {
         let b = msg[i]
@@ -301,7 +301,7 @@ fn sha512(data: &i8, len: i64, out: &i8) {
         i = i + 1
     }
 
-    ; Write output as 8 x 64-bit big-endian words
+    // Write output as 8 x 64-bit big-endian words
     let wi = 0
     let hvals: &i64 = alloc_pages(1)
     hvals[0] = h0  hvals[1] = h1  hvals[2] = h2  hvals[3] = h3
@@ -318,7 +318,7 @@ fn sha512(data: &i8, len: i64, out: &i8) {
     }
 }
 
-;; SHA-512 as hex string. Returns 128.
+// SHA-512 as hex string. Returns 128.
 fn sha512_hex(data: &i8, len: i64, out: &i8) -> i64 {
     let hash: &i8 = alloc_pages(1)
     sha512(data, len, hash)

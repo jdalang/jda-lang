@@ -1,14 +1,14 @@
-; =============================================================================
-; jda::float_fmt -- Float Formatting Utilities
-; =============================================================================
-; Print and format f64 values as decimal strings.
-; Since jda has no printf, these helpers format floats manually.
-;
-; Functions:
-;   print_f64(val: f64)               -- print f64 with 4 decimal places
-;   print_f64_prec(val: f64, prec: i64)  -- print f64 with N decimal places
-;   f64_abs(val: f64) -> f64          -- absolute value
-; =============================================================================
+// =============================================================================
+// jda::float_fmt -- Float Formatting Utilities
+// =============================================================================
+// Print and format f64 values as decimal strings.
+// Since jda has no printf, these helpers format floats manually.
+
+// Functions:
+//   print_f64(val: f64)               -- print f64 with 4 decimal places
+//   print_f64_prec(val: f64, prec: i64)  -- print f64 with N decimal places
+//   f64_abs(val: f64) -> f64          -- absolute value
+// =============================================================================
 
 fn f64_abs(val: f64) -> f64 {
     let vi = f64_to_int(val)
@@ -20,7 +20,7 @@ fn f64_abs(val: f64) -> f64 {
 }
 
 fn print_f64_prec(val: f64, prec: i64) {
-    ; Handle negative
+    // Handle negative
     let is_neg = 0
     let v = val
     let vi_check = f64_to_int(v)
@@ -29,11 +29,11 @@ fn print_f64_prec(val: f64, prec: i64) {
         v = f64_abs(v)
         is_neg = 1
     }
-    ; Integer part
+    // Integer part
     let int_part = f64_to_int(v)
     print "{int_part}"
     print "."
-    ; Fractional part: multiply by 10^prec, convert to int
+    // Fractional part: multiply by 10^prec, convert to int
     let scale: f64 = 1.0
     let pi = 0
     loop pi < prec {
@@ -46,7 +46,7 @@ fn print_f64_prec(val: f64, prec: i64) {
     let frac_scaled: f64 = frac_f * scale
     let frac_int = f64_to_int(frac_scaled)
     if frac_int < 0 { frac_int = 0 - frac_int }
-    ; Pad with leading zeros
+    // Pad with leading zeros
     let threshold = f64_to_int(scale) / 10
     loop threshold > 1 {
         if frac_int < threshold {

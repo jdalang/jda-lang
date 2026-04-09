@@ -1,5 +1,5 @@
-; Test chained f64 operator expressions (a + b * c, a - b * c, etc.)
-; This tests the RAX-clobber fix in lower_instr_float
+// Test chained f64 operator expressions (a + b * c, a - b * c, etc.)
+// This tests the RAX-clobber fix in lower_instr_float
 
 fn check(val: i64, expect: i64, name: i64) -> i64 {
     let v: f64 = val
@@ -16,19 +16,19 @@ fn test_in_fn(x: i64, y: i64) -> i64 {
     let b: f64 = f64_from_int(3)
     let c: f64 = f64_from_int(4)
 
-    ; a + b * c = 10 + 12 = 22
+    // a + b * c = 10 + 12 = 22
     let r1: f64 = a + b * c
     check(r1, 22, "add_mul")
 
-    ; a - b * c = 10 - 12 = -2
+    // a - b * c = 10 - 12 = -2
     let r2: f64 = a - b * c
     check(r2, -2, "sub_mul")
 
-    ; a * b + c = 30 + 4 = 34
+    // a * b + c = 30 + 4 = 34
     let r3: f64 = a * b + c
     check(r3, 34, "mul_add")
 
-    ; a * b - c = 30 - 4 = 26
+    // a * b - c = 30 - 4 = 26
     let r4: f64 = a * b - c
     check(r4, 26, "mul_sub")
 
@@ -39,7 +39,7 @@ fn test_tensor(t: i64, lr: i64) -> i64 {
     let p: f64 = tensor_get(t, 0)
     let g: f64 = tensor_get(t, 1)
     let lr_f: f64 = lr
-    ; p - lr * g = 10 - 1*2 = 8
+    // p - lr * g = 10 - 1*2 = 8
     tensor_set(t, 2, p - lr_f * g)
     ret 0
 }
@@ -47,7 +47,7 @@ fn test_tensor(t: i64, lr: i64) -> i64 {
 fn main() -> i64 {
     test_in_fn(0, 0)
 
-    ; Test acc pattern in loop
+    // Test acc pattern in loop
     let t = tensor_new1(4)
     let one: f64 = f64_from_int(1)
     let two: f64 = f64_from_int(2)
@@ -64,10 +64,10 @@ fn main() -> i64 {
         acc = acc + v * v
         i = i + 1
     }
-    ; 1+4+9 = 14
+    // 1+4+9 = 14
     if f64_to_int(acc) == 14 { print "acc ok\n" }
 
-    ; Test tensor sgd pattern
+    // Test tensor sgd pattern
     tensor_set(t, 0, ten)
     tensor_set(t, 1, two)
     test_tensor(t, one)

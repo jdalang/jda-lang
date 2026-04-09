@@ -1,7 +1,7 @@
 fn _cp_test_byte(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
 fn main() -> i64 {
-    ; Test copy_bytes
+    // Test copy_bytes
     let src: &i8 = alloc_pages(1)
     poke_byte(src, 0, 65)
     poke_byte(src, 1, 66)
@@ -13,22 +13,22 @@ fn main() -> i64 {
     let b2 = _cp_test_byte(dst, 2)
     if b0 == 65 { print("bytes ok\n") }
 
-    ; Test copy_i64_array
+    // Test copy_i64_array
     let arr: &i64 = alloc_pages(1)
     arr[0] = 10
     arr[1] = 20
     arr[2] = 30
     let arr2 = copy_i64_array(arr, 3)
-    ; Modify original
+    // Modify original
     arr[0] = 99
-    ; Check copy is independent
+    // Check copy is independent
     let v = arr2[0]
     print("{v}\n")
 
-    ; Test copy_vec
+    // Test copy_vec
     let vec: &i64 = alloc_pages(1)
-    vec[0] = 3   ; len
-    vec[1] = 8   ; cap
+    vec[0] = 3   // len
+    vec[1] = 8   // cap
     vec[2] = 100
     vec[3] = 200
     vec[4] = 300

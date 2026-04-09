@@ -1,8 +1,8 @@
-; stdlib_demo.jda -- demonstrates fs, fmt, time stdlib functions
-; Build: jda build --include stdlib/prelude.jda examples/stdlib_demo.jda
+// stdlib_demo.jda -- demonstrates fs, fmt, time stdlib functions
+// Build: jda build --include stdlib/prelude.jda examples/stdlib_demo.jda
 
 fn main() -> i64 {
-    ; --- fmt: integer to string ---
+    // --- fmt: integer to string ---
     let buf = alloc_pages(1)
     let len = fmt_i64(buf, 42)
     print("fmt_i64(42) = ")
@@ -29,8 +29,8 @@ fn main() -> i64 {
     print_str(buf, len)
     print("\n")
 
-    ; --- fmt: string utilities ---
-    ; Build null-terminated strings via set_byte (byte-granularity store)
+    // --- fmt: string utilities ---
+    // Build null-terminated strings via set_byte (byte-granularity store)
     let hello = alloc_pages(1)
     set_byte(hello, 0, 104)
     set_byte(hello, 1, 101)
@@ -67,7 +67,7 @@ fn main() -> i64 {
         print("str_eq differ: yes\n")
     }
 
-    ; --- time: monotonic clock ---
+    // --- time: monotonic clock ---
     let t0 = time_now_ns()
     let t1 = time_now_ns()
     let delta = t1 - t0
@@ -80,8 +80,8 @@ fn main() -> i64 {
     print_int(ms)
     print("\n")
 
-    ; --- fs: write and read back ---
-    ; Build path: "/tmp/jda_test.txt"
+    // --- fs: write and read back ---
+    // Build path: "/tmp/jda_test.txt"
     let test_path = alloc_pages(1)
     set_byte(test_path, 0, 47)
     set_byte(test_path, 1, 116)
@@ -102,7 +102,7 @@ fn main() -> i64 {
     set_byte(test_path, 16, 116)
     set_byte(test_path, 17, 0)
 
-    ; Build message: "Jda OK"
+    // Build message: "Jda OK"
     let msg = alloc_pages(1)
     set_byte(msg, 0, 74)
     set_byte(msg, 1, 100)
@@ -134,7 +134,7 @@ fn main() -> i64 {
     print_str(read_buf, rlen)
     print("\n")
 
-    ; cleanup
+    // cleanup
     fs_unlink(test_path)
     print("STDLIB_DEMO_OK\n")
     ret 0

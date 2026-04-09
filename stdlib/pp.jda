@@ -1,33 +1,33 @@
-; =============================================================================
-; jda::pp -- Pretty Printer
-; =============================================================================
-; Formatted output of data structures with indentation. Useful for debugging.
-; All output goes to stdout.
-;
-; Functions:
-;   pp_int(val)                    print integer
-;   pp_str(s, len)                 print string with quotes
-;   pp_hex(val)                    print integer as hex
-;   pp_bin(val)                    print integer as binary
-;   pp_vec(v)                      pretty-print a vec
-;   pp_vec_named(name, nlen, v)    print "name = [...]"
-;   pp_mat(m)                      pretty-print a matrix
-;   pp_bytes(data, len)            hex dump of bytes
-;   pp_indent(level)               print indentation
-;   pp_nl()                        print newline
-;   pp_sep()                       print separator ", "
-;   pp_label(name, nlen)           print "name: "
-;   pp_kv_int(key, klen, val)      print "key = value"
-;   pp_kv_hex(key, klen, val)      print "key = 0xvalue"
-; =============================================================================
+// =============================================================================
+// jda::pp -- Pretty Printer
+// =============================================================================
+// Formatted output of data structures with indentation. Useful for debugging.
+// All output goes to stdout.
 
-;; Print newline.
+// Functions:
+//   pp_int(val)                    print integer
+//   pp_str(s, len)                 print string with quotes
+//   pp_hex(val)                    print integer as hex
+//   pp_bin(val)                    print integer as binary
+//   pp_vec(v)                      pretty-print a vec
+//   pp_vec_named(name, nlen, v)    print "name = [...]"
+//   pp_mat(m)                      pretty-print a matrix
+//   pp_bytes(data, len)            hex dump of bytes
+//   pp_indent(level)               print indentation
+//   pp_nl()                        print newline
+//   pp_sep()                       print separator ", "
+//   pp_label(name, nlen)           print "name: "
+//   pp_kv_int(key, klen, val)      print "key = value"
+//   pp_kv_hex(key, klen, val)      print "key = 0xvalue"
+// =============================================================================
+
+// Print newline.
 fn pp_nl() { print("\n") }
 
-;; Print separator.
+// Print separator.
 fn pp_sep() { print(", ") }
 
-;; Print indentation (2 spaces per level).
+// Print indentation (2 spaces per level).
 fn pp_indent(level: i64) {
     let i = 0
     loop i < level {
@@ -36,7 +36,7 @@ fn pp_indent(level: i64) {
     }
 }
 
-;; Internal: print integer to stdout using write buf.
+// Internal: print integer to stdout using write buf.
 fn pp_print_int(val: i64) {
     let buf: &i8 = alloc_pages(1)
     let v = val
@@ -56,7 +56,7 @@ fn pp_print_int(val: i64) {
         pos = pos + 1
         tmp = tmp / 10
     }
-    ; Reverse
+    // Reverse
     let lo = 0
     let hi = pos - 1
     loop lo < hi {
@@ -70,19 +70,19 @@ fn pp_print_int(val: i64) {
     syscall(1, 1, buf, pos)
 }
 
-;; Print an integer.
+// Print an integer.
 fn pp_int(val: i64) {
     pp_print_int(val)
 }
 
-;; Print a string with double quotes.
+// Print a string with double quotes.
 fn pp_str(s: &i8, len: i64) {
     print("\"")
     syscall(1, 1, s, len)
     print("\"")
 }
 
-;; Print integer as hex.
+// Print integer as hex.
 fn pp_hex(val: i64) {
     let buf: &i8 = alloc_pages(1)
     print("0x")
@@ -117,7 +117,7 @@ fn pp_hex(val: i64) {
     syscall(1, 1, buf, pos)
 }
 
-;; Print integer as binary.
+// Print integer as binary.
 fn pp_bin(val: i64) {
     let buf: &i8 = alloc_pages(1)
     print("0b")
@@ -148,7 +148,7 @@ fn pp_bin(val: i64) {
     syscall(1, 1, buf, pos)
 }
 
-;; Pretty-print a vec: [1, 2, 3]
+// Pretty-print a vec: [1, 2, 3]
 fn pp_vec(v: &i64) {
     let len = v[0]
     let data: &i64 = v[2]
@@ -162,7 +162,7 @@ fn pp_vec(v: &i64) {
     print("]")
 }
 
-;; Pretty-print a named vec: name = [1, 2, 3]
+// Pretty-print a named vec: name = [1, 2, 3]
 fn pp_vec_named(name: &i8, nlen: i64, v: &i64) {
     syscall(1, 1, name, nlen)
     print(" = ")
@@ -170,7 +170,7 @@ fn pp_vec_named(name: &i8, nlen: i64, v: &i64) {
     pp_nl()
 }
 
-;; Pretty-print a matrix with alignment.
+// Pretty-print a matrix with alignment.
 fn pp_mat(m: &i64) {
     let rows = m[0]
     let cols = m[1]
@@ -194,7 +194,7 @@ fn pp_mat(m: &i64) {
     print("]\n")
 }
 
-;; Hex dump of raw bytes (16 per line).
+// Hex dump of raw bytes (16 per line).
 fn pp_bytes(data: &i8, len: i64) {
     let buf: &i8 = alloc_pages(1)
     let i = 0
@@ -218,13 +218,13 @@ fn pp_bytes(data: &i8, len: i64) {
     pp_nl()
 }
 
-;; Print a label: "name: "
+// Print a label: "name: "
 fn pp_label(name: &i8, nlen: i64) {
     syscall(1, 1, name, nlen)
     print(": ")
 }
 
-;; Print "key = value\n"
+// Print "key = value\n"
 fn pp_kv_int(key: &i8, klen: i64, val: i64) {
     syscall(1, 1, key, klen)
     print(" = ")
@@ -232,7 +232,7 @@ fn pp_kv_int(key: &i8, klen: i64, val: i64) {
     pp_nl()
 }
 
-;; Print "key = 0xvalue\n"
+// Print "key = 0xvalue\n"
 fn pp_kv_hex(key: &i8, klen: i64, val: i64) {
     syscall(1, 1, key, klen)
     print(" = ")

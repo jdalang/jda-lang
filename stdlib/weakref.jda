@@ -1,30 +1,30 @@
-; =============================================================================
-; jda::weakref -- Weak References
-; =============================================================================
-; Weak references that don't prevent deallocation. Since Jda has no GC,
-; weak references track liveness via a manual release mechanism.
-;
-; Memory layout per WeakRef (&i64):
-;   [0] target     (pointer to referenced object)
-;   [1] alive      (1=alive, 0=released)
-;   [2] id         (unique reference ID)
-;
-; Global registry tracks all weak refs for batch operations.
-;
-; Functions:
-;   weakref_new(target)          -> &i64  create weak reference
-;   weakref_deref(wr)            -> i64   get target (0 if released)
-;   weakref_alive(wr)            -> i64   1 if still alive
-;   weakref_release(wr)                   mark as released
-;   weakref_id(wr)               -> i64   get unique ID
-;   weakref_registry_new()       -> &i64  create a registry
-;   weakref_register(reg, wr)             add to registry
-;   weakref_sweep(reg)           -> i64   count and remove dead refs
-; =============================================================================
+// =============================================================================
+// jda::weakref -- Weak References
+// =============================================================================
+// Weak references that don't prevent deallocation. Since Jda has no GC,
+// weak references track liveness via a manual release mechanism.
+
+// Memory layout per WeakRef (&i64):
+//   [0] target     (pointer to referenced object)
+//   [1] alive      (1=alive, 0=released)
+//   [2] id         (unique reference ID)
+
+// Global registry tracks all weak refs for batch operations.
+
+// Functions:
+//   weakref_new(target)          -> &i64  create weak reference
+//   weakref_deref(wr)            -> i64   get target (0 if released)
+//   weakref_alive(wr)            -> i64   1 if still alive
+//   weakref_release(wr)                   mark as released
+//   weakref_id(wr)               -> i64   get unique ID
+//   weakref_registry_new()       -> &i64  create a registry
+//   weakref_register(reg, wr)             add to registry
+//   weakref_sweep(reg)           -> i64   count and remove dead refs
+// =============================================================================
 
 let _wr_next_id = 1
 
-;; Create new weak reference to target pointer.
+// Create new weak reference to target pointer.
 fn weakref_new(target: i64) -> &i64 {
     let wr: &i64 = alloc_pages(1)
     wr[0] = target
@@ -34,30 +34,30 @@ fn weakref_new(target: i64) -> &i64 {
     ret wr
 }
 
-;; Dereference: get target pointer. Returns 0 if released.
+// Dereference: get target pointer. Returns 0 if released.
 fn weakref_deref(wr: &i64) -> i64 {
     if wr[1] == 0 { ret 0 }
     ret wr[0]
 }
 
-;; Check if reference is still alive.
+// Check if reference is still alive.
 fn weakref_alive(wr: &i64) -> i64 {
     ret wr[1]
 }
 
-;; Release the weak reference (mark target as gone).
+// Release the weak reference (mark target as gone).
 fn weakref_release(wr: &i64) {
     wr[1] = 0
     wr[0] = 0
 }
 
-;; Get unique reference ID.
+// Get unique reference ID.
 fn weakref_id(wr: &i64) -> i64 {
     ret wr[2]
 }
 
-;; Registry: tracks a collection of weak references.
-;; Layout: [0]=count, [1]=capacity, [2]=refs_ptr (&i64 array of WeakRef pointers)
+// Registry: tracks a collection of weak references.
+// Layout: [0]=count, [1]=capacity, [2]=refs_ptr (&i64 array of WeakRef pointers)
 fn weakref_registry_new() -> &i64 {
     let reg: &i64 = alloc_pages(1)
     reg[0] = 0
@@ -66,7 +66,7 @@ fn weakref_registry_new() -> &i64 {
     ret reg
 }
 
-;; Register a weak reference in the registry.
+// Register a weak reference in the registry.
 fn weakref_register(reg: &i64, wr: &i64) {
     let count = reg[0]
     let refs: &i64 = reg[2]
@@ -74,8 +74,8 @@ fn weakref_register(reg: &i64, wr: &i64) {
     reg[0] = count + 1
 }
 
-;; Sweep: count dead references and compact the registry.
-;; Returns number of dead references removed.
+// Sweep: count dead references and compact the registry.
+// Returns number of dead references removed.
 fn weakref_sweep(reg: &i64) -> i64 {
     let count = reg[0]
     let refs: &i64 = reg[2]

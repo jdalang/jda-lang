@@ -1,32 +1,32 @@
-; =============================================================================
-; stdlib/context.jda — Context / Cancellation (like Go's context.Context)
-; =============================================================================
-; Pure stdlib, zero compiler changes. Uses channels for done signaling,
-; syscall(228) for monotonic time, &i64 pointer layout.
-;
-; Layout: [0]=cancelled, [1]=deadline_ns, [2]=done_chan, [3]=parent, [4]=err_code
-; err_code: 0=ok, 1=cancelled, 2=deadline_exceeded
-;
-; Usage:
-;   let ctx = ctx_background()
-;   let child = ctx_with_timeout(ctx, 1000000)  ; 1ms timeout
-;   loop ctx_done(child) == 0 { ... do work ... }
-;   let err = ctx_err(child)  ; 2 = deadline_exceeded
-; =============================================================================
+// =============================================================================
+// stdlib/context.jda — Context / Cancellation (like Go's context.Context)
+// =============================================================================
+// Pure stdlib, zero compiler changes. Uses channels for done signaling,
+// syscall(228) for monotonic time, &i64 pointer layout.
+
+// Layout: [0]=cancelled, [1]=deadline_ns, [2]=done_chan, [3]=parent, [4]=err_code
+// err_code: 0=ok, 1=cancelled, 2=deadline_exceeded
+
+// Usage:
+//   let ctx = ctx_background()
+//   let child = ctx_with_timeout(ctx, 1000000)  ; 1ms timeout
+//   loop ctx_done(child) == 0 { ... do work ... }
+//   let err = ctx_err(child)  ; 2 = deadline_exceeded
+// =============================================================================
 
 struct CtxTimespec {
     tv_sec: i64
     tv_nsec: i64
 }
 
-; ctx_now_ns — monotonic clock in nanoseconds
+// ctx_now_ns — monotonic clock in nanoseconds
 fn ctx_now_ns() -> i64 {
     let ts = CtxTimespec{}
     syscall(228, 1, &ts, 0)
     ret ts.tv_sec * 1000000000 + ts.tv_nsec
 }
 
-; ctx_background — root context, never cancelled
+// ctx_background — root context, never cancelled
 fn ctx_background() -> &i64 {
     let ctx = alloc_pages(1)
     ctx[0] = 0
@@ -37,7 +37,7 @@ fn ctx_background() -> &i64 {
     ret ctx
 }
 
-; ctx_with_cancel — child context that can be manually cancelled
+// ctx_with_cancel — child context that can be manually cancelled
 fn ctx_with_cancel(parent: &i64) -> &i64 {
     let ctx = alloc_pages(1)
     ctx[0] = 0
@@ -48,7 +48,7 @@ fn ctx_with_cancel(parent: &i64) -> &i64 {
     ret ctx
 }
 
-; ctx_with_deadline — child context with absolute deadline (nanoseconds)
+// ctx_with_deadline — child context with absolute deadline (nanoseconds)
 fn ctx_with_deadline(parent: &i64, deadline_ns: i64) -> &i64 {
     let ctx = alloc_pages(1)
     ctx[0] = 0
@@ -59,14 +59,14 @@ fn ctx_with_deadline(parent: &i64, deadline_ns: i64) -> &i64 {
     ret ctx
 }
 
-; ctx_with_timeout — child context with relative timeout (nanoseconds)
+// ctx_with_timeout — child context with relative timeout (nanoseconds)
 fn ctx_with_timeout(parent: &i64, timeout_ns: i64) -> &i64 {
     let now = ctx_now_ns()
     let deadline = now + timeout_ns
     ret ctx_with_deadline(parent, deadline)
 }
 
-; ctx_cancel — cancel a context, sets flag and closes done channel
+// ctx_cancel — cancel a context, sets flag and closes done channel
 fn ctx_cancel(ctx: &i64) {
     if ctx[0] == 0 {
         ctx[0] = 1
@@ -75,13 +75,13 @@ fn ctx_cancel(ctx: &i64) {
     }
 }
 
-; ctx_done — check if context is done (cancelled, deadline exceeded, or parent done)
-; Returns: 1 if done, 0 if still active
+// ctx_done — check if context is done (cancelled, deadline exceeded, or parent done)
+// Returns: 1 if done, 0 if still active
 fn ctx_done(ctx: &i64) -> i64 {
     if ctx[0] == 1 {
         ret 1
     }
-    ; Check deadline
+    // Check deadline
     if ctx[1] != 0 {
         let now = ctx_now_ns()
         if now > ctx[1] {
@@ -91,7 +91,7 @@ fn ctx_done(ctx: &i64) -> i64 {
             ret 1
         }
     }
-    ; Check parent
+    // Check parent
     if ctx[3] != 0 {
         let parent: &i64 = ctx[3]
         if ctx_done(parent) == 1 {
@@ -104,18 +104,18 @@ fn ctx_done(ctx: &i64) -> i64 {
     ret 0
 }
 
-; ctx_done_chan — get done channel for use with chan_select
+// ctx_done_chan — get done channel for use with chan_select
 fn ctx_done_chan(ctx: &i64) -> &i64 {
     let ch: &i64 = ctx[2]
     ret ch
 }
 
-; ctx_err — get error code: 0=ok, 1=cancelled, 2=deadline_exceeded
+// ctx_err — get error code: 0=ok, 1=cancelled, 2=deadline_exceeded
 fn ctx_err(ctx: &i64) -> i64 {
     ret ctx[4]
 }
 
-; ctx_deadline — get deadline in nanoseconds (0 if none)
+// ctx_deadline — get deadline in nanoseconds (0 if none)
 fn ctx_deadline(ctx: &i64) -> i64 {
     ret ctx[1]
 }

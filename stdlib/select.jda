@@ -1,27 +1,27 @@
-; =============================================================================
-; stdlib/select.jda — Channel Select (polling-based multiplexing)
-; =============================================================================
-; Pure stdlib, zero compiler changes. Uses non-blocking chan_recv() builtins.
-;
-; chan_recv returns: value (>=0) = success, -2 = empty, -1 = closed+empty
-; chan_send returns: 0 = ok, 1 = full, -1 = closed
-;
-; Usage:
-;   let chs = alloc_pages(1)
-;   chs[0] = ch_a
-;   chs[1] = ch_b
-;   let val = chan_select(chs, 2)
-;   if val != -2 {
-;       let which = g_sel_idx   ; 0 or 1
-;   }
-; =============================================================================
+// =============================================================================
+// stdlib/select.jda — Channel Select (polling-based multiplexing)
+// =============================================================================
+// Pure stdlib, zero compiler changes. Uses non-blocking chan_recv() builtins.
+
+// chan_recv returns: value (>=0) = success, -2 = empty, -1 = closed+empty
+// chan_send returns: 0 = ok, 1 = full, -1 = closed
+
+// Usage:
+//   let chs = alloc_pages(1)
+//   chs[0] = ch_a
+//   chs[1] = ch_b
+//   let val = chan_select(chs, 2)
+//   if val != -2 {
+//       let which = g_sel_idx   ; 0 or 1
+//   }
+// =============================================================================
 
 let g_sel_idx = 0
 let g_sel_val = 0
 
-; chan_ready — peek at channel count without consuming
-; Channel layout: [cap(0), head(8), tail(16), count(24), closed(32), buf(40+)]
-; Index 3 = offset 24 = count
+// chan_ready — peek at channel count without consuming
+// Channel layout: [cap(0), head(8), tail(16), count(24), closed(32), buf(40+)]
+// Index 3 = offset 24 = count
 fn chan_ready(ch: &i64) -> i64 {
     if ch[3] > 0 {
         ret 1
@@ -29,12 +29,12 @@ fn chan_ready(ch: &i64) -> i64 {
     ret 0
 }
 
-; chan_select — non-blocking single-pass poll of N channels
-; chs: &i64 array of channel pointers
-; n: number of channels
-; Returns: value from first ready channel (sets g_sel_idx, g_sel_val)
-;          -1 if ALL channels are closed
-;          -2 if all channels are empty (none ready)
+// chan_select — non-blocking single-pass poll of N channels
+// chs: &i64 array of channel pointers
+// n: number of channels
+// Returns: value from first ready channel (sets g_sel_idx, g_sel_val)
+//          -1 if ALL channels are closed
+//          -2 if all channels are empty (none ready)
 fn chan_select(chs: &i64, n: i64) -> i64 {
     let all_closed = 1
     let i = 0
@@ -45,7 +45,7 @@ fn chan_select(chs: &i64, n: i64) -> i64 {
         let neg1 = 0 - 1
         if val != neg2 {
             if val == neg1 {
-                ; closed+empty — skip
+                // closed+empty — skip
             } else {
                 g_sel_idx = i
                 g_sel_val = val
@@ -64,12 +64,12 @@ fn chan_select(chs: &i64, n: i64) -> i64 {
     ret neg2
 }
 
-; chan_select_val — convenience: returns g_sel_val after chan_select
+// chan_select_val — convenience: returns g_sel_val after chan_select
 fn chan_select_val() -> i64 {
     ret g_sel_val
 }
 
-; chan_select_idx — convenience: returns g_sel_idx after chan_select
+// chan_select_idx — convenience: returns g_sel_idx after chan_select
 fn chan_select_idx() -> i64 {
     ret g_sel_idx
 }

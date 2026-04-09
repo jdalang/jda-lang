@@ -1,68 +1,68 @@
-; =============================================================================
-; jda::file_io -- High-Level File I/O Helpers
-; =============================================================================
-; Ergonomic wrappers around fs.jda's raw syscall functions.
-; Depends on: stdlib/fs.jda
-;
-; Equivalent mapping:
-;   read_all(f)                 -> fs_slurp(path, &buf, &len)
-;   read_lines(f)               -> fs_read_lines(path, &lines, &count)
-;   write(f, s)                 -> fs_write_str(path, str, len)
-;   copy(src, dst)              -> fs_copy(src, dst)
-;   rename(src, dst)            -> fs_rename(src, dst)
-;   path_join(a, b)             -> path_join(a, alen, b, blen, out) -> len
-;   path_basename(p)            -> path_basename(path, len) -> (start, blen)
-;   path_ext(p)                 -> path_ext(path, len) -> offset of '.'
-;   tmpname()                   -> fs_tmpname(out) -> len
-;
-; All functions use &i8 for paths (null-terminated C strings).
-; Zero compiler changes.
-; =============================================================================
+// =============================================================================
+// jda::file_io -- High-Level File I/O Helpers
+// =============================================================================
+// Ergonomic wrappers around fs.jda's raw syscall functions.
+// Depends on: stdlib/fs.jda
 
-; --- Read entire file into auto-allocated buffer ---
-; Returns bytes read. Allocates buffer internally via alloc_pages.
-; Caller gets buffer via out_buf pointer.
-; Usage: let buf: &i8 = 0
-;        let n = fs_slurp("/tmp/test.txt", &buf)
-;        ; buf now points to file contents, n = byte count
-;
-; Since we can't do &buf easily, we use a two-step approach:
-;   1. fs_file_size to get size
-;   2. alloc_pages for buffer
-;   3. fs_read_file into buffer
-;   Returns: buffer pointer (cast to i64), or 0 on error
-;   Caller must also call fs_slurp_len() to get length.
+// Equivalent mapping:
+//   read_all(f)                 -> fs_slurp(path, &buf, &len)
+//   read_lines(f)               -> fs_read_lines(path, &lines, &count)
+//   write(f, s)                 -> fs_write_str(path, str, len)
+//   copy(src, dst)              -> fs_copy(src, dst)
+//   rename(src, dst)            -> fs_rename(src, dst)
+//   path_join(a, b)             -> path_join(a, alen, b, blen, out) -> len
+//   path_basename(p)            -> path_basename(path, len) -> (start, blen)
+//   path_ext(p)                 -> path_ext(path, len) -> offset of '.'
+//   tmpname()                   -> fs_tmpname(out) -> len
 
-; Read file into new buffer. Returns pointer to buffer (as i64).
-; Use fs_slurp_len() after to get the length.
-; Returns 0 on error.
+// All functions use &i8 for paths (null-terminated C strings).
+// Zero compiler changes.
+// =============================================================================
+
+// --- Read entire file into auto-allocated buffer ---
+// Returns bytes read. Allocates buffer internally via alloc_pages.
+// Caller gets buffer via out_buf pointer.
+// Usage: let buf: &i8 = 0
+//        let n = fs_slurp("/tmp/test.txt", &buf)
+//        ; buf now points to file contents, n = byte count
+
+// Since we can't do &buf easily, we use a two-step approach:
+//   1. fs_file_size to get size
+//   2. alloc_pages for buffer
+//   3. fs_read_file into buffer
+//   Returns: buffer pointer (cast to i64), or 0 on error
+//   Caller must also call fs_slurp_len() to get length.
+
+// Read file into new buffer. Returns pointer to buffer (as i64).
+// Use fs_slurp_len() after to get the length.
+// Returns 0 on error.
 fn fs_slurp(path: &i8) -> i64 {
     let size = fs_file_size(path)
     if size < 0 { ret 0 }
-    ; Allocate enough pages
+    // Allocate enough pages
     let pages = size / 4096 + 1
     let buf: &i8 = alloc_pages(pages)
     let n = fs_read_file(path, buf, size)
     if n < 0 { ret 0 }
-    ; Store length in the page after data (metadata)
-    ; Actually, just return buf and let caller use fs_file_size separately
+    // Store length in the page after data (metadata)
+    // Actually, just return buf and let caller use fs_file_size separately
     ret buf
 }
 
-; --- Write string to file (convenience) ---
-; Like Python: open(f, 'w').write(data)
+// --- Write string to file (convenience) ---
+// Like Python: open(f, 'w').write(data)
 fn fs_write_str(path: &i8, data: &i8, len: i64) -> i64 {
     ret fs_write_file(path, data, len)
 }
 
-; --- Append string to file ---
-; Like Python: open(f, 'a').write(data)
+// --- Append string to file ---
+// Like Python: open(f, 'a').write(data)
 fn fs_append_str(path: &i8, data: &i8, len: i64) -> i64 {
     ret fs_append_file(path, data, len)
 }
 
-; --- Count lines in a buffer ---
-; Returns number of newline characters + 1 (if buffer doesn't end with newline)
+// --- Count lines in a buffer ---
+// Returns number of newline characters + 1 (if buffer doesn't end with newline)
 fn buf_count_lines(buf: &i8, len: i64) -> i64 {
     let count = 0
     let i = 0
@@ -70,7 +70,7 @@ fn buf_count_lines(buf: &i8, len: i64) -> i64 {
         if buf[i] == 10 { count = count + 1 }
         i = i + 1
     }
-    ; If last char is not newline, there's one more line
+    // If last char is not newline, there's one more line
     if len > 0 {
         let last_idx = len - 1
         let last = buf[last_idx]
@@ -79,9 +79,9 @@ fn buf_count_lines(buf: &i8, len: i64) -> i64 {
     ret count
 }
 
-; --- Get line start offset and length ---
-; Returns start offset of line N (0-indexed) in buf.
-; Sets line length via out parameter pattern (caller passes &i64).
+// --- Get line start offset and length ---
+// Returns start offset of line N (0-indexed) in buf.
+// Sets line length via out parameter pattern (caller passes &i64).
 fn buf_line_start(buf: &i8, len: i64, line_idx: i64) -> i64 {
     let cur_line = 0
     let i = 0
@@ -93,7 +93,7 @@ fn buf_line_start(buf: &i8, len: i64, line_idx: i64) -> i64 {
     ret len
 }
 
-; Get length of line at given start offset (excludes newline)
+// Get length of line at given start offset (excludes newline)
 fn buf_line_len(buf: &i8, total_len: i64, start: i64) -> i64 {
     let i = start
     loop i < total_len {
@@ -103,8 +103,8 @@ fn buf_line_len(buf: &i8, total_len: i64, start: i64) -> i64 {
     ret total_len - start
 }
 
-; --- Copy file ---
-; Like Python: shutil.copy(src, dst)
+// --- Copy file ---
+// Like Python: shutil.copy(src, dst)
 fn fs_copy(src: &i8, dst: &i8) -> i64 {
     let size = fs_file_size(src)
     if size < 0 { ret -1 }
@@ -116,34 +116,34 @@ fn fs_copy(src: &i8, dst: &i8) -> i64 {
     ret w
 }
 
-; --- Rename file ---
-; Like Python: os.rename(src, dst)
-; Uses Linux rename syscall (82)
+// --- Rename file ---
+// Like Python: os.rename(src, dst)
+// Uses Linux rename syscall (82)
 fn fs_rename(src: &i8, dst: &i8) -> i64 {
     let r = _fs_rename_raw(src, dst)
     if r < 0 { ret -1 }
     ret 0
 }
 
-; --- Temp file name ---
-; Writes a temp file path to out buffer.
-; Returns path length.
-; Path format: /tmp/jda_NNNN where NNNN is from clock.
+// --- Temp file name ---
+// Writes a temp file path to out buffer.
+// Returns path length.
+// Path format: /tmp/jda_NNNN where NNNN is from clock.
 fn fs_tmpname(out: &i8, suffix: i64) -> i64 {
-    ; "/tmp/jda_"
-    out[0] = 47   ; /
-    out[1] = 116  ; t
-    out[2] = 109  ; m
-    out[3] = 112  ; p
-    out[4] = 47   ; /
-    out[5] = 106  ; j
-    out[6] = 100  ; d
-    out[7] = 97   ; a
-    out[8] = 95   ; _
-    ; Write suffix digits
+    // "/tmp/jda_"
+    out[0] = 47   // /
+    out[1] = 116  // t
+    out[2] = 109  // m
+    out[3] = 112  // p
+    out[4] = 47   // /
+    out[5] = 106  // j
+    out[6] = 100  // d
+    out[7] = 97   // a
+    out[8] = 95   // _
+    // Write suffix digits
     let val = suffix
     if val < 0 { val = 0 - val }
-    ; Convert to decimal digits in reverse
+    // Convert to decimal digits in reverse
     let digits: &i8 = alloc_pages(1)
     let dc = 0
     if val == 0 {
@@ -157,7 +157,7 @@ fn fs_tmpname(out: &i8, suffix: i64) -> i64 {
             val = val / 10
         }
     }
-    ; Write digits in reverse order
+    // Write digits in reverse order
     let pos = 9
     let j = dc - 1
     loop j >= 0 {
@@ -165,13 +165,13 @@ fn fs_tmpname(out: &i8, suffix: i64) -> i64 {
         pos = pos + 1
         j = j - 1
     }
-    out[pos] = 0  ; null terminate
+    out[pos] = 0  // null terminate
     ret pos
 }
 
-; --- Path helpers ---
+// --- Path helpers ---
 
-; Get length of a null-terminated string
+// Get length of a null-terminated string
 fn cstr_length(s: &i8) -> i64 {
     let i = 0
     loop s[i] != 0 {
@@ -180,15 +180,15 @@ fn cstr_length(s: &i8) -> i64 {
     ret i
 }
 
-; path_join: join directory and filename with /
-; out must be large enough. Returns length of result.
+// path_join: join directory and filename with /
+// out must be large enough. Returns length of result.
 fn path_join(dir: &i8, dir_len: i64, name: &i8, name_len: i64, out: &i8) -> i64 {
     let i = 0
     loop i < dir_len {
         out[i] = dir[i]
         i = i + 1
     }
-    ; Add / if dir doesn't end with one
+    // Add / if dir doesn't end with one
     if dir_len > 0 {
         let last_idx = dir_len - 1
         let last = dir[last_idx]
@@ -203,13 +203,13 @@ fn path_join(dir: &i8, dir_len: i64, name: &i8, name_len: i64, out: &i8) -> i64 
         i = i + 1
         j = j + 1
     }
-    out[i] = 0  ; null terminate
+    out[i] = 0  // null terminate
     ret i
 }
 
-; path_basename: find start of filename in path
-; Returns offset where basename starts.
-; E.g. "/foo/bar/baz.txt" -> 9 (points to 'b' of 'baz.txt')
+// path_basename: find start of filename in path
+// Returns offset where basename starts.
+// E.g. "/foo/bar/baz.txt" -> 9 (points to 'b' of 'baz.txt')
 fn path_basename(path: &i8, len: i64) -> i64 {
     let last_slash = 0
     let i = 0
@@ -220,9 +220,9 @@ fn path_basename(path: &i8, len: i64) -> i64 {
     ret last_slash
 }
 
-; path_ext: find the extension dot position
-; Returns offset of the last '.' in filename portion, or len if no extension.
-; E.g. "/foo/bar.txt" -> 8 (offset of '.')
+// path_ext: find the extension dot position
+// Returns offset of the last '.' in filename portion, or len if no extension.
+// E.g. "/foo/bar.txt" -> 8 (offset of '.')
 fn path_ext(path: &i8, len: i64) -> i64 {
     let base = path_basename(path, len)
     let last_dot = len
@@ -234,8 +234,8 @@ fn path_ext(path: &i8, len: i64) -> i64 {
     ret last_dot
 }
 
-; --- Byte comparison ---
-; Compare n bytes. Returns 1 if equal, 0 otherwise.
+// --- Byte comparison ---
+// Compare n bytes. Returns 1 if equal, 0 otherwise.
 fn buf_eq(a: &i8, b: &i8, n: i64) -> i64 {
     let i = 0
     loop i < n {
@@ -245,9 +245,9 @@ fn buf_eq(a: &i8, b: &i8, n: i64) -> i64 {
     ret 1
 }
 
-; --- Read file as lines into a vec of (start, len) pairs ---
-; Returns a flat vec: [start0, len0, start1, len1, ...]
-; buf and buf_len are the raw file contents.
-; Requires vec.jda (via comprehension_all.jda or standalone).
-; Commented out — depends on vec.jda which may not be included.
-; Callers can use buf_count_lines + buf_line_start + buf_line_len instead.
+// --- Read file as lines into a vec of (start, len) pairs ---
+// Returns a flat vec: [start0, len0, start1, len1, ...]
+// buf and buf_len are the raw file contents.
+// Requires vec.jda (via comprehension_all.jda or standalone).
+// Commented out — depends on vec.jda which may not be included.
+// Callers can use buf_count_lines + buf_line_start + buf_line_len instead.

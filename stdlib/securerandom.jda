@@ -1,43 +1,43 @@
-; =============================================================================
-; jda::securerandom -- Cryptographic Random Number Generation
-; =============================================================================
-; Uses Linux getrandom(2) syscall for crypto-quality randomness.
-;
-; Functions:
-;   srand_bytes(out, n)              -> i64  fill buffer with random bytes
-;   srand_hex(out, nbytes)           -> i64  hex-encoded random (2*nbytes chars)
-;   srand_base64(out, nbytes)        -> i64  base64-encoded random
-;   srand_uuid4(out)                 -> i64  UUID v4 string (36 chars)
-;   srand_range(lo, hi)              -> i64  random integer in [lo, hi)
-; =============================================================================
+// =============================================================================
+// jda::securerandom -- Cryptographic Random Number Generation
+// =============================================================================
+// Uses Linux getrandom(2) syscall for crypto-quality randomness.
 
-;; Internal: getrandom syscall (318 on x86-64).
+// Functions:
+//   srand_bytes(out, n)              -> i64  fill buffer with random bytes
+//   srand_hex(out, nbytes)           -> i64  hex-encoded random (2*nbytes chars)
+//   srand_base64(out, nbytes)        -> i64  base64-encoded random
+//   srand_uuid4(out)                 -> i64  UUID v4 string (36 chars)
+//   srand_range(lo, hi)              -> i64  random integer in [lo, hi)
+// =============================================================================
+
+// Internal: getrandom syscall (318 on x86-64).
 fn _srand_getrandom(buf: &i8, n: i64) -> i64 {
     ret syscall(318, buf, n, 0)
 }
 
-;; Fill buffer with n random bytes. Returns n on success, -1 on error.
+// Fill buffer with n random bytes. Returns n on success, -1 on error.
 fn srand_bytes(out: &i8, n: i64) -> i64 {
     let got = _srand_getrandom(out, n)
     if got < 0 { ret -1 }
     ret got
 }
 
-;; Internal: hex digit.
+// Internal: hex digit.
 fn _srand_hex_digit(v: i64) -> i64 {
     if v < 10 { ret v + 48 }
     ret v - 10 + 97
 }
 
-;; Generate hex-encoded random bytes. Writes 2*nbytes chars to out.
-;; Returns number of chars written.
+// Generate hex-encoded random bytes. Writes 2*nbytes chars to out.
+// Returns number of chars written.
 fn srand_hex(out: &i8, nbytes: i64) -> i64 {
     let tmp: &i8 = alloc_pages(1)
     srand_bytes(tmp, nbytes)
     let i = 0
     loop i < nbytes {
         let b = tmp[i]
-        ; Ensure unsigned byte
+        // Ensure unsigned byte
         if b < 0 { b = b + 256 }
         let hi = b / 16
         let lo = b - hi * 16
@@ -48,25 +48,25 @@ fn srand_hex(out: &i8, nbytes: i64) -> i64 {
     ret nbytes * 2
 }
 
-;; Base64 encode random bytes. Returns chars written.
+// Base64 encode random bytes. Returns chars written.
 fn srand_base64(out: &i8, nbytes: i64) -> i64 {
     let tmp: &i8 = alloc_pages(1)
     srand_bytes(tmp, nbytes)
-    ; Base64 encoding table
+    // Base64 encoding table
     let tbl: &i8 = alloc_pages(1)
     let ci = 0
     loop ci < 26 {
-        poke_byte(tbl, ci, 65 + ci)         ; A-Z
-        poke_byte(tbl, ci + 26, 97 + ci)    ; a-z
+        poke_byte(tbl, ci, 65 + ci)         // A-Z
+        poke_byte(tbl, ci + 26, 97 + ci)    // a-z
         ci = ci + 1
     }
     ci = 0
     loop ci < 10 {
-        poke_byte(tbl, 52 + ci, 48 + ci)    ; 0-9
+        poke_byte(tbl, 52 + ci, 48 + ci)    // 0-9
         ci = ci + 1
     }
-    poke_byte(tbl, 62, 43)  ; +
-    poke_byte(tbl, 63, 47)  ; /
+    poke_byte(tbl, 62, 43)  // +
+    poke_byte(tbl, 63, 47)  // /
 
     let oi = 0
     let si = 0
@@ -92,14 +92,14 @@ fn srand_base64(out: &i8, nbytes: i64) -> i64 {
             let idx2 = (b1 - (b1 / 16) * 16) * 4 + b2 / 64
             poke_byte(out, oi + 2, tbl[idx2])
         } else {
-            poke_byte(out, oi + 2, 61)  ; '='
+            poke_byte(out, oi + 2, 61)  // '='
         }
 
         if si + 2 < nbytes {
             let idx3 = b2 - (b2 / 64) * 64
             poke_byte(out, oi + 3, tbl[idx3])
         } else {
-            poke_byte(out, oi + 3, 61)  ; '='
+            poke_byte(out, oi + 3, 61)  // '='
         }
 
         oi = oi + 4
@@ -108,7 +108,7 @@ fn srand_base64(out: &i8, nbytes: i64) -> i64 {
     ret oi
 }
 
-;; Generate UUID v4 string (36 chars: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx).
+// Generate UUID v4 string (36 chars: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx).
 fn srand_uuid4(out: &i8) -> i64 {
     let raw: &i8 = alloc_pages(1)
     srand_bytes(raw, 16)
@@ -116,18 +116,18 @@ fn srand_uuid4(out: &i8) -> i64 {
     let di = 0
     let bi = 0
     loop bi < 16 {
-        ; Insert dashes at byte boundaries: after 4, 6, 8, 10 bytes
+        // Insert dashes at byte boundaries: after 4, 6, 8, 10 bytes
         if bi == 4 or bi == 6 or bi == 8 or bi == 10 {
-            poke_byte(out, di, 45)  ; '-'
+            poke_byte(out, di, 45)  // '-'
             di = di + 1
         }
 
         let b = raw[bi]
         if b < 0 { b = b + 256 }
 
-        ; Version: byte 6 top nibble = 4
+        // Version: byte 6 top nibble = 4
         if bi == 6 { b = 64 + (b - (b / 16) * 16) }
-        ; Variant: byte 8 top bits = 10
+        // Variant: byte 8 top bits = 10
         if bi == 8 {
             b = b - (b / 64) * 64
             b = b + 128
@@ -143,7 +143,7 @@ fn srand_uuid4(out: &i8) -> i64 {
     ret 36
 }
 
-;; Random integer in range [lo, hi). Uses getrandom for uniform distribution.
+// Random integer in range [lo, hi). Uses getrandom for uniform distribution.
 fn srand_range(lo: i64, hi: i64) -> i64 {
     let buf: &i8 = alloc_pages(1)
     srand_bytes(buf, 8)

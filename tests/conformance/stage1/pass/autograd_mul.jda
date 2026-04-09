@@ -1,4 +1,4 @@
-; Test autograd: multiplication and division gradient rules
+// Test autograd: multiplication and division gradient rules
 
 fn grad_check_close(analytical: i64, numerical: i64, eps: i64) -> i64 {
     let diff = f64_sub(analytical, numerical)
@@ -18,7 +18,7 @@ fn main() -> i64 {
     let eps = f64_div(one, hundred)
     let twoh = f64_mul(two, h)
 
-    ; c = a * b → dc/da = b, dc/db = a
+    // c = a * b → dc/da = b, dc/db = a
     let grad_c = f64_from_int(1)
     let ga = f64_mul(grad_c, b)
     let gb = f64_mul(grad_c, a)
@@ -43,7 +43,7 @@ fn main() -> i64 {
         print "grad mul ok"
     }
 
-    ; c = a / b → dc/da = 1/b, dc/db = -a/b^2
+    // c = a / b → dc/da = 1/b, dc/db = -a/b^2
     let gd_a = f64_div(grad_c, b)
     let b2 = f64_mul(b, b)
     let gc_a = f64_mul(grad_c, a)

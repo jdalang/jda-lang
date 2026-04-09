@@ -1,0 +1,391 @@
+// NFA regex engine — Thompson construction, 8 patterns x 100K strings
+
+let mem: &i64
+let g_ns = 0
+let g_start = 0
+let g_gen = 0
+let g_clen = 0
+let g_nlen = 0
+let g_rng = 0
+let g_re_pat: &i8
+let g_re_pos = 0
+let g_strbuf: &i8
+
+// Memory layout (i64 slots):
+// [0..6143]     NFA states: 2048 * 3 (c, out1, out2)
+// [6144..8191]  clist
+// [8192..10239] nlist
+// [10240..12287] seen
+
+fn _sb(buf: &i8, idx: i64) -> i64 {
+    ret buf[idx]
+}
+
+fn _clk(buf: &i8) -> i64 {
+    let r = syscall(228, 1, buf, 0, 0)
+    ret r
+}
+
+fn now_ms(ts: &i8) -> i64 {
+    _clk(ts)
+    let s = ts[0]
+    let ptr = ts + 8
+    let ns = ptr[0]
+    let ms = s * 1000 + ns / 1000000
+    ret ms
+}
+
+fn imod(a: i64, b: i64) -> i64 {
+    let d = a / b
+    let r = d * b
+    ret a - r
+}
+
+fn nrand() -> i64 {
+    let s = g_rng * 1103515245 + 12345
+    let r = s & 2147483647
+    g_rng = r
+    ret r
+}
+
+// NFA state access
+fn st_c(i: i64) -> i64 {
+    let o = i * 3
+    ret mem[o]
+}
+fn st_o1(i: i64) -> i64 {
+    let o = i * 3 + 1
+    ret mem[o]
+}
+fn st_o2(i: i64) -> i64 {
+    let o = i * 3 + 2
+    ret mem[o]
+}
+fn st_sc(i: i64, v: i64) {
+    let o = i * 3
+    mem[o] = v
+}
+fn st_so1(i: i64, v: i64) {
+    let o = i * 3 + 1
+    mem[o] = v
+}
+fn st_so2(i: i64, v: i64) {
+    let o = i * 3 + 2
+    mem[o] = v
+}
+
+// clist/nlist/seen
+fn cl(i: i64) -> i64 {
+    let o = 6144 + i
+    ret mem[o]
+}
+fn cl_s(i: i64, v: i64) {
+    let o = 6144 + i
+    mem[o] = v
+}
+fn nl(i: i64) -> i64 {
+    let o = 8192 + i
+    ret mem[o]
+}
+fn nl_s(i: i64, v: i64) {
+    let o = 8192 + i
+    mem[o] = v
+}
+fn sn(i: i64) -> i64 {
+    let o = 10240 + i
+    ret mem[o]
+}
+fn sn_s(i: i64, v: i64) {
+    let o = 10240 + i
+    mem[o] = v
+}
+
+fn new_st(c: i64, o1: i64, o2: i64) -> i64 {
+    let s = g_ns
+    g_ns = g_ns + 1
+    st_sc(s, c)
+    st_so1(s, o1)
+    st_so2(s, o2)
+    ret s
+}
+
+// Fragment: packed as start * 65536 + end
+fn frag(s: i64, e: i64) -> i64 {
+    ret s * 65536 + e
+}
+
+fn frag_s(f: i64) -> i64 {
+    ret f / 65536
+}
+
+fn frag_e(f: i64) -> i64 {
+    let s = f / 65536
+    let r = s * 65536
+    ret f - r
+}
+
+fn re_peek() -> i64 {
+    let ch = _sb(g_re_pat, g_re_pos)
+    ret ch
+}
+
+fn re_adv() {
+    let ch = _sb(g_re_pat, g_re_pos)
+    if ch != 0 {
+        g_re_pos = g_re_pos + 1
+    }
+}
+
+// Single recursive parser: level 0=expr, 1=term, 2=factor, 3=atom
+// Self-recursive: parse_re(3) calls parse_re(0) for parens — no forward decl needed
+
+fn parse_re(level: i64) -> i64 {
+    // level 3: atom
+    if level == 3 {
+        let c = re_peek()
+        if c == 40 {
+            re_adv()
+            let f = parse_re(0)
+            let p = re_peek()
+            if p == 41 {
+                re_adv()
+            }
+            ret f
+        }
+        if c == 46 {
+            re_adv()
+            let s = new_st(0 - 1, 0 - 1, 0 - 1)
+            let j = new_st(0 - 4, 0 - 1, 0 - 1)
+            st_so1(s, j)
+            ret frag(s, j)
+        }
+        re_adv()
+        let s = new_st(c, 0 - 1, 0 - 1)
+        let j = new_st(0 - 4, 0 - 1, 0 - 1)
+        st_so1(s, j)
+        ret frag(s, j)
+    }
+    // level 2: factor = atom + optional quantifier
+    if level == 2 {
+        let f = parse_re(3)
+        let fs = frag_s(f)
+        let fe = frag_e(f)
+        let c = re_peek()
+        if c == 42 {
+            re_adv()
+            let sp = new_st(0 - 2, fs, 0 - 1)
+            let j = new_st(0 - 4, 0 - 1, 0 - 1)
+            st_so1(fe, sp)
+            st_so2(sp, j)
+            ret frag(sp, j)
+        }
+        if c == 43 {
+            re_adv()
+            let sp = new_st(0 - 2, fs, 0 - 1)
+            let j = new_st(0 - 4, 0 - 1, 0 - 1)
+            st_so1(fe, sp)
+            st_so2(sp, j)
+            ret frag(fs, j)
+        }
+        if c == 63 {
+            re_adv()
+            let sp = new_st(0 - 2, fs, 0 - 1)
+            let j = new_st(0 - 4, 0 - 1, 0 - 1)
+            st_so1(fe, j)
+            st_so2(sp, j)
+            ret frag(sp, j)
+        }
+        ret f
+    }
+    // level 1: term = factor+
+    if level == 1 {
+        let f = parse_re(2)
+        let fs = frag_s(f)
+        let fe = frag_e(f)
+        let go = 1
+        loop go == 1 {
+            let p = re_peek()
+            if p == 0 { go = 0 }
+            if p == 41 { go = 0 }
+            if p == 124 { go = 0 }
+            if go == 1 {
+                let f2 = parse_re(2)
+                let s2 = frag_s(f2)
+                let e2 = frag_e(f2)
+                st_so1(fe, s2)
+                fe = e2
+            }
+        }
+        ret frag(fs, fe)
+    }
+    // level 0: expr = term (| term)*
+    let f = parse_re(1)
+    let fs = frag_s(f)
+    let fe = frag_e(f)
+    let go = 1
+    loop go == 1 {
+        let p = re_peek()
+        if p != 124 { go = 0 }
+        if go == 1 {
+            re_adv()
+            let f2 = parse_re(1)
+            let s2 = frag_s(f2)
+            let e2 = frag_e(f2)
+            let sp = new_st(0 - 2, fs, s2)
+            let j = new_st(0 - 4, 0 - 1, 0 - 1)
+            st_so1(fe, j)
+            st_so1(e2, j)
+            fs = sp
+            fe = j
+        }
+    }
+    ret frag(fs, fe)
+}
+
+fn compile(pat: &i8) {
+    g_ns = 0
+    g_re_pat = pat
+    g_re_pos = 0
+    let f = parse_re(0)
+    let fs = frag_s(f)
+    let fe = frag_e(f)
+    let acc = new_st(0 - 3, 0 - 1, 0 - 1)
+    st_so1(fe, acc)
+    g_start = fs
+}
+
+// NFA simulation — add_state to clist (w=0) or nlist (w=1)
+fn add_st(w: i64, s: i64) -> i64 {
+    if s < 0 { ret 0 }
+    if s >= g_ns { ret 0 }
+    let sv = sn(s)
+    if sv == g_gen { ret 0 }
+    sn_s(s, g_gen)
+    let c = st_c(s)
+    if c == 0 - 2 {
+        let o1 = st_o1(s)
+        let o2 = st_o2(s)
+        let d1 = add_st(w, o1)
+        let d2 = add_st(w, o2)
+        ret 0
+    }
+    if c == 0 - 4 {
+        let o1 = st_o1(s)
+        let d1 = add_st(w, o1)
+        ret 0
+    }
+    if w == 0 {
+        cl_s(g_clen, s)
+        g_clen = g_clen + 1
+    }
+    if w == 1 {
+        nl_s(g_nlen, s)
+        g_nlen = g_nlen + 1
+    }
+    ret 0
+}
+
+fn match_nfa(str: &i8, slen: i64) -> i64 {
+    g_gen = g_gen + 1
+    g_clen = 0
+    let d = add_st(0, g_start)
+    let i = 0
+    let go = 1
+    loop go == 1 {
+        if i >= slen { go = 0 }
+        if go == 1 {
+            let ch = _sb(str, i)
+            g_gen = g_gen + 1
+            g_nlen = 0
+            let j = 0
+            loop j < g_clen {
+                let s = cl(j)
+                let sc = st_c(s)
+                let ok = 0
+                if sc == ch { ok = 1 }
+                if sc == 0 - 1 { ok = 1 }
+                if ok == 1 {
+                    let o1 = st_o1(s)
+                    let d2 = add_st(1, o1)
+                }
+                j = j + 1
+            }
+            // Copy nlist to clist
+            g_clen = g_nlen
+            j = 0
+            loop j < g_nlen {
+                let v = nl(j)
+                cl_s(j, v)
+                j = j + 1
+            }
+            if g_clen == 0 { go = 0 }
+            i = i + 1
+        }
+    }
+    let k = 0
+    loop k < g_clen {
+        let s = cl(k)
+        let c = st_c(s)
+        if c == 0 - 3 { ret 1 }
+        k = k + 1
+    }
+    ret 0
+}
+
+fn gen_str(seed: i64, slen: i64) {
+    let rng = seed * 2654435761 + 1
+    rng = rng & 2147483647
+    let i = 0
+    loop i < slen {
+        rng = rng * 1103515245 + 12345 + seed
+        rng = rng & 2147483647
+        let ch = 97 + imod(rng, 26)
+        poke_byte(g_strbuf, i, ch)
+        i = i + 1
+    }
+}
+
+fn run_pat(pat: &i8, pidx: i64) -> i64 {
+    compile(pat)
+    let matches = 0
+    let ns = 100000
+    let i = 0
+    loop i < ns {
+        let slen = 10 + imod(i, 50)
+        let seed = i + pidx * 1000
+        gen_str(seed, slen)
+        let r = match_nfa(g_strbuf, slen)
+        matches = matches + r
+        i = i + 1
+    }
+    ret matches
+}
+
+fn main() -> i64 {
+    mem = alloc_pages(30)
+    let ts_off = 12300 * 8
+    let ts = mem + ts_off
+    g_strbuf = mem + 12400 * 8
+
+    let t0 = now_ms(ts)
+
+    let total = 0
+    total = total + run_pat("a.*b.*c", 0)
+    total = total + run_pat("(ab|cd|ef)+", 1)
+    total = total + run_pat("a.b.c.d.e", 2)
+    total = total + run_pat("(a|b)(c|d)(e|f)", 3)
+    total = total + run_pat("ab*c+d?ef", 4)
+    total = total + run_pat(".*hello.*world.*", 5)
+    total = total + run_pat("(abc|def|ghi|jkl)+", 6)
+    total = total + run_pat("a.*a.*a.*a", 7)
+
+    let t1 = now_ms(ts)
+    let elapsed = t1 - t0
+
+    print("matches: ")
+    print("{total}")
+    print("\ntime: ")
+    print("{elapsed}")
+    print(" ms\n")
+    ret 0
+}

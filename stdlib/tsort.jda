@@ -1,33 +1,33 @@
-; =============================================================================
-; jda::tsort -- Topological Sort
-; =============================================================================
-; Kahn's algorithm for topological ordering of a DAG. Useful for dependency
-; resolution, build systems, task scheduling.
-;
-; The graph is represented as an adjacency list using vecs.
-;
-; Functions:
-;   tsort_new(n)                   -> &i64  create graph with n nodes
-;   tsort_add_edge(g, from, to)             add directed edge from → to
-;   tsort_sort(g)                  -> &i64  topological sort (vec of node ids)
-;   tsort_has_cycle(g)             -> i64   1 if graph has a cycle
-;   tsort_node_count(g)            -> i64   number of nodes
-;   tsort_edge_count(g)            -> i64   number of edges
-; =============================================================================
+// =============================================================================
+// jda::tsort -- Topological Sort
+// =============================================================================
+// Kahn's algorithm for topological ordering of a DAG. Useful for dependency
+// resolution, build systems, task scheduling.
 
-;; Graph layout (&i64):
-;;   [0] node_count
-;;   [1] edge_count
-;;   [2] adj_lists     (&i64 — array of vec pointers, one per node)
-;;   [3] in_degree      (&i64 — array of in-degree counts)
+// The graph is represented as an adjacency list using vecs.
 
-;; Create a graph with n nodes (labeled 0..n-1).
+// Functions:
+//   tsort_new(n)                   -> &i64  create graph with n nodes
+//   tsort_add_edge(g, from, to)             add directed edge from → to
+//   tsort_sort(g)                  -> &i64  topological sort (vec of node ids)
+//   tsort_has_cycle(g)             -> i64   1 if graph has a cycle
+//   tsort_node_count(g)            -> i64   number of nodes
+//   tsort_edge_count(g)            -> i64   number of edges
+// =============================================================================
+
+// Graph layout (&i64):
+//   [0] node_count
+//   [1] edge_count
+//   [2] adj_lists     (&i64 — array of vec pointers, one per node)
+//   [3] in_degree      (&i64 — array of in-degree counts)
+
+// Create a graph with n nodes (labeled 0..n-1).
 fn tsort_new(n: i64) -> &i64 {
     let g: &i64 = alloc_pages(1)
     g[0] = n
     g[1] = 0
 
-    ; Allocate adjacency lists
+    // Allocate adjacency lists
     let pages = n * 8 / 4096 + 1
     let adj: &i64 = alloc_pages(pages)
     let i = 0
@@ -37,7 +37,7 @@ fn tsort_new(n: i64) -> &i64 {
     }
     g[2] = adj
 
-    ; Allocate in-degree array
+    // Allocate in-degree array
     let deg: &i64 = alloc_pages(pages)
     i = 0
     loop i < n {
@@ -49,7 +49,7 @@ fn tsort_new(n: i64) -> &i64 {
     ret g
 }
 
-;; Add a directed edge from → to.
+// Add a directed edge from → to.
 fn tsort_add_edge(g: &i64, from: i64, to: i64) {
     let adj: &i64 = g[2]
     let deg: &i64 = g[3]
@@ -59,15 +59,15 @@ fn tsort_add_edge(g: &i64, from: i64, to: i64) {
     g[1] = g[1] + 1
 }
 
-;; Topological sort using Kahn's algorithm.
-;; Returns vec of node IDs in topological order.
-;; If graph has a cycle, returns a vec shorter than node_count.
+// Topological sort using Kahn's algorithm.
+// Returns vec of node IDs in topological order.
+// If graph has a cycle, returns a vec shorter than node_count.
 fn tsort_sort(g: &i64) -> &i64 {
     let n = g[0]
     let adj: &i64 = g[2]
     let deg: &i64 = g[3]
 
-    ; Copy in-degrees (don't modify original)
+    // Copy in-degrees (don't modify original)
     let pages = n * 8 / 4096 + 1
     let indeg: &i64 = alloc_pages(pages)
     let i = 0
@@ -76,7 +76,7 @@ fn tsort_sort(g: &i64) -> &i64 {
         i = i + 1
     }
 
-    ; Initialize queue with nodes that have in-degree 0
+    // Initialize queue with nodes that have in-degree 0
     let q = vec_new(n)
     i = 0
     loop i < n {
@@ -85,14 +85,14 @@ fn tsort_sort(g: &i64) -> &i64 {
     }
 
     let result = vec_new(n)
-    let qi = 0  ; queue read index
+    let qi = 0  // queue read index
 
     loop qi < vec_len(q) {
         let node = vec_get(q, qi)
         qi = qi + 1
         vec_push(result, node)
 
-        ; Reduce in-degree of neighbors
+        // Reduce in-degree of neighbors
         let neighbors: &i64 = adj[node]
         let nlen = vec_len(neighbors)
         let ni = 0
@@ -109,15 +109,15 @@ fn tsort_sort(g: &i64) -> &i64 {
     ret result
 }
 
-;; Check if graph has a cycle.
+// Check if graph has a cycle.
 fn tsort_has_cycle(g: &i64) -> i64 {
     let result = tsort_sort(g)
     if vec_len(result) < g[0] { ret 1 }
     ret 0
 }
 
-;; Number of nodes.
+// Number of nodes.
 fn tsort_node_count(g: &i64) -> i64 { ret g[0] }
 
-;; Number of edges.
+// Number of edges.
 fn tsort_edge_count(g: &i64) -> i64 { ret g[1] }

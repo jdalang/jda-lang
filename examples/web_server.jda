@@ -1,48 +1,48 @@
-; =============================================================================
-; Jda — Concurrent HTTP Web Server
-; =============================================================================
-; Handles 10,000 simultaneous connections using J-Threads.
-; Zero locks. Zero GC pauses. No libc. Direct Linux syscalls.
-;
-; Architecture:
-;   - 1 Acceptor J-Thread: calls accept(), sends conn fd over channel
-;   - N Worker J-Threads: each receives an fd, reads request, writes response
-;   - Lock-free channel connects acceptor to workers
-;   - Workers are pre-spawned (thread pool) — no spawn-per-request cost
-;
-; Performance targets:
-;   - 10,000 concurrent connections
-;   - <1ms p99 latency
-;   - ~100k requests/sec on a single core (J-Thread scheduling overhead ~10ns)
-; =============================================================================
+// =============================================================================
+// Jda — Concurrent HTTP Web Server
+// =============================================================================
+// Handles 10,000 simultaneous connections using J-Threads.
+// Zero locks. Zero GC pauses. No libc. Direct Linux syscalls.
+
+// Architecture:
+//   - 1 Acceptor J-Thread: calls accept(), sends conn fd over channel
+//   - N Worker J-Threads: each receives an fd, reads request, writes response
+//   - Lock-free channel connects acceptor to workers
+//   - Workers are pre-spawned (thread pool) — no spawn-per-request cost
+
+// Performance targets:
+//   - 10,000 concurrent connections
+//   - <1ms p99 latency
+//   - ~100k requests/sec on a single core (J-Thread scheduling overhead ~10ns)
+// =============================================================================
 
 import jda::net::tcp::{ TcpListener, TcpStream }
 import jda::net::http::{ HttpRequest, HttpResponse, parse_request, send_response }
 import jda::concurrency::{ chan, chan_send, chan_recv, chan_close }
 import jda::mem::region::{ region_new, region_free, region_alloc, region_reset }
 
-; --- Configuration ---
+// --- Configuration ---
 const LISTEN_ADDR   = "0.0.0.0"
 const LISTEN_PORT   = 8080
-const WORKER_COUNT  = 256        ; J-Threads in the worker pool
-const BACKLOG       = 1024       ; TCP accept backlog
-const MAX_REQ_SIZE  = 8192       ; 8 KB max HTTP request
-const REGION_PAGES  = 4          ; 16 KB per-request arena
+const WORKER_COUNT  = 256        // J-Threads in the worker pool
+const BACKLOG       = 1024       // TCP accept backlog
+const MAX_REQ_SIZE  = 8192       // 8 KB max HTTP request
+const REGION_PAGES  = 4          // 16 KB per-request arena
 
-; =============================================================================
-; Connection descriptor — passed from acceptor to worker via channel
-; =============================================================================
+// =============================================================================
+// Connection descriptor — passed from acceptor to worker via channel
+// =============================================================================
 struct Conn {
-    fd:   i32       ; socket file descriptor
-    addr: u32       ; client IPv4 address (for logging)
-    port: u16       ; client port
+    fd:   i32       // socket file descriptor
+    addr: u32       // client IPv4 address (for logging)
+    port: u16       // client port
 }
 
-; =============================================================================
-; main — entry point
-; =============================================================================
+// =============================================================================
+// main — entry point
+// =============================================================================
 fn main() {
-    ; Bind and listen
+    // Bind and listen
     let listener = TcpListener::bind(LISTEN_ADDR, LISTEN_PORT)
         .unwrap_or_else(|e| {
             print("Failed to bind: ", e)
@@ -52,32 +52,32 @@ fn main() {
     print("Jda web server listening on ", LISTEN_ADDR, ":", LISTEN_PORT)
     print("Worker J-Threads: ", WORKER_COUNT)
 
-    ; Create the work channel (buffered — acceptor never blocks on slow workers)
+    // Create the work channel (buffered — acceptor never blocks on slow workers)
     let conn_ch = chan<Conn>(WORKER_COUNT * 4)
 
-    ; Spawn worker pool
+    // Spawn worker pool
     loop i in 0..WORKER_COUNT {
         spawn { worker_loop(&conn_ch) }
     }
 
-    ; Acceptor loop runs on the main J-Thread
+    // Acceptor loop runs on the main J-Thread
     acceptor_loop(&listener, &conn_ch)
 }
 
-; =============================================================================
-; acceptor_loop — accepts connections, sends them to workers
-; =============================================================================
+// =============================================================================
+// acceptor_loop — accepts connections, sends them to workers
+// =============================================================================
 fn acceptor_loop(listener: &TcpListener, ch: &Channel<Conn>) {
     loop {
-        ; accept() yields the J-Thread (non-blocking via io_uring or epoll)
-        ; until a new connection is ready
+        // accept() yields the J-Thread (non-blocking via io_uring or epoll)
+        // until a new connection is ready
         match listener.accept() {
             ok(conn) => {
                 chan_send(ch, Conn {
                     fd:   conn.fd,
                     addr: conn.peer_addr,
                     port: conn.peer_port,
-                }).unwrap_or(())   ; drop conn if channel closed
+                }).unwrap_or(())   // drop conn if channel closed
             }
             err(e) => {
                 print("[acceptor] error: ", e)
@@ -86,42 +86,42 @@ fn acceptor_loop(listener: &TcpListener, ch: &Channel<Conn>) {
     }
 }
 
-; =============================================================================
-; worker_loop — each worker J-Thread runs this forever
-; =============================================================================
+// =============================================================================
+// worker_loop — each worker J-Thread runs this forever
+// =============================================================================
 fn worker_loop(ch: &Channel<Conn>) {
-    ; Each worker gets its own memory arena — no allocator contention
+    // Each worker gets its own memory arena — no allocator contention
     let r = region_new(REGION_PAGES)
     defer region_free(r)
 
     loop {
-        ; Block until the acceptor sends us a connection
+        // Block until the acceptor sends us a connection
         let conn = match chan_recv(ch) {
             ok(c)  => c
-            err(_) => break     ; channel closed — server shutting down
+            err(_) => break     // channel closed — server shutting down
         }
 
-        ; Handle the request, then reset the arena for the next request
+        // Handle the request, then reset the arena for the next request
         handle_request(conn, &mut r)
-        region_reset(&mut r)    ; O(1) free of all per-request allocations
+        region_reset(&mut r)    // O(1) free of all per-request allocations
     }
 }
 
-; =============================================================================
-; handle_request — read HTTP request, route, write response
-; =============================================================================
+// =============================================================================
+// handle_request — read HTTP request, route, write response
+// =============================================================================
 fn handle_request(conn: Conn, r: &mut Region) {
-    ; Allocate read buffer from arena (zero heap allocation)
+    // Allocate read buffer from arena (zero heap allocation)
     let req_buf = region_alloc(r, MAX_REQ_SIZE, 8) as []mut i8
 
-    ; Read the HTTP request from the socket
+    // Read the HTTP request from the socket
     let n = tcp_read(conn.fd, req_buf, MAX_REQ_SIZE)
     if n <= 0 {
         tcp_close(conn.fd)
         ret
     }
 
-    ; Parse the request (zero-copy — parser returns slices into req_buf)
+    // Parse the request (zero-copy — parser returns slices into req_buf)
     let req = match parse_request(req_buf[0..n]) {
         ok(r)  => r
         err(e) => {
@@ -131,17 +131,17 @@ fn handle_request(conn: Conn, r: &mut Region) {
         }
     }
 
-    ; Route
+    // Route
     let resp = route(req, r)
 
-    ; Write response
+    // Write response
     send_response(conn.fd, resp)
     tcp_close(conn.fd)
 }
 
-; =============================================================================
-; route — dispatch request to handler, return response
-; =============================================================================
+// =============================================================================
+// route — dispatch request to handler, return response
+// =============================================================================
 fn route(req: HttpRequest, r: &mut Region) -> HttpResponse {
     match req.path {
         "/"        => handle_root(req, r)
@@ -166,7 +166,7 @@ fn handle_health(req: HttpRequest, r: &mut Region) -> HttpResponse {
 }
 
 fn handle_echo(req: HttpRequest, r: &mut Region) -> HttpResponse {
-    ; Echo back whatever query string was sent
+    // Echo back whatever query string was sent
     ret HttpResponse {
         status:  200,
         headers: "Content-Type: text/plain\r\n",
@@ -175,7 +175,7 @@ fn handle_echo(req: HttpRequest, r: &mut Region) -> HttpResponse {
 }
 
 fn handle_stats(req: HttpRequest, r: &mut Region) -> HttpResponse {
-    ; Build stats response in the arena (no heap)
+    // Build stats response in the arena (no heap)
     let buf = region_alloc(r, 512, 1) as []mut i8
     let body = fmt(buf,
         "conns_active={}\nrequests_total={}\ntsc={}",
@@ -197,9 +197,9 @@ fn send_400(fd: i32) {
     tcp_write(fd, msg, msg.len)
 }
 
-; =============================================================================
-; Global atomic counters (updated lock-free from all worker J-Threads)
-; =============================================================================
+// =============================================================================
+// Global atomic counters (updated lock-free from all worker J-Threads)
+// =============================================================================
 let g_active_conns:    u64 = 0
 let g_total_requests:  u64 = 0
 

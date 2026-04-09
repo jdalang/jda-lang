@@ -1,26 +1,26 @@
 fn main() -> i64 {
-    ; Build XML: "<a>hello</a>"
+    // Build XML: "<a>hello</a>"
     let xml: &i8 = alloc_pages(1)
     let p = 0
-    poke_byte(xml, p, 60) p = p + 1    ; <
-    poke_byte(xml, p, 97) p = p + 1    ; a
-    poke_byte(xml, p, 62) p = p + 1    ; >
-    poke_byte(xml, p, 104) p = p + 1   ; h
-    poke_byte(xml, p, 101) p = p + 1   ; e
-    poke_byte(xml, p, 108) p = p + 1   ; l
-    poke_byte(xml, p, 108) p = p + 1   ; l
-    poke_byte(xml, p, 111) p = p + 1   ; o
-    poke_byte(xml, p, 60) p = p + 1    ; <
-    poke_byte(xml, p, 47) p = p + 1    ; /
-    poke_byte(xml, p, 97) p = p + 1    ; a
-    poke_byte(xml, p, 62) p = p + 1    ; >
+    poke_byte(xml, p, 60) p = p + 1    // <
+    poke_byte(xml, p, 97) p = p + 1    // a
+    poke_byte(xml, p, 62) p = p + 1    // >
+    poke_byte(xml, p, 104) p = p + 1   // h
+    poke_byte(xml, p, 101) p = p + 1   // e
+    poke_byte(xml, p, 108) p = p + 1   // l
+    poke_byte(xml, p, 108) p = p + 1   // l
+    poke_byte(xml, p, 111) p = p + 1   // o
+    poke_byte(xml, p, 60) p = p + 1    // <
+    poke_byte(xml, p, 47) p = p + 1    // /
+    poke_byte(xml, p, 97) p = p + 1    // a
+    poke_byte(xml, p, 62) p = p + 1    // >
     let xlen = p
 
     let h = xml_parse(xml, xlen)
     let cnt = xml_event_count(h)
     print("{cnt}\n")
 
-    ; Event 0: open "a"
+    // Event 0: open "a"
     let t0 = xml_event_type(h, 0)
     print("{t0}\n")
     let out: &i8 = alloc_pages(1)
@@ -28,34 +28,34 @@ fn main() -> i64 {
     syscall(1, 1, out, n0)
     print("\n")
 
-    ; Event 1: text "hello"
+    // Event 1: text "hello"
     let t1 = xml_event_type(h, 1)
     print("{t1}\n")
     let n1 = xml_event_text(h, 1, out)
     syscall(1, 1, out, n1)
     print("\n")
 
-    ; Event 2: close "a"
+    // Event 2: close "a"
     let t2 = xml_event_type(h, 2)
     print("{t2}\n")
 
-    ; Test xml_escape: "a&b" -> "a&amp;b"
+    // Test xml_escape: "a&b" -> "a&amp;b"
     let esc: &i8 = alloc_pages(1)
-    poke_byte(esc, 0, 97)  ; a
-    poke_byte(esc, 1, 38)  ; &
-    poke_byte(esc, 2, 98)  ; b
+    poke_byte(esc, 0, 97)  // a
+    poke_byte(esc, 1, 38)  // &
+    poke_byte(esc, 2, 98)  // b
     let en = xml_escape(esc, 3, out)
     syscall(1, 1, out, en)
     print("\n")
 
-    ; Test xml_unescape: "a&lt;b" -> "a<b"
+    // Test xml_unescape: "a&lt;b" -> "a<b"
     let unesc: &i8 = alloc_pages(1)
-    poke_byte(unesc, 0, 97)   ; a
-    poke_byte(unesc, 1, 38)   ; &
-    poke_byte(unesc, 2, 108)  ; l
-    poke_byte(unesc, 3, 116)  ; t
-    poke_byte(unesc, 4, 59)   ; ;
-    poke_byte(unesc, 5, 98)   ; b
+    poke_byte(unesc, 0, 97)   // a
+    poke_byte(unesc, 1, 38)   // &
+    poke_byte(unesc, 2, 108)  // l
+    poke_byte(unesc, 3, 116)  // t
+    poke_byte(unesc, 4, 59)   // ;
+    poke_byte(unesc, 5, 98)   // b
     let un = xml_unescape(unesc, 6, out)
     syscall(1, 1, out, un)
     print("\n")

@@ -1,30 +1,30 @@
-; Test map/dict literal constructors and utilities
+// Test map/dict literal constructors and utilities
 
 fn main() {
-    ; map_of2 — literal-style {k:v} construction
+    // map_of2 — literal-style {k:v} construction
     let m = map_of2(1, 100, 2, 200)
     let v1 = map_get(m, 1)
     let v2 = map_get(m, 2)
     print("{v1}\n")
     print("{v2}\n")
 
-    ; map_of3
+    // map_of3
     let m2 = map_of3(10, 1, 20, 2, 30, 3)
     let len = map_len(m2)
     print("{len}\n")
 
-    ; map_of1
+    // map_of1
     let m1 = map_of1(42, 99)
     let v3 = map_get(m1, 42)
     print("{v3}\n")
 
-    ; map_get_or — default value
+    // map_get_or — default value
     let found = map_get_or(m, 1, 0)
     let missing = map_get_or(m, 999, 42)
     print("{found}\n")
     print("{missing}\n")
 
-    ; map_keys / map_values
+    // map_keys / map_values
     let keys: &i64 = alloc_pages(1)
     let nk = map_keys(m, keys)
     print("{nk}\n")
@@ -33,7 +33,7 @@ fn main() {
     let nv = map_values(m, vals)
     print("{nv}\n")
 
-    ; map_copy
+    // map_copy
     let cp = map_copy(m)
     let cv1 = map_get(cp, 1)
     let cv2 = map_get(cp, 2)
@@ -42,7 +42,7 @@ fn main() {
     print("{cv2}\n")
     print("{clen}\n")
 
-    ; map_merge
+    // map_merge
     let dst = map_of1(1, 10)
     let src = map_of2(2, 20, 3, 30)
     map_merge(dst, src)
@@ -53,12 +53,12 @@ fn main() {
     print("{dv2}\n")
     print("{dv3}\n")
 
-    ; map_clear
+    // map_clear
     map_clear(m)
     let cl = map_len(m)
     print("{cl}\n")
 
-    ; map_del
+    // map_del
     let md = map_of2(5, 50, 6, 60)
     let del1 = map_del(md, 5)
     let del2 = map_del(md, 999)

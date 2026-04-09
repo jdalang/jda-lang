@@ -1,15 +1,15 @@
-; =============================================================================
-; jda::errno -- Named Error Constants and Descriptions
-; =============================================================================
-; Standard Linux errno constants with name/description lookup.
-;
-; Functions:
-;   errno_name(code, out)              -> i64  write errno name, return length
-;   errno_desc(code, out)              -> i64  write description, return length
-;   errno_from_name(name, nlen)        -> i64  lookup code by name (-1 if unknown)
-; =============================================================================
+// =============================================================================
+// jda::errno -- Named Error Constants and Descriptions
+// =============================================================================
+// Standard Linux errno constants with name/description lookup.
 
-;; Internal: copy string literal to output buffer.
+// Functions:
+//   errno_name(code, out)              -> i64  write errno name, return length
+//   errno_desc(code, out)              -> i64  write description, return length
+//   errno_from_name(name, nlen)        -> i64  lookup code by name (-1 if unknown)
+// =============================================================================
+
+// Internal: copy string literal to output buffer.
 fn _errno_copy(dst: &i8, src: &i8, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -19,10 +19,10 @@ fn _errno_copy(dst: &i8, src: &i8, len: i64) -> i64 {
     ret len
 }
 
-;; Internal byte reader helper.
+// Internal byte reader helper.
 fn _errno_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: compare two strings.
+// Internal: compare two strings.
 fn _errno_streq(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
     if alen != blen { ret 0 }
     let i = 0
@@ -33,7 +33,7 @@ fn _errno_streq(a: &i8, alen: i64, b: &i8, blen: i64) -> i64 {
     ret 1
 }
 
-;; Get the name string for an errno code. Returns length written, -1 if unknown.
+// Get the name string for an errno code. Returns length written, -1 if unknown.
 fn errno_name(code: i64, out: &i8) -> i64 {
     if code == 1 { ret _errno_copy(out, "EPERM", 5) }
     if code == 2 { ret _errno_copy(out, "ENOENT", 6) }
@@ -76,7 +76,7 @@ fn errno_name(code: i64, out: &i8) -> i64 {
     ret -1
 }
 
-;; Get a human-readable description for an errno code.
+// Get a human-readable description for an errno code.
 fn errno_desc(code: i64, out: &i8) -> i64 {
     if code == 1 { ret _errno_copy(out, "Operation not permitted", 23) }
     if code == 2 { ret _errno_copy(out, "No such file or directory", 25) }
@@ -108,7 +108,7 @@ fn errno_desc(code: i64, out: &i8) -> i64 {
     ret -1
 }
 
-;; Lookup errno code by name string. Returns code or -1 if unknown.
+// Lookup errno code by name string. Returns code or -1 if unknown.
 fn errno_from_name(name: &i8, nlen: i64) -> i64 {
     if _errno_streq(name, nlen, "EPERM", 5) == 1 { ret 1 }
     if _errno_streq(name, nlen, "ENOENT", 6) == 1 { ret 2 }
