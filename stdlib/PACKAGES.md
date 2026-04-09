@@ -4,6 +4,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 
 | Package | Description |
 |---------|-------------|
+| array | Array literals and utilities — arr1–arr6, fill, range, copy, sort, reverse, sum/min/max |
 | args | CLI argument parser — flags, options (--key=val), positional args |
 | autograd | Automatic differentiation — forward/backward pass, gradient tape |
 | benchmark | In-language micro-benchmarking — ns/us/ms timers, iteration, ns/op reporting |
