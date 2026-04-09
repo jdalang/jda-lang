@@ -1860,6 +1860,60 @@ fn blank_trait_decl_toks(tok_cnt: i64) {
     }
 }
 
+fn is_fn_tok(toks: &Token, idx: i64, src: &i8) -> i64 {
+    let t = tok_type_at_raw(toks, idx)
+    if t == TOK_FN { ret 1 }
+    if t == TOK_IDENT and tok_str_len_at_raw(toks, idx) == 2 {
+        if streq(src, tok_str_start_at_raw(toks, idx), 2, "fn") == 1 { ret 1 }
+    }
+    ret 0
+}
+
+fn blank_fwd_decl_toks(tok_cnt: i64) {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let i = 0
+    loop i < tok_cnt {
+        let is_fn = is_fn_tok(toks, i, src)
+        if is_fn == 1 {
+            ; Scan from i+2 onward looking for { or fn
+            let si = i + 2
+            let found_brace = 0
+            let next_fn_pos = tok_cnt
+            loop si < tok_cnt {
+                let st = tok_type_at_raw(toks, si)
+                if st == TOK_LBRACE {
+                    found_brace = 1
+                    si = tok_cnt
+                } else {
+                    let si_is_fn = is_fn_tok(toks, si, src)
+                    if si_is_fn == 1 {
+                        next_fn_pos = si
+                        si = tok_cnt
+                    } else {
+                        si = si + 1
+                    }
+                }
+            }
+            if found_brace == 0 {
+                ; No body found — this is a forward declaration, blank it
+                let end_i = next_fn_pos
+                let hi = i
+                loop hi < end_i {
+                    tok_set_type(toks, hi, TOK_EOF)
+                    tok_set_len(toks, hi, 0)
+                    hi = hi + 1
+                }
+                i = end_i
+            } else {
+                i = i + 1
+            }
+        } else {
+            i = i + 1
+        }
+    }
+}
+
 ; Scan tokens for impl blocks and expand methods.
 ; Returns new token count.
 fn expand_impl_blocks(tok_cnt: i64) -> i64 {
@@ -6815,6 +6869,21 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
                         pi.operand0 = vval
                         pi.imm = 1
                         emit(jfn, bb, &pi)
+                    } else {
+                        let gidx = lookup_global2(id_start, id_len, src)
+                        if gidx != -1 {
+                            let gaddr = emit_gaddr(jfn, bb, gidx)
+                            let gld = Instr{}
+                            gld.op = OP_LOAD_MEM
+                            gld.operand0 = gaddr
+                            gld.itype = TYPE_I64
+                            let gval = emit(jfn, bb, &gld)
+                            let gpi = Instr{}
+                            gpi.op = OP_PRINT_INT
+                            gpi.operand0 = gval
+                            gpi.imm = 1
+                            emit(jfn, bb, &gpi)
+                        }
                     }
                 } else {
                     ii = ii + 1
@@ -22193,6 +22262,8 @@ fn main(argc: i64, argv_ptr: &i64) {
         g_scan_tok_cnt = derive_new_cnt
         prepare_top_fn_scan(toks, src_buf, g_runtime_src_len, fn_name_off, fn_name_len)
     }
+    ; Blank forward declarations (fn name(...) -> type without body)
+    blank_fwd_decl_toks(g_scan_tok_cnt)
     ; Prepare output buffers
     let code_buf = alloc_pages(4096) ; 16MB
     let code_len = 0
