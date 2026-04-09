@@ -29,6 +29,7 @@ jda run hello.jda
 |------|-------------|---------|
 | `i64` | 64-bit signed integer (default) | `let x = 42` |
 | `i32` | 32-bit signed integer | `let y: i32 = 10` |
+| `i16` | 16-bit signed integer | `let n: i16 = 1000` |
 | `i8` | 8-bit signed byte | `let b: i8 = 65` |
 | `u64` | 64-bit unsigned integer | `let n: u64 = 42` |
 | `u32` | 32-bit unsigned integer | `let n: u32 = 100000` |
