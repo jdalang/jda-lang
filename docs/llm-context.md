@@ -36,6 +36,7 @@ jda run hello.jda
 | `u16` | 16-bit unsigned integer | `let n: u16 = 65535` |
 | `u8` | 8-bit unsigned integer | `let n: u8 = 255` |
 | `f64` | 64-bit float | `let pi: f64 = 3.14` |
+| `f32` | 32-bit float (f64 internally) | `let x: f32 = 2.0` |
 | `&T` | Pointer/reference to T | `let p: &i64 = &x` |
 | `&i8` | Byte buffer / C-string pointer | `let s: &i8 = "hello"` |
 
