@@ -91,6 +91,10 @@ const TOK_NOT     = 63
 const TOK_RAW_STR = 64
 const TOK_TRUE    = 65
 const TOK_FALSE   = 66
+const TOK_U8      = 67
+const TOK_U16     = 68
+const TOK_U32     = 69
+const TOK_U64     = 70
 
 ; Derive trait IDs
 const DERIVE_DEBUG = 1
@@ -135,10 +139,20 @@ const TYPE_PTR    = 5
 ; Pointer type flag (bitmask)
 const TYPE_PTR_FLAG = 65536
 
+; Unsigned integer types
+const TYPE_U8     = 6
+const TYPE_U16    = 7
+const TYPE_U32    = 8
+const TYPE_U64    = 9
+
 ; Helper types for pointers
 const TYPE_PTR_I64 = 65537
 const TYPE_PTR_I32 = 65538
 const TYPE_PTR_I8  = 65539
+const TYPE_PTR_U8  = 65542
+const TYPE_PTR_U16 = 65543
+const TYPE_PTR_U32 = 65544
+const TYPE_PTR_U64 = 65545
 
 ; JIR opcodes
 const OP_CONST    = 0
@@ -2821,11 +2835,21 @@ fn ptr_of(base: i32) {
 
 fn type_sizeof(st: i32) {
     let b = base_type(st)
-    let is_i8 = b == 3
-    if is_i8 { ret 1 }
-    let is_i32 = b == 2
-    if is_i32 { ret 4 }
+    if b == TYPE_I8 { ret 1 }
+    if b == TYPE_U8 { ret 1 }
+    if b == TYPE_U16 { ret 2 }
+    if b == TYPE_I32 { ret 4 }
+    if b == TYPE_U32 { ret 4 }
     ret 8
+}
+
+fn is_unsigned_type(t: i64) -> i64 {
+    let b = base_type(t)
+    if b == TYPE_U8 { ret 1 }
+    if b == TYPE_U16 { ret 1 }
+    if b == TYPE_U32 { ret 1 }
+    if b == TYPE_U64 { ret 1 }
+    ret 0
 }
 
 fn mod256(x: i64) -> i64 {
@@ -3187,7 +3211,11 @@ fn classify_keyword_len2(src: &i8, start: i64, len: i64) {
     let i8_ok = 0
     if c0 == 105 { if c1 == 56 { i8_ok = 1 } }
     let m_i8 = i8_ok * TOK_I8
-    let tok = m_fn + m_if + m_or + m_i8
+    ; 'u8' = 117,56
+    let u8_ok = 0
+    if c0 == 117 { if c1 == 56 { u8_ok = 1 } }
+    let m_u8 = u8_ok * TOK_U8
+    let tok = m_fn + m_if + m_or + m_i8 + m_u8
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -3221,7 +3249,21 @@ fn classify_keyword_len3(src: &i8, start: i64, len: i64) {
     let not_ok = 0
     if c0 == 110 { if c1 == 111 { if c2 == 116 { not_ok = 1 } } }
     let m_not = not_ok * TOK_NOT
-    let tok = m_let + m_ret + m_and + m_i64 + m_i32 + m_f64 + m_for + m_not
+    ; 'u64' = 117,54,52
+    let u64_ok = 0
+    if c0 == 117 { if c1 == 54 { if c2 == 52 { u64_ok = 1 } } }
+    let m_u64 = u64_ok * TOK_U64
+    ; 'u32' = 117,51,50
+    let u32_ok = 0
+    if c0 == 117 { if c1 == 51 { if c2 == 50 { u32_ok = 1 } } }
+    let m_u32 = u32_ok * TOK_U32
+    ; 'u16' = 117,49,54
+    let u16_ok = 0
+    if c0 == 117 { if c1 == 49 { if c2 == 54 { u16_ok = 1 } } }
+    let m_u16 = u16_ok * TOK_U16
+    let tok_a = m_let + m_ret + m_and + m_i64 + m_i32 + m_f64
+    let tok_b = m_for + m_not + m_u64 + m_u32 + m_u16
+    let tok = tok_a + tok_b
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -4915,6 +4957,10 @@ fn parse_type(toks: &Token) -> i32 {
         (t1 == TOK_I64) * TYPE_PTR_I64 +
         (t1 == TOK_I32) * TYPE_PTR_I32 +
         (t1 == TOK_I8) * TYPE_PTR_I8 +
+        (t1 == TOK_U8) * TYPE_PTR_U8 +
+        (t1 == TOK_U16) * TYPE_PTR_U16 +
+        (t1 == TOK_U32) * TYPE_PTR_U32 +
+        (t1 == TOK_U64) * TYPE_PTR_U64 +
         (t1 == TOK_F64) * ptr_of(TYPE_F64) +
         (t1 == TOK_IDENT) * ptr_of(TYPE_PTR)
     let ptr_t = ptr_match + (ptr_match == 0) * ptr_of(TYPE_VOID)
@@ -4923,6 +4969,10 @@ fn parse_type(toks: &Token) -> i32 {
         (t == TOK_I64) * TYPE_I64 +
         (t == TOK_I32) * TYPE_I32 +
         (t == TOK_I8) * TYPE_I8 +
+        (t == TOK_U8) * TYPE_U8 +
+        (t == TOK_U16) * TYPE_U16 +
+        (t == TOK_U32) * TYPE_U32 +
+        (t == TOK_U64) * TYPE_U64 +
         (t == TOK_F64) * TYPE_F64 +
         (t == TOK_IDENT) * TYPE_PTR
     let base_t = base_match + (base_match == 0) * TYPE_VOID
@@ -13811,6 +13861,61 @@ fn emit_store_mem_byte(out: &i8, pos: &i64, base: i32, src: i32) {
     emit_byte(out, pos, modrm)
 }
 
+; MOVZX r64, word [base]  — 16-bit zero-extend load
+fn emit_load_mem_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32) {
+    let dst_hi = dst / 8
+    let base_hi = base / 8
+    let rex = 0x48 + dst_hi * 4 + base_hi
+    emit_byte(out, pos, rex)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xB7)
+    let dst3 = mod8(dst)
+    let base3 = mod8(base)
+    let modrm = 0x00 + (dst3 * 8) + base3
+    emit_byte(out, pos, modrm)
+}
+
+; MOVZX r64, word [base+disp]  — 16-bit zero-extend load with displacement
+fn emit_load_mem_disp_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32, disp: i64) {
+    let dst_hi = dst / 8
+    let base_hi = base / 8
+    let rex = 0x48 + dst_hi * 4 + base_hi
+    emit_byte(out, pos, rex)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xB7)
+    let dst3 = mod8(dst)
+    let base3 = mod8(base)
+    let modrm = 0x80 + (dst3 * 8) + base3
+    emit_byte(out, pos, modrm)
+    emit_i32_le(out, pos, disp)
+}
+
+; MOV word [base], src  — 16-bit store (operand size prefix 0x66)
+fn emit_store_mem_reg16(out: &i8, pos: &i64, base: i32, src: i32) {
+    emit_byte(out, pos, 0x66)
+    let src_hi = src / 8
+    let base_hi = base / 8
+    let need_rex = src_hi + base_hi
+    if need_rex > 0 {
+        let rex = 0x40 + src_hi * 4 + base_hi
+        emit_byte(out, pos, rex)
+    }
+    emit_byte(out, pos, 0x89)
+    let src3 = mod8(src)
+    let base3 = mod8(base)
+    let modrm = 0x00 + (src3 * 8) + base3
+    emit_byte(out, pos, modrm)
+}
+
+; DIV r/m64 (unsigned):  REX.W F7 /6
+fn emit_div_r(out: &i8, pos: &i64, divisor: i32) {
+    let b = 0
+    if divisor >= 8 { b = 1 }
+    emit_byte(out, pos, 72 + b)
+    emit_byte(out, pos, 0xF7)
+    emit_byte(out, pos, modrm_rr(6, divisor))
+}
+
 ; SETNE al / SETE al after CMP, then MOVZX rax, al
 fn emit_setcc_rax(out: &i8, pos: &i64, cc: i32) {
     ; SETCC al:  0F 9x C0
@@ -14211,14 +14316,22 @@ fn lower_load_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     emit_mov_rr(out, pos, PHYS_R12, base_r)
     consume_use(ctx, ins.operand0)
     let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-    if ins.itype == TYPE_I8 {
+    let ld_sz = type_sizeof(ins.itype)
+    if ld_sz == 1 {
         if ins.imm != 0 {
             emit_load_mem_disp_reg8zx(out, pos, dst, PHYS_R12, ins.imm)
         } else {
             emit_load_mem_reg8zx(out, pos, dst, PHYS_R12)
         }
     } else {
-        if ins.itype == TYPE_I32 {
+        if ld_sz == 2 {
+            if ins.imm != 0 {
+                emit_load_mem_disp_reg16zx(out, pos, dst, PHYS_R12, ins.imm)
+            } else {
+                emit_load_mem_reg16zx(out, pos, dst, PHYS_R12)
+            }
+        } else {
+        if ld_sz == 4 {
             if ins.imm != 0 {
                 emit_load_mem_disp_reg32zx(out, pos, dst, PHYS_R12, ins.imm)
             } else {
@@ -14230,6 +14343,7 @@ fn lower_load_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
             } else {
                 emit_load_mem_reg(out, pos, dst, PHYS_R12)
             }
+        }
         }
     }
     if ctx.use_cnt[ins.id] > 1 {
@@ -14338,13 +14452,18 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
             }
         }
         let base_r = get_or_load(ctx.ra, out, pos, ins.operand1)
-        if ins.itype == TYPE_I8 {
+        let st_sz = type_sizeof(ins.itype)
+        if st_sz == 1 {
             emit_store_mem_byte(out, pos, base_r, store_src)
         } else {
-            if ins.itype == TYPE_I32 {
+            if st_sz == 2 {
+                emit_store_mem_reg16(out, pos, base_r, store_src)
+            } else {
+            if st_sz == 4 {
                 emit_store_mem_reg32(out, pos, base_r, store_src)
             } else {
                 emit_store_mem_reg(out, pos, base_r, store_src)
+            }
             }
         }
         consume_use(ctx, ins.operand0)
@@ -14572,8 +14691,17 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
             safe_b = PHYS_R12
         }
         emit_mov_rr(out, pos, PHYS_RAX, a)
-        emit_cqo(out, pos)
-        emit_idiv_r(out, pos, safe_b)
+        let div_unsigned = is_unsigned_type(ins.itype)
+        if div_unsigned == 1 {
+            ; Unsigned div: zero RDX instead of sign-extend
+            emit_rex_w_rr(out, pos, PHYS_RDX, PHYS_RDX)
+            emit_byte(out, pos, 0x33)
+            emit_byte(out, pos, modrm_rr(PHYS_RDX, PHYS_RDX))
+            emit_div_r(out, pos, safe_b)
+        } else {
+            emit_cqo(out, pos)
+            emit_idiv_r(out, pos, safe_b)
+        }
         ; DIV: quotient in RAX, MOD: remainder in RDX
         let result_reg = PHYS_RAX
         if ins.op == OP_MOD { result_reg = PHYS_RDX }
@@ -14634,11 +14762,19 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         consume_use(ctx, ins.operand1)
         }
         let cc = 4
+        let cc_unsigned = is_unsigned_type(ins.itype)
         if ins.op == OP_CMP_NE { cc = 5 }
-        if ins.op == OP_CMP_LT { cc = 0xC }
-        if ins.op == OP_CMP_LTE { cc = 0xE }
-        if ins.op == OP_CMP_GT { cc = 0xF }
-        if ins.op == OP_CMP_GTE { cc = 0xD }
+        if cc_unsigned == 0 {
+            if ins.op == OP_CMP_LT { cc = 0xC }
+            if ins.op == OP_CMP_LTE { cc = 0xE }
+            if ins.op == OP_CMP_GT { cc = 0xF }
+            if ins.op == OP_CMP_GTE { cc = 0xD }
+        } else {
+            if ins.op == OP_CMP_LT { cc = 0x2 }
+            if ins.op == OP_CMP_LTE { cc = 0x6 }
+            if ins.op == OP_CMP_GT { cc = 0x7 }
+            if ins.op == OP_CMP_GTE { cc = 0x3 }
+        }
         ; Branch fusion: if CMP result used only once AND the very next
         ; non-dead instruction is OP_BR using this result, skip setcc
         ; and let BR emit jcc directly using CPU flags
@@ -19227,7 +19363,10 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
             ; Array declaration: let name: type[count]
             let arr_elem_sz = 8
             if arr_type_tok == TOK_I8 { arr_elem_sz = 1 }
+            if arr_type_tok == TOK_U8 { arr_elem_sz = 1 }
+            if arr_type_tok == TOK_U16 { arr_elem_sz = 2 }
             if arr_type_tok == TOK_I32 { arr_elem_sz = 4 }
+            if arr_type_tok == TOK_U32 { arr_elem_sz = 4 }
             if arr_type_tok == TOK_I64 { arr_elem_sz = 8 }
             if arr_type_tok == TOK_IDENT {
                 let arr_sid = lookup_struct(stab, src, arr_type_start, arr_type_len)
@@ -19237,7 +19376,11 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
             }
             let arr_bind_stype = TYPE_PTR_I64
             if arr_type_tok == TOK_I8 { arr_bind_stype = TYPE_PTR_I8 }
+            if arr_type_tok == TOK_U8 { arr_bind_stype = TYPE_PTR_U8 }
+            if arr_type_tok == TOK_U16 { arr_bind_stype = TYPE_PTR_U16 }
             if arr_type_tok == TOK_I32 { arr_bind_stype = TYPE_PTR_I32 }
+            if arr_type_tok == TOK_U32 { arr_bind_stype = TYPE_PTR_U32 }
+            if arr_type_tok == TOK_U64 { arr_bind_stype = TYPE_PTR_U64 }
             if arr_type_tok == TOK_IDENT {
                 let arr_sid2 = lookup_struct(stab, src, arr_type_start, arr_type_len)
                 if arr_sid2 >= 0 { arr_bind_stype = arr_sid2 + 1000 }
@@ -19275,6 +19418,10 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
     if arr_type_tok == TOK_F64 { bind_stype = TYPE_F64 }
     if arr_type_tok == TOK_I32 { bind_stype = TYPE_I32 }
     if arr_type_tok == TOK_I8 { bind_stype = TYPE_I8 }
+    if arr_type_tok == TOK_U8 { bind_stype = TYPE_U8 }
+    if arr_type_tok == TOK_U16 { bind_stype = TYPE_U16 }
+    if arr_type_tok == TOK_U32 { bind_stype = TYPE_U32 }
+    if arr_type_tok == TOK_U64 { bind_stype = TYPE_U64 }
     let rhs_id = -1
     let ctrc_pages = 0
     let rhs_t = tok_type_at_raw(toks0, g_main_pos)
