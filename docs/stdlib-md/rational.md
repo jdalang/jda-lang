@@ -6,6 +6,8 @@ Rational Number Arithmetic
 
 | Function | Description |
 |----------|-------------|
+| `_rat_init` | Internal: ensure pool is allocated. |
+| `_rat_slot` | Internal: allocate a rational slot from pool, returns &i64 pointing to [num, ... |
 | `_rat_gcd` | Internal: GCD (Euclidean algorithm). |
 | `_rat_abs` | Internal: absolute value. |
 | `rat_new` | Create rational number, auto-simplified. |
@@ -25,6 +27,22 @@ Rational Number Arithmetic
 | `rat_to_str` | Format as "num/den" string. Returns length. |
 
 ### Details
+
+#### `_rat_init`
+
+```jda
+fn _rat_init() -> i64
+```
+
+Internal: ensure pool is allocated.
+
+#### `_rat_slot`
+
+```jda
+fn _rat_slot() -> &i64
+```
+
+Internal: allocate a rational slot from pool, returns &i64 pointing to [num, den].
 
 #### `_rat_gcd`
 

@@ -1,6 +1,6 @@
 # Jda Standard Library
 
-Jda ships with 114 stdlib packages covering data structures, algorithms, I/O, networking, crypto, testing, and more.
+Jda ships with 117 stdlib packages covering data structures, algorithms, I/O, networking, crypto, testing, debugging, and more.
 
 ## Using the Standard Library
 
@@ -37,6 +37,11 @@ jda pkg search hash          # search for packages by keyword
 | `ring` | Ring buffer — fixed-capacity circular buffer |
 | `matrix` | Integer matrix — add, mul, transpose, identity, trace |
 | `tuple` | Tuples — pair, triple, fst/snd/trd, result ok/err/unwrap |
+| `array` | Array literals — arr1–arr6, fill, range, copy, sort, reverse, sum/min/max |
+| `slice` | Slice / dynamic view — view into array, sub-slice, get/set, contains, sum |
+| `variant` | Sum types / tagged unions — var0–var4, tag, field access, equality |
+| `option` | Option type — Some/None, unwrap, expect, unwrap_or, opt_or, opt_eq |
+| `result` | Error return pattern — ok/err, unwrap, expect, error codes, unwrap_or |
 
 ### Algorithms
 | Package | Description |
@@ -144,6 +149,10 @@ jda pkg search hash          # search for packages by keyword
 | `benchmark` | In-language micro-benchmarking — ns/op timers |
 | `log` | Structured logging — trace/debug/info/warn/error/fatal |
 | `pp` | Pretty printer — vecs, matrices, hex dumps, labeled values |
+| `debug` | Software debugger — breakpoints, watchpoints, assertions, inspection |
+| `lint` | Code style checker — naming conventions, line checks, warnings |
+| `profile` | Function-level profiler — slot-based timing, call counts, flat report |
+| `stacktrace` | Call stack trace — st_enter/leave, st_panic with trace |
 
 ### AI / ML
 | Package | Description |
@@ -176,3 +185,13 @@ jda pkg search hash          # search for packages by keyword
 | `encoding` | Character encoding — UTF-8, ASCII, Latin-1 |
 | `erb` | Template engine — variable substitution, HTML escaping |
 | `prelude` | Common utilities automatically available |
+| `namespace` | Module registry — register, is_loaded, require, prefix, list |
+| `visibility` | Visibility control — pub/private/internal convention checking |
+| `semver` | Semantic versioning — parse, compare, bump, compatible, format |
+| `lockfile` | Lock file — dependency pinning, version/hash tracking |
+| `buildconfig` | Build configuration — jda.toml parser, name/version/entry/deps |
+| `vtable` | Dynamic dispatch — vtable construction, dyn objects, method lookup |
+| `smartptr` | Smart pointers — Box (unique), Rc (refcounted), Weak (non-owning) |
+| `drop` | Destructors / finalizers — registry-based cleanup, scope guards |
+| `sync` | Synchronization — WaitGroup, Barrier, OnceFlag (futex-based) |
+| `i128` | 128-bit integer arithmetic — add, sub, mul, cmp, shifts, string conversion |

@@ -1,0 +1,62 @@
+<idea-plugin>
+    <id>org.jdalang.plugin</id>
+    <name>Jda Language</name>
+    <vendor email="hello@jdalang.org" url="https://jdalang.org">jdalang</vendor>
+
+    <description><![CDATA[
+    <p>Language support for the <b>Jda programming language</b>.</p>
+    <ul>
+        <li><b>Syntax highlighting</b> — keywords, types, strings, numbers, comments</li>
+        <li><b>LSP integration</b> — go-to-definition, hover, diagnostics, completion via jda-lsp</li>
+        <li><b>Code folding</b> — fold function bodies, struct definitions</li>
+        <li><b>Bracket matching</b> — braces, brackets, parentheses</li>
+        <li><b>Commenter</b> — toggle line comments with <code>;</code></li>
+        <li><b>File type</b> — .jda file recognition with icon</li>
+    </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- File type -->
+        <fileType
+            name="Jda"
+            implementationClass="org.jdalang.plugin.JdaFileType"
+            fieldName="INSTANCE"
+            language="Jda"
+            extensions="jda"/>
+
+        <!-- Language -->
+        <lang.parserDefinition
+            language="Jda"
+            implementationClass="org.jdalang.plugin.JdaParserDefinition"/>
+
+        <!-- Syntax highlighter -->
+        <lang.syntaxHighlighterFactory
+            language="Jda"
+            implementationClass="org.jdalang.plugin.JdaSyntaxHighlighterFactory"/>
+
+        <!-- Bracket matcher -->
+        <lang.bracketMatcher
+            language="Jda"
+            implementationClass="org.jdalang.plugin.JdaBracketMatcher"/>
+
+        <!-- Commenter -->
+        <lang.commenter
+            language="Jda"
+            implementationClass="org.jdalang.plugin.JdaCommenter"/>
+
+        <!-- Code folding -->
+        <lang.foldingBuilder
+            language="Jda"
+            implementationClass="org.jdalang.plugin.JdaFoldingBuilder"/>
+
+        <!-- Color settings page -->
+        <colorSettingsPage
+            implementation="org.jdalang.plugin.JdaColorSettingsPage"/>
+
+        <!-- LSP server support descriptor -->
+        <lsp.serverSupportProvider
+            implementation="org.jdalang.plugin.JdaLspServerSupportProvider"/>
+    </extensions>
+</idea-plugin>

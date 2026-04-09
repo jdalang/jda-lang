@@ -1,0 +1,90 @@
+; Test stdlib/sync — WaitGroup, Barrier, OnceFlag (single-threaded)
+
+fn test_waitgroup() {
+    let wg = wg_new()
+    let c0 = wg_count(wg)
+    print("wg init: ")
+    print("{c0}")
+    print("\n")
+
+    wg_add(wg, 3)
+    let c1 = wg_count(wg)
+    print("wg add 3: ")
+    print("{c1}")
+    print("\n")
+
+    wg_done(wg)
+    let c2 = wg_count(wg)
+    print("wg done: ")
+    print("{c2}")
+    print("\n")
+
+    wg_done(wg)
+    wg_done(wg)
+    let c3 = wg_count(wg)
+    print("wg all done: ")
+    print("{c3}")
+    print("\n")
+
+    wg_reset(wg)
+    let c4 = wg_count(wg)
+    print("wg reset: ")
+    print("{c4}")
+    print("\n")
+}
+
+fn test_barrier() {
+    ; Single-thread: barrier of 1 trips immediately
+    let b = barrier_new(1)
+    let total = barrier_total(b)
+    print("barrier total: ")
+    print("{total}")
+    print("\n")
+
+    let leader = barrier_wait(b)
+    print("leader: ")
+    print("{leader}")
+    print("\n")
+
+    let arrived = barrier_arrived(b)
+    print("arrived after trip: ")
+    print("{arrived}")
+    print("\n")
+}
+
+fn test_once() {
+    let f = once_new()
+    let d0 = once_is_done(f)
+    print("once init: ")
+    print("{d0}")
+    print("\n")
+
+    let r1 = once_do(f)
+    print("once first: ")
+    print("{r1}")
+    print("\n")
+
+    let r2 = once_do(f)
+    print("once second: ")
+    print("{r2}")
+    print("\n")
+
+    let d1 = once_is_done(f)
+    print("once done: ")
+    print("{d1}")
+    print("\n")
+
+    once_reset(f)
+    let r3 = once_do(f)
+    print("once after reset: ")
+    print("{r3}")
+    print("\n")
+}
+
+fn main() -> i64 {
+    test_waitgroup()
+    test_barrier()
+    test_once()
+    print("PASS\n")
+    ret 0
+}
