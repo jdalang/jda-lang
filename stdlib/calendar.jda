@@ -1,0 +1,174 @@
+; =============================================================================
+; jda::calendar -- Calendar Utilities
+; =============================================================================
+; Month/year calendar generation, day/month names, weekday calculation.
+; Self-contained — includes date math helpers internally.
+;
+; Functions:
+;   cal_weekday(year, month, day)      -> i64  0=Mon..6=Sun
+;   cal_is_leap(year)                  -> i64  1 if leap year
+;   cal_day_name(dow, out)             -> i64  day name, return length
+;   cal_month_name(month, out)         -> i64  month name, return length
+;   cal_days_in_month(year, month)     -> i64  28-31
+;   cal_month_str(year, month, out, max) -> i64  formatted month calendar
+; =============================================================================
+
+;; Internal: leap year check.
+fn _cal_is_leap(year: i64) -> i64 {
+    if year % 400 == 0 { ret 1 }
+    if year % 100 == 0 { ret 0 }
+    if year % 4 == 0 { ret 1 }
+    ret 0
+}
+
+;; Internal: days in month.
+fn _cal_dim(year: i64, month: i64) -> i64 {
+    if month == 2 {
+        if _cal_is_leap(year) == 1 { ret 29 }
+        ret 28
+    }
+    if month == 4 { ret 30 }
+    if month == 6 { ret 30 }
+    if month == 9 { ret 30 }
+    if month == 11 { ret 30 }
+    ret 31
+}
+
+;; Internal: days since epoch (1970-01-01 = day 0).
+fn _cal_date(year: i64, month: i64, day: i64) -> i64 {
+    let days = 0
+    let y = 1970
+    loop y < year {
+        if _cal_is_leap(y) == 1 { days = days + 366 } else { days = days + 365 }
+        y = y + 1
+    }
+    let m = 1
+    loop m < month {
+        days = days + _cal_dim(year, m)
+        m = m + 1
+    }
+    days = days + day - 1
+    ret days
+}
+
+;; Internal: copy literal.
+fn _cal_copy(dst: &i8, doff: i64, src: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        poke_byte(dst, doff + i, src[i])
+        i = i + 1
+    }
+    ret len
+}
+
+;; Day of week for a date. 0=Monday, 6=Sunday.
+;; Uses Tomohiko Sakamoto's algorithm.
+fn cal_weekday(year: i64, month: i64, day: i64) -> i64 {
+    ; Epoch 1970-01-01 was a Thursday (3 in 0=Mon system)
+    let days = _cal_date(year, month, day)
+    ; (days + 3) % 7 gives 0=Mon because epoch was Thu (index 3)
+    let w = (days + 3) % 7
+    if w < 0 { w = w + 7 }
+    ret w
+}
+
+;; Check leap year.
+fn cal_is_leap(year: i64) -> i64 {
+    ret _cal_is_leap(year)
+}
+
+;; Days in month.
+fn cal_days_in_month(year: i64, month: i64) -> i64 {
+    ret _cal_dim(year, month)
+}
+
+;; Get day name (0=Mon..6=Sun). Returns length written.
+fn cal_day_name(dow: i64, out: &i8) -> i64 {
+    if dow == 0 { ret _cal_copy(out, 0, "Monday", 6) }
+    if dow == 1 { ret _cal_copy(out, 0, "Tuesday", 7) }
+    if dow == 2 { ret _cal_copy(out, 0, "Wednesday", 9) }
+    if dow == 3 { ret _cal_copy(out, 0, "Thursday", 8) }
+    if dow == 4 { ret _cal_copy(out, 0, "Friday", 6) }
+    if dow == 5 { ret _cal_copy(out, 0, "Saturday", 8) }
+    if dow == 6 { ret _cal_copy(out, 0, "Sunday", 6) }
+    ret 0
+}
+
+;; Get month name (1-12). Returns length written.
+fn cal_month_name(month: i64, out: &i8) -> i64 {
+    if month == 1 { ret _cal_copy(out, 0, "January", 7) }
+    if month == 2 { ret _cal_copy(out, 0, "February", 8) }
+    if month == 3 { ret _cal_copy(out, 0, "March", 5) }
+    if month == 4 { ret _cal_copy(out, 0, "April", 5) }
+    if month == 5 { ret _cal_copy(out, 0, "May", 3) }
+    if month == 6 { ret _cal_copy(out, 0, "June", 4) }
+    if month == 7 { ret _cal_copy(out, 0, "July", 4) }
+    if month == 8 { ret _cal_copy(out, 0, "August", 6) }
+    if month == 9 { ret _cal_copy(out, 0, "September", 9) }
+    if month == 10 { ret _cal_copy(out, 0, "October", 7) }
+    if month == 11 { ret _cal_copy(out, 0, "November", 8) }
+    if month == 12 { ret _cal_copy(out, 0, "December", 8) }
+    ret 0
+}
+
+;; Internal: write 2-char number right-aligned.
+fn _cal_write_day(out: &i8, pos: i64, day: i64) -> i64 {
+    if day < 10 {
+        poke_byte(out, pos, 32)
+        poke_byte(out, pos + 1, day + 48)
+    } else {
+        let d1 = day / 10
+        let d2 = day % 10
+        poke_byte(out, pos, d1 + 48)
+        poke_byte(out, pos + 1, d2 + 48)
+    }
+    ret 2
+}
+
+;; Generate a month calendar string. Returns length.
+;; Format: "Mo Tu We Th Fr Sa Su\n 1  2  3 ..."
+fn cal_month_str(year: i64, month: i64, out: &i8, max: i64) -> i64 {
+    let pos = 0
+    ; Header
+    pos = pos + _cal_copy(out, pos, "Mo Tu We Th Fr Sa Su", 20)
+    poke_byte(out, pos, 10)
+    pos = pos + 1
+    ; First day of month
+    let first_dow = cal_weekday(year, month, 1)
+    let ndays = _cal_dim(year, month)
+    ; Leading spaces
+    let sp = 0
+    loop sp < first_dow {
+        poke_byte(out, pos, 32)
+        pos = pos + 1
+        poke_byte(out, pos, 32)
+        pos = pos + 1
+        poke_byte(out, pos, 32)
+        pos = pos + 1
+        sp = sp + 1
+    }
+    ; Days
+    let d = 1
+    let dow = first_dow
+    loop d <= ndays {
+        _cal_write_day(out, pos, d)
+        pos = pos + 2
+        dow = dow + 1
+        if dow == 7 {
+            poke_byte(out, pos, 10)
+            pos = pos + 1
+            dow = 0
+        } else {
+            if d < ndays {
+                poke_byte(out, pos, 32)
+                pos = pos + 1
+            }
+        }
+        d = d + 1
+    }
+    if dow != 0 {
+        poke_byte(out, pos, 10)
+        pos = pos + 1
+    }
+    ret pos
+}

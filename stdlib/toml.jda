@@ -1,0 +1,364 @@
+; =============================================================================
+; jda::toml -- Subset TOML Parser
+; =============================================================================
+; Parses a subset of TOML: [table] headers, key=value with string, integer,
+; and boolean values. Keys are stored as dotted paths (e.g. "section.key").
+;
+; Memory layout per TomlHandle (&i64):
+;   [0] entry_count
+;   [1] key_offsets   (&i64 — byte offsets into data_buf)
+;   [2] key_lengths   (&i64)
+;   [3] val_offsets   (&i64)
+;   [4] val_lengths   (&i64)
+;   [5] val_types     (&i64 — 0=string, 1=integer, 2=boolean)
+;   [6] data_buf      (&i8 — raw key+value bytes)
+;   [7] data_pos      (next free offset in data_buf)
+;   [8] table_off     (current table name offset in source)
+;   [9] table_len     (current table name length)
+;
+; Functions:
+;   toml_parse(buf, len)                -> &i64  parse TOML data
+;   toml_get_str(h, key, klen, out)     -> i64   get string value, return len
+;   toml_get_i64(h, key, klen)          -> i64   get integer value
+;   toml_get_bool(h, key, klen)         -> i64   get boolean (0 or 1)
+;   toml_count(h)                       -> i64   number of entries
+; =============================================================================
+
+;; Internal byte reader.
+fn _toml_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: compare bytes.
+fn _toml_eq(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i64 {
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        let ca = _toml_byte_at(a, aoff + i)
+        let cb = _toml_byte_at(b, boff + i)
+        if ca != cb { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Internal: skip whitespace.
+fn _toml_skip_ws(buf: &i8, pos: i64, len: i64) -> i64 {
+    let running = 1
+    loop running == 1 and pos < len {
+        let ch = _toml_byte_at(buf, pos)
+        if ch == 32 or ch == 9 { pos = pos + 1 } else { running = 0 }
+    }
+    ret pos
+}
+
+;; Internal: skip to end of line.
+fn _toml_skip_line(buf: &i8, pos: i64, len: i64) -> i64 {
+    let found = 0
+    loop found == 0 and pos < len {
+        let ch = _toml_byte_at(buf, pos)
+        pos = pos + 1
+        if ch == 10 { found = 1 }
+    }
+    ret pos
+}
+
+;; Internal: store bytes to data_buf, return offset where stored.
+fn _toml_store(h: &i64, src: &i8, off: i64, slen: i64) -> i64 {
+    let data: &i8 = h[6]
+    let dpos = h[7]
+    let result = dpos
+    let i = 0
+    loop i < slen {
+        let ch = _toml_byte_at(src, off + i)
+        poke_byte(data, dpos, ch)
+        dpos = dpos + 1
+        i = i + 1
+    }
+    h[7] = dpos
+    ret result
+}
+
+;; Internal: store a dotted key (table.key) to data_buf.
+fn _toml_store_dotted(h: &i64, buf: &i8, toff: i64, tlen: i64, koff: i64, klen: i64) -> i64 {
+    let data: &i8 = h[6]
+    let dpos = h[7]
+    let result = dpos
+    let i = 0
+    loop i < tlen {
+        let ch = _toml_byte_at(buf, toff + i)
+        poke_byte(data, dpos, ch)
+        dpos = dpos + 1
+        i = i + 1
+    }
+    poke_byte(data, dpos, 46)
+    dpos = dpos + 1
+    let j = 0
+    loop j < klen {
+        let ch2 = _toml_byte_at(buf, koff + j)
+        poke_byte(data, dpos, ch2)
+        dpos = dpos + 1
+        j = j + 1
+    }
+    h[7] = dpos
+    ret result
+}
+
+;; Internal: add entry.
+fn _toml_add(h: &i64, key_off: i64, key_len: i64, val_off: i64, val_len: i64, vtype: i64) -> i64 {
+    let count = h[0]
+    let key_offs: &i64 = h[1]
+    let key_lens: &i64 = h[2]
+    let val_offs: &i64 = h[3]
+    let val_lens: &i64 = h[4]
+    let val_types: &i64 = h[5]
+    key_offs[count] = key_off
+    key_lens[count] = key_len
+    val_offs[count] = val_off
+    val_lens[count] = val_len
+    val_types[count] = vtype
+    h[0] = count + 1
+    ret count + 1
+}
+
+;; Internal: parse integer from buf at off with given length.
+fn _toml_parse_int(buf: &i8, off: i64, plen: i64) -> i64 {
+    let result = 0
+    let neg = 0
+    let i = 0
+    if plen > 0 {
+        let first = _toml_byte_at(buf, off)
+        if first == 45 { neg = 1 i = 1 }
+        if first == 43 { i = 1 }
+    }
+    loop i < plen {
+        let ch = _toml_byte_at(buf, off + i)
+        if ch >= 48 and ch <= 57 {
+            result = result * 10 + ch - 48
+        }
+        i = i + 1
+    }
+    if neg == 1 { result = 0 - result }
+    ret result
+}
+
+;; Internal: trim trailing ws. Returns new end pos.
+fn _toml_trim_end(buf: &i8, start: i64, end_pos: i64) -> i64 {
+    let e = end_pos
+    let trimming = 1
+    loop trimming == 1 and e > start {
+        let tmp = e - 1
+        let ch = _toml_byte_at(buf, tmp)
+        if ch == 32 or ch == 9 { e = tmp } else { trimming = 0 }
+    }
+    ret e
+}
+
+;; Internal: parse table header. Returns pos after line.
+fn _toml_parse_table(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
+    pos = pos + 1
+    let tstart = pos
+    let found = 0
+    loop found == 0 and pos < len {
+        let ch = _toml_byte_at(buf, pos)
+        if ch == 93 { found = 1 } else { pos = pos + 1 }
+    }
+    h[8] = tstart
+    h[9] = pos - tstart
+    pos = pos + 1
+    pos = _toml_skip_line(buf, pos, len)
+    ret pos
+}
+
+;; Internal: store key (dotted if table is set). Returns stored key offset and sets key_len_out[0].
+fn _toml_store_key(h: &i64, buf: &i8, key_start: i64, key_end: i64, key_len_out: &i64) -> i64 {
+    let tlen = h[9]
+    let toff = h[8]
+    let klen = key_end - key_start
+    let stored_key = 0
+    let stored_key_len = 0
+    if tlen > 0 {
+        stored_key = _toml_store_dotted(h, buf, toff, tlen, key_start, klen)
+        stored_key_len = tlen + 1 + klen
+    } else {
+        stored_key = _toml_store(h, buf, key_start, klen)
+        stored_key_len = klen
+    }
+    key_len_out[0] = stored_key_len
+    ret stored_key
+}
+
+;; Internal: parse a quoted string value. Returns pos after closing quote.
+fn _toml_parse_quoted(h: &i64, buf: &i8, pos: i64, len: i64, key_start: i64, key_end: i64) -> i64 {
+    ; pos is at opening quote
+    pos = pos + 1
+    let val_start = pos
+    let found_q = 0
+    loop found_q == 0 and pos < len {
+        let ch = _toml_byte_at(buf, pos)
+        if ch == 34 { found_q = 1 } else { pos = pos + 1 }
+    }
+    let val_end = pos
+    pos = pos + 1
+    let klen_arr: &i64 = alloc_pages(1)
+    let stored_key = _toml_store_key(h, buf, key_start, key_end, klen_arr)
+    let sv_len = val_end - val_start
+    let stored_val = _toml_store(h, buf, val_start, sv_len)
+    _toml_add(h, stored_key, klen_arr[0], stored_val, sv_len, 0)
+    pos = _toml_skip_line(buf, pos, len)
+    ret pos
+}
+
+;; Internal: parse an unquoted value. Returns pos after line.
+fn _toml_parse_unquoted(h: &i64, buf: &i8, pos: i64, len: i64, key_start: i64, key_end: i64) -> i64 {
+    let val_start = pos
+    let at_end = 0
+    loop at_end == 0 and pos < len {
+        let ch = _toml_byte_at(buf, pos)
+        if ch == 10 or ch == 13 or ch == 35 { at_end = 1 } else { pos = pos + 1 }
+    }
+    let val_end = _toml_trim_end(buf, val_start, pos)
+    ; Determine type
+    let vtype = 0
+    if val_end > val_start {
+        let vch = _toml_byte_at(buf, val_start)
+        if vch == 116 or vch == 102 { vtype = 2 }
+        if vch >= 48 and vch <= 57 { vtype = 1 }
+        if vch == 45 or vch == 43 { vtype = 1 }
+    }
+    let klen_arr: &i64 = alloc_pages(1)
+    let stored_key = _toml_store_key(h, buf, key_start, key_end, klen_arr)
+    let sv_len = val_end - val_start
+    let stored_val = _toml_store(h, buf, val_start, sv_len)
+    _toml_add(h, stored_key, klen_arr[0], stored_val, sv_len, vtype)
+    pos = _toml_skip_line(buf, pos, len)
+    ret pos
+}
+
+;; Internal: parse key=value line. Returns pos after line.
+fn _toml_parse_kv(h: &i64, buf: &i8, pos: i64, len: i64) -> i64 {
+    let key_start = pos
+    let found_eq = 0
+    loop found_eq == 0 and pos < len {
+        let ch = _toml_byte_at(buf, pos)
+        if ch == 61 { found_eq = 1 } else { pos = pos + 1 }
+    }
+    if found_eq == 0 {
+        pos = _toml_skip_line(buf, pos, len)
+        ret pos
+    }
+    let key_end = _toml_trim_end(buf, key_start, pos)
+    pos = pos + 1
+    pos = _toml_skip_ws(buf, pos, len)
+    if pos >= len { ret pos }
+    let vc = _toml_byte_at(buf, pos)
+    if vc == 34 {
+        pos = _toml_parse_quoted(h, buf, pos, len, key_start, key_end)
+    } else {
+        pos = _toml_parse_unquoted(h, buf, pos, len, key_start, key_end)
+    }
+    ret pos
+}
+
+;; Parse TOML data. Returns handle.
+fn toml_parse(buf: &i8, len: i64) -> &i64 {
+    let h: &i64 = alloc_pages(1)
+    let key_offs: &i64 = alloc_pages(1)
+    let key_lens: &i64 = alloc_pages(1)
+    let val_offs: &i64 = alloc_pages(1)
+    let val_lens: &i64 = alloc_pages(1)
+    let val_types: &i64 = alloc_pages(1)
+    let data: &i8 = alloc_pages(8)
+    h[0] = 0
+    h[1] = key_offs
+    h[2] = key_lens
+    h[3] = val_offs
+    h[4] = val_lens
+    h[5] = val_types
+    h[6] = data
+    h[7] = 0
+    h[8] = 0
+    h[9] = 0
+
+    let pos = 0
+    loop pos < len {
+        pos = _toml_skip_ws(buf, pos, len)
+        if pos >= len { ret h }
+        let ch = _toml_byte_at(buf, pos)
+        if ch == 10 or ch == 13 {
+            pos = pos + 1
+        }
+        if ch == 35 {
+            pos = _toml_skip_line(buf, pos, len)
+        }
+        if ch == 91 {
+            pos = _toml_parse_table(h, buf, pos, len)
+        }
+        if ch >= 33 and ch != 91 and ch != 35 and ch != 10 and ch != 13 {
+            pos = _toml_parse_kv(h, buf, pos, len)
+        }
+    }
+    ret h
+}
+
+;; Number of entries.
+fn toml_count(h: &i64) -> i64 {
+    ret h[0]
+}
+
+;; Internal: find entry by key. Returns index or -1.
+fn _toml_find(h: &i64, key: &i8, klen: i64) -> i64 {
+    let data: &i8 = h[6]
+    let count = h[0]
+    let key_offs: &i64 = h[1]
+    let key_lens: &i64 = h[2]
+    let i = 0
+    loop i < count {
+        let eq = _toml_eq(key, 0, klen, data, key_offs[i], key_lens[i])
+        if eq == 1 { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Get string value for key. Copies to out, returns length. -1 if not found.
+fn toml_get_str(h: &i64, key: &i8, klen: i64, out: &i8) -> i64 {
+    let idx = _toml_find(h, key, klen)
+    if idx < 0 { ret 0 - 1 }
+    let data: &i8 = h[6]
+    let val_offs: &i64 = h[3]
+    let val_lens: &i64 = h[4]
+    let voff = val_offs[idx]
+    let vlen = val_lens[idx]
+    let i = 0
+    loop i < vlen {
+        let ch = _toml_byte_at(data, voff + i)
+        poke_byte(out, i, ch)
+        i = i + 1
+    }
+    ret vlen
+}
+
+;; Get integer value for key. Returns 0 if not found.
+fn toml_get_i64(h: &i64, key: &i8, klen: i64) -> i64 {
+    let idx = _toml_find(h, key, klen)
+    if idx < 0 { ret 0 }
+    let data: &i8 = h[6]
+    let val_offs: &i64 = h[3]
+    let val_lens: &i64 = h[4]
+    ret _toml_parse_int(data, val_offs[idx], val_lens[idx])
+}
+
+;; Get boolean value for key. Returns 0 or 1. Returns -1 if not found.
+fn toml_get_bool(h: &i64, key: &i8, klen: i64) -> i64 {
+    let idx = _toml_find(h, key, klen)
+    if idx < 0 { ret 0 - 1 }
+    let data: &i8 = h[6]
+    let val_offs: &i64 = h[3]
+    let val_lens: &i64 = h[4]
+    let voff = val_offs[idx]
+    let vlen = val_lens[idx]
+    if vlen == 4 {
+        let c0 = _toml_byte_at(data, voff)
+        if c0 == 116 { ret 1 }
+    }
+    ret 0
+}

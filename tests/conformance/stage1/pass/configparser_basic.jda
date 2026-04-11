@@ -1,0 +1,101 @@
+fn _cfg_test_byte(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+fn main() -> i64 {
+    ; Build an INI string:
+    ; [server]
+    ; host=localhost
+    ; port=8080
+    ; [db]
+    ; name=mydb
+    let ini: &i8 = alloc_pages(1)
+    let p = 0
+    ; [server]\n
+    poke_byte(ini, p, 91) p = p + 1
+    poke_byte(ini, p, 115) p = p + 1  ; s
+    poke_byte(ini, p, 101) p = p + 1  ; e
+    poke_byte(ini, p, 114) p = p + 1  ; r
+    poke_byte(ini, p, 118) p = p + 1  ; v
+    poke_byte(ini, p, 101) p = p + 1  ; e
+    poke_byte(ini, p, 114) p = p + 1  ; r
+    poke_byte(ini, p, 93) p = p + 1
+    poke_byte(ini, p, 10) p = p + 1
+    ; host=localhost\n
+    poke_byte(ini, p, 104) p = p + 1  ; h
+    poke_byte(ini, p, 111) p = p + 1  ; o
+    poke_byte(ini, p, 115) p = p + 1  ; s
+    poke_byte(ini, p, 116) p = p + 1  ; t
+    poke_byte(ini, p, 61) p = p + 1   ; =
+    poke_byte(ini, p, 108) p = p + 1  ; l
+    poke_byte(ini, p, 111) p = p + 1  ; o
+    poke_byte(ini, p, 99) p = p + 1   ; c
+    poke_byte(ini, p, 97) p = p + 1   ; a
+    poke_byte(ini, p, 108) p = p + 1  ; l
+    poke_byte(ini, p, 104) p = p + 1  ; h
+    poke_byte(ini, p, 111) p = p + 1  ; o
+    poke_byte(ini, p, 115) p = p + 1  ; s
+    poke_byte(ini, p, 116) p = p + 1  ; t
+    poke_byte(ini, p, 10) p = p + 1
+    ; port=8080\n
+    poke_byte(ini, p, 112) p = p + 1  ; p
+    poke_byte(ini, p, 111) p = p + 1  ; o
+    poke_byte(ini, p, 114) p = p + 1  ; r
+    poke_byte(ini, p, 116) p = p + 1  ; t
+    poke_byte(ini, p, 61) p = p + 1   ; =
+    poke_byte(ini, p, 56) p = p + 1   ; 8
+    poke_byte(ini, p, 48) p = p + 1   ; 0
+    poke_byte(ini, p, 56) p = p + 1   ; 8
+    poke_byte(ini, p, 48) p = p + 1   ; 0
+    poke_byte(ini, p, 10) p = p + 1
+    ; [db]\n
+    poke_byte(ini, p, 91) p = p + 1
+    poke_byte(ini, p, 100) p = p + 1  ; d
+    poke_byte(ini, p, 98) p = p + 1   ; b
+    poke_byte(ini, p, 93) p = p + 1
+    poke_byte(ini, p, 10) p = p + 1
+    ; name=mydb\n
+    poke_byte(ini, p, 110) p = p + 1  ; n
+    poke_byte(ini, p, 97) p = p + 1   ; a
+    poke_byte(ini, p, 109) p = p + 1  ; m
+    poke_byte(ini, p, 101) p = p + 1  ; e
+    poke_byte(ini, p, 61) p = p + 1   ; =
+    poke_byte(ini, p, 109) p = p + 1  ; m
+    poke_byte(ini, p, 121) p = p + 1  ; y
+    poke_byte(ini, p, 100) p = p + 1  ; d
+    poke_byte(ini, p, 98) p = p + 1   ; b
+    poke_byte(ini, p, 10) p = p + 1
+
+    let h = ini_parse_full(ini, p)
+    let cnt = ini_count(h)
+    print("entries: {cnt}\n")
+
+    ; Get port value as int
+    let sec: &i8 = alloc_pages(1)
+    poke_byte(sec, 0, 115)  ; s
+    poke_byte(sec, 1, 101)  ; e
+    poke_byte(sec, 2, 114)  ; r
+    poke_byte(sec, 3, 118)  ; v
+    poke_byte(sec, 4, 101)  ; e
+    poke_byte(sec, 5, 114)  ; r
+    let key: &i8 = alloc_pages(1)
+    poke_byte(key, 0, 112)  ; p
+    poke_byte(key, 1, 111)  ; o
+    poke_byte(key, 2, 114)  ; r
+    poke_byte(key, 3, 116)  ; t
+    let port = ini_get_i64(h, sec, 6, key, 4)
+    print("port: {port}\n")
+
+    ; Check has_section
+    let has_srv = ini_has_section(h, sec, 6)
+    print("has server: {has_srv}\n")
+
+    ; Get host string
+    poke_byte(key, 0, 104)  ; h
+    poke_byte(key, 1, 111)  ; o
+    poke_byte(key, 2, 115)  ; s
+    poke_byte(key, 3, 116)  ; t
+    let out: &i8 = alloc_pages(1)
+    let hlen = ini_get(h, sec, 6, key, 4, out)
+    print("host len: {hlen}\n")
+
+    ret 0
+}

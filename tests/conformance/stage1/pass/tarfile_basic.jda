@@ -1,0 +1,71 @@
+fn _tar_test_byte(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+fn main() -> i64 {
+    ; Create a tar archive with two files
+    let archive: &i8 = alloc_pages(16)
+    let h = tar_create(archive)
+
+    ; Add file "hello.txt" with content "Hi"
+    let fname1: &i8 = alloc_pages(1)
+    poke_byte(fname1, 0, 104)  ; h
+    poke_byte(fname1, 1, 101)  ; e
+    poke_byte(fname1, 2, 108)  ; l
+    poke_byte(fname1, 3, 108)  ; l
+    poke_byte(fname1, 4, 111)  ; o
+    poke_byte(fname1, 5, 46)   ; .
+    poke_byte(fname1, 6, 116)  ; t
+    poke_byte(fname1, 7, 120)  ; x
+    poke_byte(fname1, 8, 116)  ; t
+    let data1: &i8 = alloc_pages(1)
+    poke_byte(data1, 0, 72)   ; H
+    poke_byte(data1, 1, 105)  ; i
+    tar_add_file(h, fname1, 9, data1, 2)
+
+    ; Add file "num.txt" with content "42"
+    let fname2: &i8 = alloc_pages(1)
+    poke_byte(fname2, 0, 110)  ; n
+    poke_byte(fname2, 1, 117)  ; u
+    poke_byte(fname2, 2, 109)  ; m
+    poke_byte(fname2, 3, 46)   ; .
+    poke_byte(fname2, 4, 116)  ; t
+    poke_byte(fname2, 5, 120)  ; x
+    poke_byte(fname2, 6, 116)  ; t
+    let data2: &i8 = alloc_pages(1)
+    poke_byte(data2, 0, 52)   ; 4
+    poke_byte(data2, 1, 50)   ; 2
+    tar_add_file(h, fname2, 7, data2, 2)
+
+    let total = tar_finish(h)
+    ; 2 files * (512 header + 512 data) + 2*512 end = 3072
+    print("archive len: {total}\n")
+
+    ; Now read it back
+    let rh = tar_open(archive, total)
+    let out: &i8 = alloc_pages(1)
+
+    ; First entry
+    let ok1 = tar_next(rh)
+    print("entry1: {ok1}\n")
+    let nlen1 = tar_entry_name(rh, out)
+    print("name1 len: {nlen1}\n")
+    syscall(1, 1, out, nlen1)
+    print("\n")
+    let size1 = tar_entry_size(rh)
+    print("size1: {size1}\n")
+
+    ; Second entry
+    let ok2 = tar_next(rh)
+    print("entry2: {ok2}\n")
+    let nlen2 = tar_entry_name(rh, out)
+    syscall(1, 1, out, nlen2)
+    print("\n")
+    let dlen2 = tar_entry_data(rh, out)
+    syscall(1, 1, out, dlen2)
+    print("\n")
+
+    ; No more entries
+    let ok3 = tar_next(rh)
+    print("more: {ok3}\n")
+
+    ret 0
+}

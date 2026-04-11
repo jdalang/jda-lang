@@ -80,3 +80,37 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | weakref | Weak references — deref, alive check, release, registry with sweep |
 | yaml | YAML parser/emitter — key:value, lists, comments, quoted strings |
 | zlib | Compression — CRC-32, Adler-32, deflate/inflate (stored blocks) |
+| errno | System error codes — errno constants, strerror, error categories |
+| platform | Platform detection — OS, arch, endianness, feature queries |
+| enum | Enumeration utilities — define, iterate, name/value lookup |
+| operator | Operator functions — arithmetic, comparison, logical as first-class fns |
+| linecache | Line cache — read specific lines from files, cache management |
+| textwrap | Text wrapping — wrap, fill, shorten, indent, dedent |
+| fnmatch | Filename matching — Unix shell-style wildcards, pattern compile |
+| diff | Text differencing — unified diff, line-by-line compare, edit distance |
+| copy | Object copying — shallow copy, deep copy, clone helpers |
+| mimetypes | MIME type detection — guess type from extension, register custom types |
+| statistics | Statistical functions — mean, median, mode, stdev, variance, quantile |
+| fixedpoint | Fixed-point arithmetic — add, sub, mul, div, round, scale conversion |
+| datetime | Date and time — parse, format, add/sub duration, compare, timezone |
+| calendar | Calendar utilities — month/year display, weekday, leap year, day-of-year |
+| configparser | INI-style config parser — sections, keys, defaults, interpolation |
+| toml | TOML parser/emitter — tables, arrays, inline tables, dotted keys |
+| gzip | Gzip compression — compress, decompress, gzip header/footer |
+| tarfile | Tar archive — create, extract, list, append, ustar format |
+| zipfile | ZIP archive — create, extract, list, deflate/store methods |
+| kvstore | Key-value store — persistent on-disk storage, get/set/delete, iteration |
+| socketserver | Socket server framework — TCP/UDP, threading, request handlers |
+| httpserver | HTTP server — request routing, static files, middleware, response writer |
+| httpclient | HTTP client — GET/POST/PUT/DELETE, headers, response parsing |
+| netrc | Netrc file parser — machine/login/password lookup, default entry |
+| getpass | Password input — terminal echo suppression, secure prompt |
+| sched | Task scheduler — delayed execution, periodic tasks, priority queue |
+| mmap | Memory-mapped files — map, unmap, read, write, sync, advise |
+| email | Email message — parse/compose RFC 5322, MIME parts, headers |
+| htmlparser | HTML parser — tokenize, tag/attribute extraction, entity decode |
+| xml | XML parser — SAX-style events, element tree, attributes, namespaces |
+| smtp | SMTP client — connect, auth, send mail, STARTTLS, attachments |
+| ftp | FTP client — connect, login, list, get, put, passive mode |
+| compress | Compression codecs — LZ4, zstd-style frame format, streaming |
+| glob | Glob pattern matching — recursive **, brace expansion, dotfiles |
