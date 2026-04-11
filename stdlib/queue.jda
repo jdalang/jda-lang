@@ -1,0 +1,214 @@
+; =============================================================================
+; jda::queue -- Queue, Stack, and Priority Queue
+; =============================================================================
+; Data structures built on dynamic arrays.
+;
+; Queue (FIFO):
+;   queue_new()            -> &i64   create queue
+;   queue_push(q, val)              enqueue
+;   queue_pop(q)           -> i64   dequeue (0 if empty)
+;   queue_peek(q)          -> i64   front element (0 if empty)
+;   queue_len(q)           -> i64   length
+;   queue_empty(q)         -> i64   1 if empty
+;
+; Stack (LIFO):
+;   stack_new()            -> &i64  create stack
+;   stack_push(s, val)              push
+;   stack_pop(s)           -> i64   pop (0 if empty)
+;   stack_peek(s)          -> i64   top element (0 if empty)
+;   stack_len(s)           -> i64   length
+;   stack_empty(s)         -> i64   1 if empty
+;
+; Priority Queue (min-heap):
+;   pq_new()               -> &i64  create priority queue
+;   pq_push(pq, val)               insert
+;   pq_pop(pq)             -> i64   extract minimum (0 if empty)
+;   pq_peek(pq)            -> i64   minimum element (0 if empty)
+;   pq_len(pq)             -> i64   length
+;   pq_empty(pq)           -> i64   1 if empty
+; =============================================================================
+
+; ─── Queue (ring buffer) ─────────────────────────────────────────────────────
+; Layout: [0]=len, [1]=cap, [2]=head, [3]=tail, [4]=data_ptr
+
+fn queue_pages_for(n: i64) -> i64 {
+    let bytes = n * 8
+    let pages = bytes / 4096
+    let rem = bytes - pages * 4096
+    if rem > 0 { pages = pages + 1 }
+    if pages == 0 { pages = 1 }
+    ret pages
+}
+
+fn queue_new() -> &i64 {
+    let cap = 64
+    let hdr: &i64 = alloc_pages(1)
+    let data: &i64 = alloc_pages(queue_pages_for(cap))
+    hdr[0] = 0    ; len
+    hdr[1] = cap   ; capacity
+    hdr[2] = 0    ; head
+    hdr[3] = 0    ; tail
+    hdr[4] = data
+    ret hdr
+}
+
+fn queue_grow(q: &i64) {
+    let old_cap = q[1]
+    let old_data: &i64 = q[4]
+    let head = q[2]
+    let len = q[0]
+    let new_cap = old_cap * 2
+    let new_data: &i64 = alloc_pages(queue_pages_for(new_cap))
+    ; Copy elements in order
+    let i = 0
+    loop i < len {
+        let src_idx = head + i
+        let wrapped = src_idx - (src_idx / old_cap) * old_cap
+        new_data[i] = old_data[wrapped]
+        i = i + 1
+    }
+    q[1] = new_cap
+    q[2] = 0
+    q[3] = len
+    q[4] = new_data
+}
+
+fn queue_push(q: &i64, val: i64) {
+    if q[0] == q[1] { queue_grow(q) }
+    let data: &i64 = q[4]
+    let tail = q[3]
+    data[tail] = val
+    let new_tail = tail + 1
+    let cap = q[1]
+    if new_tail >= cap { new_tail = 0 }
+    q[3] = new_tail
+    q[0] = q[0] + 1
+}
+
+fn queue_pop(q: &i64) -> i64 {
+    if q[0] == 0 { ret 0 }
+    let data: &i64 = q[4]
+    let head = q[2]
+    let val = data[head]
+    let new_head = head + 1
+    let cap = q[1]
+    if new_head >= cap { new_head = 0 }
+    q[2] = new_head
+    q[0] = q[0] - 1
+    ret val
+}
+
+fn queue_peek(q: &i64) -> i64 {
+    if q[0] == 0 { ret 0 }
+    let data: &i64 = q[4]
+    ret data[q[2]]
+}
+
+fn queue_len(q: &i64) -> i64 { ret q[0] }
+fn queue_empty(q: &i64) -> i64 { if q[0] == 0 { ret 1 } ret 0 }
+
+; ─── Stack ────────────────────────────────────────────────────────────────────
+; Uses vec internally: [0]=len, [1]=cap, [2]=data_ptr
+
+fn stack_new() -> &i64 {
+    ret vec_new(16)
+}
+
+fn stack_push(s: &i64, val: i64) {
+    vec_push(s, val)
+}
+
+fn stack_pop(s: &i64) -> i64 {
+    ret vec_pop(s)
+}
+
+fn stack_peek(s: &i64) -> i64 {
+    ret vec_last(s)
+}
+
+fn stack_len(s: &i64) -> i64 { ret s[0] }
+fn stack_empty(s: &i64) -> i64 { if s[0] == 0 { ret 1 } ret 0 }
+
+; ─── Priority Queue (min-heap) ───────────────────────────────────────────────
+; Uses vec internally. Heap property: parent <= children.
+
+fn pq_new() -> &i64 {
+    ret vec_new(16)
+}
+
+fn pq_parent(i: i64) -> i64 {
+    let p = i - 1
+    ret p / 2
+}
+
+fn pq_left(i: i64) -> i64 { ret 2 * i + 1 }
+fn pq_right(i: i64) -> i64 { ret 2 * i + 2 }
+
+fn pq_sift_up(pq: &i64, idx: i64) {
+    let data: &i64 = pq[2]
+    let i = idx
+    loop i > 0 {
+        let p = pq_parent(i)
+        if data[p] > data[i] {
+            let tmp = data[p]
+            data[p] = data[i]
+            data[i] = tmp
+            i = p
+        } else {
+            i = 0  ; break
+        }
+    }
+}
+
+fn pq_sift_down(pq: &i64, idx: i64) {
+    let data: &i64 = pq[2]
+    let len = pq[0]
+    let i = idx
+    let cont = 1
+    loop cont == 1 {
+        let smallest = i
+        let l = pq_left(i)
+        let r = pq_right(i)
+        if l < len {
+            if data[l] < data[smallest] { smallest = l }
+        }
+        if r < len {
+            if data[r] < data[smallest] { smallest = r }
+        }
+        if smallest != i {
+            let tmp = data[i]
+            data[i] = data[smallest]
+            data[smallest] = tmp
+            i = smallest
+        } else {
+            cont = 0
+        }
+    }
+}
+
+fn pq_push(pq: &i64, val: i64) {
+    vec_push(pq, val)
+    let idx = pq[0] - 1
+    pq_sift_up(pq, idx)
+}
+
+fn pq_pop(pq: &i64) -> i64 {
+    let len = pq[0]
+    if len == 0 { ret 0 }
+    let data: &i64 = pq[2]
+    let val = data[0]
+    let last = len - 1
+    data[0] = data[last]
+    pq[0] = last
+    if last > 0 { pq_sift_down(pq, 0) }
+    ret val
+}
+
+fn pq_peek(pq: &i64) -> i64 {
+    if pq[0] == 0 { ret 0 }
+    let data: &i64 = pq[2]
+    ret data[0]
+}
+
+fn pq_len(pq: &i64) -> i64 { ret pq[0] }
+fn pq_empty(pq: &i64) -> i64 { if pq[0] == 0 { ret 1 } ret 0 }

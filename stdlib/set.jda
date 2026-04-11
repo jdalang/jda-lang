@@ -1,0 +1,297 @@
+; =============================================================================
+; jda::set -- Hash Set (Set<i64>)
+; =============================================================================
+; Unordered set of unique i64 values. Built on open addressing with linear
+; probing (same approach as hashmap.jda but values-only).
+;
+; Memory layout per set (&i64):
+;   [0] count      (number of elements)
+;   [1] capacity   (table size, power of 2)
+;   [2] keys_ptr   (&i64 — key slots)
+;   [3] used_ptr   (&i64 — 1 if slot occupied, 0 if empty)
+;
+; Functions:
+;   set_new(cap)               -> &i64   create set
+;   set_add(s, val)                      insert value
+;   set_has(s, val)            -> i64    1 if present, 0 otherwise
+;   set_del(s, val)            -> i64    1 if removed, 0 if not found
+;   set_len(s)                 -> i64    number of elements
+;   set_clear(s)                         remove all elements
+;   set_union(a, b)            -> &i64   new set = a ∪ b
+;   set_intersect(a, b)        -> &i64   new set = a ∩ b
+;   set_diff(a, b)             -> &i64   new set = a \ b
+;   set_subset(a, b)           -> i64    1 if a ⊆ b
+;   set_eq(a, b)               -> i64    1 if same elements
+;   set_to_vec(s)              -> &i64   convert to vec
+; =============================================================================
+
+fn set_pages_for(n: i64) -> i64 {
+    let bytes = n * 8
+    let pages = bytes / 4096
+    let rem = bytes - pages * 4096
+    if rem > 0 { pages = pages + 1 }
+    if pages == 0 { pages = 1 }
+    ret pages
+}
+
+;; Create a new set with given capacity (rounded up to power of 2, min 16).
+fn set_new(cap: i64) -> &i64 {
+    let c = 16
+    loop c < cap { c = c * 2 }
+    let hdr: &i64 = alloc_pages(1)
+    let kpg = set_pages_for(c)
+    let keys: &i64 = alloc_pages(kpg)
+    let used: &i64 = alloc_pages(kpg)
+    ; Zero out used flags
+    let i = 0
+    loop i < c {
+        used[i] = 0
+        i = i + 1
+    }
+    hdr[0] = 0
+    hdr[1] = c
+    hdr[2] = keys
+    hdr[3] = used
+    ret hdr
+}
+
+;; Internal: hash function for i64.
+fn set_hash(val: i64, cap: i64) -> i64 {
+    let h = val * 2654435761
+    if h < 0 { h = 0 - h }
+    let mask = cap - 1
+    ret h - (h / cap) * cap
+}
+
+;; Internal: rehash when load factor > 0.7.
+fn set_rehash(s: &i64) {
+    let old_cap = s[1]
+    let old_keys: &i64 = s[2]
+    let old_used: &i64 = s[3]
+    let new_cap = old_cap * 2
+    let kpg = set_pages_for(new_cap)
+    let new_keys: &i64 = alloc_pages(kpg)
+    let new_used: &i64 = alloc_pages(kpg)
+    let i = 0
+    loop i < new_cap {
+        new_used[i] = 0
+        i = i + 1
+    }
+    s[1] = new_cap
+    s[2] = new_keys
+    s[3] = new_used
+    s[0] = 0
+    ; Re-insert all existing elements
+    i = 0
+    loop i < old_cap {
+        if old_used[i] == 1 {
+            ; Inline insert to new table
+            let h = set_hash(old_keys[i], new_cap)
+            let done = 0
+            loop done == 0 {
+                if new_used[h] == 0 {
+                    new_keys[h] = old_keys[i]
+                    new_used[h] = 1
+                    let cnt = s[0]
+                    s[0] = cnt + 1
+                    done = 1
+                } else {
+                    h = h + 1
+                    if h >= new_cap { h = 0 }
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+;; Insert a value into the set.
+fn set_add(s: &i64, val: i64) {
+    ; Check load factor
+    let cnt = s[0]
+    let cap = s[1]
+    let threshold = cap * 7 / 10
+    if cnt >= threshold {
+        set_rehash(s)
+        cap = s[1]
+    }
+    let keys: &i64 = s[2]
+    let used: &i64 = s[3]
+    let h = set_hash(val, cap)
+    let done = 0
+    loop done == 0 {
+        if used[h] == 0 {
+            keys[h] = val
+            used[h] = 1
+            s[0] = s[0] + 1
+            done = 1
+        } else {
+            if keys[h] == val {
+                done = 1  ; already present
+            } else {
+                h = h + 1
+                if h >= cap { h = 0 }
+            }
+        }
+    }
+}
+
+;; Check if value is in the set.
+fn set_has(s: &i64, val: i64) -> i64 {
+    let cap = s[1]
+    let keys: &i64 = s[2]
+    let used: &i64 = s[3]
+    let h = set_hash(val, cap)
+    let checked = 0
+    loop checked < cap {
+        if used[h] == 0 { ret 0 }
+        if keys[h] == val { ret 1 }
+        h = h + 1
+        if h >= cap { h = 0 }
+        checked = checked + 1
+    }
+    ret 0
+}
+
+;; Remove a value from the set. Returns 1 if found, 0 otherwise.
+fn set_del(s: &i64, val: i64) -> i64 {
+    let cap = s[1]
+    let keys: &i64 = s[2]
+    let used: &i64 = s[3]
+    let h = set_hash(val, cap)
+    let checked = 0
+    loop checked < cap {
+        if used[h] == 0 { ret 0 }
+        if keys[h] == val {
+            used[h] = 0
+            s[0] = s[0] - 1
+            ; Re-insert displaced elements in cluster
+            let j = h + 1
+            if j >= cap { j = 0 }
+            loop used[j] == 1 {
+                let k = keys[j]
+                used[j] = 0
+                s[0] = s[0] - 1
+                set_add(s, k)
+                j = j + 1
+                if j >= cap { j = 0 }
+            }
+            ret 1
+        }
+        h = h + 1
+        if h >= cap { h = 0 }
+        checked = checked + 1
+    }
+    ret 0
+}
+
+;; Number of elements.
+fn set_len(s: &i64) -> i64 {
+    ret s[0]
+}
+
+;; Remove all elements.
+fn set_clear(s: &i64) {
+    let cap = s[1]
+    let used: &i64 = s[3]
+    let i = 0
+    loop i < cap {
+        used[i] = 0
+        i = i + 1
+    }
+    s[0] = 0
+}
+
+;; Union: returns new set containing all elements from a and b.
+fn set_union(a: &i64, b: &i64) -> &i64 {
+    let total = a[0] + b[0]
+    let out = set_new(total * 2)
+    let acap = a[1]
+    let akeys: &i64 = a[2]
+    let aused: &i64 = a[3]
+    let i = 0
+    loop i < acap {
+        if aused[i] == 1 { set_add(out, akeys[i]) }
+        i = i + 1
+    }
+    let bcap = b[1]
+    let bkeys: &i64 = b[2]
+    let bused: &i64 = b[3]
+    i = 0
+    loop i < bcap {
+        if bused[i] == 1 { set_add(out, bkeys[i]) }
+        i = i + 1
+    }
+    ret out
+}
+
+;; Intersection: returns new set of elements in both a and b.
+fn set_intersect(a: &i64, b: &i64) -> &i64 {
+    let out = set_new(16)
+    let acap = a[1]
+    let akeys: &i64 = a[2]
+    let aused: &i64 = a[3]
+    let i = 0
+    loop i < acap {
+        if aused[i] == 1 {
+            if set_has(b, akeys[i]) == 1 {
+                set_add(out, akeys[i])
+            }
+        }
+        i = i + 1
+    }
+    ret out
+}
+
+;; Difference: returns new set of elements in a but not in b.
+fn set_diff(a: &i64, b: &i64) -> &i64 {
+    let out = set_new(16)
+    let acap = a[1]
+    let akeys: &i64 = a[2]
+    let aused: &i64 = a[3]
+    let i = 0
+    loop i < acap {
+        if aused[i] == 1 {
+            if set_has(b, akeys[i]) == 0 {
+                set_add(out, akeys[i])
+            }
+        }
+        i = i + 1
+    }
+    ret out
+}
+
+;; Subset: returns 1 if all elements of a are in b.
+fn set_subset(a: &i64, b: &i64) -> i64 {
+    let acap = a[1]
+    let akeys: &i64 = a[2]
+    let aused: &i64 = a[3]
+    let i = 0
+    loop i < acap {
+        if aused[i] == 1 {
+            if set_has(b, akeys[i]) == 0 { ret 0 }
+        }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Equality: same elements in both sets.
+fn set_eq(a: &i64, b: &i64) -> i64 {
+    if a[0] != b[0] { ret 0 }
+    ret set_subset(a, b)
+}
+
+;; Convert set to vec (unordered).
+fn set_to_vec(s: &i64) -> &i64 {
+    let out = vec_new(s[0])
+    let cap = s[1]
+    let keys: &i64 = s[2]
+    let used: &i64 = s[3]
+    let i = 0
+    loop i < cap {
+        if used[i] == 1 { vec_push(out, keys[i]) }
+        i = i + 1
+    }
+    ret out
+}

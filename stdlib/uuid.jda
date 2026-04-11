@@ -1,0 +1,79 @@
+; =============================================================================
+; jda::uuid -- UUID Generation
+; =============================================================================
+; Version 4 (random) UUID generation. Uses the math_rand() LCG.
+;
+; UUID format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+; where x is random hex digit and y is 8, 9, a, or b.
+;
+; Functions:
+;   uuid_v4(dst)           -> i64   generate UUID v4 string into dst (36 bytes)
+;   uuid_v4_print()                 generate and print UUID to stdout
+; =============================================================================
+
+;; Internal: write hex digit to buffer.
+fn uuid_hex(val: i64) -> i64 {
+    if val < 10 { ret val + 48 }
+    ret val - 10 + 97
+}
+
+;; Generate UUID v4 into dst buffer. Returns 36 (length).
+fn uuid_v4(dst: &i8) -> i64 {
+    ; Generate 16 random bytes
+    let r1 = math_rand()
+    let r2 = math_rand()
+    let bytes: &i64 = alloc_pages(1)
+    bytes[0] = r1
+    bytes[1] = r2
+
+    ; Extract nibbles and format as hex with dashes
+    let pos = 0
+    let byte_idx = 0
+    let nibble_count = 0
+
+    ; Helper: write a hex byte (2 nibbles) from random data
+    let total_bytes = 16
+    let bi = 0
+    let di = 0
+
+    ; Format: 8-4-4-4-12 hex digits = 4-2-2-2-6 bytes
+    ; Positions: 0-7, 9-12, 14-17, 19-22, 24-35
+    let rand_val = r1
+    let shift_count = 0
+
+    ; Write 32 hex nibbles + 4 dashes = 36 chars
+    let ni = 0  ; nibble index (0-31)
+    loop ni < 32 {
+        ; Insert dashes at the right positions
+        if di == 8 or di == 13 or di == 18 or di == 23 {
+            poke_byte(dst, di, 45)  ; '-'
+            di = di + 1
+        }
+
+        ; Get next nibble from random data
+        if ni == 16 { rand_val = r2 }
+        let nibble_shift = ni - (ni / 16) * 16
+        let v = rand_val / bit_pow2(nibble_shift * 4)
+        let nibble = v - (v / 16) * 16
+
+        ; Version field: position 12 (nibble 12) must be 4
+        if ni == 12 { nibble = 4 }
+        ; Variant field: position 16 (nibble 16) must be 8-b
+        if ni == 16 {
+            nibble = nibble - (nibble / 4) * 4
+            nibble = nibble + 8
+        }
+
+        poke_byte(dst, di, uuid_hex(nibble))
+        di = di + 1
+        ni = ni + 1
+    }
+    ret 36
+}
+
+;; Generate and print a UUID v4 to stdout.
+fn uuid_v4_print() {
+    let buf: &i8 = alloc_pages(1)
+    uuid_v4(buf)
+    syscall(1, 1, buf, 36)
+}
