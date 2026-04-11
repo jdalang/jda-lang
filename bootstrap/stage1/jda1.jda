@@ -5625,6 +5625,7 @@ fn parse_fn(toks: &Token, jfn: &JirFunction, stab: &StructTable, src: &i8) -> i3
     jfn.var_cnt       = 0
     jfn.next_slot_off = 4096
     jfn.param_cnt     = param_cnt
+    clear_owned_flags(jfn)
     let pi = 0
     loop pi < param_cnt {
         let ptok = Token{}
@@ -10554,6 +10555,7 @@ fn codegen_fn(fn_node: &Node, jfn: &JirFunction) {
     jfn.var_cnt       = 0
     jfn.next_slot_off = 0
     jfn.param_cnt     = fn_node.child_cnt
+    clear_owned_flags(jfn)
     let pi = 0
     loop pi < fn_node.child_cnt {
         let ptok = Token{}

@@ -390,3 +390,7 @@ Feed `docs/llm-context.md` into any LLM to enable it to write correct Jda code.
 
 ### Contributing
 - [Contributing Guide](CONTRIBUTING.md) — how to build, test, and submit changes
+
+## License
+
+Jda is free and open source software, released under the [MIT License](LICENSE).
