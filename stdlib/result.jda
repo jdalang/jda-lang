@@ -1,56 +1,56 @@
-; =============================================================================
-; jda::result -- Standard Error Return Pattern
-; =============================================================================
-; Establishes a consistent error handling convention for Jda. Every
-; fallible function returns &i64 where [0]=value, [1]=error code.
-; Error code 0 means success; non-zero means failure.
-;
-; Memory layout (&i64):
-;   [0] value      (the return value if success)
-;   [1] err_code   (0=ok, >0 = error category below)
-;   [2] detail     (optional extra info, e.g., errno or string ptr)
-;
-; Standard error codes (use these in your functions):
-;   ERR_NONE       = 0    success
-;   ERR_NOT_FOUND  = 1    key/file/item not found
-;   ERR_IO         = 2    I/O failure (read/write/open)
-;   ERR_PARSE      = 3    parse/format error
-;   ERR_OVERFLOW   = 4    numeric overflow or buffer full
-;   ERR_INVALID    = 5    invalid argument
-;   ERR_PERM       = 6    permission denied
-;   ERR_TIMEOUT    = 7    operation timed out
-;   ERR_EXISTS     = 8    already exists (duplicate key, file, etc.)
-;   ERR_EMPTY      = 9    container is empty
-;   ERR_OOM        = 10   out of memory
-;   ERR_RANGE      = 11   index out of range
-;   ERR_TYPE       = 12   type mismatch
-;   ERR_EOF        = 13   end of file / end of stream
-;   ERR_CLOSED     = 14   resource closed / channel closed
-;   ERR_BUSY       = 15   resource busy / locked
-;   ERR_UNKNOWN    = 99   unknown / unclassified error
-;
-; Functions:
-;   ok(val)                  -> &i64   success result
-;   err(code)                -> &i64   error result
-;   err_with(code, detail)   -> &i64   error with extra info
-;   res_is_ok(r)             -> i64    1 if success
-;   res_is_err(r)            -> i64    1 if error
-;   res_unwrap(r)            -> i64    value or panic if error
-;   res_expect(r, msg)       -> i64    value or panic with msg
-;   res_val(r)               -> i64    value (0 if error)
-;   res_err(r)               -> i64    error code (0 if ok)
-;   res_detail(r)            -> i64    extra detail field
-;   res_unwrap_or(r, def)    -> i64    value or default
-;   res_map_val(r, v)        -> &i64   replace value if ok
-;   res_map_err(r, code)     -> &i64   replace error code if err
-;   res_or(r, other)         -> &i64   r if ok, else other
-;   res_eq(a, b)             -> i64    structural equality
-;   res_err_name(code)       -> &i8    error code name string
-;   res_print(r)                       print as Ok(v) or Err(code)
-;   res_println(r)                     print + newline
-; =============================================================================
+// =============================================================================
+// jda::result -- Standard Error Return Pattern
+// =============================================================================
+// Establishes a consistent error handling convention for Jda. Every
+// fallible function returns &i64 where [0]=value, [1]=error code.
+// Error code 0 means success; non-zero means failure.
 
-;; Internal: compute c-string length.
+// Memory layout (&i64):
+//   [0] value      (the return value if success)
+//   [1] err_code   (0=ok, >0 = error category below)
+//   [2] detail     (optional extra info, e.g., errno or string ptr)
+
+// Standard error codes (use these in your functions):
+//   ERR_NONE       = 0    success
+//   ERR_NOT_FOUND  = 1    key/file/item not found
+//   ERR_IO         = 2    I/O failure (read/write/open)
+//   ERR_PARSE      = 3    parse/format error
+//   ERR_OVERFLOW   = 4    numeric overflow or buffer full
+//   ERR_INVALID    = 5    invalid argument
+//   ERR_PERM       = 6    permission denied
+//   ERR_TIMEOUT    = 7    operation timed out
+//   ERR_EXISTS     = 8    already exists (duplicate key, file, etc.)
+//   ERR_EMPTY      = 9    container is empty
+//   ERR_OOM        = 10   out of memory
+//   ERR_RANGE      = 11   index out of range
+//   ERR_TYPE       = 12   type mismatch
+//   ERR_EOF        = 13   end of file / end of stream
+//   ERR_CLOSED     = 14   resource closed / channel closed
+//   ERR_BUSY       = 15   resource busy / locked
+//   ERR_UNKNOWN    = 99   unknown / unclassified error
+
+// Functions:
+//   ok(val)                  -> &i64   success result
+//   err(code)                -> &i64   error result
+//   err_with(code, detail)   -> &i64   error with extra info
+//   res_is_ok(r)             -> i64    1 if success
+//   res_is_err(r)            -> i64    1 if error
+//   res_unwrap(r)            -> i64    value or panic if error
+//   res_expect(r, msg)       -> i64    value or panic with msg
+//   res_val(r)               -> i64    value (0 if error)
+//   res_err(r)               -> i64    error code (0 if ok)
+//   res_detail(r)            -> i64    extra detail field
+//   res_unwrap_or(r, def)    -> i64    value or default
+//   res_map_val(r, v)        -> &i64   replace value if ok
+//   res_map_err(r, code)     -> &i64   replace error code if err
+//   res_or(r, other)         -> &i64   r if ok, else other
+//   res_eq(a, b)             -> i64    structural equality
+//   res_err_name(code)       -> &i8    error code name string
+//   res_print(r)                       print as Ok(v) or Err(code)
+//   res_println(r)                     print + newline
+// =============================================================================
+
+// Internal: compute c-string length.
 fn _res_cstr_len(s: &i8) -> i64 {
     let n = 0
     loop n < 256 {
@@ -60,17 +60,17 @@ fn _res_cstr_len(s: &i8) -> i64 {
     ret 256
 }
 
-;; Internal: write to stderr.
+// Internal: write to stderr.
 fn _res_write_err(s: &i8, len: i64) {
     syscall(1, 2, s, len)
 }
 
-;; Internal: exit with code 1.
+// Internal: exit with code 1.
 fn _res_exit() {
     syscall(60, 1, 0, 0)
 }
 
-;; Internal: panic with message (write to stderr + exit).
+// Internal: panic with message (write to stderr + exit).
 fn _res_panic(msg: &i8) {
     let n = _res_cstr_len(msg)
     _res_write_err(msg, n)
@@ -96,7 +96,7 @@ const ERR_CLOSED    = 14
 const ERR_BUSY      = 15
 const ERR_UNKNOWN   = 99
 
-;; Create a success result.
+// Create a success result.
 fn ok(val: i64) -> &i64 {
     let r: &i64 = alloc_pages(1)
     r[0] = val
@@ -105,7 +105,7 @@ fn ok(val: i64) -> &i64 {
     ret r
 }
 
-;; Create an error result.
+// Create an error result.
 fn err(code: i64) -> &i64 {
     let r: &i64 = alloc_pages(1)
     r[0] = 0
@@ -114,7 +114,7 @@ fn err(code: i64) -> &i64 {
     ret r
 }
 
-;; Create an error result with extra detail.
+// Create an error result with extra detail.
 fn err_with(code: i64, detail: i64) -> &i64 {
     let r: &i64 = alloc_pages(1)
     r[0] = 0
@@ -123,77 +123,77 @@ fn err_with(code: i64, detail: i64) -> &i64 {
     ret r
 }
 
-;; Check if result is success.
+// Check if result is success.
 fn res_is_ok(r: &i64) -> i64 {
     if r[1] == 0 { ret 1 }
     ret 0
 }
 
-;; Check if result is error.
+// Check if result is error.
 fn res_is_err(r: &i64) -> i64 {
     if r[1] != 0 { ret 1 }
     ret 0
 }
 
-;; Get value or panic if error.
+// Get value or panic if error.
 fn res_unwrap(r: &i64) -> i64 {
     if r[1] != 0 { _res_panic("unwrap called on Err") }
     ret r[0]
 }
 
-;; Get value or panic with custom message if error.
+// Get value or panic with custom message if error.
 fn res_expect(r: &i64, msg: &i8) -> i64 {
     if r[1] != 0 { _res_panic(msg) }
     ret r[0]
 }
 
-;; Get value (0 if error).
+// Get value (0 if error).
 fn res_val(r: &i64) -> i64 {
     ret r[0]
 }
 
-;; Get error code (0 if ok).
+// Get error code (0 if ok).
 fn res_err(r: &i64) -> i64 {
     ret r[1]
 }
 
-;; Get detail field.
+// Get detail field.
 fn res_detail(r: &i64) -> i64 {
     ret r[2]
 }
 
-;; Get value, or default if error.
+// Get value, or default if error.
 fn res_unwrap_or(r: &i64, def: i64) -> i64 {
     if r[1] == 0 { ret r[0] }
     ret def
 }
 
-;; If ok, return new result with different value. If err, pass through.
+// If ok, return new result with different value. If err, pass through.
 fn res_map_val(r: &i64, v: i64) -> &i64 {
     if r[1] != 0 { ret r }
     ret ok(v)
 }
 
-;; If err, return new result with different error code. If ok, pass through.
+// If err, return new result with different error code. If ok, pass through.
 fn res_map_err(r: &i64, code: i64) -> &i64 {
     if r[1] == 0 { ret r }
     ret err(code)
 }
 
-;; Return r if ok, otherwise return other.
+// Return r if ok, otherwise return other.
 fn res_or(r: &i64, other: &i64) -> &i64 {
     if r[1] == 0 { ret r }
     ret other
 }
 
-;; Structural equality.
+// Structural equality.
 fn res_eq(a: &i64, b: &i64) -> i64 {
     if a[0] != b[0] { ret 0 }
     if a[1] != b[1] { ret 0 }
     ret 1
 }
 
-;; Get human-readable error name.
+// Get human-readable error name.
 fn res_err_name(code: i64) -> &i8 {
     if code == 0 { ret "none" }
     if code == 1 { ret "not_found" }
@@ -214,7 +214,7 @@ fn res_err_name(code: i64) -> &i8 {
     ret "unknown"
 }
 
-;; Print as Ok(v) or Err(code: name).
+// Print as Ok(v) or Err(code: name).
 fn res_print(r: &i64) {
     if r[1] == 0 {
         let v = r[0]
@@ -225,7 +225,7 @@ fn res_print(r: &i64) {
     }
 }
 
-;; Print + newline.
+// Print + newline.
 fn res_println(r: &i64) {
     res_print(r)
     print("\n")

@@ -1,13 +1,13 @@
-; =============================================================================
-; jda::prelude -- Standard Library Prelude
-; =============================================================================
-; Includes: fmt, fs, time
-; Usage: jda build --include stdlib/prelude.jda myapp.jda
-; =============================================================================
+// =============================================================================
+// jda::prelude -- Standard Library Prelude
+// =============================================================================
+// Includes: fmt, fs, time
+// Usage: jda build --include stdlib/prelude.jda myapp.jda
+// =============================================================================
 
-; --- core: byte-level memory access ---
-; NOTE: buf[idx] = val in the same function scope does i64-stride stores.
-; Use set_byte/get_byte for byte-granularity access on raw buffers.
+// --- core: byte-level memory access ---
+// NOTE: buf[idx] = val in the same function scope does i64-stride stores.
+// Use set_byte/get_byte for byte-granularity access on raw buffers.
 
 fn set_byte(buf: &i8, off: i64, val: i64) {
     buf[off] = val
@@ -17,7 +17,7 @@ fn get_byte(buf: &i8, off: i64) -> i64 {
     ret buf[off]
 }
 
-; --- fmt: string formatting and utilities ---
+// --- fmt: string formatting and utilities ---
 
 fn fmt_i64(buf: &i8, val: i64) -> i64 {
     let v = val
@@ -62,7 +62,7 @@ fn fmt_hex(buf: &i8, val: i64) -> i64 {
         set_byte(buf, 2, 48)
         ret 3
     }
-    ; Write hex digits backwards into temp, then copy forward
+    // Write hex digits backwards into temp, then copy forward
     let tmp = alloc_pages(1)
     let pos = 20
     let len = 0
@@ -77,7 +77,7 @@ fn fmt_hex(buf: &i8, val: i64) -> i64 {
         v = v / 16
         len = len + 1
     }
-    ; Copy from tmp to buf starting at offset 2
+    // Copy from tmp to buf starting at offset 2
     let i = 0
     loop i < len {
         let src_pos = pos + i
@@ -138,7 +138,7 @@ fn print_int(val: i64) {
     print_str(pi_buf, pi_len)
 }
 
-; --- fs: file I/O ---
+// --- fs: file I/O ---
 
 fn fs_read_file(path: &i8, buf: &i8, max_bytes: i64) -> i64 {
     let fd = syscall(2, path, 0, 0)
@@ -204,7 +204,7 @@ fn fs_file_size(path: &i8) -> i64 {
     ret size
 }
 
-; --- time: clocks and sleep ---
+// --- time: clocks and sleep ---
 
 struct Timespec {
     tv_sec: i64

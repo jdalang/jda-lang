@@ -1,32 +1,32 @@
-; ROCm Backend — AMD GPU compute with CPU fallback
-; Provides AMD GPU detection, vector add, and matrix multiply
-; Uses KFD driver detection via /dev/kfd
-; Falls back to optimized CPU paths when no AMD GPU is available
+// ROCm Backend — AMD GPU compute with CPU fallback
+// Provides AMD GPU detection, vector add, and matrix multiply
+// Uses KFD driver detection via /dev/kfd
+// Falls back to optimized CPU paths when no AMD GPU is available
 
-; Check if AMD GPU driver is available
-; Returns 1 if /dev/kfd can be opened, 0 otherwise
+// Check if AMD GPU driver is available
+// Returns 1 if /dev/kfd can be opened, 0 otherwise
 fn rocm_has_gpu() -> i64 {
     ret rocm_has_amd()
 }
 
-; Vector addition: c[i] = a[i] + b[i] for i in 0..len
-; Uses AMD GPU if available, otherwise CPU SSE2 fallback
-; a, b, c are tensor handles; len is element count
+// Vector addition: c[i] = a[i] + b[i] for i in 0..len
+// Uses AMD GPU if available, otherwise CPU SSE2 fallback
+// a, b, c are tensor handles; len is element count
 fn rocm_add(a: i64, b: i64, c: i64, len: i64) -> i64 {
     rocm_vecadd(a, b, c, len)
     ret 0
 }
 
-; Matrix multiply: C = A * B
-; A is [M,K], B is [K,N], C is [M,N] — all tensor handles
-; Uses AMD GPU if available, otherwise CPU fallback
+// Matrix multiply: C = A * B
+// A is [M,K], B is [K,N], C is [M,N] — all tensor handles
+// Uses AMD GPU if available, otherwise CPU fallback
 fn rocm_mm(a: i64, b: i64, c: i64, M: i64, N: i64, K: i64) -> i64 {
     rocm_matmul(a, b, c, M, N, K)
     ret 0
 }
 
-; Scale vector: c[i] = a[i] * scalar for i in 0..len
-; CPU-only implementation using tensor builtins
+// Scale vector: c[i] = a[i] * scalar for i in 0..len
+// CPU-only implementation using tensor builtins
 fn rocm_scale(a: i64, c: i64, scalar: i64, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -38,8 +38,8 @@ fn rocm_scale(a: i64, c: i64, scalar: i64, len: i64) -> i64 {
     ret 0
 }
 
-; Dot product: sum of a[i] * b[i] for i in 0..len
-; Returns f64 bit pattern
+// Dot product: sum of a[i] * b[i] for i in 0..len
+// Returns f64 bit pattern
 fn rocm_dot(a: i64, b: i64, len: i64) -> i64 {
     let acc = f64_from_int(0)
     let i = 0
@@ -53,7 +53,7 @@ fn rocm_dot(a: i64, b: i64, len: i64) -> i64 {
     ret acc
 }
 
-; ReLU: c[i] = max(0, a[i]) for i in 0..len
+// ReLU: c[i] = max(0, a[i]) for i in 0..len
 fn rocm_relu(a: i64, c: i64, len: i64) -> i64 {
     let zero = f64_from_int(0)
     let i = 0

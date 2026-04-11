@@ -1,31 +1,31 @@
-; =============================================================================
-; jda::platform -- Platform Detection and System Information
-; =============================================================================
-; Query operating system, architecture, and kernel version via uname(2).
-; Linux x86-64 only (Jda's target platform).
-;
-; Functions:
-;   platform_system(out, max)          -> i64  OS name ("Linux")
-;   platform_release(out, max)         -> i64  kernel version string
-;   platform_machine(out, max)         -> i64  architecture ("x86_64")
-;   platform_node(out, max)            -> i64  hostname
-;   platform_info(out, max)            -> i64  combined "Linux x86_64 <release>"
-;   platform_is_x86_64()              -> i64  always 1
-;   platform_page_size()              -> i64  4096
-; =============================================================================
+// =============================================================================
+// jda::platform -- Platform Detection and System Information
+// =============================================================================
+// Query operating system, architecture, and kernel version via uname(2).
+// Linux x86-64 only (Jda's target platform).
 
-;; Internal: uname syscall wrapper (syscall 63).
-;; struct utsname: 5 fields of 65 bytes each = 325 bytes total.
-;; [0..64] = sysname, [65..129] = nodename, [130..194] = release,
-;; [195..259] = version, [260..324] = machine
+// Functions:
+//   platform_system(out, max)          -> i64  OS name ("Linux")
+//   platform_release(out, max)         -> i64  kernel version string
+//   platform_machine(out, max)         -> i64  architecture ("x86_64")
+//   platform_node(out, max)            -> i64  hostname
+//   platform_info(out, max)            -> i64  combined "Linux x86_64 <release>"
+//   platform_is_x86_64()              -> i64  always 1
+//   platform_page_size()              -> i64  4096
+// =============================================================================
+
+// Internal: uname syscall wrapper (syscall 63).
+// struct utsname: 5 fields of 65 bytes each = 325 bytes total.
+// [0..64] = sysname, [65..129] = nodename, [130..194] = release,
+// [195..259] = version, [260..324] = machine
 fn _platform_uname(buf: &i8) -> i64 {
     ret syscall(63, buf, 0, 0)
 }
 
-;; Internal byte reader helper.
+// Internal byte reader helper.
 fn _plat_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: copy string from utsname field to output.
+// Internal: copy string from utsname field to output.
 fn _plat_copy_field(dst: &i8, src: &i8, offset: i64, max: i64) -> i64 {
     let i = 0
     let running = 1
@@ -43,7 +43,7 @@ fn _plat_copy_field(dst: &i8, src: &i8, offset: i64, max: i64) -> i64 {
     ret i
 }
 
-;; Internal: copy literal bytes.
+// Internal: copy literal bytes.
 fn _plat_copy_lit(dst: &i8, doff: i64, src: &i8, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -53,7 +53,7 @@ fn _plat_copy_lit(dst: &i8, doff: i64, src: &i8, len: i64) -> i64 {
     ret doff + len
 }
 
-;; Get OS name. Returns length written.
+// Get OS name. Returns length written.
 fn platform_system(out: &i8, max: i64) -> i64 {
     let buf: &i8 = alloc_pages(1)
     let rc = _platform_uname(buf)
@@ -61,7 +61,7 @@ fn platform_system(out: &i8, max: i64) -> i64 {
     ret _plat_copy_field(out, buf, 0, max)
 }
 
-;; Get kernel release string. Returns length written.
+// Get kernel release string. Returns length written.
 fn platform_release(out: &i8, max: i64) -> i64 {
     let buf: &i8 = alloc_pages(1)
     let rc = _platform_uname(buf)
@@ -69,7 +69,7 @@ fn platform_release(out: &i8, max: i64) -> i64 {
     ret _plat_copy_field(out, buf, 130, max)
 }
 
-;; Get machine architecture. Returns length written.
+// Get machine architecture. Returns length written.
 fn platform_machine(out: &i8, max: i64) -> i64 {
     let buf: &i8 = alloc_pages(1)
     let rc = _platform_uname(buf)
@@ -77,7 +77,7 @@ fn platform_machine(out: &i8, max: i64) -> i64 {
     ret _plat_copy_field(out, buf, 260, max)
 }
 
-;; Get hostname. Returns length written.
+// Get hostname. Returns length written.
 fn platform_node(out: &i8, max: i64) -> i64 {
     let buf: &i8 = alloc_pages(1)
     let rc = _platform_uname(buf)
@@ -85,7 +85,7 @@ fn platform_node(out: &i8, max: i64) -> i64 {
     ret _plat_copy_field(out, buf, 65, max)
 }
 
-;; Get combined platform info: "Linux x86_64 <release>". Returns length.
+// Get combined platform info: "Linux x86_64 <release>". Returns length.
 fn platform_info(out: &i8, max: i64) -> i64 {
     let buf: &i8 = alloc_pages(1)
     let rc = _platform_uname(buf)
@@ -107,12 +107,12 @@ fn platform_info(out: &i8, max: i64) -> i64 {
     ret pos
 }
 
-;; Check if platform is x86_64. Always returns 1 (Jda only targets x86-64).
+// Check if platform is x86_64. Always returns 1 (Jda only targets x86-64).
 fn platform_is_x86_64() -> i64 {
     ret 1
 }
 
-;; Get system page size. Always 4096 on Linux x86-64.
+// Get system page size. Always 4096 on Linux x86-64.
 fn platform_page_size() -> i64 {
     ret 4096
 }

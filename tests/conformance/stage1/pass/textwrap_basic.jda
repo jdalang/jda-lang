@@ -1,17 +1,17 @@
 fn main() -> i64 {
     let out: &i8 = alloc_pages(1)
 
-    ; Test fill: wrap at 20 chars
+    // Test fill: wrap at 20 chars
     let n = textwrap_fill("hello world this is a test", 26, 12, out, 4096)
     syscall(1, 1, out, n)
     print("\n---\n")
 
-    ; Test indent
+    // Test indent
     n = textwrap_indent("line1\nline2\n", 12, "> ", 2, out, 4096)
     syscall(1, 1, out, n)
     print("---\n")
 
-    ; Test shorten
+    // Test shorten
     n = textwrap_shorten("this is a very long sentence that should be cut", 48, 20, out, 4096)
     syscall(1, 1, out, n)
     print("\n")

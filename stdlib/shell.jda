@@ -1,37 +1,37 @@
-; =============================================================================
-; jda::shell -- Shell Word Splitting and Escaping
-; =============================================================================
-; Safe construction of shell command strings. Prevents injection.
-; Equivalent to Ruby's Shellwords.
-;
-; Functions:
-;   shell_escape(src, len, dst)    -> i64   escape a string for shell, return len
-;   shell_join(words, lengths, count, dst) -> i64  join words with escaping
-;   shell_split(src, len, offsets, lengths) -> i64  split shell string into words
-;   shell_quote(src, len, dst)     -> i64   single-quote a string
-; =============================================================================
+// =============================================================================
+// jda::shell -- Shell Word Splitting and Escaping
+// =============================================================================
+// Safe construction of shell command strings. Prevents injection.
+// Equivalent to Ruby's Shellwords.
 
-;; Internal: does this byte need escaping in a shell context?
+// Functions:
+//   shell_escape(src, len, dst)    -> i64   escape a string for shell, return len
+//   shell_join(words, lengths, count, dst) -> i64  join words with escaping
+//   shell_split(src, len, offsets, lengths) -> i64  split shell string into words
+//   shell_quote(src, len, dst)     -> i64   single-quote a string
+// =============================================================================
+
+// Internal: does this byte need escaping in a shell context?
 fn shell_needs_escape(ch: i64) -> i64 {
-    ; Safe chars: A-Z, a-z, 0-9, and _-./:=@
+    // Safe chars: A-Z, a-z, 0-9, and _-./:=@
     if ch >= 65 and ch <= 90 { ret 0 }
     if ch >= 97 and ch <= 122 { ret 0 }
     if ch >= 48 and ch <= 57 { ret 0 }
-    if ch == 95 { ret 0 }   ; _
-    if ch == 45 { ret 0 }   ; -
-    if ch == 46 { ret 0 }   ; .
-    if ch == 47 { ret 0 }   ; /
-    if ch == 58 { ret 0 }   ; :
-    if ch == 61 { ret 0 }   ; =
-    if ch == 64 { ret 0 }   ; @
+    if ch == 95 { ret 0 }   // _
+    if ch == 45 { ret 0 }   // -
+    if ch == 46 { ret 0 }   // .
+    if ch == 47 { ret 0 }   // /
+    if ch == 58 { ret 0 }   // :
+    if ch == 61 { ret 0 }   // =
+    if ch == 64 { ret 0 }   // @
     ret 1
 }
 
-;; Escape a string for safe shell use with backslashes.
-;; Returns output length.
+// Escape a string for safe shell use with backslashes.
+// Returns output length.
 fn shell_escape(src: &i8, len: i64, dst: &i8) -> i64 {
     if len == 0 {
-        ; Empty string → ''
+        // Empty string → ''
         poke_byte(dst, 0, 39)
         poke_byte(dst, 1, 39)
         ret 2
@@ -41,7 +41,7 @@ fn shell_escape(src: &i8, len: i64, dst: &i8) -> i64 {
     loop si < len {
         let ch = load_i8_at(src, si)
         if shell_needs_escape(ch) == 1 {
-            poke_byte(dst, di, 92)  ; backslash
+            poke_byte(dst, di, 92)  // backslash
             di = di + 1
         }
         poke_byte(dst, di, ch)
@@ -51,21 +51,21 @@ fn shell_escape(src: &i8, len: i64, dst: &i8) -> i64 {
     ret di
 }
 
-;; Single-quote a string (strongest quoting).
-;; Handles embedded single quotes with '\'' sequence.
+// Single-quote a string (strongest quoting).
+// Handles embedded single quotes with '\'' sequence.
 fn shell_quote(src: &i8, len: i64, dst: &i8) -> i64 {
     let di = 0
-    poke_byte(dst, di, 39)  ; opening '
+    poke_byte(dst, di, 39)  // opening '
     di = di + 1
     let si = 0
     loop si < len {
         let ch = load_i8_at(src, si)
         if ch == 39 {
-            ; End quote, backslash-single-quote, restart quote: '\''
-            poke_byte(dst, di, 39)      ; '
-            poke_byte(dst, di + 1, 92)  ; \
-            poke_byte(dst, di + 2, 39)  ; '
-            poke_byte(dst, di + 3, 39)  ; '
+            // End quote, backslash-single-quote, restart quote: '\''
+            poke_byte(dst, di, 39)      // '
+            poke_byte(dst, di + 1, 92)  // \
+            poke_byte(dst, di + 2, 39)  // '
+            poke_byte(dst, di + 3, 39)  // '
             di = di + 4
         } else {
             poke_byte(dst, di, ch)
@@ -73,19 +73,19 @@ fn shell_quote(src: &i8, len: i64, dst: &i8) -> i64 {
         }
         si = si + 1
     }
-    poke_byte(dst, di, 39)  ; closing '
+    poke_byte(dst, di, 39)  // closing '
     di = di + 1
     ret di
 }
 
-;; Join multiple words into a single shell-safe string with spaces.
-;; words: array of &i8 pointers, lengths: array of i64.
+// Join multiple words into a single shell-safe string with spaces.
+// words: array of &i8 pointers, lengths: array of i64.
 fn shell_join(words: &i64, lengths: &i64, count: i64, dst: &i8) -> i64 {
     let di = 0
     let i = 0
     loop i < count {
         if i > 0 {
-            poke_byte(dst, di, 32)  ; space
+            poke_byte(dst, di, 32)  // space
             di = di + 1
         }
         let w: &i8 = words[i]
@@ -97,18 +97,18 @@ fn shell_join(words: &i64, lengths: &i64, count: i64, dst: &i8) -> i64 {
     ret di
 }
 
-;; Split a shell string into words respecting quotes.
-;; Stores offsets and lengths into provided arrays.
-;; Returns number of words found.
+// Split a shell string into words respecting quotes.
+// Stores offsets and lengths into provided arrays.
+// Returns number of words found.
 fn shell_split(src: &i8, len: i64, offsets: &i64, lengths: &i64) -> i64 {
     let count = 0
     let pos = 0
     loop pos < len {
-        ; Skip whitespace
+        // Skip whitespace
         loop pos < len {
             let ch = load_i8_at(src, pos)
             if ch != 32 and ch != 9 and ch != 10 {
-                pos = len + 1  ; break
+                pos = len + 1  // break
             }
             if pos <= len { pos = pos + 1 }
         }
@@ -119,7 +119,7 @@ fn shell_split(src: &i8, len: i64, offsets: &i64, lengths: &i64) -> i64 {
         let ch = load_i8_at(src, pos)
 
         if ch == 39 {
-            ; Single-quoted string
+            // Single-quoted string
             pos = pos + 1
             word_start = pos
             loop pos < len and load_i8_at(src, pos) != 39 {
@@ -128,28 +128,28 @@ fn shell_split(src: &i8, len: i64, offsets: &i64, lengths: &i64) -> i64 {
             offsets[count] = word_start
             lengths[count] = pos - word_start
             count = count + 1
-            if pos < len { pos = pos + 1 }  ; skip closing '
+            if pos < len { pos = pos + 1 }  // skip closing '
         } else {
             if ch == 34 {
-                ; Double-quoted string
+                // Double-quoted string
                 pos = pos + 1
                 word_start = pos
                 loop pos < len and load_i8_at(src, pos) != 34 {
-                    if load_i8_at(src, pos) == 92 { pos = pos + 1 }  ; skip escaped
+                    if load_i8_at(src, pos) == 92 { pos = pos + 1 }  // skip escaped
                     pos = pos + 1
                 }
                 offsets[count] = word_start
                 lengths[count] = pos - word_start
                 count = count + 1
-                if pos < len { pos = pos + 1 }  ; skip closing "
+                if pos < len { pos = pos + 1 }  // skip closing "
             } else {
-                ; Unquoted word
+                // Unquoted word
                 loop pos < len {
                     let wch = load_i8_at(src, pos)
                     if wch == 32 or wch == 9 or wch == 10 {
-                        pos = len + 1  ; break
+                        pos = len + 1  // break
                     }
-                    if wch == 92 and pos + 1 < len { pos = pos + 1 }  ; skip escaped
+                    if wch == 92 and pos + 1 < len { pos = pos + 1 }  // skip escaped
                     if pos <= len { pos = pos + 1 }
                 }
                 if pos > len { pos = pos - len - 1 }

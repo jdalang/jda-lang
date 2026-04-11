@@ -1,54 +1,54 @@
-; =============================================================================
-; jda::math -- Integer Math, Random Numbers, and Constants
-; =============================================================================
-; Pure integer math functions. No floating point, no libc.
-;
-; Functions:
-;   math_abs(x) -> |x|
-;   math_min(a, b) -> min(a, b)
-;   math_max(a, b) -> max(a, b)
-;   math_clamp(x, lo, hi) -> clamped value
-;   math_gcd(a, b) -> greatest common divisor
-;   math_lcm(a, b) -> least common multiple
-;   math_pow(base, exp) -> base^exp (integer)
-;   math_isqrt(n) -> integer square root
-;   math_log2(n) -> floor(log2(n))
-;   math_factorial(n) -> n!
-;   math_fib(n) -> nth Fibonacci number
-;   math_is_prime(n) -> 1 if prime, 0 otherwise
-;   math_next_pow2(n) -> smallest power of 2 >= n
-;   math_divmod(a, b, quot_ptr, rem_ptr) -> 0
-;   math_rand_seed(seed) -> 0
-;   math_rand() -> pseudo-random i64
-;   math_rand_range(lo, hi) -> random in [lo, hi)
-; =============================================================================
+// =============================================================================
+// jda::math -- Integer Math, Random Numbers, and Constants
+// =============================================================================
+// Pure integer math functions. No floating point, no libc.
 
-;; Absolute value.
+// Functions:
+//   math_abs(x) -> |x|
+//   math_min(a, b) -> min(a, b)
+//   math_max(a, b) -> max(a, b)
+//   math_clamp(x, lo, hi) -> clamped value
+//   math_gcd(a, b) -> greatest common divisor
+//   math_lcm(a, b) -> least common multiple
+//   math_pow(base, exp) -> base^exp (integer)
+//   math_isqrt(n) -> integer square root
+//   math_log2(n) -> floor(log2(n))
+//   math_factorial(n) -> n!
+//   math_fib(n) -> nth Fibonacci number
+//   math_is_prime(n) -> 1 if prime, 0 otherwise
+//   math_next_pow2(n) -> smallest power of 2 >= n
+//   math_divmod(a, b, quot_ptr, rem_ptr) -> 0
+//   math_rand_seed(seed) -> 0
+//   math_rand() -> pseudo-random i64
+//   math_rand_range(lo, hi) -> random in [lo, hi)
+// =============================================================================
+
+// Absolute value.
 fn math_abs(x: i64) -> i64 {
     if x < 0 { ret 0 - x }
     ret x
 }
 
-;; Minimum of two values.
+// Minimum of two values.
 fn math_min(a: i64, b: i64) -> i64 {
     if a < b { ret a }
     ret b
 }
 
-;; Maximum of two values.
+// Maximum of two values.
 fn math_max(a: i64, b: i64) -> i64 {
     if a > b { ret a }
     ret b
 }
 
-;; Clamp x to [lo, hi].
+// Clamp x to [lo, hi].
 fn math_clamp(x: i64, lo: i64, hi: i64) -> i64 {
     if x < lo { ret lo }
     if x > hi { ret hi }
     ret x
 }
 
-;; Greatest common divisor (Euclidean algorithm).
+// Greatest common divisor (Euclidean algorithm).
 fn math_gcd(a: i64, b: i64) -> i64 {
     let x = a
     let y = b
@@ -63,7 +63,7 @@ fn math_gcd(a: i64, b: i64) -> i64 {
     ret x
 }
 
-;; Least common multiple.
+// Least common multiple.
 fn math_lcm(a: i64, b: i64) -> i64 {
     if a == 0 { ret 0 }
     if b == 0 { ret 0 }
@@ -75,7 +75,7 @@ fn math_lcm(a: i64, b: i64) -> i64 {
     ret (aa / g) * bb
 }
 
-;; Integer exponentiation.
+// Integer exponentiation.
 fn math_pow(base: i64, exp: i64) -> i64 {
     if exp == 0 { ret 1 }
     let result = 1
@@ -91,7 +91,7 @@ fn math_pow(base: i64, exp: i64) -> i64 {
     ret result
 }
 
-;; Integer square root (floor).
+// Integer square root (floor).
 fn math_isqrt(n: i64) -> i64 {
     if n < 0 { ret -1 }
     if n == 0 { ret 0 }
@@ -107,7 +107,7 @@ fn math_isqrt(n: i64) -> i64 {
     ret x
 }
 
-;; Floor of log base 2.
+// Floor of log base 2.
 fn math_log2(n: i64) -> i64 {
     if n < 1 { ret -1 }
     let r = 0
@@ -119,7 +119,7 @@ fn math_log2(n: i64) -> i64 {
     ret r
 }
 
-;; Factorial (iterative).
+// Factorial (iterative).
 fn math_factorial(n: i64) -> i64 {
     if n < 0 { ret -1 }
     let result = 1
@@ -131,7 +131,7 @@ fn math_factorial(n: i64) -> i64 {
     ret result
 }
 
-;; Fibonacci number (iterative).
+// Fibonacci number (iterative).
 fn math_fib(n: i64) -> i64 {
     if n <= 0 { ret 0 }
     if n == 1 { ret 1 }
@@ -147,7 +147,7 @@ fn math_fib(n: i64) -> i64 {
     ret b
 }
 
-;; Primality test (trial division).
+// Primality test (trial division).
 fn math_is_prime(n: i64) -> i64 {
     if n < 2 { ret 0 }
     if n < 4 { ret 1 }
@@ -162,11 +162,11 @@ fn math_is_prime(n: i64) -> i64 {
     ret 1
 }
 
-;; Smallest power of 2 >= n.
+// Smallest power of 2 >= n.
 fn math_next_pow2(n: i64) -> i64 {
     if n < 1 { ret 1 }
     let v = n - 1
-    v = v + v / 1  ; no bitwise OR, use repeated halving approach
+    v = v + v / 1  // no bitwise OR, use repeated halving approach
     let p = 1
     loop p < n {
         p = p * 2
@@ -174,59 +174,59 @@ fn math_next_pow2(n: i64) -> i64 {
     ret p
 }
 
-;; Quotient and remainder.
+// Quotient and remainder.
 fn math_divmod(a: i64, b: i64, quot_ptr: &i64, rem_ptr: &i64) -> i64 {
     quot_ptr[0] = a / b
     rem_ptr[0] = a - (a / b) * b
     ret 0
 }
 
-; ─── Random Number Generator (xorshift64) ──────────────────────────────────
+// ─── Random Number Generator (xorshift64) ──────────────────────────────────
 
-;; Seed the random number generator.
-;; Uses a global variable via a page of memory.
+// Seed the random number generator.
+// Uses a global variable via a page of memory.
 fn math_rand_seed(seed: i64) -> i64 {
     let page = alloc_pages(1)
     let p: &i64 = page
     let s = seed
     if s == 0 { s = 2463534242 }
     p[0] = s
-    p[1] = 1  ; initialized flag
+    p[1] = 1  // initialized flag
     ret 0
 }
 
-;; Generate pseudo-random i64.
-;; xorshift64 algorithm.
+// Generate pseudo-random i64.
+// xorshift64 algorithm.
 fn math_rand() -> i64 {
     let page = alloc_pages(1)
     let p: &i64 = page
     if p[1] == 0 {
-        ; Auto-seed from clock
+        // Auto-seed from clock
         let ts = alloc_pages(1)
-        syscall(228, 0, ts, 0)  ; clock_gettime(CLOCK_REALTIME)
+        syscall(228, 0, ts, 0)  // clock_gettime(CLOCK_REALTIME)
         let tsp: &i64 = ts
-        p[0] = tsp[1]  ; nanoseconds as seed
+        p[0] = tsp[1]  // nanoseconds as seed
         if p[0] == 0 { p[0] = 2463534242 }
         p[1] = 1
     }
     let x = p[0]
-    ; xorshift64 steps (emulated without XOR using arithmetic)
-    ; Since Jda doesn't have ^ operator, use a linear congruential generator instead
-    ; LCG: x = (a * x + c) mod m
-    ; Using Knuth's constants: a=6364136223846793005, c=1442695040888963407
+    // xorshift64 steps (emulated without XOR using arithmetic)
+    // Since Jda doesn't have ^ operator, use a linear congruential generator instead
+    // LCG: x = (a * x + c) mod m
+    // Using Knuth's constants: a=6364136223846793005, c=1442695040888963407
     x = x * 6364136223846793005 + 1442695040888963407
     p[0] = x
-    ; Make positive
+    // Make positive
     if x < 0 { x = 0 - x }
     ret x
 }
 
-;; Random number in range [lo, hi).
+// Random number in range [lo, hi).
 fn math_rand_range(lo: i64, hi: i64) -> i64 {
     let range = hi - lo
     if range < 1 { ret lo }
     let r = math_rand()
-    ; r mod range + lo
+    // r mod range + lo
     let m = r - (r / range) * range
     ret m + lo
 }

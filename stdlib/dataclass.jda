@@ -1,99 +1,99 @@
-; =============================================================================
-; jda::dataclass -- Data Class Utilities
-; =============================================================================
-; Data class patterns for Jda structs.
-;
-; Equivalent mapping:
-;   dataclass               -> derive(Debug, Eq, Clone, Hash, Zero)
-;   dataclass(order=True)   -> derive(Ord) — generates StructName_lt()
-;   field(default=val)      -> manual init after StructName{}
-;   asdict(obj)             -> manual field access (no runtime reflection)
-;   frozen dataclass        -> linear types (Phase 3)
-;
-; This library provides comparison combinators that build on derive(Ord)'s
-; generated _lt function:
-;   cmp_le(lt_result, eq_result)  -- less-than-or-equal
-;   cmp_gt(lt_result, eq_result)  -- greater-than
-;   cmp_ge(lt_result, eq_result)  -- greater-than-or-equal
-;   cmp(lt_ab, lt_ba)             -- three-way compare (-1, 0, 1)
-;
-; Also provides validation utilities:
-;   validate_range(val, lo, hi)    -- check val in [lo, hi]
-;   validate_positive(val)         -- check val > 0
-;   validate_non_negative(val)     -- check val >= 0
-;
-; Usage with derive(Ord, Eq):
-;   derive(Ord, Eq)
-;   struct Point { x: i64  y: i64 }
-;   let a = Point{} a.x = 1 a.y = 2
-;   let b = Point{} b.x = 1 b.y = 3
-;   let lt = Point_lt(&a, &b)    ; 1 (a < b lexicographically)
-;   let eq = Point_eq(&a, &b)    ; 0
-;   let le = cmp_le(lt, eq)      ; 1 (a <= b)
-;   let gt = cmp_gt(lt, eq)      ; 0 (a > b? no)
-;
-; All functions use i64 for values.
-; =============================================================================
+// =============================================================================
+// jda::dataclass -- Data Class Utilities
+// =============================================================================
+// Data class patterns for Jda structs.
 
-; --- Comparison combinators ---
-; Given lt = StructName_lt(&a, &b) and eq = StructName_eq(&a, &b):
+// Equivalent mapping:
+//   dataclass               -> derive(Debug, Eq, Clone, Hash, Zero)
+//   dataclass(order=True)   -> derive(Ord) — generates StructName_lt()
+//   field(default=val)      -> manual init after StructName{}
+//   asdict(obj)             -> manual field access (no runtime reflection)
+//   frozen dataclass        -> linear types (Phase 3)
 
-; a <= b  iff  a < b OR a == b
+// This library provides comparison combinators that build on derive(Ord)'s
+// generated _lt function:
+//   cmp_le(lt_result, eq_result)  -- less-than-or-equal
+//   cmp_gt(lt_result, eq_result)  -- greater-than
+//   cmp_ge(lt_result, eq_result)  -- greater-than-or-equal
+//   cmp(lt_ab, lt_ba)             -- three-way compare (-1, 0, 1)
+
+// Also provides validation utilities:
+//   validate_range(val, lo, hi)    -- check val in [lo, hi]
+//   validate_positive(val)         -- check val > 0
+//   validate_non_negative(val)     -- check val >= 0
+
+// Usage with derive(Ord, Eq):
+//   derive(Ord, Eq)
+//   struct Point { x: i64  y: i64 }
+//   let a = Point{} a.x = 1 a.y = 2
+//   let b = Point{} b.x = 1 b.y = 3
+//   let lt = Point_lt(&a, &b)    ; 1 (a < b lexicographically)
+//   let eq = Point_eq(&a, &b)    ; 0
+//   let le = cmp_le(lt, eq)      ; 1 (a <= b)
+//   let gt = cmp_gt(lt, eq)      ; 0 (a > b? no)
+
+// All functions use i64 for values.
+// =============================================================================
+
+// --- Comparison combinators ---
+// Given lt = StructName_lt(&a, &b) and eq = StructName_eq(&a, &b):
+
+// a <= b  iff  a < b OR a == b
 fn cmp_le(lt: i64, eq: i64) -> i64 {
     if lt == 1 { ret 1 }
     ret eq
 }
 
-; a > b  iff  NOT (a <= b)
+// a > b  iff  NOT (a <= b)
 fn cmp_gt(lt: i64, eq: i64) -> i64 {
     if lt == 1 { ret 0 }
     if eq == 1 { ret 0 }
     ret 1
 }
 
-; a >= b  iff  NOT (a < b)
+// a >= b  iff  NOT (a < b)
 fn cmp_ge(lt: i64, eq: i64) -> i64 {
     if lt == 1 { ret 0 }
     ret 1
 }
 
-; Three-way compare: -1 if a<b, 0 if a==b, 1 if a>b
-; lt_ab = StructName_lt(&a, &b), lt_ba = StructName_lt(&b, &a)
+// Three-way compare: -1 if a<b, 0 if a==b, 1 if a>b
+// lt_ab = StructName_lt(&a, &b), lt_ba = StructName_lt(&b, &a)
 fn cmp(lt_ab: i64, lt_ba: i64) -> i64 {
     if lt_ab == 1 { ret -1 }
     if lt_ba == 1 { ret 1 }
     ret 0
 }
 
-; --- Min / Max using lt ---
-; Returns 1 if a is min (a < b), 0 otherwise
+// --- Min / Max using lt ---
+// Returns 1 if a is min (a < b), 0 otherwise
 fn cmp_is_min(lt: i64) -> i64 {
     ret lt
 }
 
-; --- Clamp: ensure val is in [lo, hi] ---
-; val_lt_lo = S_lt(&val, &lo), hi_lt_val = S_lt(&hi, &val)
-; Returns: -1 if val < lo (use lo), 1 if val > hi (use hi), 0 if in range
+// --- Clamp: ensure val is in [lo, hi] ---
+// val_lt_lo = S_lt(&val, &lo), hi_lt_val = S_lt(&hi, &val)
+// Returns: -1 if val < lo (use lo), 1 if val > hi (use hi), 0 if in range
 fn cmp_clamp(val_lt_lo: i64, hi_lt_val: i64) -> i64 {
     if val_lt_lo == 1 { ret -1 }
     if hi_lt_val == 1 { ret 1 }
     ret 0
 }
 
-; --- Validate: check if a field value is in range ---
+// --- Validate: check if a field value is in range ---
 fn validate_range(val: i64, lo: i64, hi: i64) -> i64 {
     if val < lo { ret 0 }
     if val > hi { ret 0 }
     ret 1
 }
 
-; --- Validate: check if a field value is positive ---
+// --- Validate: check if a field value is positive ---
 fn validate_positive(val: i64) -> i64 {
     if val > 0 { ret 1 }
     ret 0
 }
 
-; --- Validate: check if a field value is non-negative ---
+// --- Validate: check if a field value is non-negative ---
 fn validate_non_negative(val: i64) -> i64 {
     if val >= 0 { ret 1 }
     ret 0

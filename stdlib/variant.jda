@@ -1,46 +1,46 @@
-; =============================================================================
-; jda::variant -- Sum Types / Tagged Unions
-; =============================================================================
-; Runtime-tagged values for algebraic data types. Each variant stores
-; a tag (i64) and up to 4 payload fields.
-;
-; Memory layout (&i64):
-;   [0] tag       (user-defined discriminant)
-;   [1] field_0   (first payload)
-;   [2] field_1   (second payload)
-;   [3] field_2   (third payload)
-;   [4] field_3   (fourth payload)
-;
-; Usage pattern:
-;   const CIRCLE = 1
-;   const RECT = 2
-;   let shape = var1(CIRCLE, 5)       ; Circle with radius=5
-;   let rect = var2(RECT, 10, 20)     ; Rect with w=10, h=20
-;   if var_tag(shape) == CIRCLE { ... }
-;
-; Functions:
-;   var0(tag)                   -> &i64   variant with 0 payload fields
-;   var1(tag, f0)               -> &i64   variant with 1 field
-;   var2(tag, f0, f1)           -> &i64   variant with 2 fields
-;   var3(tag, f0, f1, f2)       -> &i64   variant with 3 fields
-;   var4(tag, f0, f1, f2, f3)   -> &i64   variant with 4 fields
-;   var_tag(v)                  -> i64    get tag
-;   var_field(v, i)             -> i64    get field i (0-based)
-;   var_set_field(v, i, val)             set field i
-;   var_is(v, tag)              -> i64    1 if tag matches
-;   var_eq(a, b)                -> i64    tag + all fields equal
-;   var_print(v, nfields)                print as Variant(tag, f0, f1, ...)
-;   var_println(v, nfields)              print + newline
-; =============================================================================
+// =============================================================================
+// jda::variant -- Sum Types / Tagged Unions
+// =============================================================================
+// Runtime-tagged values for algebraic data types. Each variant stores
+// a tag (i64) and up to 4 payload fields.
 
-;; Create variant with 0 payload fields.
+// Memory layout (&i64):
+//   [0] tag       (user-defined discriminant)
+//   [1] field_0   (first payload)
+//   [2] field_1   (second payload)
+//   [3] field_2   (third payload)
+//   [4] field_3   (fourth payload)
+
+// Usage pattern:
+//   const CIRCLE = 1
+//   const RECT = 2
+//   let shape = var1(CIRCLE, 5)       ; Circle with radius=5
+//   let rect = var2(RECT, 10, 20)     ; Rect with w=10, h=20
+//   if var_tag(shape) == CIRCLE { ... }
+
+// Functions:
+//   var0(tag)                   -> &i64   variant with 0 payload fields
+//   var1(tag, f0)               -> &i64   variant with 1 field
+//   var2(tag, f0, f1)           -> &i64   variant with 2 fields
+//   var3(tag, f0, f1, f2)       -> &i64   variant with 3 fields
+//   var4(tag, f0, f1, f2, f3)   -> &i64   variant with 4 fields
+//   var_tag(v)                  -> i64    get tag
+//   var_field(v, i)             -> i64    get field i (0-based)
+//   var_set_field(v, i, val)             set field i
+//   var_is(v, tag)              -> i64    1 if tag matches
+//   var_eq(a, b)                -> i64    tag + all fields equal
+//   var_print(v, nfields)                print as Variant(tag, f0, f1, ...)
+//   var_println(v, nfields)              print + newline
+// =============================================================================
+
+// Create variant with 0 payload fields.
 fn var0(tag: i64) -> &i64 {
     let v: &i64 = alloc_pages(1)
     v[0] = tag
     ret v
 }
 
-;; Create variant with 1 payload field.
+// Create variant with 1 payload field.
 fn var1(tag: i64, f0: i64) -> &i64 {
     let v: &i64 = alloc_pages(1)
     v[0] = tag
@@ -48,7 +48,7 @@ fn var1(tag: i64, f0: i64) -> &i64 {
     ret v
 }
 
-;; Create variant with 2 payload fields.
+// Create variant with 2 payload fields.
 fn var2(tag: i64, f0: i64, f1: i64) -> &i64 {
     let v: &i64 = alloc_pages(1)
     v[0] = tag
@@ -57,7 +57,7 @@ fn var2(tag: i64, f0: i64, f1: i64) -> &i64 {
     ret v
 }
 
-;; Create variant with 3 payload fields.
+// Create variant with 3 payload fields.
 fn var3(tag: i64, f0: i64, f1: i64, f2: i64) -> &i64 {
     let v: &i64 = alloc_pages(1)
     v[0] = tag
@@ -67,7 +67,7 @@ fn var3(tag: i64, f0: i64, f1: i64, f2: i64) -> &i64 {
     ret v
 }
 
-;; Create variant with 4 payload fields.
+// Create variant with 4 payload fields.
 fn var4(tag: i64, f0: i64, f1: i64, f2: i64, f3: i64) -> &i64 {
     let v: &i64 = alloc_pages(1)
     v[0] = tag
@@ -78,33 +78,33 @@ fn var4(tag: i64, f0: i64, f1: i64, f2: i64, f3: i64) -> &i64 {
     ret v
 }
 
-;; Get tag.
+// Get tag.
 fn var_tag(v: &i64) -> i64 {
     ret v[0]
 }
 
-;; Get field at index (0-based).
+// Get field at index (0-based).
 fn var_field(v: &i64, i: i64) -> i64 {
     let idx = i + 1
     ret v[idx]
 }
 
-;; Set field at index (0-based).
+// Set field at index (0-based).
 fn var_set_field(v: &i64, i: i64, val: i64) {
     let idx = i + 1
     v[idx] = val
 }
 
-;; Check if variant has the given tag.
+// Check if variant has the given tag.
 fn var_is(v: &i64, tag: i64) -> i64 {
     if v[0] == tag { ret 1 }
     ret 0
 }
 
-;; Structural equality: same tag, same fields up to nfields.
+// Structural equality: same tag, same fields up to nfields.
 fn var_eq(a: &i64, b: &i64) -> i64 {
     if a[0] != b[0] { ret 0 }
-    ; Compare up to 4 fields
+    // Compare up to 4 fields
     if a[1] != b[1] { ret 0 }
     if a[2] != b[2] { ret 0 }
     if a[3] != b[3] { ret 0 }
@@ -112,7 +112,7 @@ fn var_eq(a: &i64, b: &i64) -> i64 {
     ret 1
 }
 
-;; Print variant as Variant(tag, f0, f1, ...).
+// Print variant as Variant(tag, f0, f1, ...).
 fn var_print(v: &i64, nfields: i64) {
     let tag = v[0]
     print("Variant({tag}")
@@ -126,7 +126,7 @@ fn var_print(v: &i64, nfields: i64) {
     print(")")
 }
 
-;; Print + newline.
+// Print + newline.
 fn var_println(v: &i64, nfields: i64) {
     var_print(v, nfields)
     print("\n")

@@ -1,22 +1,22 @@
-; Compile-time autograd — gradient operations for reverse-mode AD
-; All gradient rules are statically compiled Jda functions (no runtime graph).
-; Each function computes the analytical derivative per the standard AD rules.
+// Compile-time autograd — gradient operations for reverse-mode AD
+// All gradient rules are statically compiled Jda functions (no runtime graph).
+// Each function computes the analytical derivative per the standard AD rules.
 
-; ── Scalar gradient operations (f64 bit-pattern values) ──────────────
+// ── Scalar gradient operations (f64 bit-pattern values) ──────────────
 
-; c = a + b → grad_a += grad_c, grad_b += grad_c
+// c = a + b → grad_a += grad_c, grad_b += grad_c
 fn grad_add_a(grad_c: i64) -> i64 { ret grad_c }
 fn grad_add_b(grad_c: i64) -> i64 { ret grad_c }
 
-; c = a - b → grad_a += grad_c, grad_b -= grad_c
+// c = a - b → grad_a += grad_c, grad_b -= grad_c
 fn grad_sub_a(grad_c: i64) -> i64 { ret grad_c }
 fn grad_sub_b(grad_c: i64) -> i64 { ret f64_neg(grad_c) }
 
-; c = a * b → grad_a += grad_c * b, grad_b += grad_c * a
+// c = a * b → grad_a += grad_c * b, grad_b += grad_c * a
 fn grad_mul_a(b: i64, grad_c: i64) -> i64 { ret f64_mul(grad_c, b) }
 fn grad_mul_b(a: i64, grad_c: i64) -> i64 { ret f64_mul(grad_c, a) }
 
-; c = a / b → grad_a += grad_c / b, grad_b -= grad_c * a / (b*b)
+// c = a / b → grad_a += grad_c / b, grad_b -= grad_c * a / (b*b)
 fn grad_div_a(b: i64, grad_c: i64) -> i64 { ret f64_div(grad_c, b) }
 fn grad_div_b(a: i64, b: i64, grad_c: i64) -> i64 {
     let num = f64_mul(grad_c, a)
@@ -25,20 +25,20 @@ fn grad_div_b(a: i64, b: i64, grad_c: i64) -> i64 {
     ret f64_neg(r)
 }
 
-; c = relu(a) → grad_a += grad_c * (a > 0 ? 1 : 0)
+// c = relu(a) → grad_a += grad_c * (a > 0 ? 1 : 0)
 fn grad_relu(a: i64, grad_c: i64) -> i64 {
     let zero = f64_from_int(0)
     if f64_gt(a, zero) == 1 { ret grad_c }
     ret zero
 }
 
-; c = exp(a) → grad_a += grad_c * c
+// c = exp(a) → grad_a += grad_c * c
 fn grad_exp(c: i64, grad_c: i64) -> i64 { ret f64_mul(grad_c, c) }
 
-; c = log(a) → grad_a += grad_c / a
+// c = log(a) → grad_a += grad_c / a
 fn grad_log(a: i64, grad_c: i64) -> i64 { ret f64_div(grad_c, a) }
 
-; c = tanh(a) → grad_a += grad_c * (1 - c*c)
+// c = tanh(a) → grad_a += grad_c * (1 - c*c)
 fn grad_tanh(c: i64, grad_c: i64) -> i64 {
     let one = f64_from_int(1)
     let c2 = f64_mul(c, c)
@@ -46,9 +46,9 @@ fn grad_tanh(c: i64, grad_c: i64) -> i64 {
     ret f64_mul(grad_c, t)
 }
 
-; ── Tensor gradient operations ───────────────────────────────────────
+// ── Tensor gradient operations ───────────────────────────────────────
 
-; c = a + b (elementwise) → grad_a += grad_c, grad_b += grad_c
+// c = a + b (elementwise) → grad_a += grad_c, grad_b += grad_c
 fn grad_tensor_add(grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
     let n = tensor_len(grad_c)
     let i = 0
@@ -65,7 +65,7 @@ fn grad_tensor_add(grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
     ret 0
 }
 
-; c = a * b (elementwise) → grad_a += grad_c * b, grad_b += grad_c * a
+// c = a * b (elementwise) → grad_a += grad_c * b, grad_b += grad_c * a
 fn grad_tensor_mul(a: i64, b: i64, grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
     let n = tensor_len(a)
     let i = 0
@@ -86,7 +86,7 @@ fn grad_tensor_mul(a: i64, b: i64, grad_c: i64, grad_a: i64, grad_b: i64) -> i64
     ret 0
 }
 
-; c = relu(a) → grad_a += grad_c * (a > 0)
+// c = relu(a) → grad_a += grad_c * (a > 0)
 fn grad_tensor_relu(a: i64, grad_c: i64, grad_a: i64) -> i64 {
     let n = tensor_len(a)
     let zero = f64_from_int(0)
@@ -104,7 +104,7 @@ fn grad_tensor_relu(a: i64, grad_c: i64, grad_a: i64) -> i64 {
     ret 0
 }
 
-; c = sum(a) → grad_a += broadcast(grad_c_scalar)
+// c = sum(a) → grad_a += broadcast(grad_c_scalar)
 fn grad_tensor_sum(grad_c_scalar: i64, grad_a: i64) -> i64 {
     let n = tensor_len(grad_a)
     let i = 0
@@ -117,12 +117,12 @@ fn grad_tensor_sum(grad_c_scalar: i64, grad_a: i64) -> i64 {
     ret 0
 }
 
-; c = matmul(a[M,K], b[K,N]) → grad_a += matmul(grad_c, bT), grad_b += matmul(aT, grad_c)
+// c = matmul(a[M,K], b[K,N]) → grad_a += matmul(grad_c, bT), grad_b += matmul(aT, grad_c)
 fn grad_matmul(a: i64, b: i64, grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
     let M = tensor_shape(a, 0)
     let K = tensor_shape(a, 1)
     let N = tensor_shape(b, 1)
-    ; grad_a[M,K] += grad_c[M,N] @ bT[N,K]
+    // grad_a[M,K] += grad_c[M,N] @ bT[N,K]
     let i = 0
     loop i < M {
         let j = 0
@@ -146,7 +146,7 @@ fn grad_matmul(a: i64, b: i64, grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
         }
         i = i + 1
     }
-    ; grad_b[K,N] += aT[K,M] @ grad_c[M,N]
+    // grad_b[K,N] += aT[K,M] @ grad_c[M,N]
     let k = 0
     loop k < K {
         let n2 = 0
@@ -173,10 +173,10 @@ fn grad_matmul(a: i64, b: i64, grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
     ret 0
 }
 
-; ── Numerical gradient checking ──────────────────────────────────────
+// ── Numerical gradient checking ──────────────────────────────────────
 
-; Check |analytical - numerical| < epsilon
-; Returns 1 if gradient is correct, 0 otherwise
+// Check |analytical - numerical| < epsilon
+// Returns 1 if gradient is correct, 0 otherwise
 fn grad_check_close(analytical: i64, numerical: i64, eps: i64) -> i64 {
     let diff = f64_sub(analytical, numerical)
     let abs_diff = f64_abs(diff)

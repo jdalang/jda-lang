@@ -1,28 +1,28 @@
-; =============================================================================
-; jda::complex -- Complex Number Arithmetic
-; =============================================================================
-; Integer complex numbers (a + bi). Operations use exact integer arithmetic.
-;
-; Memory layout per Complex (&i64):
-;   [0] re    (real part)
-;   [1] im    (imaginary part)
-;
-; Functions:
-;   cx_new(re, im)           -> &i64  create complex number
-;   cx_add(a, b)             -> &i64  addition
-;   cx_sub(a, b)             -> &i64  subtraction
-;   cx_mul(a, b)             -> &i64  multiplication
-;   cx_scale(a, k)           -> &i64  scalar multiply
-;   cx_abs_sq(a)             -> i64   |a|^2 = re^2 + im^2
-;   cx_conjugate(a)          -> &i64  a* = (re, -im)
-;   cx_eq(a, b)              -> i64   1 if equal
-;   cx_re(a)                 -> i64   real part
-;   cx_im(a)                 -> i64   imaginary part
-;   cx_is_real(a)            -> i64   1 if im == 0
-;   cx_to_str(a, out)        -> i64   format as "a+bi" string
-; =============================================================================
+// =============================================================================
+// jda::complex -- Complex Number Arithmetic
+// =============================================================================
+// Integer complex numbers (a + bi). Operations use exact integer arithmetic.
 
-;; Create complex number.
+// Memory layout per Complex (&i64):
+//   [0] re    (real part)
+//   [1] im    (imaginary part)
+
+// Functions:
+//   cx_new(re, im)           -> &i64  create complex number
+//   cx_add(a, b)             -> &i64  addition
+//   cx_sub(a, b)             -> &i64  subtraction
+//   cx_mul(a, b)             -> &i64  multiplication
+//   cx_scale(a, k)           -> &i64  scalar multiply
+//   cx_abs_sq(a)             -> i64   |a|^2 = re^2 + im^2
+//   cx_conjugate(a)          -> &i64  a* = (re, -im)
+//   cx_eq(a, b)              -> i64   1 if equal
+//   cx_re(a)                 -> i64   real part
+//   cx_im(a)                 -> i64   imaginary part
+//   cx_is_real(a)            -> i64   1 if im == 0
+//   cx_to_str(a, out)        -> i64   format as "a+bi" string
+// =============================================================================
+
+// Create complex number.
 fn cx_new(re: i64, im: i64) -> &i64 {
     let c: &i64 = alloc_pages(1)
     c[0] = re
@@ -30,57 +30,57 @@ fn cx_new(re: i64, im: i64) -> &i64 {
     ret c
 }
 
-;; Add two complex numbers.
+// Add two complex numbers.
 fn cx_add(a: &i64, b: &i64) -> &i64 {
     ret cx_new(a[0] + b[0], a[1] + b[1])
 }
 
-;; Subtract: a - b.
+// Subtract: a - b.
 fn cx_sub(a: &i64, b: &i64) -> &i64 {
     ret cx_new(a[0] - b[0], a[1] - b[1])
 }
 
-;; Multiply: (a+bi)(c+di) = (ac-bd) + (ad+bc)i.
+// Multiply: (a+bi)(c+di) = (ac-bd) + (ad+bc)i.
 fn cx_mul(a: &i64, b: &i64) -> &i64 {
     let re = a[0] * b[0] - a[1] * b[1]
     let im = a[0] * b[1] + a[1] * b[0]
     ret cx_new(re, im)
 }
 
-;; Scalar multiply.
+// Scalar multiply.
 fn cx_scale(a: &i64, k: i64) -> &i64 {
     ret cx_new(a[0] * k, a[1] * k)
 }
 
-;; Magnitude squared: |a|^2 = re^2 + im^2.
+// Magnitude squared: |a|^2 = re^2 + im^2.
 fn cx_abs_sq(a: &i64) -> i64 {
     ret a[0] * a[0] + a[1] * a[1]
 }
 
-;; Complex conjugate.
+// Complex conjugate.
 fn cx_conjugate(a: &i64) -> &i64 {
     ret cx_new(a[0], 0 - a[1])
 }
 
-;; Equality check.
+// Equality check.
 fn cx_eq(a: &i64, b: &i64) -> i64 {
     if a[0] == b[0] and a[1] == b[1] { ret 1 }
     ret 0
 }
 
-;; Real part.
+// Real part.
 fn cx_re(a: &i64) -> i64 { ret a[0] }
 
-;; Imaginary part.
+// Imaginary part.
 fn cx_im(a: &i64) -> i64 { ret a[1] }
 
-;; Check if purely real.
+// Check if purely real.
 fn cx_is_real(a: &i64) -> i64 {
     if a[1] == 0 { ret 1 }
     ret 0
 }
 
-;; Internal: write integer to buffer. Returns chars written.
+// Internal: write integer to buffer. Returns chars written.
 fn _cx_write_int(val: i64, out: &i8, off: i64) -> i64 {
     if val == 0 {
         poke_byte(out, off, 48)
@@ -110,21 +110,21 @@ fn _cx_write_int(val: i64, out: &i8, off: i64) -> i64 {
     ret pos - off
 }
 
-;; Format as string: "a+bi" or "a-bi". Returns length.
+// Format as string: "a+bi" or "a-bi". Returns length.
 fn cx_to_str(a: &i64, out: &i8) -> i64 {
     let pos = _cx_write_int(a[0], out, 0)
     let im = a[1]
     if im >= 0 {
-        poke_byte(out, pos, 43)  ; '+'
+        poke_byte(out, pos, 43)  // '+'
         pos = pos + 1
         let n = _cx_write_int(im, out, pos)
         pos = pos + n
     } else {
-        poke_byte(out, pos, 45)  ; '-'
+        poke_byte(out, pos, 45)  // '-'
         pos = pos + 1
         let n = _cx_write_int(0 - im, out, pos)
         pos = pos + n
     }
-    poke_byte(out, pos, 105)  ; 'i'
+    poke_byte(out, pos, 105)  // 'i'
     ret pos + 1
 }

@@ -1,60 +1,60 @@
-; Test i128 (128-bit integer) stdlib package
+// Test i128 (128-bit integer) stdlib package
 
 fn main() {
     let out: &i8 = alloc_pages(1)
 
-    ; Create from i64
+    // Create from i64
     let a = i128_from_i64(42)
     let n = i128_to_str(a, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Create from lo/hi pair: 2^64 + 1 = 18446744073709551617
+    // Create from lo/hi pair: 2^64 + 1 = 18446744073709551617
     let b = i128_new(1, 1)
     n = i128_to_str(b, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Add: 42 + 58 = 100
+    // Add: 42 + 58 = 100
     let c = i128_from_i64(58)
     let d = i128_add(a, c)
     n = i128_to_str(d, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Sub: 100 - 42 = 58
+    // Sub: 100 - 42 = 58
     let e = i128_sub(d, a)
     n = i128_to_str(e, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Negate
+    // Negate
     let f = i128_neg(a)
     n = i128_to_str(f, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Compare: 42 < 58 → -1
+    // Compare: 42 < 58 → -1
     let x = i128_from_i64(42)
     let y = i128_from_i64(58)
     let cmp1 = i128_cmp(x, y)
     if cmp1 < 0 { print("lt\n") }
 
-    ; Compare: 58 > 42 → 1
+    // Compare: 58 > 42 → 1
     let cmp2 = i128_cmp(y, x)
     if cmp2 > 0 { print("gt\n") }
 
-    ; Compare: 42 == 42 → 0
+    // Compare: 42 == 42 → 0
     let same = i128_from_i64(42)
     let cmp3 = i128_cmp(x, same)
     if cmp3 == 0 { print("eq\n") }
 
-    ; is_zero
+    // is_zero
     let z = i128_from_i64(0)
     let iz = i128_is_zero(z)
     if iz == 1 { print("zero\n") }
 
-    ; Multiply: 1000000 * 1000000 = 1000000000000
+    // Multiply: 1000000 * 1000000 = 1000000000000
     let m1 = i128_from_i64(1000000)
     let m2 = i128_from_i64(1000000)
     let m = i128_mul(m1, m2)
@@ -62,7 +62,7 @@ fn main() {
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Shift left: 1 << 64 → hi=1, lo=0
+    // Shift left: 1 << 64 → hi=1, lo=0
     let one = i128_from_i64(1)
     let shifted = i128_shl(one, 64)
     let shi = i128_hi(shifted)

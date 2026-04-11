@@ -1,50 +1,50 @@
-; =============================================================================
-; jda::pack -- Binary Pack/Unpack
-; =============================================================================
-; Serialize/deserialize integers and strings to/from byte buffers.
-; Little-endian and big-endian variants for all integer sizes.
-;
-; Functions:
-;   pack_i8(buf, off, val)           -> i64  write 1 byte, return off+1
-;   pack_i16_le(buf, off, val)       -> i64  write 2 bytes LE, return off+2
-;   pack_i16_be(buf, off, val)       -> i64  write 2 bytes BE, return off+2
-;   pack_i32_le(buf, off, val)       -> i64  write 4 bytes LE, return off+4
-;   pack_i32_be(buf, off, val)       -> i64  write 4 bytes BE, return off+4
-;   pack_i64_le(buf, off, val)       -> i64  write 8 bytes LE, return off+8
-;   pack_i64_be(buf, off, val)       -> i64  write 8 bytes BE, return off+8
-;   pack_str(buf, off, src, len)     -> i64  write length-prefixed string
-;   pack_raw(buf, off, src, len)     -> i64  write raw bytes
-;   unpack_i8(buf, off)              -> i64  read 1 byte
-;   unpack_i16_le(buf, off)          -> i64  read 2 bytes LE
-;   unpack_i16_be(buf, off)          -> i64  read 2 bytes BE
-;   unpack_i32_le(buf, off)          -> i64  read 4 bytes LE
-;   unpack_i32_be(buf, off)          -> i64  read 4 bytes BE
-;   unpack_i64_le(buf, off)          -> i64  read 8 bytes LE
-;   unpack_i64_be(buf, off)          -> i64  read 8 bytes BE
-;   unpack_str(buf, off, out)        -> i64  read length-prefixed string, return new off
-; =============================================================================
+// =============================================================================
+// jda::pack -- Binary Pack/Unpack
+// =============================================================================
+// Serialize/deserialize integers and strings to/from byte buffers.
+// Little-endian and big-endian variants for all integer sizes.
 
-;; Write 1 byte. Returns off+1.
+// Functions:
+//   pack_i8(buf, off, val)           -> i64  write 1 byte, return off+1
+//   pack_i16_le(buf, off, val)       -> i64  write 2 bytes LE, return off+2
+//   pack_i16_be(buf, off, val)       -> i64  write 2 bytes BE, return off+2
+//   pack_i32_le(buf, off, val)       -> i64  write 4 bytes LE, return off+4
+//   pack_i32_be(buf, off, val)       -> i64  write 4 bytes BE, return off+4
+//   pack_i64_le(buf, off, val)       -> i64  write 8 bytes LE, return off+8
+//   pack_i64_be(buf, off, val)       -> i64  write 8 bytes BE, return off+8
+//   pack_str(buf, off, src, len)     -> i64  write length-prefixed string
+//   pack_raw(buf, off, src, len)     -> i64  write raw bytes
+//   unpack_i8(buf, off)              -> i64  read 1 byte
+//   unpack_i16_le(buf, off)          -> i64  read 2 bytes LE
+//   unpack_i16_be(buf, off)          -> i64  read 2 bytes BE
+//   unpack_i32_le(buf, off)          -> i64  read 4 bytes LE
+//   unpack_i32_be(buf, off)          -> i64  read 4 bytes BE
+//   unpack_i64_le(buf, off)          -> i64  read 8 bytes LE
+//   unpack_i64_be(buf, off)          -> i64  read 8 bytes BE
+//   unpack_str(buf, off, out)        -> i64  read length-prefixed string, return new off
+// =============================================================================
+
+// Write 1 byte. Returns off+1.
 fn pack_i8(buf: &i8, off: i64, val: i64) -> i64 {
     poke_byte(buf, off, val)
     ret off + 1
 }
 
-;; Write 2 bytes little-endian. Returns off+2.
+// Write 2 bytes little-endian. Returns off+2.
 fn pack_i16_le(buf: &i8, off: i64, val: i64) -> i64 {
     poke_byte(buf, off, val - (val / 256) * 256)
     poke_byte(buf, off + 1, val / 256 - (val / 65536) * 256)
     ret off + 2
 }
 
-;; Write 2 bytes big-endian. Returns off+2.
+// Write 2 bytes big-endian. Returns off+2.
 fn pack_i16_be(buf: &i8, off: i64, val: i64) -> i64 {
     poke_byte(buf, off, val / 256 - (val / 65536) * 256)
     poke_byte(buf, off + 1, val - (val / 256) * 256)
     ret off + 2
 }
 
-;; Write 4 bytes little-endian. Returns off+4.
+// Write 4 bytes little-endian. Returns off+4.
 fn pack_i32_le(buf: &i8, off: i64, val: i64) -> i64 {
     poke_byte(buf, off, val - (val / 256) * 256)
     let v1 = val / 256
@@ -56,7 +56,7 @@ fn pack_i32_le(buf: &i8, off: i64, val: i64) -> i64 {
     ret off + 4
 }
 
-;; Write 4 bytes big-endian. Returns off+4.
+// Write 4 bytes big-endian. Returns off+4.
 fn pack_i32_be(buf: &i8, off: i64, val: i64) -> i64 {
     let v3 = val / 16777216
     poke_byte(buf, off, v3 - (v3 / 256) * 256)
@@ -68,7 +68,7 @@ fn pack_i32_be(buf: &i8, off: i64, val: i64) -> i64 {
     ret off + 4
 }
 
-;; Write 8 bytes little-endian. Returns off+8.
+// Write 8 bytes little-endian. Returns off+8.
 fn pack_i64_le(buf: &i8, off: i64, val: i64) -> i64 {
     let i = 0
     let v = val
@@ -80,7 +80,7 @@ fn pack_i64_le(buf: &i8, off: i64, val: i64) -> i64 {
     ret off + 8
 }
 
-;; Write 8 bytes big-endian. Returns off+8.
+// Write 8 bytes big-endian. Returns off+8.
 fn pack_i64_be(buf: &i8, off: i64, val: i64) -> i64 {
     let i = 7
     let v = val
@@ -92,7 +92,7 @@ fn pack_i64_be(buf: &i8, off: i64, val: i64) -> i64 {
     ret off + 8
 }
 
-;; Write length-prefixed string (4-byte LE length + raw bytes). Returns new offset.
+// Write length-prefixed string (4-byte LE length + raw bytes). Returns new offset.
 fn pack_str(buf: &i8, off: i64, src: &i8, len: i64) -> i64 {
     let noff = pack_i32_le(buf, off, len)
     let i = 0
@@ -103,7 +103,7 @@ fn pack_str(buf: &i8, off: i64, src: &i8, len: i64) -> i64 {
     ret noff + len
 }
 
-;; Write raw bytes (no length prefix). Returns new offset.
+// Write raw bytes (no length prefix). Returns new offset.
 fn pack_raw(buf: &i8, off: i64, src: &i8, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -113,14 +113,14 @@ fn pack_raw(buf: &i8, off: i64, src: &i8, len: i64) -> i64 {
     ret off + len
 }
 
-;; Read 1 unsigned byte.
+// Read 1 unsigned byte.
 fn unpack_i8(buf: &i8, off: i64) -> i64 {
     let v = buf[off]
     if v < 0 { v = v + 256 }
     ret v
 }
 
-;; Read 2 bytes little-endian.
+// Read 2 bytes little-endian.
 fn unpack_i16_le(buf: &i8, off: i64) -> i64 {
     let b0 = buf[off]
     let b1 = buf[off + 1]
@@ -129,7 +129,7 @@ fn unpack_i16_le(buf: &i8, off: i64) -> i64 {
     ret b0 + b1 * 256
 }
 
-;; Read 2 bytes big-endian.
+// Read 2 bytes big-endian.
 fn unpack_i16_be(buf: &i8, off: i64) -> i64 {
     let b0 = buf[off]
     let b1 = buf[off + 1]
@@ -138,7 +138,7 @@ fn unpack_i16_be(buf: &i8, off: i64) -> i64 {
     ret b0 * 256 + b1
 }
 
-;; Read 4 bytes little-endian.
+// Read 4 bytes little-endian.
 fn unpack_i32_le(buf: &i8, off: i64) -> i64 {
     let b0 = buf[off]
     let b1 = buf[off + 1]
@@ -151,7 +151,7 @@ fn unpack_i32_le(buf: &i8, off: i64) -> i64 {
     ret b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
 }
 
-;; Read 4 bytes big-endian.
+// Read 4 bytes big-endian.
 fn unpack_i32_be(buf: &i8, off: i64) -> i64 {
     let b0 = buf[off]
     let b1 = buf[off + 1]
@@ -164,7 +164,7 @@ fn unpack_i32_be(buf: &i8, off: i64) -> i64 {
     ret b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
 }
 
-;; Read 8 bytes little-endian.
+// Read 8 bytes little-endian.
 fn unpack_i64_le(buf: &i8, off: i64) -> i64 {
     let result = 0
     let i = 7
@@ -177,7 +177,7 @@ fn unpack_i64_le(buf: &i8, off: i64) -> i64 {
     ret result
 }
 
-;; Read 8 bytes big-endian.
+// Read 8 bytes big-endian.
 fn unpack_i64_be(buf: &i8, off: i64) -> i64 {
     let result = 0
     let i = 0
@@ -190,8 +190,8 @@ fn unpack_i64_be(buf: &i8, off: i64) -> i64 {
     ret result
 }
 
-;; Read length-prefixed string. Reads 4-byte LE length, then copies bytes to out.
-;; Returns new offset (past string data).
+// Read length-prefixed string. Reads 4-byte LE length, then copies bytes to out.
+// Returns new offset (past string data).
 fn unpack_str(buf: &i8, off: i64, out: &i8) -> i64 {
     let len = unpack_i32_le(buf, off)
     let data_off = off + 4
@@ -203,7 +203,7 @@ fn unpack_str(buf: &i8, off: i64, out: &i8) -> i64 {
     ret data_off + len
 }
 
-;; Get string length from length-prefixed string at offset.
+// Get string length from length-prefixed string at offset.
 fn unpack_str_len(buf: &i8, off: i64) -> i64 {
     ret unpack_i32_le(buf, off)
 }

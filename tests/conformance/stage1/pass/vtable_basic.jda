@@ -1,7 +1,7 @@
-; Test stdlib/vtable — dynamic dispatch
+// Test stdlib/vtable — dynamic dispatch
 
-; Two "types" that implement an interface with 2 methods
-; Slot 0 = "value" method, Slot 1 = "double" method
+// Two "types" that implement an interface with 2 methods
+// Slot 0 = "value" method, Slot 1 = "double" method
 
 fn type_a_value(data: i64) -> i64 {
     ret data
@@ -20,7 +20,7 @@ fn type_b_double(data: i64) -> i64 {
 }
 
 fn test_vtable() {
-    ; Create vtables
+    // Create vtables
     let vt_a = vt_new(2)
     vt_set(vt_a, 0, type_a_value)
     vt_set(vt_a, 1, type_a_double)
@@ -29,17 +29,17 @@ fn test_vtable() {
     vt_set(vt_b, 0, type_b_value)
     vt_set(vt_b, 1, type_b_double)
 
-    ; vtable size
+    // vtable size
     let s = vt_size(vt_a)
     print("vt size: ")
     print("{s}")
     print("\n")
 
-    ; Create dynamic objects
+    // Create dynamic objects
     let obj_a = dyn_new(42, vt_a, 1)
     let obj_b = dyn_new(10, vt_b, 2)
 
-    ; Type tags
+    // Type tags
     let tag_a = dyn_tag(obj_a)
     print("tag a: ")
     print("{tag_a}")
@@ -55,13 +55,13 @@ fn test_vtable() {
     print("{is_2}")
     print("\n")
 
-    ; Data access
+    // Data access
     let d = dyn_data(obj_a)
     print("data a: ")
     print("{d}")
     print("\n")
 
-    ; Print
+    // Print
     dyn_print(obj_b)
 
     print("PASS\n")

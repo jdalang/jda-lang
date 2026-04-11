@@ -1,21 +1,21 @@
-; =============================================================================
-; jda::io -- Buffered I/O and Stream Helpers
-; =============================================================================
-; Buffered reading/writing for stdin, stdout, and file descriptors.
-; Direct Linux syscalls. No libc.
-;
-; Functions:
-;   io_read_stdin(buf, max) -> bytes read
-;   io_write_stdout(data, len) -> bytes written
-;   io_write_stderr(data, len) -> bytes written
-;   io_read_line(fd, buf, max) -> line length (including newline)
-;   io_read_fd(fd, buf, max) -> bytes read
-;   io_write_fd(fd, data, len) -> bytes written
-;   io_flush_fd(fd) -> 0 on success
-;   io_print_i64(val) -> 0 (prints integer to stdout)
-;   io_print_str(s, len) -> bytes written
-;   io_println(s, len) -> bytes written (appends newline)
-; =============================================================================
+// =============================================================================
+// jda::io -- Buffered I/O and Stream Helpers
+// =============================================================================
+// Buffered reading/writing for stdin, stdout, and file descriptors.
+// Direct Linux syscalls. No libc.
+
+// Functions:
+//   io_read_stdin(buf, max) -> bytes read
+//   io_write_stdout(data, len) -> bytes written
+//   io_write_stderr(data, len) -> bytes written
+//   io_read_line(fd, buf, max) -> line length (including newline)
+//   io_read_fd(fd, buf, max) -> bytes read
+//   io_write_fd(fd, data, len) -> bytes written
+//   io_flush_fd(fd) -> 0 on success
+//   io_print_i64(val) -> 0 (prints integer to stdout)
+//   io_print_str(s, len) -> bytes written
+//   io_println(s, len) -> bytes written (appends newline)
+// =============================================================================
 
 fn io_read_stdin(buf: &i8, max_bytes: i64) -> i64 {
     ret syscall(0, 0, buf, max_bytes)
@@ -30,14 +30,14 @@ fn io_write_stderr(data: &i8, len: i64) -> i64 {
 }
 
 fn io_read_line(fd: i64, buf: &i8, max_bytes: i64) -> i64 {
-    ; Read one byte at a time until newline or max
+    // Read one byte at a time until newline or max
     let i = 0
     loop i < max_bytes {
         let n = syscall(0, fd, buf + i, 1)
         if n < 1 { ret i }
         i = i + 1
         let ch: &i8 = buf + i - 1
-        if ch[0] == 10 { ret i }  ; newline
+        if ch[0] == 10 { ret i }  // newline
     }
     ret i
 }
@@ -79,12 +79,12 @@ fn io_write_fd(fd: i64, data: &i8, len: i64) -> i64 {
 }
 
 fn io_flush_fd(fd: i64) -> i64 {
-    ; fsync syscall = 74
+    // fsync syscall = 74
     ret syscall(74, fd, 0, 0)
 }
 
 fn io_print_i64(val: i64) -> i64 {
-    ; Convert integer to decimal string and print
+    // Convert integer to decimal string and print
     let buf = alloc_pages(1)
     let neg = 0
     let v = val
@@ -96,7 +96,7 @@ fn io_print_i64(val: i64) -> i64 {
     let ptr: &i8 = buf
     if v == 0 {
         pos = pos - 1
-        ptr[pos] = 48  ; '0'
+        ptr[pos] = 48  // '0'
     }
     loop v > 0 {
         pos = pos - 1
@@ -106,7 +106,7 @@ fn io_print_i64(val: i64) -> i64 {
     }
     if neg == 1 {
         pos = pos - 1
-        ptr[pos] = 45  ; '-'
+        ptr[pos] = 45  // '-'
     }
     let len = 20 - pos
     syscall(1, 1, buf + pos, len)

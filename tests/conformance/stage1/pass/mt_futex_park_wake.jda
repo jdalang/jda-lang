@@ -1,13 +1,13 @@
-; Test futex_wait / futex_wake with a self-wake pattern
-; We use clone_thread to spawn a child that wakes the parent
+// Test futex_wait / futex_wake with a self-wake pattern
+// We use clone_thread to spawn a child that wakes the parent
 let g_flag: &i64 = 0
 
 fn child_fn() {
-    ; Store 1 to flag so parent's futex_wait sees mismatch and returns
+    // Store 1 to flag so parent's futex_wait sees mismatch and returns
     g_flag[0] = 1
-    ; Wake one waiter on g_flag
+    // Wake one waiter on g_flag
     futex_wake(g_flag, 1)
-    ; Exit this thread: syscall exit (60) with status 0
+    // Exit this thread: syscall exit (60) with status 0
     let dummy = syscall(60, 0, 0, 0)
 }
 
@@ -15,13 +15,13 @@ fn main() {
     g_flag = alloc_pages(1)
     g_flag[0] = 0
 
-    ; Allocate 64KB stack for child thread
+    // Allocate 64KB stack for child thread
     let child_stack: &i8 = alloc_pages(16)
     let stack_top: &i8 = child_stack + 65536
     let fn_p = fn_addr(child_fn)
     let tid = clone_thread(stack_top, fn_p)
 
-    ; Parent: wait on g_flag until it becomes non-zero
+    // Parent: wait on g_flag until it becomes non-zero
     let run = 1
     loop run == 1 {
         let cur = g_flag[0]
@@ -32,7 +32,7 @@ fn main() {
         }
     }
 
-    ; Small spin to let child thread finish
+    // Small spin to let child thread finish
     let i = 0
     loop i < 100000 {
         i = i + 1

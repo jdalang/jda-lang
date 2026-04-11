@@ -1,26 +1,26 @@
-; =============================================================================
-; jda::compress -- Compression Utilities (RLE + LZ77 stubs)
-; =============================================================================
-; Run-Length Encoding: [count][byte] pairs.
-; A run of N identical bytes encodes as [N][byte].
-; Non-runs encode as [1][byte] each. Max run length: 255.
-;
-; Functions:
-;   compress_rle(data, len, out)      -> i64  compressed length
-;   decompress_rle(data, len, out)    -> i64  decompressed length
-;   compress_lz77(data, len, out)     -> i64  -1 (stub)
-;   decompress_lz77(data, len, out)   -> i64  -1 (stub)
-; =============================================================================
+// =============================================================================
+// jda::compress -- Compression Utilities (RLE + LZ77 stubs)
+// =============================================================================
+// Run-Length Encoding: [count][byte] pairs.
+// A run of N identical bytes encodes as [N][byte].
+// Non-runs encode as [1][byte] each. Max run length: 255.
 
-;; Internal byte reader.
+// Functions:
+//   compress_rle(data, len, out)      -> i64  compressed length
+//   decompress_rle(data, len, out)    -> i64  decompressed length
+//   compress_lz77(data, len, out)     -> i64  -1 (stub)
+//   decompress_lz77(data, len, out)   -> i64  -1 (stub)
+// =============================================================================
+
+// Internal byte reader.
 fn _cmp_byte_at(buf: &i8, idx: i64) -> i64 {
     let b = buf[idx]
     if b < 0 { b = b + 256 }
     ret b
 }
 
-;; RLE compress data into out. Returns compressed length.
-;; Format: repeated [count][byte] pairs.
+// RLE compress data into out. Returns compressed length.
+// Format: repeated [count][byte] pairs.
 fn compress_rle(data: &i8, len: i64, out: &i8) -> i64 {
     let oi = 0
     let i = 0
@@ -34,7 +34,7 @@ fn compress_rle(data: &i8, len: i64, out: &i8) -> i64 {
                 run = run + 1
                 j = j + 1
             } else {
-                j = len  ; break
+                j = len  // break
             }
         }
         poke_byte(out, oi, run)
@@ -45,7 +45,7 @@ fn compress_rle(data: &i8, len: i64, out: &i8) -> i64 {
     ret oi
 }
 
-;; RLE decompress data into out. Returns decompressed length.
+// RLE decompress data into out. Returns decompressed length.
 fn decompress_rle(data: &i8, len: i64, out: &i8) -> i64 {
     let oi = 0
     let i = 0
@@ -63,12 +63,12 @@ fn decompress_rle(data: &i8, len: i64, out: &i8) -> i64 {
     ret oi
 }
 
-;; LZ77 compress (stub — not implemented). Returns -1.
+// LZ77 compress (stub — not implemented). Returns -1.
 fn compress_lz77(data: &i8, len: i64, out: &i8) -> i64 {
     ret 0 - 1
 }
 
-;; LZ77 decompress (stub — not implemented). Returns -1.
+// LZ77 decompress (stub — not implemented). Returns -1.
 fn decompress_lz77(data: &i8, len: i64, out: &i8) -> i64 {
     ret 0 - 1
 }

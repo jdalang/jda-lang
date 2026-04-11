@@ -1,56 +1,56 @@
-; =============================================================================
-; jda::iter -- Chainable Iterator Adapters
-; =============================================================================
-; Iterator chaining for Jda.
-;
-; Equivalent mapping:
-;   iter_from(arr, len)            Start a chain from an array
-;   iter_map(fn)                   Transform each element
-;   iter_filter(fn)                Keep elements matching predicate
-;   iter_take(n)                   Take first n elements
-;   iter_skip(n)                   Skip first n elements
-;   iter_collect(out) -> count     Materialize into output array
-;   iter_sum() -> total            Sum all values
-;   iter_count() -> count          Count elements
-;   iter_any(fn) -> 0/1            Any element matches?
-;   iter_all(fn) -> 0/1            All elements match?
-;   iter_find(fn) -> value or -1   Find first matching element
-;   iter_fold(init, fn) -> result  Fold with accumulator
-;   iter_foreach(fn)               Call fn for each element (side effects)
-;   iter_enumerate(out_idx, out_val) -> count
-;   iter_zip(arr2, out_a, out_b) -> count
-;   iter_min() / iter_max()        Min / max value
-;   iter_chain(arr2, len2)         Chain a second array
-;
-; Usage:
-;   iter_from(arr, 5)
-;   iter_map(double_fn)
-;   iter_filter(positive_fn)
-;   let n = iter_collect(out)
-;
-; Pipeline is built lazily; terminal ops (collect, sum, count, etc.) evaluate it.
-; Chain state is global — one active chain at a time.
-; =============================================================================
+// =============================================================================
+// jda::iter -- Chainable Iterator Adapters
+// =============================================================================
+// Iterator chaining for Jda.
 
-; --- Chain state globals ---
-; Single heap page split into 3 regions of 16 i64 each:
-;   [0..15]  = ops (operation codes)
-;   [16..31] = fns (closure pointers)
-;   [32..47] = args (take/skip arguments)
+// Equivalent mapping:
+//   iter_from(arr, len)            Start a chain from an array
+//   iter_map(fn)                   Transform each element
+//   iter_filter(fn)                Keep elements matching predicate
+//   iter_take(n)                   Take first n elements
+//   iter_skip(n)                   Skip first n elements
+//   iter_collect(out) -> count     Materialize into output array
+//   iter_sum() -> total            Sum all values
+//   iter_count() -> count          Count elements
+//   iter_any(fn) -> 0/1            Any element matches?
+//   iter_all(fn) -> 0/1            All elements match?
+//   iter_find(fn) -> value or -1   Find first matching element
+//   iter_fold(init, fn) -> result  Fold with accumulator
+//   iter_foreach(fn)               Call fn for each element (side effects)
+//   iter_enumerate(out_idx, out_val) -> count
+//   iter_zip(arr2, out_a, out_b) -> count
+//   iter_min() / iter_max()        Min / max value
+//   iter_chain(arr2, len2)         Chain a second array
+
+// Usage:
+//   iter_from(arr, 5)
+//   iter_map(double_fn)
+//   iter_filter(positive_fn)
+//   let n = iter_collect(out)
+
+// Pipeline is built lazily; terminal ops (collect, sum, count, etc.) evaluate it.
+// Chain state is global — one active chain at a time.
+// =============================================================================
+
+// --- Chain state globals ---
+// Single heap page split into 3 regions of 16 i64 each:
+//   [0..15]  = ops (operation codes)
+//   [16..31] = fns (closure pointers)
+//   [32..47] = args (take/skip arguments)
 let g_it_tbl: &i64 = 0
 let g_it_src: &i64 = 0
 let g_it_len: i64 = 0
 let g_it_nops: i64 = 0
 
-; Chain a second source for iter_chain
+// Chain a second source for iter_chain
 let g_it_src2: &i64 = 0
 let g_it_len2: i64 = 0
 let g_it_has_chain: i64 = 0
 
-; Operation codes
-; 1 = MAP, 2 = FILTER, 3 = TAKE, 4 = SKIP
+// Operation codes
+// 1 = MAP, 2 = FILTER, 3 = TAKE, 4 = SKIP
 
-; --- Builder: start a chain from an array ---
+// --- Builder: start a chain from an array ---
 fn iter_from(arr: &i64, len: i64) -> i64 {
     if g_it_tbl == 0 {
         g_it_tbl = alloc_pages(1)
@@ -62,7 +62,7 @@ fn iter_from(arr: &i64, len: i64) -> i64 {
     ret 0
 }
 
-; --- Builder: add map step ---
+// --- Builder: add map step ---
 fn iter_map(f: i64) -> i64 {
     let i = g_it_nops
     g_it_tbl[i] = 1
@@ -71,7 +71,7 @@ fn iter_map(f: i64) -> i64 {
     ret 0
 }
 
-; --- Builder: add filter step ---
+// --- Builder: add filter step ---
 fn iter_filter(f: i64) -> i64 {
     let i = g_it_nops
     g_it_tbl[i] = 2
@@ -80,7 +80,7 @@ fn iter_filter(f: i64) -> i64 {
     ret 0
 }
 
-; --- Builder: add take(n) step ---
+// --- Builder: add take(n) step ---
 fn iter_take(n: i64) -> i64 {
     let i = g_it_nops
     g_it_tbl[i] = 3
@@ -89,7 +89,7 @@ fn iter_take(n: i64) -> i64 {
     ret 0
 }
 
-; --- Builder: add skip(n) step ---
+// --- Builder: add skip(n) step ---
 fn iter_skip(n: i64) -> i64 {
     let i = g_it_nops
     g_it_tbl[i] = 4
@@ -98,7 +98,7 @@ fn iter_skip(n: i64) -> i64 {
     ret 0
 }
 
-; --- Builder: chain a second array ---
+// --- Builder: chain a second array ---
 fn iter_chain(arr2: &i64, len2: i64) -> i64 {
     g_it_src2 = arr2
     g_it_len2 = len2
@@ -106,8 +106,8 @@ fn iter_chain(arr2: &i64, len2: i64) -> i64 {
     ret 0
 }
 
-; --- Internal: apply pipeline to one value ---
-; Returns the transformed value and sets g_it_keep to 1 if it passes filters.
+// --- Internal: apply pipeline to one value ---
+// Returns the transformed value and sets g_it_keep to 1 if it passes filters.
 let g_it_keep: i64 = 0
 
 fn iter_apply_one(val: i64) -> i64 {
@@ -118,12 +118,12 @@ fn iter_apply_one(val: i64) -> i64 {
         let op = g_it_tbl[i]
         if g_it_keep == 1 {
             if op == 1 {
-                ; MAP
+                // MAP
                 let fp = g_it_tbl[i + 16]
                 v = call_closure(fp, v)
             }
             if op == 2 {
-                ; FILTER
+                // FILTER
                 let fp = g_it_tbl[i + 16]
                 let pass = call_closure(fp, v)
                 if pass == 0 { g_it_keep = 0 }
@@ -134,15 +134,15 @@ fn iter_apply_one(val: i64) -> i64 {
     ret v
 }
 
-; --- Internal: iterate source with take/skip, call process_fn ---
-; Materializes the chain into out array. Returns count.
+// --- Internal: iterate source with take/skip, call process_fn ---
+// Materializes the chain into out array. Returns count.
 fn iter_materialize(out: &i64) -> i64 {
     let total_len = g_it_len
     if g_it_has_chain == 1 {
         total_len = g_it_len + g_it_len2
     }
 
-    ; Pre-scan for take/skip
+    // Pre-scan for take/skip
     let skip_n = 0
     let take_n = total_len
     let si = 0
@@ -156,7 +156,7 @@ fn iter_materialize(out: &i64) -> i64 {
     let skipped = 0
     let src_i = 0
 
-    ; Process primary source
+    // Process primary source
     loop src_i < g_it_len {
         if out_count >= take_n { src_i = g_it_len }
         if out_count < take_n {
@@ -174,7 +174,7 @@ fn iter_materialize(out: &i64) -> i64 {
         }
     }
 
-    ; Process chained source
+    // Process chained source
     if g_it_has_chain == 1 {
         src_i = 0
         loop src_i < g_it_len2 {
@@ -198,12 +198,12 @@ fn iter_materialize(out: &i64) -> i64 {
     ret out_count
 }
 
-; --- Terminal: collect into output array ---
+// --- Terminal: collect into output array ---
 fn iter_collect(out: &i64) -> i64 {
     ret iter_materialize(out)
 }
 
-; --- Terminal: sum all values ---
+// --- Terminal: sum all values ---
 fn iter_sum() -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -216,13 +216,13 @@ fn iter_sum() -> i64 {
     ret s
 }
 
-; --- Terminal: count elements ---
+// --- Terminal: count elements ---
 fn iter_count() -> i64 {
     let scratch: &i64 = alloc_pages(1)
     ret iter_materialize(scratch)
 }
 
-; --- Terminal: check if any element passes predicate ---
+// --- Terminal: check if any element passes predicate ---
 fn iter_any(f: i64) -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -235,7 +235,7 @@ fn iter_any(f: i64) -> i64 {
     ret 0
 }
 
-; --- Terminal: check if all elements pass predicate ---
+// --- Terminal: check if all elements pass predicate ---
 fn iter_all(f: i64) -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -248,7 +248,7 @@ fn iter_all(f: i64) -> i64 {
     ret 1
 }
 
-; --- Terminal: find first element matching predicate ---
+// --- Terminal: find first element matching predicate ---
 fn iter_find(f: i64) -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -261,7 +261,7 @@ fn iter_find(f: i64) -> i64 {
     ret -1
 }
 
-; --- Terminal: fold/reduce with accumulator ---
+// --- Terminal: fold/reduce with accumulator ---
 fn iter_fold(init: i64, f: i64) -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -274,7 +274,7 @@ fn iter_fold(init: i64, f: i64) -> i64 {
     ret acc
 }
 
-; --- Terminal: call fn for each element (side effects) ---
+// --- Terminal: call fn for each element (side effects) ---
 fn iter_foreach(f: i64) -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -286,7 +286,7 @@ fn iter_foreach(f: i64) -> i64 {
     ret n
 }
 
-; --- Terminal: min value ---
+// --- Terminal: min value ---
 fn iter_min() -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -300,7 +300,7 @@ fn iter_min() -> i64 {
     ret m
 }
 
-; --- Terminal: max value ---
+// --- Terminal: max value ---
 fn iter_max() -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -314,7 +314,7 @@ fn iter_max() -> i64 {
     ret m
 }
 
-; --- Terminal: enumerate (paired index + value arrays) ---
+// --- Terminal: enumerate (paired index + value arrays) ---
 fn iter_enumerate(out_idx: &i64, out_val: &i64) -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)
@@ -327,7 +327,7 @@ fn iter_enumerate(out_idx: &i64, out_val: &i64) -> i64 {
     ret n
 }
 
-; --- Terminal: zip with another array (produces paired output) ---
+// --- Terminal: zip with another array (produces paired output) ---
 fn iter_zip(arr2: &i64, out_a: &i64, out_b: &i64) -> i64 {
     let scratch: &i64 = alloc_pages(1)
     let n = iter_materialize(scratch)

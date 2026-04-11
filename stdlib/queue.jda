@@ -1,35 +1,35 @@
-; =============================================================================
-; jda::queue -- Queue, Stack, and Priority Queue
-; =============================================================================
-; Data structures built on dynamic arrays.
-;
-; Queue (FIFO):
-;   queue_new()            -> &i64   create queue
-;   queue_push(q, val)              enqueue
-;   queue_pop(q)           -> i64   dequeue (0 if empty)
-;   queue_peek(q)          -> i64   front element (0 if empty)
-;   queue_len(q)           -> i64   length
-;   queue_empty(q)         -> i64   1 if empty
-;
-; Stack (LIFO):
-;   stack_new()            -> &i64  create stack
-;   stack_push(s, val)              push
-;   stack_pop(s)           -> i64   pop (0 if empty)
-;   stack_peek(s)          -> i64   top element (0 if empty)
-;   stack_len(s)           -> i64   length
-;   stack_empty(s)         -> i64   1 if empty
-;
-; Priority Queue (min-heap):
-;   pq_new()               -> &i64  create priority queue
-;   pq_push(pq, val)               insert
-;   pq_pop(pq)             -> i64   extract minimum (0 if empty)
-;   pq_peek(pq)            -> i64   minimum element (0 if empty)
-;   pq_len(pq)             -> i64   length
-;   pq_empty(pq)           -> i64   1 if empty
-; =============================================================================
+// =============================================================================
+// jda::queue -- Queue, Stack, and Priority Queue
+// =============================================================================
+// Data structures built on dynamic arrays.
 
-; ─── Queue (ring buffer) ─────────────────────────────────────────────────────
-; Layout: [0]=len, [1]=cap, [2]=head, [3]=tail, [4]=data_ptr
+// Queue (FIFO):
+//   queue_new()            -> &i64   create queue
+//   queue_push(q, val)              enqueue
+//   queue_pop(q)           -> i64   dequeue (0 if empty)
+//   queue_peek(q)          -> i64   front element (0 if empty)
+//   queue_len(q)           -> i64   length
+//   queue_empty(q)         -> i64   1 if empty
+
+// Stack (LIFO):
+//   stack_new()            -> &i64  create stack
+//   stack_push(s, val)              push
+//   stack_pop(s)           -> i64   pop (0 if empty)
+//   stack_peek(s)          -> i64   top element (0 if empty)
+//   stack_len(s)           -> i64   length
+//   stack_empty(s)         -> i64   1 if empty
+
+// Priority Queue (min-heap):
+//   pq_new()               -> &i64  create priority queue
+//   pq_push(pq, val)               insert
+//   pq_pop(pq)             -> i64   extract minimum (0 if empty)
+//   pq_peek(pq)            -> i64   minimum element (0 if empty)
+//   pq_len(pq)             -> i64   length
+//   pq_empty(pq)           -> i64   1 if empty
+// =============================================================================
+
+// ─── Queue (ring buffer) ─────────────────────────────────────────────────────
+// Layout: [0]=len, [1]=cap, [2]=head, [3]=tail, [4]=data_ptr
 
 fn queue_pages_for(n: i64) -> i64 {
     let bytes = n * 8
@@ -44,10 +44,10 @@ fn queue_new() -> &i64 {
     let cap = 64
     let hdr: &i64 = alloc_pages(1)
     let data: &i64 = alloc_pages(queue_pages_for(cap))
-    hdr[0] = 0    ; len
-    hdr[1] = cap   ; capacity
-    hdr[2] = 0    ; head
-    hdr[3] = 0    ; tail
+    hdr[0] = 0    // len
+    hdr[1] = cap   // capacity
+    hdr[2] = 0    // head
+    hdr[3] = 0    // tail
     hdr[4] = data
     ret hdr
 }
@@ -59,7 +59,7 @@ fn queue_grow(q: &i64) {
     let len = q[0]
     let new_cap = old_cap * 2
     let new_data: &i64 = alloc_pages(queue_pages_for(new_cap))
-    ; Copy elements in order
+    // Copy elements in order
     let i = 0
     loop i < len {
         let src_idx = head + i
@@ -107,8 +107,8 @@ fn queue_peek(q: &i64) -> i64 {
 fn queue_len(q: &i64) -> i64 { ret q[0] }
 fn queue_empty(q: &i64) -> i64 { if q[0] == 0 { ret 1 } ret 0 }
 
-; ─── Stack ────────────────────────────────────────────────────────────────────
-; Uses vec internally: [0]=len, [1]=cap, [2]=data_ptr
+// ─── Stack ────────────────────────────────────────────────────────────────────
+// Uses vec internally: [0]=len, [1]=cap, [2]=data_ptr
 
 fn stack_new() -> &i64 {
     ret vec_new(16)
@@ -129,8 +129,8 @@ fn stack_peek(s: &i64) -> i64 {
 fn stack_len(s: &i64) -> i64 { ret s[0] }
 fn stack_empty(s: &i64) -> i64 { if s[0] == 0 { ret 1 } ret 0 }
 
-; ─── Priority Queue (min-heap) ───────────────────────────────────────────────
-; Uses vec internally. Heap property: parent <= children.
+// ─── Priority Queue (min-heap) ───────────────────────────────────────────────
+// Uses vec internally. Heap property: parent <= children.
 
 fn pq_new() -> &i64 {
     ret vec_new(16)
@@ -155,7 +155,7 @@ fn pq_sift_up(pq: &i64, idx: i64) {
             data[i] = tmp
             i = p
         } else {
-            i = 0  ; break
+            i = 0  // break
         }
     }
 }

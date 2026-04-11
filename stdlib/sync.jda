@@ -1,56 +1,56 @@
-; =============================================================================
-; jda::sync -- WaitGroup and Barrier Synchronization
-; =============================================================================
-; Synchronization primitives for coordinating spawned tasks.
-;
-; WaitGroup — wait for a group of tasks to complete:
-;   Memory layout (&i64):
-;     [0] = counter (number of outstanding tasks)
-;     [1] = futex word (for blocking wait)
-;
-;   wg_new()                -> &i64   create with counter=0
-;   wg_add(wg, n)                     add n to counter
-;   wg_done(wg)                       decrement counter (call from task)
-;   wg_count(wg)            -> i64    current counter value
-;   wg_wait(wg)                       block until counter reaches 0
-;   wg_reset(wg)                      reset counter to 0
-;
-; Barrier — synchronization point for N tasks:
-;   Memory layout (&i64):
-;     [0] = total (number of tasks)
-;     [1] = arrived (number that have reached barrier)
-;     [2] = generation (increments each time barrier trips)
-;     [3] = futex word
-;
-;   barrier_new(n)           -> &i64   create for n tasks
-;   barrier_wait(b)          -> i64    block until all N arrive; returns 1 for leader
-;   barrier_arrived(b)       -> i64    number that have arrived
-;   barrier_total(b)         -> i64    total expected
-;   barrier_reset(b, n)               reset for n tasks
-;
-; OnceFlag — execute initialization exactly once:
-;   Memory layout (&i64):
-;     [0] = done (0=not yet, 1=done)
-;
-;   once_new()               -> &i64   create flag
-;   once_do(f)               -> i64    returns 1 if caller should execute, 0 if already done
-;   once_is_done(f)          -> i64    1 if already executed
-;   once_reset(f)                      reset to not-done
-; =============================================================================
+// =============================================================================
+// jda::sync -- WaitGroup and Barrier Synchronization
+// =============================================================================
+// Synchronization primitives for coordinating spawned tasks.
 
-;; Internal: futex wait.
+// WaitGroup — wait for a group of tasks to complete:
+//   Memory layout (&i64):
+//     [0] = counter (number of outstanding tasks)
+//     [1] = futex word (for blocking wait)
+
+//   wg_new()                -> &i64   create with counter=0
+//   wg_add(wg, n)                     add n to counter
+//   wg_done(wg)                       decrement counter (call from task)
+//   wg_count(wg)            -> i64    current counter value
+//   wg_wait(wg)                       block until counter reaches 0
+//   wg_reset(wg)                      reset counter to 0
+
+// Barrier — synchronization point for N tasks:
+//   Memory layout (&i64):
+//     [0] = total (number of tasks)
+//     [1] = arrived (number that have reached barrier)
+//     [2] = generation (increments each time barrier trips)
+//     [3] = futex word
+
+//   barrier_new(n)           -> &i64   create for n tasks
+//   barrier_wait(b)          -> i64    block until all N arrive; returns 1 for leader
+//   barrier_arrived(b)       -> i64    number that have arrived
+//   barrier_total(b)         -> i64    total expected
+//   barrier_reset(b, n)               reset for n tasks
+
+// OnceFlag — execute initialization exactly once:
+//   Memory layout (&i64):
+//     [0] = done (0=not yet, 1=done)
+
+//   once_new()               -> &i64   create flag
+//   once_do(f)               -> i64    returns 1 if caller should execute, 0 if already done
+//   once_is_done(f)          -> i64    1 if already executed
+//   once_reset(f)                      reset to not-done
+// =============================================================================
+
+// Internal: futex wait.
 fn _sync_futex_wait(addr: &i64, expected: i64) -> i64 {
     ret syscall(202, addr, 0, expected)
 }
 
-;; Internal: futex wake all.
+// Internal: futex wake all.
 fn _sync_futex_wake_all(addr: &i64) -> i64 {
     ret syscall(202, addr, 1, 2147483647)
 }
 
-; --- WaitGroup ---
+// --- WaitGroup ---
 
-;; Create a new WaitGroup with counter=0.
+// Create a new WaitGroup with counter=0.
 fn wg_new() -> &i64 {
     let wg: &i64 = alloc_pages(1)
     wg[0] = 0
@@ -58,12 +58,12 @@ fn wg_new() -> &i64 {
     ret wg
 }
 
-;; Add n to the WaitGroup counter.
+// Add n to the WaitGroup counter.
 fn wg_add(wg: &i64, n: i64) {
     wg[0] = wg[0] + n
 }
 
-;; Decrement the counter. Wakes waiters when it reaches 0.
+// Decrement the counter. Wakes waiters when it reaches 0.
 fn wg_done(wg: &i64) {
     wg[0] = wg[0] - 1
     if wg[0] <= 0 {
@@ -72,12 +72,12 @@ fn wg_done(wg: &i64) {
     }
 }
 
-;; Get current counter value.
+// Get current counter value.
 fn wg_count(wg: &i64) -> i64 {
     ret wg[0]
 }
 
-;; Block until counter reaches 0.
+// Block until counter reaches 0.
 fn wg_wait(wg: &i64) {
     loop wg[0] > 0 {
         let seq = wg[1]
@@ -85,15 +85,15 @@ fn wg_wait(wg: &i64) {
     }
 }
 
-;; Reset counter to 0.
+// Reset counter to 0.
 fn wg_reset(wg: &i64) {
     wg[0] = 0
     wg[1] = 0
 }
 
-; --- Barrier ---
+// --- Barrier ---
 
-;; Create a barrier for n tasks.
+// Create a barrier for n tasks.
 fn barrier_new(n: i64) -> &i64 {
     let b: &i64 = alloc_pages(1)
     b[0] = n
@@ -103,19 +103,19 @@ fn barrier_new(n: i64) -> &i64 {
     ret b
 }
 
-;; Wait at barrier. Returns 1 for the last arrival (leader), 0 otherwise.
+// Wait at barrier. Returns 1 for the last arrival (leader), 0 otherwise.
 fn barrier_wait(b: &i64) -> i64 {
     let gen = b[2]
     b[1] = b[1] + 1
     if b[1] >= b[0] {
-        ; Last arrival — trip the barrier
+        // Last arrival — trip the barrier
         b[1] = 0
         b[2] = b[2] + 1
         b[3] = b[3] + 1
         _sync_futex_wake_all(b)
         ret 1
     }
-    ; Wait for generation to change
+    // Wait for generation to change
     loop b[2] == gen {
         let seq = b[3]
         _sync_futex_wait(b, seq)
@@ -123,17 +123,17 @@ fn barrier_wait(b: &i64) -> i64 {
     ret 0
 }
 
-;; Get number of tasks that have arrived.
+// Get number of tasks that have arrived.
 fn barrier_arrived(b: &i64) -> i64 {
     ret b[1]
 }
 
-;; Get total expected tasks.
+// Get total expected tasks.
 fn barrier_total(b: &i64) -> i64 {
     ret b[0]
 }
 
-;; Reset barrier for n tasks.
+// Reset barrier for n tasks.
 fn barrier_reset(b: &i64, n: i64) {
     b[0] = n
     b[1] = 0
@@ -141,16 +141,16 @@ fn barrier_reset(b: &i64, n: i64) {
     b[3] = 0
 }
 
-; --- OnceFlag ---
+// --- OnceFlag ---
 
-;; Create a new once flag.
+// Create a new once flag.
 fn once_new() -> &i64 {
     let f: &i64 = alloc_pages(1)
     f[0] = 0
     ret f
 }
 
-;; Try to claim the once. Returns 1 if caller should execute, 0 if already done.
+// Try to claim the once. Returns 1 if caller should execute, 0 if already done.
 fn once_do(f: &i64) -> i64 {
     if f[0] == 0 {
         f[0] = 1
@@ -159,12 +159,12 @@ fn once_do(f: &i64) -> i64 {
     ret 0
 }
 
-;; Check if already executed.
+// Check if already executed.
 fn once_is_done(f: &i64) -> i64 {
     ret f[0]
 }
 
-;; Reset to not-done.
+// Reset to not-done.
 fn once_reset(f: &i64) {
     f[0] = 0
 }

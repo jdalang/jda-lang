@@ -1,46 +1,46 @@
-; =============================================================================
-; jda::stacktrace -- Call Stack Trace on Crash
-; =============================================================================
-; Manual call-stack tracking for Jda. Since the compiler does not emit
-; debug info or frame pointers automatically, this module provides a
-; convention-based approach: functions push/pop their names on entry/exit,
-; and st_panic() prints the call stack before aborting.
-;
-; Usage:
-;   fn my_func() {
-;       st_enter("my_func")
-;       ; ... do work ...
-;       st_leave()
-;   }
-;
-;   ; On error:
-;   st_panic("something went wrong")
-;   ; Output:
-;   ;   panic: something went wrong
-;   ;   stack trace:
-;   ;     [0] my_func
-;   ;     [1] caller_func
-;   ;     [2] main
-;
-; Functions:
-;   st_init()                          initialize (call once)
-;   st_enter(name)                     push function name onto stack
-;   st_leave()                         pop top of stack
-;   st_depth()              -> i64     current stack depth
-;   st_panic(msg)                      print stack trace + abort
-;   st_print()                         print current stack trace
-;   st_frame(i)             -> &i8     get frame name at depth i
-;   st_clear()                         reset stack to empty
-; =============================================================================
+// =============================================================================
+// jda::stacktrace -- Call Stack Trace on Crash
+// =============================================================================
+// Manual call-stack tracking for Jda. Since the compiler does not emit
+// debug info or frame pointers automatically, this module provides a
+// convention-based approach: functions push/pop their names on entry/exit,
+// and st_panic() prints the call stack before aborting.
 
-; Max 128 frames deep
+// Usage:
+//   fn my_func() {
+//       st_enter("my_func")
+//       ; ... do work ...
+//       st_leave()
+//   }
+
+//   ; On error:
+//   st_panic("something went wrong")
+//   ; Output:
+//   ;   panic: something went wrong
+//   ;   stack trace:
+//   ;     [0] my_func
+//   ;     [1] caller_func
+//   ;     [2] main
+
+// Functions:
+//   st_init()                          initialize (call once)
+//   st_enter(name)                     push function name onto stack
+//   st_leave()                         pop top of stack
+//   st_depth()              -> i64     current stack depth
+//   st_panic(msg)                      print stack trace + abort
+//   st_print()                         print current stack trace
+//   st_frame(i)             -> &i8     get frame name at depth i
+//   st_clear()                         reset stack to empty
+// =============================================================================
+
+// Max 128 frames deep
 const _ST_MAX_FRAMES = 128
 
 let _st_frames: &i64 = 0
 let _st_depth: i64 = 0
 let _st_inited: i64 = 0
 
-;; Initialize the stack trace system. Call once at program start.
+// Initialize the stack trace system. Call once at program start.
 fn st_init() {
     if _st_inited == 1 { ret }
     _st_frames = alloc_pages(1)
@@ -48,26 +48,26 @@ fn st_init() {
     _st_inited = 1
 }
 
-;; Push a function name onto the call stack.
+// Push a function name onto the call stack.
 fn st_enter(name: &i8) {
     if _st_depth >= 128 { ret }
     _st_frames[_st_depth] = name
     _st_depth = _st_depth + 1
 }
 
-;; Pop the top frame from the call stack.
+// Pop the top frame from the call stack.
 fn st_leave() {
     if _st_depth > 0 {
         _st_depth = _st_depth - 1
     }
 }
 
-;; Get the current stack depth.
+// Get the current stack depth.
 fn st_depth() -> i64 {
     ret _st_depth
 }
 
-;; Get the frame name at depth i (0 = most recent).
+// Get the frame name at depth i (0 = most recent).
 fn st_frame(i: i64) -> &i8 {
     if i >= _st_depth { ret "<invalid>" }
     let idx = _st_depth - 1
@@ -75,12 +75,12 @@ fn st_frame(i: i64) -> &i8 {
     ret _st_frames[actual]
 }
 
-;; Internal: write a string to stderr (fd 2).
+// Internal: write a string to stderr (fd 2).
 fn _st_write_stderr(s: &i8, len: i64) {
     syscall(1, 2, s, len)
 }
 
-;; Internal: compute c-string length (max 256).
+// Internal: compute c-string length (max 256).
 fn _st_cstr_len(s: &i8) -> i64 {
     let n = 0
     loop n < 256 {
@@ -90,15 +90,15 @@ fn _st_cstr_len(s: &i8) -> i64 {
     ret 256
 }
 
-;; Internal: write a c-string to stderr.
+// Internal: write a c-string to stderr.
 fn _st_print_str(s: &i8) {
     let n = _st_cstr_len(s)
     _st_write_stderr(s, n)
 }
 
-;; Internal: write an integer to stderr.
+// Internal: write an integer to stderr.
 fn _st_print_int(val: i64) {
-    ; Simple: build digits in buffer
+    // Simple: build digits in buffer
     let buf: &i8 = alloc_pages(1)
     let v = val
     if v == 0 {
@@ -114,7 +114,7 @@ fn _st_print_int(val: i64) {
         v = v / 10
     }
     let len = 20 - pos
-    ; write from buf+pos
+    // write from buf+pos
     let i = 0
     loop i < len {
         let idx = pos + i
@@ -126,7 +126,7 @@ fn _st_print_int(val: i64) {
     }
 }
 
-;; Print the current stack trace to stderr.
+// Print the current stack trace to stderr.
 fn st_print() {
     _st_print_str("stack trace:\n")
     let i = 0
@@ -143,7 +143,7 @@ fn st_print() {
     }
 }
 
-;; Print stack trace and abort with message.
+// Print stack trace and abort with message.
 fn st_panic(msg: &i8) {
     _st_print_str("panic: ")
     _st_print_str(msg)
@@ -152,7 +152,7 @@ fn st_panic(msg: &i8) {
     syscall(60, 1, 0, 0)
 }
 
-;; Reset the stack to empty.
+// Reset the stack to empty.
 fn st_clear() {
     _st_depth = 0
 }

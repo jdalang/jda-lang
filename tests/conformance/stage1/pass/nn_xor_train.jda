@@ -1,4 +1,4 @@
-; XOR Training: 2-layer MLP (2→4→1) learns XOR in pure Jda
+// XOR Training: 2-layer MLP (2→4→1) learns XOR in pure Jda
 
 fn linear_forward(x: i64, w: i64, bias: i64, out: i64) -> i64 {
     let batch = tensor_shape(x, 0)
@@ -28,7 +28,7 @@ fn linear_forward(x: i64, w: i64, bias: i64, out: i64) -> i64 {
     ret 0
 }
 
-; Split backward into 3 functions to stay ≤6 args each
+// Split backward into 3 functions to stay ≤6 args each
 fn backward_weights(x: i64, w: i64, grad_out: i64, grad_w: i64) -> i64 {
     let batch = tensor_shape(x, 0)
     let in_f = tensor_shape(x, 1)
@@ -186,7 +186,7 @@ fn main() -> i64 {
     let zero_f = f64_from_int(0)
     let one_f = f64_from_int(1)
 
-    ; XOR inputs [4,2]
+    // XOR inputs [4,2]
     let x = tensor_new2(4, 2)
     tensor_set(x, 0, zero_f)
     tensor_set(x, 1, zero_f)
@@ -197,26 +197,26 @@ fn main() -> i64 {
     tensor_set(x, 6, one_f)
     tensor_set(x, 7, one_f)
 
-    ; XOR targets [4,1]
+    // XOR targets [4,1]
     let y = tensor_new2(4, 1)
     tensor_set(y, 0, zero_f)
     tensor_set(y, 1, one_f)
     tensor_set(y, 2, one_f)
     tensor_set(y, 3, zero_f)
 
-    ; Layer 1: W1[4,2], b1[4]
+    // Layer 1: W1[4,2], b1[4]
     let w1 = tensor_new2(4, 2)
     let b1 = tensor_new1(4)
     let gw1 = tensor_new2(4, 2)
     let gb1 = tensor_new1(4)
 
-    ; Layer 2: W2[1,4], b2[1]
+    // Layer 2: W2[1,4], b2[1]
     let w2 = tensor_new2(1, 4)
     let b2 = tensor_new1(1)
     let gw2 = tensor_new2(1, 4)
     let gb2 = tensor_new1(1)
 
-    ; Init W1 for XOR-friendly features
+    // Init W1 for XOR-friendly features
     let neg1 = f64_neg(one_f)
     let two_f = f64_from_int(2)
     let v05 = f64_div(one_f, two_f)
@@ -228,7 +228,7 @@ fn main() -> i64 {
     tensor_set(w1, 5, one_f)
     tensor_set(w1, 6, v05)
     tensor_set(w1, 7, v05)
-    ; b1 = [-1.5, 0, 0, 0]
+    // b1 = [-1.5, 0, 0, 0]
     let three_f = f64_from_int(3)
     let vm15 = f64_div(three_f, two_f)
     let vm15n = f64_neg(vm15)
@@ -236,7 +236,7 @@ fn main() -> i64 {
     tensor_set(b1, 1, zero_f)
     tensor_set(b1, 2, zero_f)
     tensor_set(b1, 3, zero_f)
-    ; W2 = [-2, 1, 1, 0], b2 = [0]
+    // W2 = [-2, 1, 1, 0], b2 = [0]
     let neg2 = f64_neg(two_f)
     tensor_set(w2, 0, neg2)
     tensor_set(w2, 1, one_f)
@@ -244,7 +244,7 @@ fn main() -> i64 {
     tensor_set(w2, 3, zero_f)
     tensor_set(b2, 0, zero_f)
 
-    ; Buffers
+    // Buffers
     let h1 = tensor_new2(4, 4)
     let h1r = tensor_new2(4, 4)
     let out = tensor_new2(4, 1)
@@ -253,19 +253,19 @@ fn main() -> i64 {
     let g_h1 = tensor_new2(4, 4)
     let g_x = tensor_new2(4, 2)
 
-    ; Learning rate
+    // Learning rate
     let ten_f = f64_from_int(10)
     let lr = f64_div(one_f, ten_f)
 
-    ; Training loop — 2000 epochs
+    // Training loop — 2000 epochs
     let epoch = 0
     loop epoch < 2000 {
-        ; Forward
+        // Forward
         linear_forward(x, w1, b1, h1)
         relu_forward(h1, h1r)
         linear_forward(h1r, w2, b2, out)
 
-        ; Backward
+        // Backward
         mse_backward(out, y, g_out)
         zero_tensor(gw2)
         zero_tensor(gb2)
@@ -281,7 +281,7 @@ fn main() -> i64 {
         backward_bias(g_h1, gb1, batch, hidden)
         backward_input(w1, g_h1, g_x)
 
-        ; SGD
+        // SGD
         sgd_step(w1, gw1, lr)
         sgd_step(b1, gb1, lr)
         sgd_step(w2, gw2, lr)
@@ -290,12 +290,12 @@ fn main() -> i64 {
         epoch = epoch + 1
     }
 
-    ; Final forward pass
+    // Final forward pass
     linear_forward(x, w1, b1, h1)
     relu_forward(h1, h1r)
     linear_forward(h1r, w2, b2, out)
 
-    ; Check XOR: [0,0]→<0.5, [0,1]→>0.5, [1,0]→>0.5, [1,1]→<0.5
+    // Check XOR: [0,0]→<0.5, [0,1]→>0.5, [1,0]→>0.5, [1,1]→<0.5
     let half = f64_div(one_f, two_f)
     let p0 = tensor_get(out, 0)
     let p1 = tensor_get(out, 1)

@@ -1,26 +1,26 @@
-; =============================================================================
-; jda::sched -- Simple Task Scheduler (Min-Heap)
-; =============================================================================
-; Priority queue based task scheduler. Tasks are ordered by time using an
-; array-based min-heap. Each task has a time and an id.
-;
-; Memory layout per SchedHandle (&i64):
-;   [0] count       (number of tasks)
-;   [1] times       (&i64 — task times, heap-ordered)
-;   [2] ids         (&i64 — task ids, parallel to times)
-;
-; Functions:
-;   sched_new()              -> &i64  create scheduler
-;   sched_enter(h, time, id)          add task
-;   sched_cancel(h, id)     -> i64   cancel task, 1 if found
-;   sched_next(h)           -> i64   id of next task (-1 if empty)
-;   sched_next_time(h)      -> i64   time of next task
-;   sched_run(h, now)       -> i64   run next if ready, return id (-1 if none)
-;   sched_empty(h)          -> i64   1 if empty
-;   sched_count(h)          -> i64   number of tasks
-; =============================================================================
+// =============================================================================
+// jda::sched -- Simple Task Scheduler (Min-Heap)
+// =============================================================================
+// Priority queue based task scheduler. Tasks are ordered by time using an
+// array-based min-heap. Each task has a time and an id.
 
-;; Create a new scheduler.
+// Memory layout per SchedHandle (&i64):
+//   [0] count       (number of tasks)
+//   [1] times       (&i64 — task times, heap-ordered)
+//   [2] ids         (&i64 — task ids, parallel to times)
+
+// Functions:
+//   sched_new()              -> &i64  create scheduler
+//   sched_enter(h, time, id)          add task
+//   sched_cancel(h, id)     -> i64   cancel task, 1 if found
+//   sched_next(h)           -> i64   id of next task (-1 if empty)
+//   sched_next_time(h)      -> i64   time of next task
+//   sched_run(h, now)       -> i64   run next if ready, return id (-1 if none)
+//   sched_empty(h)          -> i64   1 if empty
+//   sched_count(h)          -> i64   number of tasks
+// =============================================================================
+
+// Create a new scheduler.
 fn sched_new() -> &i64 {
     let h: &i64 = alloc_pages(1)
     let times: &i64 = alloc_pages(1)
@@ -31,7 +31,7 @@ fn sched_new() -> &i64 {
     ret h
 }
 
-;; Internal: swap two entries in the heap.
+// Internal: swap two entries in the heap.
 fn _sched_swap(times: &i64, ids: &i64, a: i64, b: i64) -> i64 {
     let tt = times[a]
     let ti = ids[a]
@@ -42,7 +42,7 @@ fn _sched_swap(times: &i64, ids: &i64, a: i64, b: i64) -> i64 {
     ret 0
 }
 
-;; Internal: sift up from index i.
+// Internal: sift up from index i.
 fn _sched_sift_up(times: &i64, ids: &i64, i: i64) -> i64 {
     let cur = i
     let running = 1
@@ -62,7 +62,7 @@ fn _sched_sift_up(times: &i64, ids: &i64, i: i64) -> i64 {
     ret 0
 }
 
-;; Internal: sift down from index i, with count elements.
+// Internal: sift down from index i, with count elements.
 fn _sched_sift_down(times: &i64, ids: &i64, i: i64, count: i64) -> i64 {
     let cur = i
     let running = 1
@@ -86,7 +86,7 @@ fn _sched_sift_down(times: &i64, ids: &i64, i: i64, count: i64) -> i64 {
     ret 0
 }
 
-;; Add a task to the scheduler.
+// Add a task to the scheduler.
 fn sched_enter(h: &i64, time: i64, id: i64) -> i64 {
     let count = h[0]
     let times: &i64 = h[1]
@@ -100,7 +100,7 @@ fn sched_enter(h: &i64, time: i64, id: i64) -> i64 {
     ret 0
 }
 
-;; Cancel a task by id. Returns 1 if found and removed.
+// Cancel a task by id. Returns 1 if found and removed.
 fn sched_cancel(h: &i64, id: i64) -> i64 {
     let count = h[0]
     let times: &i64 = h[1]
@@ -108,7 +108,7 @@ fn sched_cancel(h: &i64, id: i64) -> i64 {
     let i = 0
     loop i < count {
         if ids[i] == id {
-            ; Move last element to this position
+            // Move last element to this position
             let last = count - 1
             times[i] = times[last]
             ids[i] = ids[last]
@@ -124,7 +124,7 @@ fn sched_cancel(h: &i64, id: i64) -> i64 {
     ret 0
 }
 
-;; Return id of the next (earliest) task, or -1 if empty.
+// Return id of the next (earliest) task, or -1 if empty.
 fn sched_next(h: &i64) -> i64 {
     let count = h[0]
     if count == 0 { ret 0 - 1 }
@@ -132,7 +132,7 @@ fn sched_next(h: &i64) -> i64 {
     ret ids[0]
 }
 
-;; Return time of the next (earliest) task.
+// Return time of the next (earliest) task.
 fn sched_next_time(h: &i64) -> i64 {
     let count = h[0]
     if count == 0 { ret 0 - 1 }
@@ -140,7 +140,7 @@ fn sched_next_time(h: &i64) -> i64 {
     ret times[0]
 }
 
-;; Internal: remove the root element from the heap.
+// Internal: remove the root element from the heap.
 fn _sched_pop(h: &i64) -> i64 {
     let count = h[0]
     let times: &i64 = h[1]
@@ -156,7 +156,7 @@ fn _sched_pop(h: &i64) -> i64 {
     ret id
 }
 
-;; Run the next task if its time <= now. Returns task id or -1.
+// Run the next task if its time <= now. Returns task id or -1.
 fn sched_run(h: &i64, now: i64) -> i64 {
     let count = h[0]
     if count == 0 { ret 0 - 1 }
@@ -166,13 +166,13 @@ fn sched_run(h: &i64, now: i64) -> i64 {
     ret id
 }
 
-;; Return 1 if the scheduler has no tasks.
+// Return 1 if the scheduler has no tasks.
 fn sched_empty(h: &i64) -> i64 {
     if h[0] == 0 { ret 1 }
     ret 0
 }
 
-;; Return the number of tasks.
+// Return the number of tasks.
 fn sched_count(h: &i64) -> i64 {
     ret h[0]
 }

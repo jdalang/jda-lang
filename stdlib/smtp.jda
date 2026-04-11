@@ -1,21 +1,21 @@
-; =============================================================================
-; jda::smtp -- SMTP Protocol Helpers
-; =============================================================================
-; Format SMTP commands and parse reply codes. No actual network I/O.
-;
-; Functions:
-;   smtp_format_ehlo(domain, dlen, out)       -> i64  "EHLO domain\r\n"
-;   smtp_format_mail_from(addr, alen, out)    -> i64  "MAIL FROM:<addr>\r\n"
-;   smtp_format_rcpt_to(addr, alen, out)      -> i64  "RCPT TO:<addr>\r\n"
-;   smtp_format_data(out)                     -> i64  "DATA\r\n"
-;   smtp_parse_reply(buf, len)                -> i64  status code (e.g. 250)
-;   smtp_reply_is_ok(code)                    -> i64  1 if 2xx
-; =============================================================================
+// =============================================================================
+// jda::smtp -- SMTP Protocol Helpers
+// =============================================================================
+// Format SMTP commands and parse reply codes. No actual network I/O.
 
-;; Internal byte reader.
+// Functions:
+//   smtp_format_ehlo(domain, dlen, out)       -> i64  "EHLO domain\r\n"
+//   smtp_format_mail_from(addr, alen, out)    -> i64  "MAIL FROM:<addr>\r\n"
+//   smtp_format_rcpt_to(addr, alen, out)      -> i64  "RCPT TO:<addr>\r\n"
+//   smtp_format_data(out)                     -> i64  "DATA\r\n"
+//   smtp_parse_reply(buf, len)                -> i64  status code (e.g. 250)
+//   smtp_reply_is_ok(code)                    -> i64  1 if 2xx
+// =============================================================================
+
+// Internal byte reader.
 fn _smtp_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: copy bytes from src to dst+doff.
+// Internal: copy bytes from src to dst+doff.
 fn _smtp_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) -> i64 {
     let i = 0
     loop i < n {
@@ -26,81 +26,81 @@ fn _smtp_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) -> i64 {
     ret n
 }
 
-;; Internal: write CRLF at position.
+// Internal: write CRLF at position.
 fn _smtp_crlf(out: &i8, pos: i64) -> i64 {
-    poke_byte(out, pos, 13)     ; \r
-    poke_byte(out, pos + 1, 10) ; \n
+    poke_byte(out, pos, 13)     // \r
+    poke_byte(out, pos + 1, 10) // \n
     ret pos + 2
 }
 
-;; Format EHLO command: "EHLO domain\r\n"
+// Format EHLO command: "EHLO domain\r\n"
 fn smtp_format_ehlo(domain: &i8, dlen: i64, out: &i8) -> i64 {
-    ; "EHLO " = 69 72 76 79 32
-    poke_byte(out, 0, 69)   ; E
-    poke_byte(out, 1, 72)   ; H
-    poke_byte(out, 2, 76)   ; L
-    poke_byte(out, 3, 79)   ; O
-    poke_byte(out, 4, 32)   ; space
+    // "EHLO " = 69 72 76 79 32
+    poke_byte(out, 0, 69)   // E
+    poke_byte(out, 1, 72)   // H
+    poke_byte(out, 2, 76)   // L
+    poke_byte(out, 3, 79)   // O
+    poke_byte(out, 4, 32)   // space
     _smtp_copy(out, 5, domain, 0, dlen)
     let pos = 5 + dlen
     pos = _smtp_crlf(out, pos)
     ret pos
 }
 
-;; Format MAIL FROM command: "MAIL FROM:<addr>\r\n"
+// Format MAIL FROM command: "MAIL FROM:<addr>\r\n"
 fn smtp_format_mail_from(addr: &i8, alen: i64, out: &i8) -> i64 {
-    ; "MAIL FROM:<" = 77 65 73 76 32 70 82 79 77 58 60
-    poke_byte(out, 0, 77)   ; M
-    poke_byte(out, 1, 65)   ; A
-    poke_byte(out, 2, 73)   ; I
-    poke_byte(out, 3, 76)   ; L
-    poke_byte(out, 4, 32)   ; space
-    poke_byte(out, 5, 70)   ; F
-    poke_byte(out, 6, 82)   ; R
-    poke_byte(out, 7, 79)   ; O
-    poke_byte(out, 8, 77)   ; M
-    poke_byte(out, 9, 58)   ; :
-    poke_byte(out, 10, 60)  ; <
+    // "MAIL FROM:<" = 77 65 73 76 32 70 82 79 77 58 60
+    poke_byte(out, 0, 77)   // M
+    poke_byte(out, 1, 65)   // A
+    poke_byte(out, 2, 73)   // I
+    poke_byte(out, 3, 76)   // L
+    poke_byte(out, 4, 32)   // space
+    poke_byte(out, 5, 70)   // F
+    poke_byte(out, 6, 82)   // R
+    poke_byte(out, 7, 79)   // O
+    poke_byte(out, 8, 77)   // M
+    poke_byte(out, 9, 58)   // :
+    poke_byte(out, 10, 60)  // <
     _smtp_copy(out, 11, addr, 0, alen)
     let pos = 11 + alen
-    poke_byte(out, pos, 62) ; >
+    poke_byte(out, pos, 62) // >
     pos = pos + 1
     pos = _smtp_crlf(out, pos)
     ret pos
 }
 
-;; Format RCPT TO command: "RCPT TO:<addr>\r\n"
+// Format RCPT TO command: "RCPT TO:<addr>\r\n"
 fn smtp_format_rcpt_to(addr: &i8, alen: i64, out: &i8) -> i64 {
-    ; "RCPT TO:<" = 82 67 80 84 32 84 79 58 60
-    poke_byte(out, 0, 82)   ; R
-    poke_byte(out, 1, 67)   ; C
-    poke_byte(out, 2, 80)   ; P
-    poke_byte(out, 3, 84)   ; T
-    poke_byte(out, 4, 32)   ; space
-    poke_byte(out, 5, 84)   ; T
-    poke_byte(out, 6, 79)   ; O
-    poke_byte(out, 7, 58)   ; :
-    poke_byte(out, 8, 60)   ; <
+    // "RCPT TO:<" = 82 67 80 84 32 84 79 58 60
+    poke_byte(out, 0, 82)   // R
+    poke_byte(out, 1, 67)   // C
+    poke_byte(out, 2, 80)   // P
+    poke_byte(out, 3, 84)   // T
+    poke_byte(out, 4, 32)   // space
+    poke_byte(out, 5, 84)   // T
+    poke_byte(out, 6, 79)   // O
+    poke_byte(out, 7, 58)   // :
+    poke_byte(out, 8, 60)   // <
     _smtp_copy(out, 9, addr, 0, alen)
     let pos = 9 + alen
-    poke_byte(out, pos, 62) ; >
+    poke_byte(out, pos, 62) // >
     pos = pos + 1
     pos = _smtp_crlf(out, pos)
     ret pos
 }
 
-;; Format DATA command: "DATA\r\n"
+// Format DATA command: "DATA\r\n"
 fn smtp_format_data(out: &i8) -> i64 {
-    poke_byte(out, 0, 68)  ; D
-    poke_byte(out, 1, 65)  ; A
-    poke_byte(out, 2, 84)  ; T
-    poke_byte(out, 3, 65)  ; A
+    poke_byte(out, 0, 68)  // D
+    poke_byte(out, 1, 65)  // A
+    poke_byte(out, 2, 84)  // T
+    poke_byte(out, 3, 65)  // A
     let pos = _smtp_crlf(out, 4)
     ret pos
 }
 
-;; Parse SMTP reply code from buffer. Returns integer code (e.g. 250).
-;; Expects first 3 bytes to be ASCII digits.
+// Parse SMTP reply code from buffer. Returns integer code (e.g. 250).
+// Expects first 3 bytes to be ASCII digits.
 fn smtp_parse_reply(buf: &i8, len: i64) -> i64 {
     if len < 3 { ret 0 - 1 }
     let d0 = _smtp_byte_at(buf, 0) - 48
@@ -116,7 +116,7 @@ fn smtp_parse_reply(buf: &i8, len: i64) -> i64 {
     ret code
 }
 
-;; Check if reply code is success (2xx).
+// Check if reply code is success (2xx).
 fn smtp_reply_is_ok(code: i64) -> i64 {
     if code >= 200 and code <= 299 { ret 1 }
     ret 0

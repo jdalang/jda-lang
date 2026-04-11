@@ -1,58 +1,58 @@
-; =============================================================================
-; jda::string -- String Type
-; =============================================================================
-; Length-prefixed strings built on &i8 byte buffers. Immutable-style API
-; (operations return new strings).
-;
-; Memory layout per string (&i64):
-;   [0] length     (byte count)
-;   [1] capacity   (allocated bytes)
-;   [2] data_ptr   (&i8 — the byte buffer)
-;
-; Functions:
-;   str_new()                  -> &i64   empty string
-;   str_from(src, len)         -> &i64   copy from literal
-;   str_from_cstr(src)         -> &i64   from null-terminated string
-;   str_from_i64(n)            -> &i64   integer to string
-;   str_clone(s)               -> &i64   deep copy
-;   str_len(s)                 -> i64    byte length
-;   str_byte(s, idx)           -> i64    byte at index
-;   str_is_empty(s)            -> i64    1 if length is 0
-;   str_eq(a, b)               -> i64    content equality (1/0)
-;   str_cmp(a, b)              -> i64    lexicographic -1/0/1
-;   str_concat(a, b)           -> &i64   concatenation
-;   str_append(s, src, len)    -> &i64   append literal bytes
-;   str_slice(s, start, end)   -> &i64   substring [start, end)
-;   str_contains(s, sub)       -> i64    1 if sub found
-;   str_index_of(s, sub)       -> i64    position or -1
-;   str_starts_with(s, pfx)    -> i64    1/0
-;   str_ends_with(s, sfx)      -> i64    1/0
-;   str_count(s, sub)          -> i64    non-overlapping count
-;   str_replace(s, old, new)   -> &i64   replace all occurrences
-;   str_trim(s)                -> &i64   trim whitespace both ends
-;   str_trim_left(s)           -> &i64   trim leading whitespace
-;   str_trim_right(s)          -> &i64   trim trailing whitespace
-;   str_repeat(s, n)           -> &i64   repeat n times
-;   str_reverse(s)             -> &i64   reverse bytes
-;   str_insert(s, pos, ins)    -> &i64   insert at position
-;   str_remove(s, start, end)  -> &i64   remove range [start, end)
-;   str_pad_left(s, w, ch)     -> &i64   left-pad to width
-;   str_pad_right(s, w, ch)    -> &i64   right-pad to width
-;   str_split(s, delim, buf, cnt)        split by char delimiter
-;   str_join(parts, n, sep)    -> &i64   join array with separator
-;   str_to_upper(s)            -> &i64   ASCII uppercase copy
-;   str_to_lower(s)            -> &i64   ASCII lowercase copy
-;   str_print(s)                         write to stdout
-;   str_println(s)                       write to stdout + newline
-; =============================================================================
+// =============================================================================
+// jda::string -- String Type
+// =============================================================================
+// Length-prefixed strings built on &i8 byte buffers. Immutable-style API
+// (operations return new strings).
 
-; Globals for byte-level access (compiler needs &i8 typed globals for
-; correct byte-sized loads — local &i8 vars from &i64 header loads
-; don't properly re-type).
+// Memory layout per string (&i64):
+//   [0] length     (byte count)
+//   [1] capacity   (allocated bytes)
+//   [2] data_ptr   (&i8 — the byte buffer)
+
+// Functions:
+//   str_new()                  -> &i64   empty string
+//   str_from(src, len)         -> &i64   copy from literal
+//   str_from_cstr(src)         -> &i64   from null-terminated string
+//   str_from_i64(n)            -> &i64   integer to string
+//   str_clone(s)               -> &i64   deep copy
+//   str_len(s)                 -> i64    byte length
+//   str_byte(s, idx)           -> i64    byte at index
+//   str_is_empty(s)            -> i64    1 if length is 0
+//   str_eq(a, b)               -> i64    content equality (1/0)
+//   str_cmp(a, b)              -> i64    lexicographic -1/0/1
+//   str_concat(a, b)           -> &i64   concatenation
+//   str_append(s, src, len)    -> &i64   append literal bytes
+//   str_slice(s, start, end)   -> &i64   substring [start, end)
+//   str_contains(s, sub)       -> i64    1 if sub found
+//   str_index_of(s, sub)       -> i64    position or -1
+//   str_starts_with(s, pfx)    -> i64    1/0
+//   str_ends_with(s, sfx)      -> i64    1/0
+//   str_count(s, sub)          -> i64    non-overlapping count
+//   str_replace(s, old, new)   -> &i64   replace all occurrences
+//   str_trim(s)                -> &i64   trim whitespace both ends
+//   str_trim_left(s)           -> &i64   trim leading whitespace
+//   str_trim_right(s)          -> &i64   trim trailing whitespace
+//   str_repeat(s, n)           -> &i64   repeat n times
+//   str_reverse(s)             -> &i64   reverse bytes
+//   str_insert(s, pos, ins)    -> &i64   insert at position
+//   str_remove(s, start, end)  -> &i64   remove range [start, end)
+//   str_pad_left(s, w, ch)     -> &i64   left-pad to width
+//   str_pad_right(s, w, ch)    -> &i64   right-pad to width
+//   str_split(s, delim, buf, cnt)        split by char delimiter
+//   str_join(parts, n, sep)    -> &i64   join array with separator
+//   str_to_upper(s)            -> &i64   ASCII uppercase copy
+//   str_to_lower(s)            -> &i64   ASCII lowercase copy
+//   str_print(s)                         write to stdout
+//   str_println(s)                       write to stdout + newline
+// =============================================================================
+
+// Globals for byte-level access (compiler needs &i8 typed globals for
+// correct byte-sized loads — local &i8 vars from &i64 header loads
+// don't properly re-type).
 let g_str_a: &i8 = 0
 let g_str_b: &i8 = 0
 
-;; Internal: allocate a string with given capacity.
+// Internal: allocate a string with given capacity.
 fn str_alloc(cap: i64) -> &i64 {
     let c = cap
     if c < 16 { c = 16 }
@@ -69,7 +69,7 @@ fn str_alloc(cap: i64) -> &i64 {
     ret hdr
 }
 
-;; Internal: copy n bytes using globals.
+// Internal: copy n bytes using globals.
 fn str_copy(n: i64) {
     let i = 0
     loop i < n {
@@ -79,7 +79,7 @@ fn str_copy(n: i64) {
     }
 }
 
-;; Internal: copy n bytes from g_str_a at off_a to g_str_b at off_b.
+// Internal: copy n bytes from g_str_a at off_a to g_str_b at off_b.
 fn str_copy_at(off_b: i64, off_a: i64, n: i64) {
     let i = 0
     loop i < n {
@@ -89,12 +89,12 @@ fn str_copy_at(off_b: i64, off_a: i64, n: i64) {
     }
 }
 
-;; Create an empty string.
+// Create an empty string.
 fn str_new() -> &i64 {
     ret str_alloc(16)
 }
 
-;; Create a string by copying bytes from a literal.
+// Create a string by copying bytes from a literal.
 fn str_from(src: &i8, len: i64) -> &i64 {
     let s = str_alloc(len)
     g_str_a = src
@@ -104,7 +104,7 @@ fn str_from(src: &i8, len: i64) -> &i64 {
     ret s
 }
 
-;; Deep copy a string.
+// Deep copy a string.
 fn str_clone(s: &i64) -> &i64 {
     let len = s[0]
     let c = str_alloc(len)
@@ -115,18 +115,18 @@ fn str_clone(s: &i64) -> &i64 {
     ret c
 }
 
-;; Get byte length.
+// Get byte length.
 fn str_len(s: &i64) -> i64 {
     ret s[0]
 }
 
-;; Get byte at index.
+// Get byte at index.
 fn str_byte(s: &i64, idx: i64) -> i64 {
     g_str_a = s[2]
     ret g_str_a[idx]
 }
 
-;; Content equality.
+// Content equality.
 fn str_eq(a: &i64, b: &i64) -> i64 {
     let alen = a[0]
     let blen = b[0]
@@ -141,17 +141,17 @@ fn str_eq(a: &i64, b: &i64) -> i64 {
     ret 1
 }
 
-;; Concatenate two strings.
+// Concatenate two strings.
 fn str_concat(a: &i64, b: &i64) -> &i64 {
     let alen = a[0]
     let blen = b[0]
     let total = alen + blen
     let s = str_alloc(total)
-    ; Copy a's bytes
+    // Copy a's bytes
     g_str_a = a[2]
     g_str_b = s[2]
     str_copy(alen)
-    ; Copy b's bytes after a
+    // Copy b's bytes after a
     g_str_a = b[2]
     g_str_b = s[2]
     str_copy_at(alen, 0, blen)
@@ -159,16 +159,16 @@ fn str_concat(a: &i64, b: &i64) -> &i64 {
     ret s
 }
 
-;; Append literal bytes to a string.
+// Append literal bytes to a string.
 fn str_append(s: &i64, src: &i8, len: i64) -> &i64 {
     let slen = s[0]
     let total = slen + len
     let r = str_alloc(total)
-    ; Copy s's bytes
+    // Copy s's bytes
     g_str_a = s[2]
     g_str_b = r[2]
     str_copy(slen)
-    ; Copy literal bytes after
+    // Copy literal bytes after
     g_str_a = src
     g_str_b = r[2]
     str_copy_at(slen, 0, len)
@@ -176,7 +176,7 @@ fn str_append(s: &i64, src: &i8, len: i64) -> &i64 {
     ret r
 }
 
-;; Substring [start, end). Returns new string.
+// Substring [start, end). Returns new string.
 fn str_slice(s: &i64, start: i64, end: i64) -> &i64 {
     let slen = s[0]
     let st = start
@@ -195,7 +195,7 @@ fn str_slice(s: &i64, start: i64, end: i64) -> &i64 {
     ret r
 }
 
-;; Internal: check if sub matches at position pos in s.
+// Internal: check if sub matches at position pos in s.
 fn str_match_at(s: &i64, pos: i64, sub: &i64) -> i64 {
     let slen = s[0]
     let sublen = sub[0]
@@ -211,7 +211,7 @@ fn str_match_at(s: &i64, pos: i64, sub: &i64) -> i64 {
     ret 1
 }
 
-;; Find first occurrence of sub in s. Returns position or -1.
+// Find first occurrence of sub in s. Returns position or -1.
 fn str_index_of(s: &i64, sub: &i64) -> i64 {
     let slen = s[0]
     let sublen = sub[0]
@@ -226,7 +226,7 @@ fn str_index_of(s: &i64, sub: &i64) -> i64 {
     ret 0 - 1
 }
 
-;; Check if s contains sub.
+// Check if s contains sub.
 fn str_contains(s: &i64, sub: &i64) -> i64 {
     let pos = str_index_of(s, sub)
     let not_found = 0 - 1
@@ -234,12 +234,12 @@ fn str_contains(s: &i64, sub: &i64) -> i64 {
     ret 0
 }
 
-;; Check if s starts with prefix.
+// Check if s starts with prefix.
 fn str_starts_with(s: &i64, pfx: &i64) -> i64 {
     ret str_match_at(s, 0, pfx)
 }
 
-;; Check if s ends with suffix.
+// Check if s ends with suffix.
 fn str_ends_with(s: &i64, sfx: &i64) -> i64 {
     let slen = s[0]
     let sfxlen = sfx[0]
@@ -248,7 +248,7 @@ fn str_ends_with(s: &i64, sfx: &i64) -> i64 {
     ret str_match_at(s, pos, sfx)
 }
 
-;; Count non-overlapping occurrences of sub in s.
+// Count non-overlapping occurrences of sub in s.
 fn str_count(s: &i64, sub: &i64) -> i64 {
     let slen = s[0]
     let sublen = sub[0]
@@ -270,7 +270,7 @@ fn str_count(s: &i64, sub: &i64) -> i64 {
     ret count
 }
 
-;; ASCII uppercase copy.
+// ASCII uppercase copy.
 fn str_to_upper(s: &i64) -> &i64 {
     let len = s[0]
     let r = str_alloc(len)
@@ -292,7 +292,7 @@ fn str_to_upper(s: &i64) -> &i64 {
     ret r
 }
 
-;; ASCII lowercase copy.
+// ASCII lowercase copy.
 fn str_to_lower(s: &i64) -> &i64 {
     let len = s[0]
     let r = str_alloc(len)
@@ -314,20 +314,20 @@ fn str_to_lower(s: &i64) -> &i64 {
     ret r
 }
 
-;; Write string to stdout.
+// Write string to stdout.
 fn str_print(s: &i64) {
     let len = s[0]
     g_str_a = s[2]
     syscall(1, 1, g_str_a, len)
 }
 
-;; Write string to stdout followed by newline.
+// Write string to stdout followed by newline.
 fn str_println(s: &i64) {
     str_print(s)
     print("\n")
 }
 
-;; Create string from null-terminated C string (no manual length needed).
+// Create string from null-terminated C string (no manual length needed).
 fn str_from_cstr(src: &i8) -> &i64 {
     let len = 0
     g_str_a = src
@@ -337,13 +337,13 @@ fn str_from_cstr(src: &i8) -> &i64 {
     ret str_from(src, len)
 }
 
-;; Check if string is empty.
+// Check if string is empty.
 fn str_is_empty(s: &i64) -> i64 {
     if s[0] == 0 { ret 1 }
     ret 0
 }
 
-;; Lexicographic comparison. Returns -1, 0, or 1.
+// Lexicographic comparison. Returns -1, 0, or 1.
 fn str_cmp(a: &i64, b: &i64) -> i64 {
     let alen = a[0]
     let blen = b[0]
@@ -364,7 +364,7 @@ fn str_cmp(a: &i64, b: &i64) -> i64 {
     ret 0
 }
 
-;; Trim leading and trailing ASCII whitespace.
+// Trim leading and trailing ASCII whitespace.
 fn str_trim(s: &i64) -> &i64 {
     let len = s[0]
     if len == 0 { ret str_new() }
@@ -378,7 +378,7 @@ fn str_trim(s: &i64) -> &i64 {
     ret str_new()
 }
 
-;; Internal helper: trim trailing whitespace given a known start.
+// Internal helper: trim trailing whitespace given a known start.
 fn str_trim_end(s: &i64, start: i64) -> &i64 {
     let slen = s[0]
     g_str_a = s[2]
@@ -392,7 +392,7 @@ fn str_trim_end(s: &i64, start: i64) -> &i64 {
     ret str_new()
 }
 
-;; Trim leading whitespace.
+// Trim leading whitespace.
 fn str_trim_left(s: &i64) -> &i64 {
     let len = s[0]
     if len == 0 { ret str_new() }
@@ -406,7 +406,7 @@ fn str_trim_left(s: &i64) -> &i64 {
     ret str_new()
 }
 
-;; Trim trailing whitespace.
+// Trim trailing whitespace.
 fn str_trim_right(s: &i64) -> &i64 {
     let slen = s[0]
     if slen == 0 { ret str_new() }
@@ -421,7 +421,7 @@ fn str_trim_right(s: &i64) -> &i64 {
     ret str_new()
 }
 
-;; Replace all occurrences of old with new_s. Returns new string.
+// Replace all occurrences of old with new_s. Returns new string.
 fn str_replace(s: &i64, old: &i64, new_s: &i64) -> &i64 {
     let oldlen = old[0]
     if oldlen == 0 { ret str_clone(s) }
@@ -436,7 +436,7 @@ fn str_replace(s: &i64, old: &i64, new_s: &i64) -> &i64 {
             i = i + oldlen
         }
         if m == 0 {
-            ; Append single byte
+            // Append single byte
             let one = str_slice(s, i, i + 1)
             result = str_concat(result, one)
             i = i + 1
@@ -445,7 +445,7 @@ fn str_replace(s: &i64, old: &i64, new_s: &i64) -> &i64 {
     ret result
 }
 
-;; Repeat string n times.
+// Repeat string n times.
 fn str_repeat(s: &i64, n: i64) -> &i64 {
     let result = str_new()
     let i = 0
@@ -456,7 +456,7 @@ fn str_repeat(s: &i64, n: i64) -> &i64 {
     ret result
 }
 
-;; Reverse a string.
+// Reverse a string.
 fn str_reverse(s: &i64) -> &i64 {
     let len = s[0]
     if len == 0 { ret str_new() }
@@ -475,7 +475,7 @@ fn str_reverse(s: &i64) -> &i64 {
     ret r
 }
 
-;; Internal: count decimal digits in a positive number.
+// Internal: count decimal digits in a positive number.
 fn str_i64_digits(val: i64) -> i64 {
     let count = 0
     let v = val
@@ -486,7 +486,7 @@ fn str_i64_digits(val: i64) -> i64 {
     ret count
 }
 
-;; Convert i64 to string (decimal representation).
+// Convert i64 to string (decimal representation).
 fn str_from_i64(n: i64) -> &i64 {
     if n == 0 { ret str_from("0", 1) }
     let neg = 0
@@ -502,7 +502,7 @@ fn str_from_i64(n: i64) -> &i64 {
     if neg == 1 {
         poke_byte(g_str_b, 0, 45)
     }
-    ; Write digits from right to left
+    // Write digits from right to left
     let pos = total - 1
     loop val > 0 {
         let digit = val - (val / 10) * 10
@@ -515,8 +515,8 @@ fn str_from_i64(n: i64) -> &i64 {
     ret r
 }
 
-;; Split string by single-char delimiter. Returns array of string pointers.
-;; Writes count to out_count. Caller provides result buffer.
+// Split string by single-char delimiter. Returns array of string pointers.
+// Writes count to out_count. Caller provides result buffer.
 fn str_split(s: &i64, delim: i64, result: &i64, out_count: &i64) {
     let slen = s[0]
     let count = 0
@@ -533,14 +533,14 @@ fn str_split(s: &i64, delim: i64, result: &i64, out_count: &i64) {
         }
         i = i + 1
     }
-    ; Last segment
+    // Last segment
     let last = str_slice(s, start, slen)
     result[count] = last
     count = count + 1
     out_count[0] = count
 }
 
-;; Join array of strings with separator.
+// Join array of strings with separator.
 fn str_join(parts: &i64, count: i64, sep: &i64) -> &i64 {
     if count == 0 { ret str_new() }
     let result: &i64 = parts[0]
@@ -554,7 +554,7 @@ fn str_join(parts: &i64, count: i64, sep: &i64) -> &i64 {
     ret result
 }
 
-;; Insert string at position.
+// Insert string at position.
 fn str_insert(s: &i64, pos: i64, ins: &i64) -> &i64 {
     let left = str_slice(s, 0, pos)
     let slen = s[0]
@@ -563,7 +563,7 @@ fn str_insert(s: &i64, pos: i64, ins: &i64) -> &i64 {
     ret str_concat(tmp, right)
 }
 
-;; Remove range [start, end) from string.
+// Remove range [start, end) from string.
 fn str_remove(s: &i64, start: i64, end: i64) -> &i64 {
     let left = str_slice(s, 0, start)
     let slen = s[0]
@@ -571,7 +571,7 @@ fn str_remove(s: &i64, start: i64, end: i64) -> &i64 {
     ret str_concat(left, right)
 }
 
-;; Pad string on the left to given width.
+// Pad string on the left to given width.
 fn str_pad_left(s: &i64, width: i64, ch: i64) -> &i64 {
     let len = s[0]
     if len >= width { ret str_clone(s) }
@@ -594,7 +594,7 @@ fn str_pad_left(s: &i64, width: i64, ch: i64) -> &i64 {
     ret r
 }
 
-;; Pad string on the right to given width.
+// Pad string on the right to given width.
 fn str_pad_right(s: &i64, width: i64, ch: i64) -> &i64 {
     let len = s[0]
     if len >= width { ret str_clone(s) }

@@ -1,30 +1,30 @@
-; =============================================================================
-; jda::httpclient -- HTTP Client Helpers
-; =============================================================================
-; HTTP response parsing and request building.
-; No actual network I/O — pure parsing/formatting helpers.
-;
-; Response handle layout (&i64):
-;   [0] status_code
-;   [1] header_end
-;   [2] body_off
-;   [3] body_len
-;   [4] buf         (&i8)
-;   [5] buf_len
-;
-; Functions:
-;   http_parse_response(buf, len)          -> &i64   parse HTTP response
-;   http_resp_status(h)                    -> i64    get status code
-;   http_resp_header(h, name, nlen, out)   -> i64    get header value
-;   http_resp_body_offset(h)               -> i64    body start offset
-;   http_resp_body_len(h)                  -> i64    body length
-;   http_build_get_request(host, hlen, path, plen, out) -> i64  build GET
-; =============================================================================
+// =============================================================================
+// jda::httpclient -- HTTP Client Helpers
+// =============================================================================
+// HTTP response parsing and request building.
+// No actual network I/O — pure parsing/formatting helpers.
 
-;; Internal byte reader.
+// Response handle layout (&i64):
+//   [0] status_code
+//   [1] header_end
+//   [2] body_off
+//   [3] body_len
+//   [4] buf         (&i8)
+//   [5] buf_len
+
+// Functions:
+//   http_parse_response(buf, len)          -> &i64   parse HTTP response
+//   http_resp_status(h)                    -> i64    get status code
+//   http_resp_header(h, name, nlen, out)   -> i64    get header value
+//   http_resp_body_offset(h)               -> i64    body start offset
+//   http_resp_body_len(h)                  -> i64    body length
+//   http_build_get_request(host, hlen, path, plen, out) -> i64  build GET
+// =============================================================================
+
+// Internal byte reader.
 fn _hcli_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: copy bytes.
+// Internal: copy bytes.
 fn _hcli_copy(dst: &i8, doff: i64, src: &i8, soff: i64, len: i64) -> i64 {
     let i = 0
     loop i < len {
@@ -35,7 +35,7 @@ fn _hcli_copy(dst: &i8, doff: i64, src: &i8, soff: i64, len: i64) -> i64 {
     ret len
 }
 
-;; Internal: parse integer from ASCII digits at position.
+// Internal: parse integer from ASCII digits at position.
 fn _hcli_parse_int(buf: &i8, off: i64, len: i64) -> i64 {
     let val = 0
     let i = off
@@ -52,7 +52,7 @@ fn _hcli_parse_int(buf: &i8, off: i64, len: i64) -> i64 {
     ret val
 }
 
-;; Internal: find double CRLF. Returns offset of body start or -1.
+// Internal: find double CRLF. Returns offset of body start or -1.
 fn _hcli_find_body(buf: &i8, len: i64) -> i64 {
     let i = 0
     let limit = len - 3
@@ -72,7 +72,7 @@ fn _hcli_find_body(buf: &i8, len: i64) -> i64 {
     ret 0 - 1
 }
 
-;; Internal: compare bytes case-insensitively.
+// Internal: compare bytes case-insensitively.
 fn _hcli_lower(ch: i64) -> i64 {
     if ch >= 65 and ch <= 90 { ret ch + 32 }
     ret ch
@@ -91,13 +91,13 @@ fn _hcli_eq_nocase(a: &i8, aoff: i64, b: &i8, boff: i64, len: i64) -> i64 {
     ret 1
 }
 
-;; Parse an HTTP response. Returns handle.
+// Parse an HTTP response. Returns handle.
 fn http_parse_response(buf: &i8, len: i64) -> &i64 {
     let h: &i64 = alloc_pages(1)
     h[4] = buf
     h[5] = len
-    ; Parse status code: "HTTP/1.x NNN ..."
-    ; Find first space
+    // Parse status code: "HTTP/1.x NNN ..."
+    // Find first space
     let pos = 0
     let found_sp = 0
     loop found_sp == 0 and pos < len {
@@ -105,10 +105,10 @@ fn http_parse_response(buf: &i8, len: i64) -> &i64 {
         if ch == 32 { found_sp = 1 } else { pos = pos + 1 }
     }
     pos = pos + 1
-    ; Parse 3-digit status code
+    // Parse 3-digit status code
     let status = _hcli_parse_int(buf, pos, pos + 3)
     h[0] = status
-    ; Find body separator
+    // Find body separator
     let body_off = _hcli_find_body(buf, len)
     if body_off >= 0 {
         h[1] = body_off - 4
@@ -122,41 +122,41 @@ fn http_parse_response(buf: &i8, len: i64) -> &i64 {
     ret h
 }
 
-;; Get status code.
+// Get status code.
 fn http_resp_status(h: &i64) -> i64 {
     ret h[0]
 }
 
-;; Get a header value. Searches for "Name: value\r\n".
-;; Returns length of value copied to out, or -1 if not found.
+// Get a header value. Searches for "Name: value\r\n".
+// Returns length of value copied to out, or -1 if not found.
 fn http_resp_header(h: &i64, name: &i8, nlen: i64, out: &i8) -> i64 {
     let buf: &i8 = h[4]
     let blen = h[5]
     let hdr_end = h[1]
-    ; Scan line by line
+    // Scan line by line
     let pos = 0
-    ; Skip first line (status line)
+    // Skip first line (status line)
     let skip_first = 1
     loop skip_first == 1 and pos < hdr_end {
         let ch = _hcli_byte_at(buf, pos)
         pos = pos + 1
         if ch == 10 { skip_first = 0 }
     }
-    ; Now scan header lines
+    // Now scan header lines
     let searching = 1
     loop searching == 1 and pos < hdr_end {
-        ; Check if this line starts with name (case insensitive)
+        // Check if this line starts with name (case insensitive)
         let remaining = hdr_end - pos
         if remaining >= nlen {
             let eq = _hcli_eq_nocase(buf, pos, name, 0, nlen)
             if eq == 1 {
-                ; Check for ": " after name
+                // Check for ": " after name
                 let after = pos + nlen
                 let ca = _hcli_byte_at(buf, after)
                 let after1 = after + 1
                 let cb = _hcli_byte_at(buf, after1)
                 if ca == 58 and cb == 32 {
-                    ; Found header — copy value until CR or LF
+                    // Found header — copy value until CR or LF
                     let vstart = after + 2
                     let vend = vstart
                     let scan_val = 1
@@ -174,7 +174,7 @@ fn http_resp_header(h: &i64, name: &i8, nlen: i64, out: &i8) -> i64 {
                 }
             }
         }
-        ; Skip to next line
+        // Skip to next line
         let at_eol = 0
         loop at_eol == 0 and pos < hdr_end {
             let lc = _hcli_byte_at(buf, pos)
@@ -185,53 +185,53 @@ fn http_resp_header(h: &i64, name: &i8, nlen: i64, out: &i8) -> i64 {
     ret 0 - 1
 }
 
-;; Get body start offset.
+// Get body start offset.
 fn http_resp_body_offset(h: &i64) -> i64 {
     ret h[2]
 }
 
-;; Get body length.
+// Get body length.
 fn http_resp_body_len(h: &i64) -> i64 {
     ret h[3]
 }
 
-;; Build a GET request. Returns total length in out.
+// Build a GET request. Returns total length in out.
 fn http_build_get_request(host: &i8, hlen: i64, path: &i8, plen: i64, out: &i8) -> i64 {
     let p = 0
-    ; "GET "
-    poke_byte(out, p, 71) p = p + 1  ; G
-    poke_byte(out, p, 69) p = p + 1  ; E
-    poke_byte(out, p, 84) p = p + 1  ; T
-    poke_byte(out, p, 32) p = p + 1  ; space
-    ; path
+    // "GET "
+    poke_byte(out, p, 71) p = p + 1  // G
+    poke_byte(out, p, 69) p = p + 1  // E
+    poke_byte(out, p, 84) p = p + 1  // T
+    poke_byte(out, p, 32) p = p + 1  // space
+    // path
     _hcli_copy(out, p, path, 0, plen)
     p = p + plen
-    ; " HTTP/1.1\r\n"
-    poke_byte(out, p, 32) p = p + 1  ; space
-    poke_byte(out, p, 72) p = p + 1  ; H
-    poke_byte(out, p, 84) p = p + 1  ; T
-    poke_byte(out, p, 84) p = p + 1  ; T
-    poke_byte(out, p, 80) p = p + 1  ; P
-    poke_byte(out, p, 47) p = p + 1  ; /
-    poke_byte(out, p, 49) p = p + 1  ; 1
-    poke_byte(out, p, 46) p = p + 1  ; .
-    poke_byte(out, p, 49) p = p + 1  ; 1
-    poke_byte(out, p, 13) p = p + 1  ; CR
-    poke_byte(out, p, 10) p = p + 1  ; LF
-    ; "Host: "
-    poke_byte(out, p, 72) p = p + 1   ; H
-    poke_byte(out, p, 111) p = p + 1  ; o
-    poke_byte(out, p, 115) p = p + 1  ; s
-    poke_byte(out, p, 116) p = p + 1  ; t
-    poke_byte(out, p, 58) p = p + 1   ; :
-    poke_byte(out, p, 32) p = p + 1   ; space
-    ; host value
+    // " HTTP/1.1\r\n"
+    poke_byte(out, p, 32) p = p + 1  // space
+    poke_byte(out, p, 72) p = p + 1  // H
+    poke_byte(out, p, 84) p = p + 1  // T
+    poke_byte(out, p, 84) p = p + 1  // T
+    poke_byte(out, p, 80) p = p + 1  // P
+    poke_byte(out, p, 47) p = p + 1  // /
+    poke_byte(out, p, 49) p = p + 1  // 1
+    poke_byte(out, p, 46) p = p + 1  // .
+    poke_byte(out, p, 49) p = p + 1  // 1
+    poke_byte(out, p, 13) p = p + 1  // CR
+    poke_byte(out, p, 10) p = p + 1  // LF
+    // "Host: "
+    poke_byte(out, p, 72) p = p + 1   // H
+    poke_byte(out, p, 111) p = p + 1  // o
+    poke_byte(out, p, 115) p = p + 1  // s
+    poke_byte(out, p, 116) p = p + 1  // t
+    poke_byte(out, p, 58) p = p + 1   // :
+    poke_byte(out, p, 32) p = p + 1   // space
+    // host value
     _hcli_copy(out, p, host, 0, hlen)
     p = p + hlen
-    poke_byte(out, p, 13) p = p + 1  ; CR
-    poke_byte(out, p, 10) p = p + 1  ; LF
-    ; Empty line (end of headers)
-    poke_byte(out, p, 13) p = p + 1  ; CR
-    poke_byte(out, p, 10) p = p + 1  ; LF
+    poke_byte(out, p, 13) p = p + 1  // CR
+    poke_byte(out, p, 10) p = p + 1  // LF
+    // Empty line (end of headers)
+    poke_byte(out, p, 13) p = p + 1  // CR
+    poke_byte(out, p, 10) p = p + 1  // LF
     ret p
 }

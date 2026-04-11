@@ -1,6 +1,6 @@
-; Test autograd: ReLU and tensor elementwise gradient rules
-; relu(a) → grad_a = grad_c * (a > 0 ? 1 : 0)
-; Also tests tensor-level gradient accumulation
+// Test autograd: ReLU and tensor elementwise gradient rules
+// relu(a) → grad_a = grad_c * (a > 0 ? 1 : 0)
+// Also tests tensor-level gradient accumulation
 
 fn grad_relu(a: i64, grad_c: i64) -> i64 {
     let zero = f64_from_int(0)
@@ -42,17 +42,17 @@ fn grad_tensor_add(grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
 }
 
 fn main() -> i64 {
-    ; Scalar relu gradient
+    // Scalar relu gradient
     let one = f64_from_int(1)
     let zero = f64_from_int(0)
     let gc = f64_from_int(1)
 
-    ; relu(3) = 3 → grad = 1*gc = 1
+    // relu(3) = 3 → grad = 1*gc = 1
     let pos = f64_from_int(3)
     let g_pos = grad_relu(pos, gc)
     let g_pos_i = f64_to_int(g_pos)
 
-    ; relu(-2) = 0 → grad = 0
+    // relu(-2) = 0 → grad = 0
     let neg = f64_from_int(-2)
     let g_neg = grad_relu(neg, gc)
     let g_neg_i = f64_to_int(g_neg)
@@ -61,8 +61,8 @@ fn main() -> i64 {
         print "grad relu scalar ok"
     }
 
-    ; Tensor relu gradient: a = [-1, 2, -3, 4], grad_c = [1,1,1,1]
-    ; Expected grad_a: [0, 1, 0, 1]
+    // Tensor relu gradient: a = [-1, 2, -3, 4], grad_c = [1,1,1,1]
+    // Expected grad_a: [0, 1, 0, 1]
     let a = tensor_new1(4)
     let gc_t = tensor_new1(4)
     let ga_t = tensor_new1(4)
@@ -85,7 +85,7 @@ fn main() -> i64 {
         print "grad relu tensor ok"
     }
 
-    ; Tensor add gradient: grad_c=[2,3], grad_a and grad_b should each get [2,3]
+    // Tensor add gradient: grad_c=[2,3], grad_a and grad_b should each get [2,3]
     let gc2 = tensor_new1(2)
     let ga2 = tensor_new1(2)
     let gb2 = tensor_new1(2)
