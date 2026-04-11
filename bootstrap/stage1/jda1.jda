@@ -95,6 +95,7 @@ const TOK_U8      = 67
 const TOK_U16     = 68
 const TOK_U32     = 69
 const TOK_U64     = 70
+const TOK_I16     = 71
 
 ; Derive trait IDs
 const DERIVE_DEBUG = 1
@@ -144,6 +145,7 @@ const TYPE_U8     = 6
 const TYPE_U16    = 7
 const TYPE_U32    = 8
 const TYPE_U64    = 9
+const TYPE_I16    = 10
 
 ; Helper types for pointers
 const TYPE_PTR_I64 = 65537
@@ -153,6 +155,7 @@ const TYPE_PTR_U8  = 65542
 const TYPE_PTR_U16 = 65543
 const TYPE_PTR_U32 = 65544
 const TYPE_PTR_U64 = 65545
+const TYPE_PTR_I16 = 65546
 
 ; JIR opcodes
 const OP_CONST    = 0
@@ -1235,6 +1238,12 @@ fn write_type_suffix(src: &i8, pos: i64, type_tok: i64) -> i64 {
         poke_byte(src, pos + 1, 56)
         ret 2
     }
+    if type_tok == TOK_I16 {
+        poke_byte(src, pos, 105)
+        poke_byte(src, pos + 1, 49)
+        poke_byte(src, pos + 2, 54)
+        ret 3
+    }
     ret 0
 }
 
@@ -1390,7 +1399,7 @@ fn expand_all_generics(tok_cnt: i64) -> i64 {
             let t1 = tok_type_at_raw(toks, i + 1)
             let t2 = tok_type_at_raw(toks, i + 2)
             let t3 = tok_type_at_raw(toks, i + 3)
-            if t1 == TOK_LT and (t2 == TOK_I64 or t2 == TOK_I32 or t2 == TOK_I8 or t2 == TOK_INT) and t3 == TOK_GT {
+            if t1 == TOK_LT and (t2 == TOK_I64 or t2 == TOK_I32 or t2 == TOK_I8 or t2 == TOK_I16 or t2 == TOK_INT) and t3 == TOK_GT {
                 let call_name_off = tok_str_start_at_raw(toks, i)
                 let call_name_len = tok_str_len_at_raw(toks, i)
                 let gfi = lookup_genfn(src, call_name_off, call_name_len)
@@ -2645,7 +2654,7 @@ fn is_skip_rhs_int_tok(t: i64) -> i64 {
 }
 
 fn is_skip_rhs_type_tok(t: i64) -> i64 {
-    ret t == 45 or t == 46 or t == 47 or t == 48 or t == 10
+    ret t == 45 or t == 46 or t == 47 or t == 48 or t == 71 or t == 10
 }
 
 fn skip_top_level_let_rhs(toks: &Token, stab: &StructTable, src: &i8) {
@@ -2726,6 +2735,7 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
         if dt == 45 { decl_stype = TYPE_I64 }
         if dt == 46 { decl_stype = TYPE_I32 }
         if dt == 47 { decl_stype = TYPE_I8 }
+        if dt == 71 { decl_stype = TYPE_I16 }
         if dt == 48 { decl_stype = TYPE_F64 }
         if dt == 10 {
             let type_start = tok_str_start_at(toks, g_main_pos)
@@ -2838,6 +2848,7 @@ fn type_sizeof(st: i32) {
     if b == TYPE_I8 { ret 1 }
     if b == TYPE_U8 { ret 1 }
     if b == TYPE_U16 { ret 2 }
+    if b == TYPE_I16 { ret 2 }
     if b == TYPE_I32 { ret 4 }
     if b == TYPE_U32 { ret 4 }
     ret 8
@@ -3261,8 +3272,12 @@ fn classify_keyword_len3(src: &i8, start: i64, len: i64) {
     let u16_ok = 0
     if c0 == 117 { if c1 == 49 { if c2 == 54 { u16_ok = 1 } } }
     let m_u16 = u16_ok * TOK_U16
+    ; 'i16' = 105,49,54
+    let i16_ok = 0
+    if c0 == 105 { if c1 == 49 { if c2 == 54 { i16_ok = 1 } } }
+    let m_i16 = i16_ok * TOK_I16
     let tok_a = m_let + m_ret + m_and + m_i64 + m_i32 + m_f64
-    let tok_b = m_for + m_not + m_u64 + m_u32 + m_u16
+    let tok_b = m_for + m_not + m_u64 + m_u32 + m_u16 + m_i16
     let tok = tok_a + tok_b
     ret tok + (tok == 0) * TOK_IDENT
 }
@@ -4828,11 +4843,13 @@ fn parse_skip_ret_type(toks: &Token) -> i64 {
         if rt == TOK_I64 { ret TYPE_PTR_I64 }
         if rt == TOK_I32 { ret TYPE_PTR_I32 }
         if rt == TOK_I8  { ret TYPE_PTR_I8 }
+        if rt == TOK_I16 { ret TYPE_PTR_I16 }
         ret TYPE_PTR
     }
     if rt == TOK_I64 { ret TYPE_I64 }
     if rt == TOK_I32 { ret TYPE_I32 }
     if rt == TOK_I8  { ret TYPE_I8 }
+    if rt == TOK_I16 { ret TYPE_I16 }
     if rt == TOK_F64 { ret TYPE_F64 }
     ret TYPE_I64
 }
@@ -4953,28 +4970,34 @@ fn parse_type(toks: &Token) -> i32 {
     let t1 = tok_type_at_raw(toks, idx + is_ptr)
     g_main_pos = idx + 1 + is_ptr
 
-    let ptr_match =
+    let pm_a =
         (t1 == TOK_I64) * TYPE_PTR_I64 +
         (t1 == TOK_I32) * TYPE_PTR_I32 +
         (t1 == TOK_I8) * TYPE_PTR_I8 +
-        (t1 == TOK_U8) * TYPE_PTR_U8 +
+        (t1 == TOK_I16) * TYPE_PTR_I16 +
+        (t1 == TOK_U8) * TYPE_PTR_U8
+    let pm_b =
         (t1 == TOK_U16) * TYPE_PTR_U16 +
         (t1 == TOK_U32) * TYPE_PTR_U32 +
         (t1 == TOK_U64) * TYPE_PTR_U64 +
         (t1 == TOK_F64) * ptr_of(TYPE_F64) +
         (t1 == TOK_IDENT) * ptr_of(TYPE_PTR)
+    let ptr_match = pm_a + pm_b
     let ptr_t = ptr_match + (ptr_match == 0) * ptr_of(TYPE_VOID)
 
-    let base_match =
+    let bm_a =
         (t == TOK_I64) * TYPE_I64 +
         (t == TOK_I32) * TYPE_I32 +
         (t == TOK_I8) * TYPE_I8 +
-        (t == TOK_U8) * TYPE_U8 +
+        (t == TOK_I16) * TYPE_I16 +
+        (t == TOK_U8) * TYPE_U8
+    let bm_b =
         (t == TOK_U16) * TYPE_U16 +
         (t == TOK_U32) * TYPE_U32 +
         (t == TOK_U64) * TYPE_U64 +
         (t == TOK_F64) * TYPE_F64 +
         (t == TOK_IDENT) * TYPE_PTR
+    let base_match = bm_a + bm_b
     let base_t = base_match + (base_match == 0) * TYPE_VOID
 
     ret is_ptr * ptr_t + (is_ptr == 0) * base_t
@@ -5236,6 +5259,7 @@ fn parse_struct_decl(toks: &Token, stab: &StructTable, src: &i8) {
         if type_tok_type == TOK_I64 { field_t = TYPE_I64 }
         if type_tok_type == TOK_I32 { field_t = TYPE_I32 }
         if type_tok_type == TOK_I8  { field_t = TYPE_I8 }
+        if type_tok_type == TOK_I16 { field_t = TYPE_I16 }
         if type_tok_type == TOK_F64 { field_t = TYPE_F64 }
         let sid_x = -1
         if type_tok_type == TOK_IDENT {
@@ -5258,6 +5282,7 @@ fn parse_struct_decl(toks: &Token, stab: &StructTable, src: &i8) {
         let elem_sz = 8
         if type_is_ptr == 0 {
             if type_tok_type == TOK_I8  { elem_sz = 1 }
+            if type_tok_type == TOK_I16 { elem_sz = 2 }
             if type_tok_type == TOK_I32 { elem_sz = 4 }
         }
         if type_tok_type == TOK_IDENT {
@@ -19364,6 +19389,7 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
             let arr_elem_sz = 8
             if arr_type_tok == TOK_I8 { arr_elem_sz = 1 }
             if arr_type_tok == TOK_U8 { arr_elem_sz = 1 }
+            if arr_type_tok == TOK_I16 { arr_elem_sz = 2 }
             if arr_type_tok == TOK_U16 { arr_elem_sz = 2 }
             if arr_type_tok == TOK_I32 { arr_elem_sz = 4 }
             if arr_type_tok == TOK_U32 { arr_elem_sz = 4 }
@@ -19377,6 +19403,7 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
             let arr_bind_stype = TYPE_PTR_I64
             if arr_type_tok == TOK_I8 { arr_bind_stype = TYPE_PTR_I8 }
             if arr_type_tok == TOK_U8 { arr_bind_stype = TYPE_PTR_U8 }
+            if arr_type_tok == TOK_I16 { arr_bind_stype = TYPE_PTR_I16 }
             if arr_type_tok == TOK_U16 { arr_bind_stype = TYPE_PTR_U16 }
             if arr_type_tok == TOK_I32 { arr_bind_stype = TYPE_PTR_I32 }
             if arr_type_tok == TOK_U32 { arr_bind_stype = TYPE_PTR_U32 }
@@ -19418,6 +19445,7 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
     if arr_type_tok == TOK_F64 { bind_stype = TYPE_F64 }
     if arr_type_tok == TOK_I32 { bind_stype = TYPE_I32 }
     if arr_type_tok == TOK_I8 { bind_stype = TYPE_I8 }
+    if arr_type_tok == TOK_I16 { bind_stype = TYPE_I16 }
     if arr_type_tok == TOK_U8 { bind_stype = TYPE_U8 }
     if arr_type_tok == TOK_U16 { bind_stype = TYPE_U16 }
     if arr_type_tok == TOK_U32 { bind_stype = TYPE_U32 }

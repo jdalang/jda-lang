@@ -39,6 +39,7 @@ const MAX = 100         ; compile-time constant
 |------|-------------|
 | `i64` | 64-bit signed integer (default) |
 | `i32` | 32-bit signed integer |
+| `i16` | 16-bit signed integer |
 | `i8` | 8-bit signed integer (byte) |
 | `u64` | 64-bit unsigned integer |
 | `u32` | 32-bit unsigned integer |
