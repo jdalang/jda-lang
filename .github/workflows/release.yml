@@ -106,10 +106,14 @@ jobs:
       - name: Build .exe installer
         shell: cmd
         run: |
-          set JDA_VERSION=%GITHUB_REF_NAME:~1%
           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installers\jda-setup.iss
         env:
-          JDA_VERSION: ${{ github.ref_name }}
+          JDA_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "version=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
