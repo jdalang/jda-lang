@@ -14,233 +14,10 @@ fn time_now_ms() -> i64 {
     ret ns / 1000000
 }
 
-; --- Neural network primitives ---
+; --- Float formatting ---
 
-fn linear_forward(x: i64, w: i64, bias: i64, out: i64) {
-    let batch = tensor_shape(x, 0)
-    let in_f = tensor_shape(x, 1)
-    let out_f = tensor_shape(w, 0)
-    let i = 0
-    loop i < batch {
-        let j = 0
-        loop j < out_f {
-            let acc: f64 = tensor_get(bias, j)
-            let k = 0
-            loop k < in_f {
-                let xv: f64 = tensor_get(x, i * in_f + k)
-                let wv: f64 = tensor_get(w, j * in_f + k)
-                acc = acc + xv * wv
-                k = k + 1
-            }
-            tensor_set(out, i * out_f + j, acc)
-            j = j + 1
-        }
-        i = i + 1
-    }
-}
-
-fn relu_forward(a: i64, out: i64) {
-    let n = tensor_len(a)
-    let zero: f64 = f64_from_int(0)
-    let i = 0
-    loop i < n {
-        let v: f64 = tensor_get(a, i)
-        if v > zero {
-            tensor_set(out, i, v)
-        } else {
-            tensor_set(out, i, zero)
-        }
-        i = i + 1
-    }
-}
-
-fn relu_backward(pre_relu: i64, grad_out: i64, grad_in: i64) {
-    let n = tensor_len(pre_relu)
-    let zero: f64 = f64_from_int(0)
-    let i = 0
-    loop i < n {
-        let ai: f64 = tensor_get(pre_relu, i)
-        if ai > zero {
-            let go: f64 = tensor_get(grad_out, i)
-            tensor_set(grad_in, i, go)
-        } else {
-            tensor_set(grad_in, i, zero)
-        }
-        i = i + 1
-    }
-}
-
-fn backward_weights(x: i64, w: i64, grad_out: i64, grad_w: i64) {
-    let batch = tensor_shape(x, 0)
-    let in_f = tensor_shape(x, 1)
-    let out_f = tensor_shape(w, 0)
-    let j = 0
-    loop j < out_f {
-        let k = 0
-        loop k < in_f {
-            let acc: f64 = f64_from_int(0)
-            let i = 0
-            loop i < batch {
-                let gov: f64 = tensor_get(grad_out, i * out_f + j)
-                let xv: f64 = tensor_get(x, i * in_f + k)
-                acc = acc + gov * xv
-                i = i + 1
-            }
-            let gw_idx = j * in_f + k
-            let old: f64 = tensor_get(grad_w, gw_idx)
-            tensor_set(grad_w, gw_idx, old + acc)
-            k = k + 1
-        }
-        j = j + 1
-    }
-}
-
-fn backward_bias(grad_out: i64, grad_b: i64, batch: i64, out_f: i64) {
-    let j = 0
-    loop j < out_f {
-        let acc: f64 = f64_from_int(0)
-        let i = 0
-        loop i < batch {
-            let gov: f64 = tensor_get(grad_out, i * out_f + j)
-            acc = acc + gov
-            i = i + 1
-        }
-        let old: f64 = tensor_get(grad_b, j)
-        tensor_set(grad_b, j, old + acc)
-        j = j + 1
-    }
-}
-
-fn backward_input(w: i64, grad_out: i64, grad_in: i64) {
-    let batch = tensor_shape(grad_in, 0)
-    let in_f = tensor_shape(grad_in, 1)
-    let out_f = tensor_shape(w, 0)
-    let i = 0
-    loop i < batch {
-        let k = 0
-        loop k < in_f {
-            let acc: f64 = f64_from_int(0)
-            let j = 0
-            loop j < out_f {
-                let gov: f64 = tensor_get(grad_out, i * out_f + j)
-                let wv: f64 = tensor_get(w, j * in_f + k)
-                acc = acc + gov * wv
-                j = j + 1
-            }
-            let gi_idx = i * in_f + k
-            let old: f64 = tensor_get(grad_in, gi_idx)
-            tensor_set(grad_in, gi_idx, old + acc)
-            k = k + 1
-        }
-        i = i + 1
-    }
-}
-
-fn mse_loss(pred: i64, target: i64) -> i64 {
-    let n = tensor_len(pred)
-    let sum: f64 = f64_from_int(0)
-    let i = 0
-    loop i < n {
-        let p: f64 = tensor_get(pred, i)
-        let t: f64 = tensor_get(target, i)
-        let d: f64 = p - t
-        sum = sum + d * d
-        i = i + 1
-    }
-    let fn_val: f64 = f64_from_int(n)
-    ret sum / fn_val
-}
-
-fn mse_backward(pred: i64, target: i64, grad_out: i64) {
-    let n = tensor_len(pred)
-    let fn_val: f64 = f64_from_int(n)
-    let two: f64 = f64_from_int(2)
-    let scale: f64 = two / fn_val
-    let i = 0
-    loop i < n {
-        let p: f64 = tensor_get(pred, i)
-        let t: f64 = tensor_get(target, i)
-        let d: f64 = p - t
-        tensor_set(grad_out, i, scale * d)
-        i = i + 1
-    }
-}
-
-fn sgd_step(params: i64, grads: i64, lr: i64) {
-    let n = tensor_len(params)
-    let zero: f64 = f64_from_int(0)
-    let lr_f: f64 = lr
-    let i = 0
-    loop i < n {
-        let p: f64 = tensor_get(params, i)
-        let g: f64 = tensor_get(grads, i)
-        tensor_set(params, i, p - lr_f * g)
-        tensor_set(grads, i, zero)
-        i = i + 1
-    }
-}
-
-fn zero_tensor(t: i64) {
-    let zero: f64 = f64_from_int(0)
-    tensor_fill(t, zero)
-}
-
-; --- PRNG (xorshift64) for weight init ---
-
-fn rng_next(state: &i64) -> i64 {
-    let s = state[0]
-    let a = s * 6364136223846793005 + 1442695040888963407
-    state[0] = a
-    ret a
-}
-
-fn rng_f64(state: &i64) -> i64 {
-    let r = rng_next(state)
-    if r < 0 { r = 0 - r }
-    let big: f64 = f64_from_int(1000000)
-    let ri = r / 1000000000000
-    if ri < 0 { ri = 0 - ri }
-    let rem = ri - (ri / 1000000) * 1000000
-    let rf: f64 = f64_from_int(rem)
-    ret rf / big
-}
-
-fn init_weights_uniform(t: i64, state: &i64, scale: i64) {
-    let n = tensor_len(t)
-    let scale_f: f64 = scale
-    let half: f64 = scale_f / f64_from_int(2)
-    let i = 0
-    loop i < n {
-        let r: f64 = rng_f64(state)
-        tensor_set(t, i, r * scale_f - half)
-        i = i + 1
-    }
-}
-
-fn matmul_bench(a: i64, b: i64, c: i64, M: i64, K: i64, N: i64) {
-    let i = 0
-    loop i < M {
-        let j = 0
-        loop j < N {
-            let acc: f64 = f64_from_int(0)
-            let k = 0
-            loop k < K {
-                let av: f64 = tensor_get(a, i * K + k)
-                let bv: f64 = tensor_get(b, k * N + j)
-                acc = acc + av * bv
-                k = k + 1
-            }
-            tensor_set(c, i * N + j, acc)
-            j = j + 1
-        }
-        i = i + 1
-    }
-}
-
-fn print_f64_scaled(val: i64) {
-    let ten_k: f64 = f64_from_int(10000)
-    let val_f: f64 = val
-    let scaled: f64 = val_f * ten_k
+fn print_f64(val: f64) {
+    let scaled: f64 = val * 10000.0
     let ival = f64_to_int(scaled)
     let sign = 0
     if ival < 0 {
@@ -257,6 +34,182 @@ fn print_f64_scaled(val: i64) {
     print "{frac}"
 }
 
+; --- Neural network primitives ---
+
+fn linear_forward(x: i64, w: i64, bias: i64, out: i64) {
+    let batch = tensor_shape(x, 0)
+    let in_f = tensor_shape(x, 1)
+    let out_f = tensor_shape(w, 0)
+    for i in range(batch) {
+        for j in range(out_f) {
+            let acc: f64 = tensor_get(bias, j)
+            for k in range(in_f) {
+                let xv: f64 = tensor_get(x, i * in_f + k)
+                let wv: f64 = tensor_get(w, j * in_f + k)
+                acc += xv * wv
+            }
+            tensor_set(out, i * out_f + j, acc)
+        }
+    }
+}
+
+fn relu_forward(a: i64, out: i64) {
+    let n = tensor_len(a)
+    for i in range(n) {
+        let v: f64 = tensor_get(a, i)
+        if v > 0.0 {
+            tensor_set(out, i, v)
+        } else {
+            tensor_set(out, i, 0.0)
+        }
+    }
+}
+
+fn relu_backward(pre_relu: i64, grad_out: i64, grad_in: i64) {
+    let n = tensor_len(pre_relu)
+    for i in range(n) {
+        let ai: f64 = tensor_get(pre_relu, i)
+        if ai > 0.0 {
+            let go: f64 = tensor_get(grad_out, i)
+            tensor_set(grad_in, i, go)
+        } else {
+            tensor_set(grad_in, i, 0.0)
+        }
+    }
+}
+
+fn backward_weights(x: i64, w: i64, grad_out: i64, grad_w: i64) {
+    let batch = tensor_shape(x, 0)
+    let in_f = tensor_shape(x, 1)
+    let out_f = tensor_shape(w, 0)
+    for j in range(out_f) {
+        for k in range(in_f) {
+            let acc: f64 = 0.0
+            for i in range(batch) {
+                let gov: f64 = tensor_get(grad_out, i * out_f + j)
+                let xv: f64 = tensor_get(x, i * in_f + k)
+                acc += gov * xv
+            }
+            let gw_idx = j * in_f + k
+            let old: f64 = tensor_get(grad_w, gw_idx)
+            tensor_set(grad_w, gw_idx, old + acc)
+        }
+    }
+}
+
+fn backward_bias(grad_out: i64, grad_b: i64, batch: i64, out_f: i64) {
+    for j in range(out_f) {
+        let acc: f64 = 0.0
+        for i in range(batch) {
+            let gov: f64 = tensor_get(grad_out, i * out_f + j)
+            acc += gov
+        }
+        let old: f64 = tensor_get(grad_b, j)
+        tensor_set(grad_b, j, old + acc)
+    }
+}
+
+fn backward_input(w: i64, grad_out: i64, grad_in: i64) {
+    let batch = tensor_shape(grad_in, 0)
+    let in_f = tensor_shape(grad_in, 1)
+    let out_f = tensor_shape(w, 0)
+    for i in range(batch) {
+        for k in range(in_f) {
+            let acc: f64 = 0.0
+            for j in range(out_f) {
+                let gov: f64 = tensor_get(grad_out, i * out_f + j)
+                let wv: f64 = tensor_get(w, j * in_f + k)
+                acc += gov * wv
+            }
+            let gi_idx = i * in_f + k
+            let old: f64 = tensor_get(grad_in, gi_idx)
+            tensor_set(grad_in, gi_idx, old + acc)
+        }
+    }
+}
+
+fn mse_loss(pred: i64, target: i64) -> i64 {
+    let n = tensor_len(pred)
+    let sum: f64 = 0.0
+    for i in range(n) {
+        let p: f64 = tensor_get(pred, i)
+        let t: f64 = tensor_get(target, i)
+        let d: f64 = p - t
+        sum += d * d
+    }
+    let fn_val: f64 = f64_from_int(n)
+    ret sum / fn_val
+}
+
+fn mse_backward(pred: i64, target: i64, grad_out: i64) {
+    let n = tensor_len(pred)
+    let scale: f64 = 2.0 / f64_from_int(n)
+    for i in range(n) {
+        let p: f64 = tensor_get(pred, i)
+        let t: f64 = tensor_get(target, i)
+        let d: f64 = p - t
+        tensor_set(grad_out, i, scale * d)
+    }
+}
+
+fn sgd_step(params: i64, grads: i64, lr: i64) {
+    let n = tensor_len(params)
+    let lr_f: f64 = lr
+    for i in range(n) {
+        let p: f64 = tensor_get(params, i)
+        let g: f64 = tensor_get(grads, i)
+        tensor_set(params, i, p - lr_f * g)
+        tensor_set(grads, i, 0.0)
+    }
+}
+
+fn zero_tensor(t: i64) {
+    tensor_fill(t, 0.0)
+}
+
+; --- PRNG for weight init ---
+
+fn rng_next(state: &i64) -> i64 {
+    let s = state[0]
+    let a = s * 6364136223846793005 + 1442695040888963407
+    state[0] = a
+    ret a
+}
+
+fn rng_f64(state: &i64) -> i64 {
+    let r = rng_next(state)
+    if r < 0 { r = 0 - r }
+    let ri = r / 1000000000000
+    if ri < 0 { ri = 0 - ri }
+    let rem = ri - (ri / 1000000) * 1000000
+    let rf: f64 = f64_from_int(rem)
+    ret rf / 1000000.0
+}
+
+fn init_weights_uniform(t: i64, state: &i64, scale: i64) {
+    let n = tensor_len(t)
+    let scale_f: f64 = scale
+    let half: f64 = scale_f / 2.0
+    for i in range(n) {
+        let r: f64 = rng_f64(state)
+        tensor_set(t, i, r * scale_f - half)
+    }
+}
+
+fn matmul_bench(a: i64, b: i64, c: i64, M: i64, K: i64, N: i64) {
+    for i in range(M) {
+        for j in range(N) {
+            let acc: f64 = 0.0
+            for k in range(K) {
+                let av: f64 = tensor_get(a, i * K + k)
+                let bv: f64 = tensor_get(b, k * N + j)
+                acc += av * bv
+            }
+            tensor_set(c, i * N + j, acc)
+        }
+    }
+}
+
 ; === Task 1: XOR Classification (2->8->1 MLP) ===
 
 fn task_xor() {
@@ -266,22 +219,20 @@ fn task_xor() {
     print "Epochs: 5000, LR: 0.1\n\n"
     let batch = 4
     let hidden = 8
-    let zero_f: f64 = f64_from_int(0)
-    let one_f: f64 = f64_from_int(1)
     let x = tensor_new2(4, 2)
-    tensor_set(x, 0, zero_f)
-    tensor_set(x, 1, zero_f)
-    tensor_set(x, 2, zero_f)
-    tensor_set(x, 3, one_f)
-    tensor_set(x, 4, one_f)
-    tensor_set(x, 5, zero_f)
-    tensor_set(x, 6, one_f)
-    tensor_set(x, 7, one_f)
+    tensor_set(x, 0, 0.0)
+    tensor_set(x, 1, 0.0)
+    tensor_set(x, 2, 0.0)
+    tensor_set(x, 3, 1.0)
+    tensor_set(x, 4, 1.0)
+    tensor_set(x, 5, 0.0)
+    tensor_set(x, 6, 1.0)
+    tensor_set(x, 7, 1.0)
     let y = tensor_new2(4, 1)
-    tensor_set(y, 0, zero_f)
-    tensor_set(y, 1, one_f)
-    tensor_set(y, 2, one_f)
-    tensor_set(y, 3, zero_f)
+    tensor_set(y, 0, 0.0)
+    tensor_set(y, 1, 1.0)
+    tensor_set(y, 2, 1.0)
+    tensor_set(y, 3, 0.0)
     let w1 = tensor_new2(hidden, 2)
     let b1 = tensor_new1(hidden)
     let gw1 = tensor_new2(hidden, 2)
@@ -292,12 +243,11 @@ fn task_xor() {
     let gb2 = tensor_new1(1)
     let rng_state: i64[1]
     rng_state[0] = 42
-    let two_f: f64 = f64_from_int(2)
-    let scale: f64 = two_f / one_f
+    let scale: f64 = 2.0
     init_weights_uniform(w1, &rng_state, scale)
     init_weights_uniform(w2, &rng_state, scale)
-    tensor_fill(b1, zero_f)
-    tensor_fill(b2, zero_f)
+    tensor_fill(b1, 0.0)
+    tensor_fill(b2, 0.0)
     let h1 = tensor_new2(4, hidden)
     let h1r = tensor_new2(4, hidden)
     let out = tensor_new2(4, 1)
@@ -305,21 +255,18 @@ fn task_xor() {
     let g_h1r = tensor_new2(4, hidden)
     let g_h1 = tensor_new2(4, hidden)
     let g_x = tensor_new2(4, 2)
-    let ten_f: f64 = f64_from_int(10)
-    let lr: f64 = one_f / ten_f
+    let lr: f64 = 0.1
     let t0 = time_now_ms()
-    let epoch = 0
-    loop epoch < 5000 {
+    for epoch in range(5000) {
         linear_forward(x, w1, b1, h1)
         relu_forward(h1, h1r)
         linear_forward(h1r, w2, b2, out)
-        let print_flag = epoch - (epoch / 1000) * 1000
-        if print_flag == 0 {
-            let loss = mse_loss(out, y)
+        if epoch % 1000 == 0 {
+            let loss: f64 = mse_loss(out, y)
             print "  epoch "
             print "{epoch}"
             print "  loss="
-            print_f64_scaled(loss)
+            print_f64(loss)
             print "\n"
         }
         mse_backward(out, y, g_out)
@@ -340,7 +287,6 @@ fn task_xor() {
         sgd_step(b1, gb1, lr)
         sgd_step(w2, gw2, lr)
         sgd_step(b2, gb2, lr)
-        epoch = epoch + 1
     }
     let t1 = time_now_ms()
     let xor_ms = t1 - t0
@@ -348,31 +294,31 @@ fn task_xor() {
     relu_forward(h1, h1r)
     linear_forward(h1r, w2, b2, out)
     print "\nPredictions:\n"
-    let half: f64 = one_f / two_f
+    let half: f64 = 0.5
     let p0: f64 = tensor_get(out, 0)
     let p1: f64 = tensor_get(out, 1)
     let p2: f64 = tensor_get(out, 2)
     let p3: f64 = tensor_get(out, 3)
     print "  [0,0] -> "
-    print_f64_scaled(p0)
+    print_f64(p0)
     print "  (expected ~0)\n"
     print "  [0,1] -> "
-    print_f64_scaled(p1)
+    print_f64(p1)
     print "  (expected ~1)\n"
     print "  [1,0] -> "
-    print_f64_scaled(p2)
+    print_f64(p2)
     print "  (expected ~1)\n"
     print "  [1,1] -> "
-    print_f64_scaled(p3)
+    print_f64(p3)
     print "  (expected ~0)\n"
     if half > p0 and p1 > half and p2 > half and half > p3 {
         print "  Result: PASS (4/4 correct)\n"
     } else {
         print "  Result: FAIL\n"
     }
-    let final_loss = mse_loss(out, y)
+    let final_loss: f64 = mse_loss(out, y)
     print "  Final loss: "
-    print_f64_scaled(final_loss)
+    print_f64(final_loss)
     print "\n  Time: "
     print "{xor_ms}"
     print " ms\n\n"
@@ -387,22 +333,16 @@ fn task_sine() {
     print "Epochs: 10000, LR: 0.01\n\n"
     let n_samples = 32
     let hidden = 16
-    let zero_f: f64 = f64_from_int(0)
-    let one_f: f64 = f64_from_int(1)
     let x = tensor_new2(n_samples, 1)
     let y = tensor_new2(n_samples, 1)
-    let pi2: f64 = f64_from_int(6283185)
-    let million: f64 = f64_from_int(1000000)
-    let two_pi: f64 = pi2 / million
+    let two_pi: f64 = 6.283185
     let n_f: f64 = f64_from_int(n_samples)
     let step: f64 = two_pi / n_f
-    let si = 0
-    loop si < n_samples {
+    for si in range(n_samples) {
         let si_f: f64 = f64_from_int(si)
         let xv: f64 = si_f * step
         tensor_set(x, si, xv)
         tensor_set(y, si, f64_sin(xv))
-        si = si + 1
     }
     let w1 = tensor_new2(hidden, 1)
     let b1 = tensor_new1(hidden)
@@ -414,12 +354,11 @@ fn task_sine() {
     let gb2 = tensor_new1(1)
     let rng_state: i64[1]
     rng_state[0] = 12345
-    let two_f: f64 = f64_from_int(2)
-    let scale: f64 = two_f / one_f
+    let scale: f64 = 2.0
     init_weights_uniform(w1, &rng_state, scale)
     init_weights_uniform(w2, &rng_state, scale)
-    tensor_fill(b1, zero_f)
-    tensor_fill(b2, zero_f)
+    tensor_fill(b1, 0.0)
+    tensor_fill(b2, 0.0)
     let h1 = tensor_new2(n_samples, hidden)
     let h1r = tensor_new2(n_samples, hidden)
     let out = tensor_new2(n_samples, 1)
@@ -427,21 +366,18 @@ fn task_sine() {
     let g_h1r = tensor_new2(n_samples, hidden)
     let g_h1 = tensor_new2(n_samples, hidden)
     let g_x = tensor_new2(n_samples, 1)
-    let hundred: f64 = f64_from_int(100)
-    let lr: f64 = one_f / hundred
+    let lr: f64 = 0.01
     let t0 = time_now_ms()
-    let epoch = 0
-    loop epoch < 10000 {
+    for epoch in range(10000) {
         linear_forward(x, w1, b1, h1)
         relu_forward(h1, h1r)
         linear_forward(h1r, w2, b2, out)
-        let print_flag = epoch - (epoch / 2000) * 2000
-        if print_flag == 0 {
-            let loss = mse_loss(out, y)
+        if epoch % 2000 == 0 {
+            let loss: f64 = mse_loss(out, y)
             print "  epoch "
             print "{epoch}"
             print "  loss="
-            print_f64_scaled(loss)
+            print_f64(loss)
             print "\n"
         }
         mse_backward(out, y, g_out)
@@ -462,7 +398,6 @@ fn task_sine() {
         sgd_step(b1, gb1, lr)
         sgd_step(w2, gw2, lr)
         sgd_step(b2, gb2, lr)
-        epoch = epoch + 1
     }
     let t1 = time_now_ms()
     let sine_ms = t1 - t0
@@ -470,21 +405,22 @@ fn task_sine() {
     relu_forward(h1, h1r)
     linear_forward(h1r, w2, b2, out)
     print "\nSample predictions (x -> predicted vs actual):\n"
-    let pi = 0
-    loop pi < 8 {
+    for pi in range(8) {
         let idx = pi * 4
+        let xv: f64 = tensor_get(x, idx)
+        let pv: f64 = tensor_get(out, idx)
+        let av: f64 = tensor_get(y, idx)
         print "  x="
-        print_f64_scaled(tensor_get(x, idx))
+        print_f64(xv)
         print "  pred="
-        print_f64_scaled(tensor_get(out, idx))
+        print_f64(pv)
         print "  actual="
-        print_f64_scaled(tensor_get(y, idx))
+        print_f64(av)
         print "\n"
-        pi = pi + 1
     }
-    let final_loss = mse_loss(out, y)
+    let final_loss: f64 = mse_loss(out, y)
     print "  Final loss: "
-    print_f64_scaled(final_loss)
+    print_f64(final_loss)
     print "\n  Time: "
     print "{sine_ms}"
     print " ms\n\n"
@@ -498,31 +434,26 @@ fn task_matmul() {
     let M = 64
     let N = 64
     let K = 64
-    let zero_f: f64 = f64_from_int(0)
     let a = tensor_new2(M, K)
     let b = tensor_new2(K, N)
     let c = tensor_new2(M, N)
     let rng_state: i64[1]
     rng_state[0] = 999
-    let scale: f64 = f64_from_int(1)
+    let scale: f64 = 1.0
     init_weights_uniform(a, &rng_state, scale)
     init_weights_uniform(b, &rng_state, scale)
     matmul_bench(a, b, c, M, K, N)
     let t0 = time_now_ms()
-    let iter = 0
-    loop iter < 10 {
+    for iter in range(10) {
         matmul_bench(a, b, c, M, K, N)
-        iter = iter + 1
     }
     let t1 = time_now_ms()
     let total_ms = t1 - t0
     let avg_ms = total_ms / 10
-    let sum: f64 = f64_from_int(0)
-    let vi = 0
-    loop vi < 16 {
+    let sum: f64 = 0.0
+    for vi in range(16) {
         let v: f64 = tensor_get(c, vi)
-        sum = sum + f64_abs(v)
-        vi = vi + 1
+        sum += f64_abs(v)
     }
     print "  Total (10 iters): "
     print "{total_ms}"
@@ -530,7 +461,7 @@ fn task_matmul() {
     print "  Average: "
     print "{avg_ms}"
     print " ms per matmul\n"
-    if sum > zero_f {
+    if sum > 0.0 {
         print "  Verification: PASS\n"
     }
     print "  FLOP/matmul: 524288\n\n"
