@@ -6105,6 +6105,13 @@ fn emit_binop(jfn: &JirFunction, bb: i64, op: i32, a: i64, b: i64) -> i64 {
     ret emit(jfn, bb, &ins)
 }
 
+; Emit index * elem_sz — just emit MUL (SHL optimization deferred)
+fn emit_index_scale(bb: i64, idx_id: i64, elem_sz_val: i64) -> i64 {
+    let jfn = g_jfn
+    let sz_c = emit_const(jfn, bb, TYPE_I64, elem_sz_val)
+    ret emit_binop(jfn, bb, OP_MUL, idx_id, sz_c)
+}
+
 ;; Desugar modulo: a % b => a - (a / b) * b
 ;; OP_MOD codegen is broken when compiled by jda0, so lower to working ops.
 fn emit_mod_desugared(jfn: &JirFunction, bb: i64, a: i64, b: i64) -> i64 {
@@ -6501,8 +6508,7 @@ fn try_compile_index_store_inline(toks: &Token, pos: &i64, stab: &StructTable, s
         let store_itype = TYPE_I64
         if var_stype == TYPE_PTR_I8 { store_elem_sz = 1 store_itype = TYPE_I8 }
         if var_stype == TYPE_PTR_I32 { store_elem_sz = 4 store_itype = TYPE_I32 }
-        let elem_sz = emit_const(jfn, bb, TYPE_I64, store_elem_sz)
-        let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
+        let byte_off = emit_index_scale(bb, idx_id, store_elem_sz)
         let addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
         let stx = Instr{}
         stx.op = OP_STORE_MEM
@@ -6572,8 +6578,7 @@ fn try_compile_index_field_store_inline(toks: &Token, pos: &i64, stab: &StructTa
     if sid >= 0 and sid < stab.cnt {
         elem_sz = stab.sizes[sid]
     }
-    let elem_sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
-    let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_id)
+    let byte_off = emit_index_scale(bb, idx_id, elem_sz)
     let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
     let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
     let target = obj_addr
@@ -6723,8 +6728,7 @@ fn compile_ident_stmt_index_field_case(toks: &Token, pos: &i64, stab: &StructTab
     if base_stype >= 1000 and is_pointer_type(base_stype) == 0 { sid = base_stype - 1000 }
     let elem_sz = 8
     if is_pointer_type(base_stype) { elem_sz = type_sizeof(base_stype) }
-    let elem_sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
-    let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_id)
+    let byte_off = emit_index_scale(bb, idx_id, elem_sz)
     let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
     let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
     let target = obj_addr
@@ -6801,8 +6805,7 @@ fn compile_ident_stmt_bracket_case(toks: &Token, pos: &i64, stab: &StructTable, 
         let elem_sz = 8
         if sid >= 0 and sid < stab.cnt { elem_sz = stab.sizes[sid] }
         if is_pointer_type(base_stype) { elem_sz = type_sizeof(base_stype) }
-        let elem_sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
-        let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_id)
+        let byte_off = emit_index_scale(bb, idx_id, elem_sz)
         let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
         let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
         let target = obj_addr
@@ -6865,8 +6868,7 @@ fn compile_ident_stmt_bracket_case(toks: &Token, pos: &i64, stab: &StructTable, 
             elem_sz_val = type_sizeof(base_stype)
             store_itype2 = base_type(base_stype)
         }
-        let elem_sz = emit_const(jfn, bb, TYPE_I64, elem_sz_val)
-        let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz)
+        let byte_off = emit_index_scale(bb, idx_id, elem_sz_val)
         let addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
         let stx = Instr{}
         stx.op = OP_STORE_MEM
@@ -7765,8 +7767,7 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                     let c = emit_const(jfn, bb, TYPE_I64, imm_off * elem_sz_i)
                     dot_addr = emit_binop(jfn, bb, OP_ADD, expr_id, c)
                 } else {
-                    let elem_sz_v = emit_const(jfn, bb, TYPE_I64, elem_sz_i)
-                    let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_v)
+                    let byte_off = emit_index_scale(bb, idx_id, elem_sz_i)
                     dot_addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
                 }
                 expr_id = dot_addr
@@ -7779,8 +7780,7 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                     ld.imm = imm_off * elem_sz_i
                     expr_id = emit(jfn, bb, &ld)
                 } else {
-                    let elem_sz_v = emit_const(jfn, bb, TYPE_I64, elem_sz_i)
-                    let byte_off = emit_binop(jfn, bb, OP_MUL, idx_id, elem_sz_v)
+                    let byte_off = emit_index_scale(bb, idx_id, elem_sz_i)
                     let arr_addr = emit_binop(jfn, bb, OP_ADD, expr_id, byte_off)
                     ld.operand0 = arr_addr
                     expr_id = emit(jfn, bb, &ld)
@@ -10549,15 +10549,13 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
             ; struct element type (negative encoding: struct_sid = -(cur_stype)-1)
             let struct_sid = (0 - cur_stype) - 1
             let elem_sz_i = g_struct_sizes[struct_sid]
-            let elem_sz = emit_const(g_jfn, bb, TYPE_I64, elem_sz_i)
-            let byte_off = emit_binop(g_jfn, bb, OP_MUL, idx_id, elem_sz)
+            let byte_off = emit_index_scale(bb, idx_id, elem_sz_i)
             let addr = emit_binop(g_jfn, bb, OP_ADD, expr_id, byte_off)
             ret live_codegen_postfix_rest(bb, addr, cur_stype)
         }
         ; primitive element type (positive cur_stype)
         let elem_sz_i = type_sizeof(cur_stype)
-        let elem_sz = emit_const(g_jfn, bb, TYPE_I64, elem_sz_i)
-        let byte_off = emit_binop(g_jfn, bb, OP_MUL, idx_id, elem_sz)
+        let byte_off = emit_index_scale(bb, idx_id, elem_sz_i)
         let addr = emit_binop(g_jfn, bb, OP_ADD, expr_id, byte_off)
         let ld = Instr{}
         ld.op = OP_LOAD_MEM
@@ -13835,7 +13833,7 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_mov_rr(out, pos, dst, PHYS_R12)
         let msp2 = ctx.ra.sp_top + 8
         ra_set_sp_top(&ctx.ra, msp2)
-        ra_set_spill(&ctx.ra, ins.id, msp)2
+        ra_set_spill(&ctx.ra, ins.id, msp2)
         emit_store_spill(out, pos, msp2, dst)
         ret 1
     }
