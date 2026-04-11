@@ -1,0 +1,213 @@
+; =============================================================================
+; jda::erb -- Template Engine
+; =============================================================================
+; Simple template rendering with variable substitution.
+; Supports <%= var %> for variable output.
+;
+; Variables are stored in a hashmap (string key -> string value).
+;
+; Functions:
+;   erb_render(tmpl, tlen, vars, out, max)   -> i64  render template
+;   erb_vars_new()                           -> &i64 create variable map
+;   erb_vars_set(vars, key, klen, val, vlen)         set variable
+;   erb_escape_html(src, slen, out)          -> i64  HTML-escape string
+; =============================================================================
+
+fn _erb_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
+    let i = 0
+    loop i < n {
+        poke_byte(dst, doff + i, src[soff + i])
+        i = i + 1
+    }
+}
+
+fn _erb_streq(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i64 {
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        if a[aoff + i] != b[boff + i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+; Variable storage: simple linear list (up to 64 vars)
+; Layout: [0]=count, then per var: key_off, key_len, val_off, val_len
+; Keys stored in [keys_buf], values in [vals_buf]
+
+;; Create variable map.
+fn erb_vars_new() -> &i64 {
+    let vars: &i64 = alloc_pages(2)
+    vars[0] = 0      ; count
+    vars[1] = alloc_pages(2)  ; keys buffer
+    vars[2] = alloc_pages(2)  ; values buffer
+    vars[3] = alloc_pages(1)  ; key offsets
+    vars[4] = alloc_pages(1)  ; key lengths
+    vars[5] = alloc_pages(1)  ; val offsets
+    vars[6] = alloc_pages(1)  ; val lengths
+    vars[7] = 0      ; keys_pos (write cursor)
+    vars[8] = 0      ; vals_pos (write cursor)
+    ret vars
+}
+
+;; Set a variable in the map.
+fn erb_vars_set(vars: &i64, key: &i8, klen: i64, val: &i8, vlen: i64) {
+    let count = vars[0]
+    let keys: &i8 = vars[1]
+    let vals: &i8 = vars[2]
+    let k_offs: &i64 = vars[3]
+    let k_lens: &i64 = vars[4]
+    let v_offs: &i64 = vars[5]
+    let v_lens: &i64 = vars[6]
+    let kpos = vars[7]
+    let vpos = vars[8]
+
+    ; Check if key already exists
+    let i = 0
+    loop i < count {
+        if _erb_streq(keys, k_offs[i], k_lens[i], key, 0, klen) == 1 {
+            ; Update existing
+            _erb_copy(vals, vpos, val, 0, vlen)
+            v_offs[i] = vpos
+            v_lens[i] = vlen
+            vars[8] = vpos + vlen
+            ret
+        }
+        i = i + 1
+    }
+
+    ; New entry
+    _erb_copy(keys, kpos, key, 0, klen)
+    k_offs[count] = kpos
+    k_lens[count] = klen
+    vars[7] = kpos + klen
+
+    _erb_copy(vals, vpos, val, 0, vlen)
+    v_offs[count] = vpos
+    v_lens[count] = vlen
+    vars[8] = vpos + vlen
+
+    vars[0] = count + 1
+}
+
+;; Internal: lookup variable value. Returns value length, copies to out.
+fn _erb_lookup(vars: &i64, name: &i8, noff: i64, nlen: i64, out: &i8) -> i64 {
+    let count = vars[0]
+    let keys: &i8 = vars[1]
+    let vals: &i8 = vars[2]
+    let k_offs: &i64 = vars[3]
+    let k_lens: &i64 = vars[4]
+    let v_offs: &i64 = vars[5]
+    let v_lens: &i64 = vars[6]
+
+    let i = 0
+    loop i < count {
+        if _erb_streq(keys, k_offs[i], k_lens[i], name, noff, nlen) == 1 {
+            _erb_copy(out, 0, vals, v_offs[i], v_lens[i])
+            ret v_lens[i]
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Render template with variable substitution.
+;; Replaces <%= name %> with variable value from vars map.
+;; Returns output length.
+fn erb_render(tmpl: &i8, tlen: i64, vars: &i64, out: &i8, max: i64) -> i64 {
+    let opos = 0
+    let ti = 0
+    let val_buf: &i8 = alloc_pages(1)
+
+    loop ti < tlen and opos < max {
+        ; Check for <%= ... %>
+        let is_tag = 0
+        if ti + 3 < tlen {
+            if tmpl[ti] == 60 {          ; '<'
+                if tmpl[ti + 1] == 37 {  ; '%'
+                    if tmpl[ti + 2] == 61 { ; '='
+                        is_tag = 1
+                    }
+                }
+            }
+        }
+
+        if is_tag == 1 {
+            ; Find closing %>
+            let start = ti + 3
+            ; Skip leading whitespace
+            loop start < tlen and tmpl[start] == 32 {
+                start = start + 1
+            }
+            let end_pos = 0 - 1
+            let scan = start
+            loop scan < tlen and end_pos < 0 {
+                if scan + 1 < tlen {
+                    if tmpl[scan] == 37 {
+                        if tmpl[scan + 1] == 62 {
+                            end_pos = scan
+                        }
+                    }
+                }
+                if end_pos < 0 { scan = scan + 1 }
+            }
+            if end_pos >= 0 {
+                ; Trim trailing whitespace from variable name
+                let name_end = end_pos
+                loop name_end > start and tmpl[name_end - 1] == 32 {
+                    name_end = name_end - 1
+                }
+                let name_len = name_end - start
+                let vlen = _erb_lookup(vars, tmpl, start, name_len, val_buf)
+                if vlen > 0 {
+                    _erb_copy(out, opos, val_buf, 0, vlen)
+                    opos = opos + vlen
+                }
+                ti = end_pos + 2  ; skip %>
+            } else {
+                ; No closing %> found, output literal
+                poke_byte(out, opos, tmpl[ti])
+                opos = opos + 1
+                ti = ti + 1
+            }
+        } else {
+            poke_byte(out, opos, tmpl[ti])
+            opos = opos + 1
+            ti = ti + 1
+        }
+    }
+    ret opos
+}
+
+;; HTML-escape string (&, <, >, ", '). Returns output length.
+fn erb_escape_html(src: &i8, slen: i64, out: &i8) -> i64 {
+    let oi = 0
+    let i = 0
+    loop i < slen {
+        let c = src[i]
+        if c == 38 {        ; '&'
+            _erb_copy(out, oi, "&amp;", 0, 5)
+            oi = oi + 5
+        } else {
+            if c == 60 {    ; '<'
+                _erb_copy(out, oi, "&lt;", 0, 4)
+                oi = oi + 4
+            } else {
+                if c == 62 {  ; '>'
+                    _erb_copy(out, oi, "&gt;", 0, 4)
+                    oi = oi + 4
+                } else {
+                    if c == 34 {  ; '"'
+                        _erb_copy(out, oi, "&quot;", 0, 6)
+                        oi = oi + 6
+                    } else {
+                        poke_byte(out, oi, c)
+                        oi = oi + 1
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    ret oi
+}
