@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     nasm \
     binutils \
     time \
+    wrk \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust

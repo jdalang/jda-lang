@@ -283,19 +283,21 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 
 | Benchmark | C | Jda | Rust | Go | Python | Ruby |
 |-----------|----:|--------:|------:|-----:|-------:|-----:|
-| sieve 1M | 28 | **23** | 31 | 31 | 424 | 387 |
-| matmul 200x200 | 29 | 39 | 32 | 40 | 2,344 | 986 |
-| sum 100M | 57 | **48** | 29 | 79 | 8,059 | 3,650 |
-| fib(35) | 40 | 147 | 63 | 127 | 2,831 | 1,295 |
+| sieve 1M | 27 | **24** | 31 | 32 | 416 | 408 |
+| matmul 200x200 | 30 | 37 | 32 | 40 | 2,265 | 998 |
+| sum 100M | 57 | **49** | 30 | 80 | 8,183 | 3,615 |
+| fib(35) | 40 | 148 | 62 | 126 | 2,826 | 1,318 |
+| json parse 50K | 32 | **31** | 33 | 90 | 159 | 342 |
 
 ### Compile Time (ms)
 
 | Benchmark | C (gcc -O2) | Jda | Rust (rustc -O) | Go |
 |-----------|--------:|--------:|------:|----:|
-| sieve 1M | 491 | **44** | 1,647 | 663 |
-| matmul 200x200 | 484 | **42** | 1,625 | 667 |
-| sum 100M | 414 | **39** | 1,231 | 652 |
-| fib(35) | 568 | **46** | 1,666 | 847 |
+| sieve 1M | 479 | **45** | 1,579 | 658 |
+| matmul 200x200 | 478 | **42** | 1,628 | 695 |
+| sum 100M | 434 | **40** | 1,209 | 678 |
+| fib(35) | 495 | **42** | 1,269 | 746 |
+| json parse 50K | 510 | **48** | 1,726 | 789 |
 
 ### Binary Size
 
@@ -308,8 +310,8 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 
 | | vs C | vs Rust | vs Go | vs Python | vs Ruby |
 |---|---|---|---|---|---|
-| **Runtime** | **Jda wins 2 of 4** | Jda wins 1 of 4 | **Jda wins 3 of 4** | **Jda 66x faster** | **Jda 32x faster** |
-| **Compile** | **Jda 11x faster** | **Jda 36x faster** | **Jda 16x faster** | — | — |
+| **Runtime** | **Jda wins 3 of 5** | **Jda wins 2 of 5** | **Jda wins 4 of 5** | **Jda 54x faster** | **Jda 28x faster** |
+| **Compile** | **Jda 11x faster** | **Jda 33x faster** | **Jda 16x faster** | — | — |
 | **Binary** | C 65x smaller (dynamic) | **Jda 3.8x smaller** | **Jda 40% smaller** | — | — |
 | **GC** | Neither | Neither | **Jda: no GC** | — | — |
 | **Deps** | gcc + libc | Rust toolchain | Go toolchain | CPython | CRuby |
