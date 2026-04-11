@@ -1,0 +1,118 @@
+; =============================================================================
+; jda::linecache -- Random Access to Text Lines in Files
+; =============================================================================
+; Read a file into memory and access individual lines by number (1-based).
+;
+; Functions:
+;   linecache_open(path)               -> &i64 open file, index lines
+;   linecache_getline(lc, lineno, out) -> i64  get line content, return length
+;   linecache_count(lc)                -> i64  total line count
+;   linecache_close(lc)                -> i64  release resources
+; =============================================================================
+
+;; Internal byte reader helper.
+fn _lc_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: read file via syscalls.
+fn _lc_open(path: &i8) -> i64 {
+    ret syscall(2, path, 0, 0)
+}
+
+;; Internal: read from fd.
+fn _lc_read(fd: i64, buf: &i8, max: i64) -> i64 {
+    ret syscall(0, fd, buf, max)
+}
+
+;; Internal: close fd.
+fn _lc_close(fd: i64) -> i64 {
+    ret syscall(3, fd, 0, 0)
+}
+
+;; Open a file and index its lines.
+;; Layout: [0]=line_count, [1]=data_ptr, [2]=data_len,
+;;          [3]=offsets_ptr, [4]=lengths_ptr
+fn linecache_open(path: &i8) -> &i64 {
+    let fd = _lc_open(path)
+    if fd < 0 { ret 0 }
+    ; Read entire file (up to 256KB)
+    let data: &i8 = alloc_pages(64)
+    let total = 0
+    let reading = 1
+    loop reading == 1 {
+        let maxread = 262144 - total
+        if maxread <= 0 {
+            reading = 0
+        }
+        if reading == 1 {
+            let n = _lc_read(fd, data, maxread)
+            if n <= 0 {
+                reading = 0
+            }
+            if reading == 1 {
+                total = total + n
+            }
+        }
+    }
+    _lc_close(fd)
+    ; Index lines
+    let offsets: &i64 = alloc_pages(8)
+    let lengths: &i64 = alloc_pages(8)
+    let line_count = 0
+    let line_start = 0
+    let i = 0
+    loop i < total {
+        let b = _lc_byte_at(data, i)
+        if b == 10 {
+            offsets[line_count] = line_start
+            let llen = i - line_start
+            lengths[line_count] = llen
+            line_count = line_count + 1
+            line_start = i + 1
+        }
+        i = i + 1
+    }
+    ; Handle last line without trailing newline
+    if line_start < total {
+        offsets[line_count] = line_start
+        let llen = total - line_start
+        lengths[line_count] = llen
+        line_count = line_count + 1
+    }
+    let lc: &i64 = alloc_pages(1)
+    lc[0] = line_count
+    lc[1] = data
+    lc[2] = total
+    lc[3] = offsets
+    lc[4] = lengths
+    ret lc
+}
+
+;; Get a line by number (1-based). Returns length, -1 if out of range.
+fn linecache_getline(lc: &i64, lineno: i64, out: &i8) -> i64 {
+    let count = lc[0]
+    if lineno < 1 { ret -1 }
+    if lineno > count { ret -1 }
+    let idx = lineno - 1
+    let data: &i8 = lc[1]
+    let offsets: &i64 = lc[3]
+    let lengths: &i64 = lc[4]
+    let off = offsets[idx]
+    let ln = lengths[idx]
+    let i = 0
+    loop i < ln {
+        let b = _lc_byte_at(data, off + i)
+        poke_byte(out, i, b)
+        i = i + 1
+    }
+    ret ln
+}
+
+;; Return total number of lines.
+fn linecache_count(lc: &i64) -> i64 {
+    ret lc[0]
+}
+
+;; Release linecache (no-op in Jda — no GC, no free).
+fn linecache_close(lc: &i64) -> i64 {
+    ret 0
+}

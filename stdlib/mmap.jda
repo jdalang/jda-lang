@@ -1,0 +1,101 @@
+; =============================================================================
+; jda::mmap -- Memory-Mapped Region Utilities
+; =============================================================================
+; Provides a handle-based abstraction for a memory region with byte and i64
+; read/write operations. Uses alloc_pages for allocation.
+;
+; Memory layout per MmapHandle (&i64):
+;   [0] buf       (&i8 — byte buffer)
+;   [1] size      (region size in bytes)
+;   [2] i64_view  (&i64 — same memory as i64 pointer)
+;
+; Functions:
+;   mmap_region_new(size)           -> &i64  create region
+;   mmap_read_byte(h, off)         -> i64   read byte at offset
+;   mmap_write_byte(h, off, val)            write byte at offset
+;   mmap_read_i64(h, off)          -> i64   read i64 at byte offset
+;   mmap_write_i64(h, off, val)             write i64 at byte offset
+;   mmap_fill(h, off, len, val)             fill bytes with val
+;   mmap_region_size(h)            -> i64   return region size
+; =============================================================================
+
+;; Internal byte reader.
+fn _mmap_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Create a new memory region of at least `size` bytes.
+fn mmap_region_new(size: i64) -> &i64 {
+    let h: &i64 = alloc_pages(1)
+    ; Calculate pages needed (4096 bytes per page)
+    let pages = size / 4096
+    let rem = size % 4096
+    if rem > 0 { pages = pages + 1 }
+    if pages < 1 { pages = 1 }
+    let buf: &i8 = alloc_pages(pages)
+    let view: &i64 = buf
+    h[0] = buf
+    h[1] = size
+    h[2] = view
+    ; Zero-fill the region
+    let i = 0
+    loop i < size {
+        poke_byte(buf, i, 0)
+        i = i + 1
+    }
+    ret h
+}
+
+;; Read a byte at the given offset.
+fn mmap_read_byte(h: &i64, off: i64) -> i64 {
+    let buf: &i8 = h[0]
+    let size = h[1]
+    if off < 0 { ret 0 - 1 }
+    if off >= size { ret 0 - 1 }
+    let val = _mmap_byte_at(buf, off)
+    if val < 0 { val = val + 256 }
+    ret val
+}
+
+;; Write a byte at the given offset.
+fn mmap_write_byte(h: &i64, off: i64, val: i64) -> i64 {
+    let buf: &i8 = h[0]
+    let size = h[1]
+    if off < 0 { ret 0 - 1 }
+    if off >= size { ret 0 - 1 }
+    poke_byte(buf, off, val)
+    ret 0
+}
+
+;; Read an i64 at the given byte offset (must be 8-byte aligned).
+fn mmap_read_i64(h: &i64, off: i64) -> i64 {
+    let view: &i64 = h[2]
+    let idx = off / 8
+    ret view[idx]
+}
+
+;; Write an i64 at the given byte offset (must be 8-byte aligned).
+fn mmap_write_i64(h: &i64, off: i64, val: i64) -> i64 {
+    let view: &i64 = h[2]
+    let idx = off / 8
+    view[idx] = val
+    ret 0
+}
+
+;; Fill `len` bytes starting at `off` with value `val`.
+fn mmap_fill(h: &i64, off: i64, len: i64, val: i64) -> i64 {
+    let buf: &i8 = h[0]
+    let size = h[1]
+    let i = 0
+    loop i < len {
+        let pos = off + i
+        if pos < size {
+            poke_byte(buf, pos, val)
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Return the size of the region.
+fn mmap_region_size(h: &i64) -> i64 {
+    ret h[1]
+}

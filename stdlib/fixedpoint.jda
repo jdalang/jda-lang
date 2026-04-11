@@ -1,0 +1,200 @@
+; =============================================================================
+; jda::fixedpoint -- Scaled Integer Arithmetic (4 Decimal Places)
+; =============================================================================
+; Fixed-point arithmetic using scale factor of 10000.
+; Value 3.1415 is stored as 31415. Value 100 is stored as 1000000.
+;
+; Functions:
+;   fp_from_int(n)                     -> i64  n * 10000
+;   fp_from_parts(whole, frac)         -> i64  whole * 10000 + frac
+;   fp_add(a, b)                       -> i64  a + b
+;   fp_sub(a, b)                       -> i64  a - b
+;   fp_mul(a, b)                       -> i64  (a * b) / 10000
+;   fp_div(a, b)                       -> i64  (a * 10000) / b
+;   fp_whole(a)                        -> i64  a / 10000
+;   fp_frac(a)                         -> i64  a % 10000
+;   fp_to_str(a, out)                  -> i64  format "123.4567"
+;   fp_from_str(s, slen)              -> i64  parse "123.4567"
+;   fp_cmp(a, b)                       -> i64  -1, 0, 1
+;   fp_abs(a)                          -> i64  absolute value
+; =============================================================================
+
+;; Internal byte reader.
+fn _fp_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Convert integer to fixed-point.
+fn fp_from_int(n: i64) -> i64 { ret n * 10000 }
+
+;; Create from whole and fractional parts (frac is 0-9999).
+fn fp_from_parts(whole: i64, frac: i64) -> i64 {
+    if whole < 0 {
+        let aw = 0 - whole
+        let r = aw * 10000 + frac
+        ret 0 - r
+    }
+    ret whole * 10000 + frac
+}
+
+;; Add two fixed-point values.
+fn fp_add(a: i64, b: i64) -> i64 { ret a + b }
+
+;; Subtract two fixed-point values.
+fn fp_sub(a: i64, b: i64) -> i64 { ret a - b }
+
+;; Multiply two fixed-point values.
+fn fp_mul(a: i64, b: i64) -> i64 { ret a * b / 10000 }
+
+;; Divide two fixed-point values.
+fn fp_div(a: i64, b: i64) -> i64 {
+    if b == 0 { ret 0 }
+    ret a * 10000 / b
+}
+
+;; Get whole part.
+fn fp_whole(a: i64) -> i64 { ret a / 10000 }
+
+;; Get fractional part (0-9999).
+fn fp_frac(a: i64) -> i64 {
+    let f = a % 10000
+    if f < 0 { f = 0 - f }
+    ret f
+}
+
+;; Compare: -1, 0, or 1.
+fn fp_cmp(a: i64, b: i64) -> i64 {
+    if a < b { ret -1 }
+    if a > b { ret 1 }
+    ret 0
+}
+
+;; Absolute value.
+fn fp_abs(a: i64) -> i64 {
+    if a < 0 { ret 0 - a }
+    ret a
+}
+
+;; Square root of fixed-point value.
+fn fp_sqrt(a: i64) -> i64 {
+    if a <= 0 { ret 0 }
+    ; sqrt(a) where a is scaled by 10000
+    ; result should also be scaled by 10000
+    ; sqrt(a * 10000) / sqrt(10000) * 10000 = sqrt(a * 10000) * 100
+    let scaled = a * 10000
+    let x = scaled
+    let y = (x + 1) / 2
+    let running = 1
+    loop running == 1 {
+        if y >= x { running = 0 }
+        if running == 1 {
+            x = y
+            y = (x + scaled / x) / 2
+        }
+    }
+    ret x
+}
+
+;; Format fixed-point value to string. Returns length.
+fn fp_to_str(a: i64, out: &i8) -> i64 {
+    let pos = 0
+    let val = a
+    if val < 0 {
+        poke_byte(out, pos, 45) ; '-'
+        pos = pos + 1
+        val = 0 - val
+    }
+    let whole = val / 10000
+    let frac = val % 10000
+    ; Write whole part
+    if whole == 0 {
+        poke_byte(out, pos, 48)
+        pos = pos + 1
+    } else {
+        ; Convert whole to digits
+        let tmp: &i8 = alloc_pages(1)
+        let dcount = 0
+        let w = whole
+        loop w > 0 {
+            let d = w % 10
+            poke_byte(tmp, dcount, d + 48)
+            dcount = dcount + 1
+            w = w / 10
+        }
+        ; Reverse
+        let k = dcount - 1
+        loop k >= 0 {
+            let b = _fp_byte_at(tmp, k)
+            poke_byte(out, pos, b)
+            pos = pos + 1
+            k = k - 1
+        }
+    }
+    ; Decimal point
+    poke_byte(out, pos, 46)
+    pos = pos + 1
+    ; Write 4 fractional digits
+    let d1 = frac / 1000
+    let rem1 = frac % 1000
+    let d2 = rem1 / 100
+    let rem2 = rem1 % 100
+    let d3 = rem2 / 10
+    let d4 = rem2 % 10
+    poke_byte(out, pos, d1 + 48)
+    pos = pos + 1
+    poke_byte(out, pos, d2 + 48)
+    pos = pos + 1
+    poke_byte(out, pos, d3 + 48)
+    pos = pos + 1
+    poke_byte(out, pos, d4 + 48)
+    pos = pos + 1
+    ret pos
+}
+
+;; Parse fixed-point from string. Returns scaled value.
+fn fp_from_str(s: &i8, slen: i64) -> i64 {
+    let neg = 0
+    let i = 0
+    if slen > 0 {
+        let b = _fp_byte_at(s, 0)
+        if b == 45 {
+            neg = 1
+            i = 1
+        }
+    }
+    let whole = 0
+    let reading_whole = 1
+    loop reading_whole == 1 {
+        if i >= slen { reading_whole = 0 }
+        if reading_whole == 1 {
+            let b = _fp_byte_at(s, i)
+            if b == 46 {
+                reading_whole = 0
+                i = i + 1
+            } else {
+                let d = b - 48
+                whole = whole * 10 + d
+                i = i + 1
+            }
+        }
+    }
+    let frac = 0
+    let frac_digits = 0
+    loop i < slen {
+        let b = _fp_byte_at(s, i)
+        let d = b - 48
+        frac = frac * 10 + d
+        frac_digits = frac_digits + 1
+        i = i + 1
+    }
+    ; Scale frac to 4 digits
+    loop frac_digits < 4 {
+        frac = frac * 10
+        frac_digits = frac_digits + 1
+    }
+    loop frac_digits > 4 {
+        frac = frac / 10
+        frac_digits = frac_digits - 1
+    }
+    let result = whole * 10000 + frac
+    if neg == 1 { result = 0 - result }
+    ret result
+}

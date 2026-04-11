@@ -1,0 +1,44 @@
+fn main() -> i64 {
+    let h = mmap_region_new(256)
+
+    let sz = mmap_region_size(h)
+    print("size: {sz}\n")
+
+    ; Write and read bytes
+    let dummy = mmap_write_byte(h, 0, 42)
+    let dummy2 = mmap_write_byte(h, 1, 99)
+    let dummy3 = mmap_write_byte(h, 10, 255)
+
+    let b0 = mmap_read_byte(h, 0)
+    print("byte 0: {b0}\n")
+
+    let b1 = mmap_read_byte(h, 1)
+    print("byte 1: {b1}\n")
+
+    let b10 = mmap_read_byte(h, 10)
+    print("byte 10: {b10}\n")
+
+    ; Read unwritten byte (should be 0)
+    let b5 = mmap_read_byte(h, 5)
+    print("byte 5: {b5}\n")
+
+    ; Write and read i64
+    let dummy4 = mmap_write_i64(h, 16, 12345)
+    let v = mmap_read_i64(h, 16)
+    print("i64 at 16: {v}\n")
+
+    ; Fill bytes 32..37 with value 65 (A)
+    let dummy5 = mmap_fill(h, 32, 5, 65)
+    let f0 = mmap_read_byte(h, 32)
+    let f4 = mmap_read_byte(h, 36)
+    let f5 = mmap_read_byte(h, 37)
+    print("fill[0]: {f0}\n")
+    print("fill[4]: {f4}\n")
+    print("fill[5]: {f5}\n")
+
+    ; Out of bounds read
+    let oob = mmap_read_byte(h, 300)
+    print("oob: {oob}\n")
+
+    ret 0
+}

@@ -1,0 +1,311 @@
+; =============================================================================
+; jda::httpserver -- HTTP Server Helpers
+; =============================================================================
+; HTTP request parsing and response formatting.
+; No actual network I/O — these are pure parsing/formatting helpers.
+;
+; Request handle layout (&i64):
+;   [0] method      (0=GET, 1=POST, 2=PUT, 3=DELETE, 4=PATCH, 5=HEAD)
+;   [1] path_buf    (&i8)
+;   [2] path_len
+;   [3] version     (0=1.0, 1=1.1)
+;   [4] body_off
+;   [5] body_len
+;   [6] raw_buf     (&i8)
+;   [7] raw_len
+;
+; Functions:
+;   http_parse_request(buf, len)       -> &i64   parse HTTP request
+;   http_req_method(h)                 -> i64    get method code
+;   http_req_path(h, out)              -> i64    copy path to out
+;   http_req_path_len(h)               -> i64    get path length
+;   http_respond_ok(body, blen, out)   -> i64    format 200 response
+;   http_respond_404(out)              -> i64    format 404 response
+;   http_status_line(code, out)        -> i64    format status line
+; =============================================================================
+
+;; Internal byte reader.
+fn _hsrv_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: copy bytes.
+fn _hsrv_copy(dst: &i8, doff: i64, src: &i8, soff: i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ch = _hsrv_byte_at(src, soff + i)
+        poke_byte(dst, doff + i, ch)
+        i = i + 1
+    }
+    ret len
+}
+
+;; Internal: check if buf at off starts with prefix of plen bytes.
+fn _hsrv_starts(buf: &i8, off: i64, pfx: &i8, plen: i64) -> i64 {
+    let i = 0
+    loop i < plen {
+        let a = _hsrv_byte_at(buf, off + i)
+        let b = _hsrv_byte_at(pfx, i)
+        if a != b { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+;; Internal: find double CRLF (header/body separator). Returns offset or -1.
+fn _hsrv_find_body(buf: &i8, len: i64) -> i64 {
+    let i = 0
+    let limit = len - 3
+    loop i < limit {
+        let c0 = _hsrv_byte_at(buf, i)
+        let i1 = i + 1
+        let c1 = _hsrv_byte_at(buf, i1)
+        let i2 = i + 2
+        let c2 = _hsrv_byte_at(buf, i2)
+        let i3 = i + 3
+        let c3 = _hsrv_byte_at(buf, i3)
+        if c0 == 13 and c1 == 10 and c2 == 13 and c3 == 10 {
+            ret i + 4
+        }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Internal: write a string literal byte-by-byte. Returns new offset.
+;; Writes "HTTP/1.1 " (9 bytes)
+fn _hsrv_write_http11(out: &i8, pos: i64) -> i64 {
+    poke_byte(out, pos, 72) let p = pos + 1   ; H
+    poke_byte(out, p, 84) p = p + 1           ; T
+    poke_byte(out, p, 84) p = p + 1           ; T
+    poke_byte(out, p, 80) p = p + 1           ; P
+    poke_byte(out, p, 47) p = p + 1           ; /
+    poke_byte(out, p, 49) p = p + 1           ; 1
+    poke_byte(out, p, 46) p = p + 1           ; .
+    poke_byte(out, p, 49) p = p + 1           ; 1
+    poke_byte(out, p, 32) p = p + 1           ; space
+    ret p
+}
+
+;; Internal: write CRLF. Returns new offset.
+fn _hsrv_write_crlf(out: &i8, pos: i64) -> i64 {
+    poke_byte(out, pos, 13)
+    let p = pos + 1
+    poke_byte(out, p, 10)
+    ret p + 1
+}
+
+;; Internal: write integer as decimal. Returns new offset.
+;; Handles values up to 99999 without alloc_pages.
+fn _hsrv_write_int(out: &i8, pos: i64, val: i64) -> i64 {
+    if val == 0 {
+        poke_byte(out, pos, 48)
+        ret pos + 1
+    }
+    ; Count digits first
+    let dcount = 0
+    let v = val
+    loop v > 0 {
+        dcount = dcount + 1
+        v = v / 10
+    }
+    ; Write digits from right to left into out
+    let i = dcount - 1
+    let v2 = val
+    let writing = 1
+    loop writing == 1 {
+        let d = v2 % 10
+        poke_byte(out, pos + i, d + 48)
+        v2 = v2 / 10
+        if i == 0 { writing = 0 } else { i = i - 1 }
+    }
+    ret pos + dcount
+}
+
+;; Parse an HTTP request. Returns handle.
+fn http_parse_request(buf: &i8, len: i64) -> &i64 {
+    let h: &i64 = alloc_pages(1)
+    let path_buf: &i8 = alloc_pages(1)
+    h[1] = path_buf
+    h[6] = buf
+    h[7] = len
+    ; Parse method
+    let c0 = _hsrv_byte_at(buf, 0)
+    let c1 = _hsrv_byte_at(buf, 1)
+    let c2 = _hsrv_byte_at(buf, 2)
+    if c0 == 71 and c1 == 69 and c2 == 84 {
+        h[0] = 0  ; GET
+    }
+    if c0 == 80 and c1 == 79 and c2 == 83 {
+        h[0] = 1  ; POST
+    }
+    if c0 == 80 and c1 == 85 and c2 == 84 {
+        h[0] = 2  ; PUT
+    }
+    if c0 == 68 and c1 == 69 and c2 == 76 {
+        h[0] = 3  ; DELETE
+    }
+    if c0 == 80 and c1 == 65 and c2 == 84 {
+        h[0] = 4  ; PATCH
+    }
+    if c0 == 72 and c1 == 69 and c2 == 65 {
+        h[0] = 5  ; HEAD
+    }
+    ; Find first space (end of method)
+    let pos = 0
+    let found_sp = 0
+    loop found_sp == 0 and pos < len {
+        let ch = _hsrv_byte_at(buf, pos)
+        if ch == 32 { found_sp = 1 } else { pos = pos + 1 }
+    }
+    pos = pos + 1
+    ; Parse path until next space
+    let path_start = pos
+    found_sp = 0
+    loop found_sp == 0 and pos < len {
+        let ch2 = _hsrv_byte_at(buf, pos)
+        if ch2 == 32 { found_sp = 1 } else { pos = pos + 1 }
+    }
+    let plen = pos - path_start
+    _hsrv_copy(path_buf, 0, buf, path_start, plen)
+    h[2] = plen
+    ; Parse version
+    pos = pos + 1
+    h[3] = 1  ; default 1.1
+    ; Find body
+    let body_off = _hsrv_find_body(buf, len)
+    if body_off >= 0 {
+        h[4] = body_off
+        h[5] = len - body_off
+    } else {
+        h[4] = len
+        h[5] = 0
+    }
+    ret h
+}
+
+;; Get method code (0=GET, 1=POST, 2=PUT, 3=DELETE, 4=PATCH, 5=HEAD).
+fn http_req_method(h: &i64) -> i64 {
+    ret h[0]
+}
+
+;; Copy path to output buffer. Returns path length.
+fn http_req_path(h: &i64, out: &i8) -> i64 {
+    let path_buf: &i8 = h[1]
+    let plen = h[2]
+    _hsrv_copy(out, 0, path_buf, 0, plen)
+    ret plen
+}
+
+;; Get path length.
+fn http_req_path_len(h: &i64) -> i64 {
+    ret h[2]
+}
+
+;; Format a 200 OK response with body. Returns total length in out.
+fn http_respond_ok(body: &i8, blen: i64, out: &i8) -> i64 {
+    let p = _hsrv_write_http11(out, 0)
+    ; "200 OK"
+    poke_byte(out, p, 50) p = p + 1  ; 2
+    poke_byte(out, p, 48) p = p + 1  ; 0
+    poke_byte(out, p, 48) p = p + 1  ; 0
+    poke_byte(out, p, 32) p = p + 1  ; space
+    poke_byte(out, p, 79) p = p + 1  ; O
+    poke_byte(out, p, 75) p = p + 1  ; K
+    p = _hsrv_write_crlf(out, p)
+    ; Content-Length header
+    poke_byte(out, p, 67) p = p + 1  ; C
+    poke_byte(out, p, 111) p = p + 1 ; o
+    poke_byte(out, p, 110) p = p + 1 ; n
+    poke_byte(out, p, 116) p = p + 1 ; t
+    poke_byte(out, p, 101) p = p + 1 ; e
+    poke_byte(out, p, 110) p = p + 1 ; n
+    poke_byte(out, p, 116) p = p + 1 ; t
+    poke_byte(out, p, 45) p = p + 1  ; -
+    poke_byte(out, p, 76) p = p + 1  ; L
+    poke_byte(out, p, 101) p = p + 1 ; e
+    poke_byte(out, p, 110) p = p + 1 ; n
+    poke_byte(out, p, 103) p = p + 1 ; g
+    poke_byte(out, p, 116) p = p + 1 ; t
+    poke_byte(out, p, 104) p = p + 1 ; h
+    poke_byte(out, p, 58) p = p + 1  ; :
+    poke_byte(out, p, 32) p = p + 1  ; space
+    p = _hsrv_write_int(out, p, blen)
+    p = _hsrv_write_crlf(out, p)
+    ; Empty line
+    p = _hsrv_write_crlf(out, p)
+    ; Body
+    _hsrv_copy(out, p, body, 0, blen)
+    p = p + blen
+    ret p
+}
+
+;; Format a 404 Not Found response. Returns total length in out.
+fn http_respond_404(out: &i8) -> i64 {
+    let p = _hsrv_write_http11(out, 0)
+    ; "404 Not Found"
+    poke_byte(out, p, 52) p = p + 1  ; 4
+    poke_byte(out, p, 48) p = p + 1  ; 0
+    poke_byte(out, p, 52) p = p + 1  ; 4
+    poke_byte(out, p, 32) p = p + 1  ; space
+    poke_byte(out, p, 78) p = p + 1  ; N
+    poke_byte(out, p, 111) p = p + 1 ; o
+    poke_byte(out, p, 116) p = p + 1 ; t
+    poke_byte(out, p, 32) p = p + 1  ; space
+    poke_byte(out, p, 70) p = p + 1  ; F
+    poke_byte(out, p, 111) p = p + 1 ; o
+    poke_byte(out, p, 117) p = p + 1 ; u
+    poke_byte(out, p, 110) p = p + 1 ; n
+    poke_byte(out, p, 100) p = p + 1 ; d
+    p = _hsrv_write_crlf(out, p)
+    ; Content-Length: 0
+    poke_byte(out, p, 67) p = p + 1  ; C
+    poke_byte(out, p, 111) p = p + 1 ; o
+    poke_byte(out, p, 110) p = p + 1 ; n
+    poke_byte(out, p, 116) p = p + 1 ; t
+    poke_byte(out, p, 101) p = p + 1 ; e
+    poke_byte(out, p, 110) p = p + 1 ; n
+    poke_byte(out, p, 116) p = p + 1 ; t
+    poke_byte(out, p, 45) p = p + 1  ; -
+    poke_byte(out, p, 76) p = p + 1  ; L
+    poke_byte(out, p, 101) p = p + 1 ; e
+    poke_byte(out, p, 110) p = p + 1 ; n
+    poke_byte(out, p, 103) p = p + 1 ; g
+    poke_byte(out, p, 116) p = p + 1 ; t
+    poke_byte(out, p, 104) p = p + 1 ; h
+    poke_byte(out, p, 58) p = p + 1  ; :
+    poke_byte(out, p, 32) p = p + 1  ; space
+    poke_byte(out, p, 48) p = p + 1  ; 0
+    p = _hsrv_write_crlf(out, p)
+    p = _hsrv_write_crlf(out, p)
+    ret p
+}
+
+;; Format a status line for a given code. Returns length.
+fn http_status_line(code: i64, out: &i8) -> i64 {
+    let p = _hsrv_write_http11(out, 0)
+    p = _hsrv_write_int(out, p, code)
+    poke_byte(out, p, 32) p = p + 1  ; space
+    if code == 200 {
+        poke_byte(out, p, 79) p = p + 1  ; O
+        poke_byte(out, p, 75) p = p + 1  ; K
+    }
+    if code == 404 {
+        poke_byte(out, p, 78) p = p + 1  ; N
+        poke_byte(out, p, 111) p = p + 1 ; o
+        poke_byte(out, p, 116) p = p + 1 ; t
+        poke_byte(out, p, 32) p = p + 1  ; space
+        poke_byte(out, p, 70) p = p + 1  ; F
+        poke_byte(out, p, 111) p = p + 1 ; o
+        poke_byte(out, p, 117) p = p + 1 ; u
+        poke_byte(out, p, 110) p = p + 1 ; n
+        poke_byte(out, p, 100) p = p + 1 ; d
+    }
+    if code == 500 {
+        poke_byte(out, p, 69) p = p + 1  ; E
+        poke_byte(out, p, 114) p = p + 1 ; r
+        poke_byte(out, p, 114) p = p + 1 ; r
+        poke_byte(out, p, 111) p = p + 1 ; o
+        poke_byte(out, p, 114) p = p + 1 ; r
+    }
+    p = _hsrv_write_crlf(out, p)
+    ret p
+}

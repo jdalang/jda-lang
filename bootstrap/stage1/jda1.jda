@@ -79,6 +79,7 @@ const TOK_IMPL    = 51
 const TOK_SPAWN   = 52
 const TOK_TRAIT   = 53
 const TOK_UNSAFE  = 54
+const TOK_PERCENT = 55
 
 ; Derive trait IDs
 const DERIVE_DEBUG = 1
@@ -231,6 +232,7 @@ const OP_ROCM_CHECK  = 92
 const OP_ROCM_MATMUL = 93
 const OP_ROCM_VECADD = 94
 const OP_CALL_IND = 95
+const OP_MOD      = 96
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -3085,6 +3087,7 @@ fn is_ident_start(c: i8) {
 }
 
 fn char_to_tok_lo(c: i8) {
+    if c == 37 { ret TOK_PERCENT }
     if c == 38 { ret TOK_AMP }
     if c == 40 { ret TOK_LPAREN }
     if c == 41 { ret TOK_RPAREN }
@@ -4032,6 +4035,14 @@ fn lex_global_fast() -> i32 {
             tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
             g_lex_count = g_lex_count + 1
             g_lex_pos_i = g_lex_pos_i + g_lex_adv
+            g_lex_handled = 1
+        }
+        if g_lex_handled == 0 and g_lex_cur_char == 37 {
+            ; Handle % directly — ASCII 37 = '%'
+            tok_set_type(g_dbg_toks_init, g_lex_count, TOK_PERCENT)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+            g_lex_count = g_lex_count + 1
+            g_lex_pos_i = g_lex_pos_i + 1
             g_lex_handled = 1
         }
         if g_lex_handled == 0 {
@@ -5581,7 +5592,7 @@ fn parse_binop(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: 
 }
 
 fn op_precedence(op: i32) -> i32 {
-    let mul_p = ((op == TOK_STAR) or (op == TOK_SLASH)) * 6
+    let mul_p = ((op == TOK_STAR) or (op == TOK_SLASH) or (op == TOK_PERCENT)) * 6
     let add_p = ((op == TOK_PLUS) or (op == TOK_MINUS) or (op == TOK_SHR) or (op == TOK_SHL)) * 5
     let cmp_p = ((op == TOK_LT) or (op == TOK_GT) or (op == TOK_LTE) or (op == TOK_GTE)) * 4
     let eq_p = ((op == TOK_EQEQ) or (op == TOK_NEQ)) * 3
@@ -6072,6 +6083,14 @@ fn emit_binop(jfn: &JirFunction, bb: i64, op: i32, a: i64, b: i64) -> i64 {
     ins.operand0 = a
     ins.operand1 = b
     ret emit(jfn, bb, &ins)
+}
+
+;; Desugar modulo: a % b => a - (a / b) * b
+;; OP_MOD codegen is broken when compiled by jda0, so lower to working ops.
+fn emit_mod_desugared(jfn: &JirFunction, bb: i64, a: i64, b: i64) -> i64 {
+    let q = emit_binop(jfn, bb, OP_DIV, a, b)
+    let qb = emit_binop(jfn, bb, OP_MUL, q, b)
+    ret emit_binop(jfn, bb, OP_SUB, a, qb)
 }
 
 fn emit_spawn_jir(jfn: &JirFunction, bb: i64, fn_name_start: i64, fn_name_len: i64) -> i64 {
@@ -7148,7 +7167,7 @@ fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
 }
 
 fn op_precedence(tok: i32) -> i32 {
-    let mul_p = ((tok == TOK_STAR) or (tok == TOK_SLASH)) * 60
+    let mul_p = ((tok == TOK_STAR) or (tok == TOK_SLASH) or (tok == TOK_PERCENT)) * 60
     let add_p = ((tok == TOK_PLUS) or (tok == TOK_MINUS)) * 50
     let cmp_p = ((tok == TOK_LT) or (tok == TOK_GT) or (tok == TOK_LTE) or (tok == TOK_GTE)) * 40
     let eq_p = ((tok == TOK_EQEQ) or (tok == TOK_NEQ)) * 30
@@ -7302,7 +7321,7 @@ fn is_add_like_op(op: i32) -> i64 {
 }
 
 fn is_mul_like_op(op: i32) -> i64 {
-    ret (op == TOK_STAR) or (op == TOK_SLASH)
+    ret (op == TOK_STAR) or (op == TOK_SLASH) or (op == TOK_PERCENT)
 }
 
 fn codegen_add_inline_tail(left_id: i64, toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -7367,7 +7386,7 @@ fn codegen_mul_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
     let mul_more = 1
     loop mul_more == 1 {
         let op = tok_type_at(toks, pos[0])
-        let keep = (op == TOK_STAR) or (op == TOK_SLASH)
+        let keep = (op == TOK_STAR) or (op == TOK_SLASH) or (op == TOK_PERCENT)
         if keep == 0 {
             mul_more = 0
         }
@@ -11824,6 +11843,7 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_MINUS { ret OP_SUB }
     if tok == TOK_STAR  { ret OP_MUL }
     if tok == TOK_SLASH { ret OP_DIV }
+    if tok == TOK_PERCENT { ret OP_MOD }
     if tok == TOK_EQEQ  { ret OP_CMP_EQ }
     if tok == TOK_NEQ   { ret OP_CMP_NE }
     if tok == TOK_LT    { ret OP_CMP_LT }
@@ -11881,7 +11901,7 @@ fn fold_constants(jfn: &JirFunction) {
         loop ii < jfn.blocks[bi].instr_cnt {
             let iop = jfn.blocks[bi].instrs[ii].op
             if iop == OP_ADD or iop == OP_SUB or
-               iop == OP_MUL or iop == OP_DIV or
+               iop == OP_MUL or iop == OP_DIV or iop == OP_MOD or
                iop == OP_SHR or iop == OP_SHL {
                 let ca = find_const(jfn, jfn.blocks[bi].instrs[ii].operand0)
                 let cb = find_const(jfn, jfn.blocks[bi].instrs[ii].operand1)
@@ -11892,6 +11912,10 @@ fn fold_constants(jfn: &JirFunction) {
                     if iop == OP_MUL { result = ca.val * cb.val }
                     if iop == OP_DIV and cb.val != 0 {
                         result = ca.val / cb.val
+                    }
+                    if iop == OP_MOD and cb.val != 0 {
+                        let q = ca.val / cb.val
+                        result = ca.val - q * cb.val
                     }
                     if iop == OP_SHR { result = ca.val >> cb.val }
                     if iop == OP_SHL { result = ca.val << cb.val }
@@ -11946,7 +11970,7 @@ fn dce(jfn: &JirFunction) {
             let imm0 = jfn.blocks[bi].instrs[ii].imm
             let op = jfn.blocks[bi].instrs[ii].op
             let id = jfn.blocks[bi].instrs[ii].id
-            if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
+            if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or op == OP_MOD or
                op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
                op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
                op == OP_SHR or op == OP_SHL {
@@ -13418,6 +13442,7 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     }
     let is_div = 0
     if ins.op == OP_DIV { is_div = 1 }
+    if ins.op == OP_MOD { is_div = 1 }
     if is_div == 1 {
         ; Spill and evict live values in RAX/RDX before idiv clobbers them
         let rax_val = ctx.ra.reg2val[0]
@@ -13444,7 +13469,10 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_mov_rr(out, pos, PHYS_RAX, a)
         emit_cqo(out, pos)
         emit_idiv_r(out, pos, safe_b)
-        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        ; DIV: quotient in RAX, MOD: remainder in RDX
+        let result_reg = PHYS_RAX
+        if ins.op == OP_MOD { result_reg = PHYS_RDX }
+        emit_mov_rr(out, pos, PHYS_R12, result_reg)
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
@@ -19226,7 +19254,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
     let o1 = ins.operand1
     let o2 = ins.operand2
     let o3 = ins.operand3
-    if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
+    if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or op == OP_MOD or
        op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
        op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
        op == OP_SHR or op == OP_SHL {

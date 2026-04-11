@@ -1,0 +1,98 @@
+; =============================================================================
+; jda::getpass -- Password Input Helpers
+; =============================================================================
+; Utilities for password masking, validation, and strength checking.
+;
+; Functions:
+;   getpass_mask(input, len, out)           -> i64  replace chars with '*'
+;   getpass_validate_len(len, min, max)     -> i64  1 if min <= len <= max
+;   getpass_strength(buf, len)              -> i64  0-4 strength score
+; =============================================================================
+
+;; Internal byte reader.
+fn _getpass_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Replace each byte of input with '*' (42). Returns len.
+fn getpass_mask(input: &i8, len: i64, out: &i8) -> i64 {
+    let i = 0
+    loop i < len {
+        poke_byte(out, i, 42)
+        i = i + 1
+    }
+    ret len
+}
+
+;; Check if len is between min and max inclusive. Returns 1 if valid.
+fn getpass_validate_len(len: i64, min: i64, max: i64) -> i64 {
+    if len < min { ret 0 }
+    if len > max { ret 0 }
+    ret 1
+}
+
+;; Internal: check if password has at least one digit.
+fn _getpass_has_digit(buf: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ch = _getpass_byte_at(buf, i)
+        if ch < 0 { ch = ch + 256 }
+        if ch >= 48 and ch <= 57 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Internal: check if password has at least one uppercase letter.
+fn _getpass_has_upper(buf: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ch = _getpass_byte_at(buf, i)
+        if ch < 0 { ch = ch + 256 }
+        if ch >= 65 and ch <= 90 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Internal: check if password has at least one lowercase letter.
+fn _getpass_has_lower(buf: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ch = _getpass_byte_at(buf, i)
+        if ch < 0 { ch = ch + 256 }
+        if ch >= 97 and ch <= 122 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Internal: check if password has at least one special character.
+fn _getpass_has_special(buf: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ch = _getpass_byte_at(buf, i)
+        if ch < 0 { ch = ch + 256 }
+        ; Not a letter and not a digit
+        let is_alpha = 0
+        if ch >= 65 and ch <= 90 { is_alpha = 1 }
+        if ch >= 97 and ch <= 122 { is_alpha = 1 }
+        if ch >= 48 and ch <= 57 { is_alpha = 1 }
+        if is_alpha == 0 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Compute password strength score (0-4).
+;; +1 for length >= 8, +1 for digit, +1 for mixed case, +1 for special char.
+fn getpass_strength(buf: &i8, len: i64) -> i64 {
+    let score = 0
+    if len >= 8 { score = score + 1 }
+    let has_dig = _getpass_has_digit(buf, len)
+    score = score + has_dig
+    let has_up = _getpass_has_upper(buf, len)
+    let has_lo = _getpass_has_lower(buf, len)
+    if has_up == 1 and has_lo == 1 { score = score + 1 }
+    let has_sp = _getpass_has_special(buf, len)
+    score = score + has_sp
+    ret score
+}
