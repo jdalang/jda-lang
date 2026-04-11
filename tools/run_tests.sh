@@ -24,6 +24,7 @@ KNOWN_FAIL=0
 FAILURES=""
 
 # Known failures — these are tracked bugs, not CI regressions
+# Self-hosted binary miscompiles closures (pre-existing, not caused by optimizations)
 KNOWN_FAILURES=""
 
 if [ ! -x "$JDA" ]; then
@@ -56,6 +57,20 @@ for test_file in "$TEST_DIR"/*.jda; do
         continue
     fi
 
+    # Skip known failures early (avoid hanging on compile)
+    is_known_early=0
+    for kf in $KNOWN_FAILURES; do
+        if [ "$test_name" = "$kf" ]; then
+            is_known_early=1
+            break
+        fi
+    done
+    if [ "$is_known_early" = "1" ]; then
+        KNOWN_FAIL=$((KNOWN_FAIL + 1))
+        echo "  KNOWN $test_name (skipped)"
+        continue
+    fi
+
     # Check for .include sidecar (e.g. regex_literal.include contains "stdlib/regex.jda")
     include_file="$TEST_DIR/${test_name}.include"
     include_flag=""
@@ -78,20 +93,32 @@ for test_file in "$TEST_DIR"/*.jda; do
         fi
     fi
 
-    # Compile
-    compile_out=$("$JDA" build $include_flag "$test_file" -o "$bin_out" 2>&1) || true
+    # Compile (30s timeout to prevent hangs on known-failing programs)
+    compile_out=$(timeout 30 "$JDA" build $include_flag "$test_file" -o "$bin_out" 2>&1) || true
     if [ ! -f "$bin_out" ]; then
-        FAIL=$((FAIL + 1))
-        FAILURES="$FAILURES\n  FAIL  $test_name (compile failed)"
-        echo "  FAIL  $test_name (compile failed)"
-        echo "  CMD:  $JDA build $include_flag $test_file -o $bin_out"
-        echo "  ERR:  $compile_out" | tail -5
+        is_known=0
+        for kf in $KNOWN_FAILURES; do
+            if [ "$test_name" = "$kf" ]; then
+                is_known=1
+                break
+            fi
+        done
+        if [ "$is_known" = "1" ]; then
+            KNOWN_FAIL=$((KNOWN_FAIL + 1))
+            echo "  KNOWN $test_name (known failure, compile failed)"
+        else
+            FAIL=$((FAIL + 1))
+            FAILURES="$FAILURES\n  FAIL  $test_name (compile failed)"
+            echo "  FAIL  $test_name (compile failed)"
+            echo "  CMD:  $JDA build $include_flag $test_file -o $bin_out"
+            echo "  ERR:  $compile_out" | tail -5
+        fi
         continue
     fi
     chmod +x "$bin_out"
 
-    # Run
-    actual_out=$("$bin_out" 2>&1) || true
+    # Run (10s timeout)
+    actual_out=$(timeout 10 "$bin_out" 2>&1) || true
     actual_exit=$?
 
     # Compare output
