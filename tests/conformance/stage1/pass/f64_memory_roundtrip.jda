@@ -1,0 +1,42 @@
+fn store_f64(buf: &i64, idx: i64, val: f64) {
+    buf[idx] = val
+}
+
+fn load_f64(buf: &i64, idx: i64) -> f64 {
+    let r: f64 = buf[idx]
+    ret r
+}
+
+fn main() {
+    let mem = alloc_pages(1)
+
+    // Bug #11: f64 stored to &i64 memory, loaded back via function
+    let v: f64 = 5.5
+    mem[0] = v
+
+    // Load via function — was broken (cvtsi2sd instead of movq)
+    let a = load_f64(mem, 0)
+    let ai = a.to_i64()
+    print("{ai}")
+
+    // Store via function, load directly
+    store_f64(mem, 1, 3.14)
+    let b: f64 = mem[1]
+    let bi = b.to_i64()
+    print("{bi}")
+
+    // Both via functions
+    store_f64(mem, 2, 9.75)
+    let c = load_f64(mem, 2)
+    let ci = c.to_i64()
+    print("{ci}")
+
+    // Direct baseline
+    let w: f64 = 7.25
+    mem[3] = w
+    let d: f64 = mem[3]
+    let di = d.to_i64()
+    print("{di}")
+
+    ret 0
+}
