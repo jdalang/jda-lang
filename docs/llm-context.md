@@ -76,15 +76,13 @@ fn main() -> i64 {
 
 | Category | Operators |
 |----------|-----------|
-| Arithmetic | `+`, `-`, `*`, `/` |
+| Arithmetic | `+`, `-`, `*`, `/`, `%` |
 | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` |
-| Logical | `and`, `or` |
+| Logical | `and`, `or`, `not` |
 | Compound assignment | `+=`, `-=`, `*=`, `/=` |
 | Address-of | `&` (prefix) |
 | Index | `[]` |
 | Field access | `.` |
-
-**No modulo operator.** Use `a - (a / b) * b` instead of `a % b`.
 
 ## Control Flow
 
@@ -126,18 +124,21 @@ for i in range(3) {
 }
 ```
 
-**Important:** There is no `break` or `continue`. Use a guard variable:
+### Break and Continue
 
 ```jda
-let done = 0
+; break exits the loop immediately
 let i = 0
 loop i < 100 {
-    if done == 0 {
-        if arr[i] == target {
-            done = 1
-        }
-    }
+    if i == 10 { break }
     i = i + 1
+}
+
+; continue skips to next iteration (works in both loop and for)
+let sum = 0
+for i in range(10) {
+    if i % 2 != 0 { continue }
+    sum += i
 }
 ```
 
@@ -389,6 +390,15 @@ print_i64(val)
 ```jda
 ; Single-line comment
 ;; Documentation comment (used by jda-doc tool)
+/* Multi-line block comment */
+
+; Multi-line strings (literal newlines preserved):
+print("line 1
+line 2
+")
+
+; Raw strings (no escape processing):
+let path = r"C:\Users\file.txt"
 ```
 
 ---
@@ -646,9 +656,7 @@ These are compiler constraints that will cause bugs or crashes if ignored:
 
 4. **No unconditional loops.** `loop { ... }` does not work. Always use `loop condition { ... }`.
 
-5. **No break/continue.** Use guard variables to control loop flow.
-
-6. **Closures must capture at least one variable.** Otherwise segfault.
+5. **Closures must capture at least one variable.** Otherwise segfault.
 
 7. **Use `poke_byte()` for byte stores.** `buf[i] = val` for byte arrays may not work.
 
@@ -722,6 +730,6 @@ jda version
 | Structs | `struct P { x: i64 }` | `struct P { int x; }` | `struct P { x: i64 }` | `type P struct { X int }` | `@dataclass` |
 | Traits | `trait T { }` | — | `trait T { }` | `interface T { }` | `class T(ABC):` |
 | Pointers | `&T` | `T*` | `&T` | `*T` | — |
-| Comments | `; comment` | `// comment` | `// comment` | `// comment` | `# comment` |
+| Comments | `; comment` / `/* */` | `// comment` | `// comment` | `// comment` | `# comment` |
 | Null | 0 | NULL | None/Option | nil | None |
 | Package | `--include stdlib/x.jda` | `#include` | `use` | `import` | `import` |
