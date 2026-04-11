@@ -16001,10 +16001,9 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         if src_r >= 8 { rm = src_r - 8 }
         emit_byte(out, pos, 0xC0 + rm)
         consume_use(ctx, ins.operand0)
-        ; MOVQ RAX, XMM0 (move float bits to GPR)
-        emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 0)
+        ; MOVQ dst, XMM0 (move float bits directly to allocated GPR)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_rr(out, pos, dst, PHYS_RAX)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
         ret 1
     }
 
@@ -16045,10 +16044,9 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_sse_rr(out, pos, 0xF2, fbin_op, 0, 1)
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
-        ; MOVQ RAX, XMM0 (result bits to GPR)
-        emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 0)
+        ; MOVQ dst, XMM0 (result bits directly to allocated GPR — avoids RAX clobber)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_rr(out, pos, dst, PHYS_RAX)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
         ret 1
     }
 
@@ -16070,9 +16068,8 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 0x80)
         emit_movq_gpr_to_xmm(out, pos, 1, PHYS_RAX)
         emit_sse_rr(out, pos, 0x66, 0x57, 0, 1)
-        emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 0)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_rr(out, pos, dst, PHYS_RAX)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
         ret 1
     }
     if op == OP_FSQRT {
@@ -16080,9 +16077,8 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         emit_sse_rr(out, pos, 0xF2, 0x51, 0, 0)
-        emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 0)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        emit_mov_rr(out, pos, dst, PHYS_RAX)
+        emit_movq_xmm_to_gpr(out, pos, dst, 0)
         ret 1
     }
 
