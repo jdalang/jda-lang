@@ -1,0 +1,30 @@
+fn main() -> i64 {
+    ; ASCII check
+    let a = enc_is_ascii("hello", 5)
+    print("{a}\n")
+
+    ; UTF-8 valid ASCII
+    let v = enc_utf8_valid("hello", 5)
+    print("{v}\n")
+
+    ; Char count for ASCII
+    let cc = enc_utf8_char_count("hello", 5)
+    print("{cc}\n")
+
+    ; to_upper
+    let out: &i8 = alloc_pages(1)
+    enc_to_upper("hello", 5, out)
+    syscall(1, 1, out, 5)
+    print("\n")
+
+    ; to_lower
+    enc_to_lower("WORLD", 5, out)
+    syscall(1, 1, out, 5)
+    print("\n")
+
+    ; byte_len for first 3 ASCII chars
+    let bl = enc_utf8_byte_len("hello", 5, 3)
+    print("{bl}\n")
+
+    ret 0
+}

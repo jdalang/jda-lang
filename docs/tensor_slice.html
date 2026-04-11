@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tensor_slice — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>tensor_slice</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bignum.html">bignum</a> | <a href="bitops.html">bitops</a> | <a href="complex.html">complex</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <a href="crypto.html">crypto</a> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="digest.html">digest</a> | <a href="dns.html">dns</a> | <a href="encoding.html">encoding</a> | <a href="erb.html">erb</a> | <a href="file_io.html">file_io</a> | <a href="file_io_all.html">file_io_all</a> | <a href="fileutils.html">fileutils</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <a href="hashmap.html">hashmap</a> | <a href="heap.html">heap</a> | <a href="http.html">http</a> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="marshal.html">marshal</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <a href="mutex.html">mutex</a> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="open3.html">open3</a> | <a href="optparse.html">optparse</a> | <a href="os.html">os</a> | <a href="pack.html">pack</a> | <a href="pathname.html">pathname</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <a href="process.html">process</a> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="range.html">range</a> | <a href="rational.html">rational</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="securerandom.html">securerandom</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <a href="signal.html">signal</a> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <a href="stringio.html">stringio</a> | <a href="stringscanner.html">stringscanner</a> | <a href="tcp.html">tcp</a> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <strong>tensor_slice</strong> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="tls.html">tls</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="weakref.html">weakref</a> | <a href="ws.html">ws</a> | <a href="yaml.html">yaml</a> | <a href="zlib.html">zlib</a></div>
+<ul class="toc"><li><span class="badge fn">fn</span><a href="#tensor_reshape_1d">tensor_reshape_1d</a></li><li><span class="badge fn">fn</span><a href="#tensor_reshape_2d">tensor_reshape_2d</a></li><li><span class="badge fn">fn</span><a href="#tensor_slice1d">tensor_slice1d</a></li><li><span class="badge fn">fn</span><a href="#tensor_slice2d">tensor_slice2d</a></li><li><span class="badge fn">fn</span><a href="#tensor_row">tensor_row</a></li><li><span class="badge fn">fn</span><a href="#tensor_col">tensor_col</a></li><li><span class="badge fn">fn</span><a href="#broadcast_add_1d">broadcast_add_1d</a></li><li><span class="badge fn">fn</span><a href="#broadcast_add_2d1d">broadcast_add_2d1d</a></li><li><span class="badge fn">fn</span><a href="#broadcast_add_2d_col">broadcast_add_2d_col</a></li><li><span class="badge fn">fn</span><a href="#broadcast_mul_1d">broadcast_mul_1d</a></li><li><span class="badge fn">fn</span><a href="#broadcast_mul_2d1d">broadcast_mul_2d1d</a></li><li><span class="badge fn">fn</span><a href="#broadcast_mul_2d_col">broadcast_mul_2d_col</a></li><li><span class="badge fn">fn</span><a href="#broadcast_scalar_add">broadcast_scalar_add</a></li><li><span class="badge fn">fn</span><a href="#broadcast_scalar_mul">broadcast_scalar_mul</a></li><li><span class="badge fn">fn</span><a href="#broadcast_scalar_sub">broadcast_scalar_sub</a></li><li><span class="badge fn">fn</span><a href="#broadcast_scalar_div">broadcast_scalar_div</a></li><li><span class="badge fn">fn</span><a href="#tensor_sum_axis0">tensor_sum_axis0</a></li><li><span class="badge fn">fn</span><a href="#tensor_sum_axis1">tensor_sum_axis1</a></li><li><span class="badge fn">fn</span><a href="#tensor_mean_axis0">tensor_mean_axis0</a></li><li><span class="badge fn">fn</span><a href="#tensor_mean_axis1">tensor_mean_axis1</a></li><li><span class="badge fn">fn</span><a href="#tensor_max_axis0">tensor_max_axis0</a></li><li><span class="badge fn">fn</span><a href="#tensor_max_axis1">tensor_max_axis1</a></li><li><span class="badge fn">fn</span><a href="#tensor_concat1d">tensor_concat1d</a></li><li><span class="badge fn">fn</span><a href="#tensor_vstack">tensor_vstack</a></li><li><span class="badge fn">fn</span><a href="#tensor_hstack">tensor_hstack</a></li><li><span class="badge fn">fn</span><a href="#tensor_where">tensor_where</a></li><li><span class="badge fn">fn</span><a href="#tensor_clamp">tensor_clamp</a></li><li><span class="badge fn">fn</span><a href="#tensor_arange">tensor_arange</a></li><li><span class="badge fn">fn</span><a href="#tensor_linspace">tensor_linspace</a></li><li><span class="badge fn">fn</span><a href="#tensor_copy_1d">tensor_copy_1d</a></li><li><span class="badge fn">fn</span><a href="#tensor_copy_2d">tensor_copy_2d</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="tensor_reshape_1d">
+  <span class="source-link">tensor_slice.jda:22</span><span class="badge fn">fn</span><h3>tensor_reshape_1d</h3>
+  <code class="sig">fn tensor_reshape_1d(t: i64, d0: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_reshape_2d">
+  <span class="source-link">tensor_slice.jda:34</span><span class="badge fn">fn</span><h3>tensor_reshape_2d</h3>
+  <code class="sig">fn tensor_reshape_2d(t: i64, d0: i64, d1: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_slice1d">
+  <span class="source-link">tensor_slice.jda:50</span><span class="badge fn">fn</span><h3>tensor_slice1d</h3>
+  <code class="sig">fn tensor_slice1d(t: i64, start: i64, stop: i64, step: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_slice2d">
+  <span class="source-link">tensor_slice.jda:80</span><span class="badge fn">fn</span><h3>tensor_slice2d</h3>
+  <code class="sig">fn tensor_slice2d(t: i64, row_start: i64, row_stop: i64, col_start: i64, col_stop: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_row">
+  <span class="source-link">tensor_slice.jda:109</span><span class="badge fn">fn</span><h3>tensor_row</h3>
+  <code class="sig">fn tensor_row(t: i64, row: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_col">
+  <span class="source-link">tensor_slice.jda:122</span><span class="badge fn">fn</span><h3>tensor_col</h3>
+  <code class="sig">fn tensor_col(t: i64, col: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="broadcast_add_1d">
+  <span class="source-link">tensor_slice.jda:142</span><span class="badge fn">fn</span><h3>broadcast_add_1d</h3>
+  <code class="sig">fn broadcast_add_1d(a: i64, b: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_add_2d1d">
+  <span class="source-link">tensor_slice.jda:154</span><span class="badge fn">fn</span><h3>broadcast_add_2d1d</h3>
+  <code class="sig">fn broadcast_add_2d1d(a: i64, b: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_add_2d_col">
+  <span class="source-link">tensor_slice.jda:172</span><span class="badge fn">fn</span><h3>broadcast_add_2d_col</h3>
+  <code class="sig">fn broadcast_add_2d_col(a: i64, b: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_mul_1d">
+  <span class="source-link">tensor_slice.jda:190</span><span class="badge fn">fn</span><h3>broadcast_mul_1d</h3>
+  <code class="sig">fn broadcast_mul_1d(a: i64, b: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_mul_2d1d">
+  <span class="source-link">tensor_slice.jda:202</span><span class="badge fn">fn</span><h3>broadcast_mul_2d1d</h3>
+  <code class="sig">fn broadcast_mul_2d1d(a: i64, b: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_mul_2d_col">
+  <span class="source-link">tensor_slice.jda:220</span><span class="badge fn">fn</span><h3>broadcast_mul_2d_col</h3>
+  <code class="sig">fn broadcast_mul_2d_col(a: i64, b: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_scalar_add">
+  <span class="source-link">tensor_slice.jda:240</span><span class="badge fn">fn</span><h3>broadcast_scalar_add</h3>
+  <code class="sig">fn broadcast_scalar_add(t: i64, s: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_scalar_mul">
+  <span class="source-link">tensor_slice.jda:251</span><span class="badge fn">fn</span><h3>broadcast_scalar_mul</h3>
+  <code class="sig">fn broadcast_scalar_mul(t: i64, s: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_scalar_sub">
+  <span class="source-link">tensor_slice.jda:262</span><span class="badge fn">fn</span><h3>broadcast_scalar_sub</h3>
+  <code class="sig">fn broadcast_scalar_sub(t: i64, s: i64, out: i64)</code>
+</div>
+<div class="item fn" id="broadcast_scalar_div">
+  <span class="source-link">tensor_slice.jda:273</span><span class="badge fn">fn</span><h3>broadcast_scalar_div</h3>
+  <code class="sig">fn broadcast_scalar_div(t: i64, s: i64, out: i64)</code>
+</div>
+<div class="item fn" id="tensor_sum_axis0">
+  <span class="source-link">tensor_slice.jda:288</span><span class="badge fn">fn</span><h3>tensor_sum_axis0</h3>
+  <code class="sig">fn tensor_sum_axis0(t: i64, rows: i64, cols: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_sum_axis1">
+  <span class="source-link">tensor_slice.jda:310</span><span class="badge fn">fn</span><h3>tensor_sum_axis1</h3>
+  <code class="sig">fn tensor_sum_axis1(t: i64, rows: i64, cols: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_mean_axis0">
+  <span class="source-link">tensor_slice.jda:329</span><span class="badge fn">fn</span><h3>tensor_mean_axis0</h3>
+  <code class="sig">fn tensor_mean_axis0(t: i64, rows: i64, cols: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_mean_axis1">
+  <span class="source-link">tensor_slice.jda:345</span><span class="badge fn">fn</span><h3>tensor_mean_axis1</h3>
+  <code class="sig">fn tensor_mean_axis1(t: i64, rows: i64, cols: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_max_axis0">
+  <span class="source-link">tensor_slice.jda:362</span><span class="badge fn">fn</span><h3>tensor_max_axis0</h3>
+  <code class="sig">fn tensor_max_axis0(t: i64, rows: i64, cols: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_max_axis1">
+  <span class="source-link">tensor_slice.jda:382</span><span class="badge fn">fn</span><h3>tensor_max_axis1</h3>
+  <code class="sig">fn tensor_max_axis1(t: i64, rows: i64, cols: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_concat1d">
+  <span class="source-link">tensor_slice.jda:405</span><span class="badge fn">fn</span><h3>tensor_concat1d</h3>
+  <code class="sig">fn tensor_concat1d(a: i64, b: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_vstack">
+  <span class="source-link">tensor_slice.jda:426</span><span class="badge fn">fn</span><h3>tensor_vstack</h3>
+  <code class="sig">fn tensor_vstack(a: i64, b: i64, cols: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_hstack">
+  <span class="source-link">tensor_slice.jda:449</span><span class="badge fn">fn</span><h3>tensor_hstack</h3>
+  <code class="sig">fn tensor_hstack(a: i64, b: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_where">
+  <span class="source-link">tensor_slice.jda:482</span><span class="badge fn">fn</span><h3>tensor_where</h3>
+  <code class="sig">fn tensor_where(cond: i64, a: i64, b: i64, out: i64)</code>
+</div>
+<div class="item fn" id="tensor_clamp">
+  <span class="source-link">tensor_slice.jda:502</span><span class="badge fn">fn</span><h3>tensor_clamp</h3>
+  <code class="sig">fn tensor_clamp(t: i64, lo: i64, hi: i64, out: i64)</code>
+</div>
+<div class="item fn" id="tensor_arange">
+  <span class="source-link">tensor_slice.jda:523</span><span class="badge fn">fn</span><h3>tensor_arange</h3>
+  <code class="sig">fn tensor_arange(start: i64, stop: i64, step: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_linspace">
+  <span class="source-link">tensor_slice.jda:545</span><span class="badge fn">fn</span><h3>tensor_linspace</h3>
+  <code class="sig">fn tensor_linspace(start: i64, stop: i64, n: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_copy_1d">
+  <span class="source-link">tensor_slice.jda:566</span><span class="badge fn">fn</span><h3>tensor_copy_1d</h3>
+  <code class="sig">fn tensor_copy_1d(t: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="tensor_copy_2d">
+  <span class="source-link">tensor_slice.jda:578</span><span class="badge fn">fn</span><h3>tensor_copy_2d</h3>
+  <code class="sig">fn tensor_copy_2d(t: i64) -&gt; i64</code>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>

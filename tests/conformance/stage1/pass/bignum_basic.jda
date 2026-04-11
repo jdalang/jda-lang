@@ -1,0 +1,47 @@
+fn main() -> i64 {
+    ; Create from i64
+    let a = bn_new(12345)
+    let out: &i8 = alloc_pages(1)
+    let n = bn_to_str(a, out)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; Add: 999999999 + 1 = 1000000000
+    let b = bn_new(999999999)
+    let c = bn_new(1)
+    let d = bn_add(b, c)
+    n = bn_to_str(d, out)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; Multiply: 12345 * 6789
+    let e1 = bn_new(12345)
+    let e2 = bn_new(6789)
+    let e = bn_mul(e1, e2)
+    n = bn_to_str(e, out)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; Negative
+    let f = bn_new(0 - 42)
+    n = bn_to_str(f, out)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; Compare
+    let g1 = bn_new(100)
+    let g2 = bn_new(200)
+    let cmp1 = bn_cmp(g1, g2)
+    print("{cmp1}\n")
+    let h1 = bn_new(100)
+    let h2 = bn_new(100)
+    let cmp2 = bn_cmp(h1, h2)
+    print("{cmp2}\n")
+
+    ; is_zero
+    let z = bn_new(0)
+    let iz = bn_is_zero(z)
+    print("{iz}\n")
+
+    ret 0
+}

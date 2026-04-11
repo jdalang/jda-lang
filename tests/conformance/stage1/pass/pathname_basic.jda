@@ -1,0 +1,31 @@
+fn main() -> i64 {
+    let out: &i8 = alloc_pages(1)
+
+    ; Test dirname
+    let n = pn_dirname("/usr/bin/gcc", 12, out)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; Test extname
+    n = pn_extname("file.tar.gz", 11, out)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; Test is_absolute
+    let abs = pn_is_absolute("/usr")
+    print("{abs}\n")
+
+    let rel = pn_is_absolute("usr")
+    print("{rel}\n")
+
+    ; Test normalize
+    n = pn_normalize("/usr/./bin/../lib", 17, out)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; Test has_ext
+    let has = pn_has_ext("test.jda", 8, ".jda", 4)
+    print("{has}\n")
+
+    ret 0
+}

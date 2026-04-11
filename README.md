@@ -104,7 +104,7 @@ Legacy syntax is also supported for backward compatibility:
 jda hello.jda output_binary
 ```
 
-### Standard Library (53 packages)
+### Standard Library (76 packages)
 
 Use `--include` to link standard library packages:
 
@@ -159,7 +159,7 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 bootstrap/
   stage0/          Build system + jda0 (assembly bootstrap)
   stage1/          jda1 compiler source (jda1.jda — self-hosted)
-stdlib/            53 standard library packages
+stdlib/            76 standard library packages
 tools/             CLI tools (jda, jda-doc, jda-test, jda-pkg, etc.)
 tests/             291 pass + 7 fail conformance tests
 examples/          Example programs
@@ -176,7 +176,7 @@ docker/            Dockerfile for build environment
 ### Language Reference (Markdown — GitHub)
 - [Syntax](docs/language/syntax.md) — variables, types, functions, control flow, operators
 - [Structs & OOP](docs/language/structs.md) — structs, traits, impl, derive, generics, closures, unsafe
-- [Standard Library](docs/language/stdlib.md) — all 53 packages by category
+- [Standard Library](docs/language/stdlib.md) — all 76 packages by category
 - [Toolchain](docs/language/toolchain.md) — CLI commands, package manager, doc generator, testing
 - [Compiler Architecture](docs/language/compiler.md) — pipeline, data structures, self-hosting
 

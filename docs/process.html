@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>process — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>process</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bignum.html">bignum</a> | <a href="bitops.html">bitops</a> | <a href="complex.html">complex</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <a href="crypto.html">crypto</a> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="digest.html">digest</a> | <a href="dns.html">dns</a> | <a href="encoding.html">encoding</a> | <a href="erb.html">erb</a> | <a href="file_io.html">file_io</a> | <a href="file_io_all.html">file_io_all</a> | <a href="fileutils.html">fileutils</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <a href="hashmap.html">hashmap</a> | <a href="heap.html">heap</a> | <a href="http.html">http</a> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="marshal.html">marshal</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <a href="mutex.html">mutex</a> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="open3.html">open3</a> | <a href="optparse.html">optparse</a> | <a href="os.html">os</a> | <a href="pack.html">pack</a> | <a href="pathname.html">pathname</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <strong>process</strong> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="range.html">range</a> | <a href="rational.html">rational</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="securerandom.html">securerandom</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <a href="signal.html">signal</a> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <a href="stringio.html">stringio</a> | <a href="stringscanner.html">stringscanner</a> | <a href="tcp.html">tcp</a> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <a href="tensor_slice.html">tensor_slice</a> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="tls.html">tls</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="weakref.html">weakref</a> | <a href="ws.html">ws</a> | <a href="yaml.html">yaml</a> | <a href="zlib.html">zlib</a></div>
+<ul class="toc"><li><span class="badge const">const</span><a href="#SYS_READ">SYS_READ</a></li><li><span class="badge const">const</span><a href="#SYS_WRITE">SYS_WRITE</a></li><li><span class="badge const">const</span><a href="#SYS_OPEN">SYS_OPEN</a></li><li><span class="badge const">const</span><a href="#SYS_CLOSE">SYS_CLOSE</a></li><li><span class="badge const">const</span><a href="#SYS_STAT">SYS_STAT</a></li><li><span class="badge const">const</span><a href="#SYS_MMAP">SYS_MMAP</a></li><li><span class="badge const">const</span><a href="#SYS_RT_SIGACTION">SYS_RT_SIGACTION</a></li><li><span class="badge const">const</span><a href="#SYS_RT_SIGPROCMASK">SYS_RT_SIGPROCMASK</a></li><li><span class="badge const">const</span><a href="#SYS_RT_SIGRETURN">SYS_RT_SIGRETURN</a></li><li><span class="badge const">const</span><a href="#SYS_IOCTL">SYS_IOCTL</a></li><li><span class="badge const">const</span><a href="#SYS_PIPE">SYS_PIPE</a></li><li><span class="badge const">const</span><a href="#SYS_DUP">SYS_DUP</a></li><li><span class="badge const">const</span><a href="#SYS_DUP2">SYS_DUP2</a></li><li><span class="badge const">const</span><a href="#SYS_GETPID">SYS_GETPID</a></li><li><span class="badge const">const</span><a href="#SYS_CLONE">SYS_CLONE</a></li><li><span class="badge const">const</span><a href="#SYS_FORK">SYS_FORK</a></li><li><span class="badge const">const</span><a href="#SYS_VFORK">SYS_VFORK</a></li><li><span class="badge const">const</span><a href="#SYS_EXECVE">SYS_EXECVE</a></li><li><span class="badge const">const</span><a href="#SYS_EXIT">SYS_EXIT</a></li><li><span class="badge const">const</span><a href="#SYS_WAIT4">SYS_WAIT4</a></li><li><span class="badge const">const</span><a href="#SYS_KILL">SYS_KILL</a></li><li><span class="badge const">const</span><a href="#SYS_GETPPID">SYS_GETPPID</a></li><li><span class="badge const">const</span><a href="#SYS_GETUID">SYS_GETUID</a></li><li><span class="badge const">const</span><a href="#SYS_GETGID">SYS_GETGID</a></li><li><span class="badge const">const</span><a href="#SYS_GETEUID">SYS_GETEUID</a></li><li><span class="badge const">const</span><a href="#SYS_GETEGID">SYS_GETEGID</a></li><li><span class="badge const">const</span><a href="#SYS_SIGALTSTACK">SYS_SIGALTSTACK</a></li><li><span class="badge const">const</span><a href="#SYS_PRCTL">SYS_PRCTL</a></li><li><span class="badge const">const</span><a href="#SYS_SETPGID">SYS_SETPGID</a></li><li><span class="badge const">const</span><a href="#SYS_GETPGID">SYS_GETPGID</a></li><li><span class="badge const">const</span><a href="#SYS_SETSID">SYS_SETSID</a></li><li><span class="badge const">const</span><a href="#SYS_ENVIRON">SYS_ENVIRON</a></li><li><span class="badge const">const</span><a href="#SIGHUP">SIGHUP</a></li><li><span class="badge const">const</span><a href="#SIGINT">SIGINT</a></li><li><span class="badge const">const</span><a href="#SIGQUIT">SIGQUIT</a></li><li><span class="badge const">const</span><a href="#SIGILL">SIGILL</a></li><li><span class="badge const">const</span><a href="#SIGTRAP">SIGTRAP</a></li><li><span class="badge const">const</span><a href="#SIGABRT">SIGABRT</a></li><li><span class="badge const">const</span><a href="#SIGBUS">SIGBUS</a></li><li><span class="badge const">const</span><a href="#SIGFPE">SIGFPE</a></li><li><span class="badge const">const</span><a href="#SIGKILL">SIGKILL</a></li><li><span class="badge const">const</span><a href="#SIGUSR1">SIGUSR1</a></li><li><span class="badge const">const</span><a href="#SIGSEGV">SIGSEGV</a></li><li><span class="badge const">const</span><a href="#SIGUSR2">SIGUSR2</a></li><li><span class="badge const">const</span><a href="#SIGPIPE">SIGPIPE</a></li><li><span class="badge const">const</span><a href="#SIGALRM">SIGALRM</a></li><li><span class="badge const">const</span><a href="#SIGTERM">SIGTERM</a></li><li><span class="badge const">const</span><a href="#SIGCHLD">SIGCHLD</a></li><li><span class="badge const">const</span><a href="#SIGCONT">SIGCONT</a></li><li><span class="badge const">const</span><a href="#SIGSTOP">SIGSTOP</a></li><li><span class="badge const">const</span><a href="#SIGTSTP">SIGTSTP</a></li><li><span class="badge const">const</span><a href="#SIGTTIN">SIGTTIN</a></li><li><span class="badge const">const</span><a href="#SIGTTOU">SIGTTOU</a></li><li><span class="badge const">const</span><a href="#SIGURG">SIGURG</a></li><li><span class="badge const">const</span><a href="#SIGWINCH">SIGWINCH</a></li><li><span class="badge const">const</span><a href="#SIG_DFL">SIG_DFL</a></li><li><span class="badge const">const</span><a href="#SIG_IGN">SIG_IGN</a></li><li><span class="badge const">const</span><a href="#WNOHANG">WNOHANG</a></li><li><span class="badge fn">fn</span><a href="#wifexited">wifexited</a></li><li><span class="badge fn">fn</span><a href="#wexitstatus">wexitstatus</a></li><li><span class="badge fn">fn</span><a href="#wifsignaled">wifsignaled</a></li><li><span class="badge fn">fn</span><a href="#wtermsig">wtermsig</a></li><li><span class="badge fn">fn</span><a href="#wifstopped">wifstopped</a></li><li><span class="badge fn">fn</span><a href="#wstopsig">wstopsig</a></li><li><span class="badge struct">struct</span><a href="#SigAction">SigAction</a></li><li><span class="badge struct">struct</span><a href="#ProcInfo">ProcInfo</a></li><li><span class="badge struct">struct</span><a href="#SpawnOpts">SpawnOpts</a></li><li><span class="badge struct">struct</span><a href="#ChildProc">ChildProc</a></li><li><span class="badge struct">struct</span><a href="#WaitResult">WaitResult</a></li><li><span class="badge fn">fn</span><a href="#getpid">getpid</a></li><li><span class="badge fn">fn</span><a href="#getppid">getppid</a></li><li><span class="badge fn">fn</span><a href="#getuid">getuid</a></li><li><span class="badge fn">fn</span><a href="#getgid">getgid</a></li><li><span class="badge fn">fn</span><a href="#exit">exit</a></li><li><span class="badge fn">fn</span><a href="#abort">abort</a></li><li><span class="badge fn">fn</span><a href="#fork">fork</a></li><li><span class="badge fn">fn</span><a href="#execve">execve</a></li><li><span class="badge fn">fn</span><a href="#exec_argv">exec_argv</a></li><li><span class="badge fn">fn</span><a href="#waitpid">waitpid</a></li><li><span class="badge fn">fn</span><a href="#wait_any">wait_any</a></li><li><span class="badge fn">fn</span><a href="#run">run</a></li><li><span class="badge fn">fn</span><a href="#pipe2">pipe2</a></li><li><span class="badge fn">fn</span><a href="#dup2">dup2</a></li><li><span class="badge fn">fn</span><a href="#close_fd">close_fd</a></li><li><span class="badge fn">fn</span><a href="#spawn">spawn</a></li><li><span class="badge fn">fn</span><a href="#spawn_output">spawn_output</a></li><li><span class="badge fn">fn</span><a href="#kill">kill</a></li><li><span class="badge fn">fn</span><a href="#killpg">killpg</a></li><li><span class="badge fn">fn</span><a href="#raise_sig">raise_sig</a></li><li><span class="badge fn">fn</span><a href="#signal">signal</a></li><li><span class="badge fn">fn</span><a href="#signal_ignore">signal_ignore</a></li><li><span class="badge fn">fn</span><a href="#signal_default">signal_default</a></li><li><span class="badge fn">fn</span><a href="#signal_block">signal_block</a></li><li><span class="badge fn">fn</span><a href="#signal_unblock">signal_unblock</a></li><li><span class="badge fn">fn</span><a href="#environ">environ</a></li><li><span class="badge fn">fn</span><a href="#process_init">process_init</a></li><li><span class="badge fn">fn</span><a href="#getenv">getenv</a></li><li><span class="badge fn">fn</span><a href="#setenv">setenv</a></li><li><span class="badge fn">fn</span><a href="#unsetenv">unsetenv</a></li><li><span class="badge fn">fn</span><a href="#proc_info">proc_info</a></li><li><span class="badge struct">struct</span><a href="#Pipe">Pipe</a></li><li><span class="badge fn">fn</span><a href="#pipe_open">pipe_open</a></li><li><span class="badge fn">fn</span><a href="#pipe_write">pipe_write</a></li><li><span class="badge fn">fn</span><a href="#pipe_read">pipe_read</a></li><li><span class="badge fn">fn</span><a href="#pipe_close_write">pipe_close_write</a></li><li><span class="badge fn">fn</span><a href="#pipe_close_read">pipe_close_read</a></li><li><span class="badge fn">fn</span><a href="#daemonize">daemonize</a></li><li><span class="badge const">const</span><a href="#PR_SET_NAME">PR_SET_NAME</a></li><li><span class="badge const">const</span><a href="#PR_GET_NAME">PR_GET_NAME</a></li><li><span class="badge const">const</span><a href="#PR_SET_DUMPABLE">PR_SET_DUMPABLE</a></li><li><span class="badge const">const</span><a href="#PR_GET_DUMPABLE">PR_GET_DUMPABLE</a></li><li><span class="badge const">const</span><a href="#PR_SET_PDEATHSIG">PR_SET_PDEATHSIG</a></li><li><span class="badge fn">fn</span><a href="#set_process_name">set_process_name</a></li><li><span class="badge fn">fn</span><a href="#get_process_name">get_process_name</a></li><li><span class="badge fn">fn</span><a href="#set_pdeathsig">set_pdeathsig</a></li><li><span class="badge fn">fn</span><a href="#disable_coredump">disable_coredump</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="wifexited">
+  <span class="source-link">process.jda:84</span><span class="badge fn">fn</span><h3>wifexited</h3>
+  <code class="sig">fn wifexited(status: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="wexitstatus">
+  <span class="source-link">process.jda:85</span><span class="badge fn">fn</span><h3>wexitstatus</h3>
+  <code class="sig">fn wexitstatus(status: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="wifsignaled">
+  <span class="source-link">process.jda:86</span><span class="badge fn">fn</span><h3>wifsignaled</h3>
+  <code class="sig">fn wifsignaled(status: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="wtermsig">
+  <span class="source-link">process.jda:87</span><span class="badge fn">fn</span><h3>wtermsig</h3>
+  <code class="sig">fn wtermsig(status: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="wifstopped">
+  <span class="source-link">process.jda:88</span><span class="badge fn">fn</span><h3>wifstopped</h3>
+  <code class="sig">fn wifstopped(status: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="wstopsig">
+  <span class="source-link">process.jda:89</span><span class="badge fn">fn</span><h3>wstopsig</h3>
+  <code class="sig">fn wstopsig(status: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="getpid">
+  <span class="source-link">process.jda:141</span><span class="badge fn">fn</span><h3>getpid</h3>
+  <code class="sig">fn getpid() -&gt; i32</code>
+</div>
+<div class="item fn" id="getppid">
+  <span class="source-link">process.jda:145</span><span class="badge fn">fn</span><h3>getppid</h3>
+  <code class="sig">fn getppid() -&gt; i32</code>
+</div>
+<div class="item fn" id="getuid">
+  <span class="source-link">process.jda:149</span><span class="badge fn">fn</span><h3>getuid</h3>
+  <code class="sig">fn getuid() -&gt; i32</code>
+</div>
+<div class="item fn" id="getgid">
+  <span class="source-link">process.jda:150</span><span class="badge fn">fn</span><h3>getgid</h3>
+  <code class="sig">fn getgid() -&gt; i32</code>
+</div>
+<div class="item fn" id="exit">
+  <span class="source-link">process.jda:152</span><span class="badge fn">fn</span><h3>exit</h3>
+  <code class="sig">fn exit(code: i32)</code>
+</div>
+<div class="item fn" id="abort">
+  <span class="source-link">process.jda:156</span><span class="badge fn">fn</span><h3>abort</h3>
+  <code class="sig">fn abort()</code>
+</div>
+<div class="item fn" id="fork">
+  <span class="source-link">process.jda:164</span><span class="badge fn">fn</span><h3>fork</h3>
+  <code class="sig">fn fork() -&gt; i32</code>
+</div>
+<div class="item fn" id="execve">
+  <span class="source-link">process.jda:170</span><span class="badge fn">fn</span><h3>execve</h3>
+  <code class="sig">fn execve(path: &amp;i8, argv: &amp;&amp;i8, envp: &amp;&amp;i8) -&gt; i32</code>
+</div>
+<div class="item fn" id="exec_argv">
+  <span class="source-link">process.jda:176</span><span class="badge fn">fn</span><h3>exec_argv</h3>
+  <code class="sig">fn exec_argv(path: &amp;i8, argv: &amp;&amp;i8) -&gt; i32</code>
+</div>
+<div class="item fn" id="waitpid">
+  <span class="source-link">process.jda:187</span><span class="badge fn">fn</span><h3>waitpid</h3>
+  <code class="sig">fn waitpid(pid: i32, status: &amp;i32, options: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="wait_any">
+  <span class="source-link">process.jda:192</span><span class="badge fn">fn</span><h3>wait_any</h3>
+  <code class="sig">fn wait_any(opts: i32) -&gt; WaitResult</code>
+</div>
+<div class="item fn" id="run">
+  <span class="source-link">process.jda:205</span><span class="badge fn">fn</span><h3>run</h3>
+  <code class="sig">fn run(path: &amp;i8, argv: &amp;&amp;i8) -&gt; i32</code>
+</div>
+<div class="item fn" id="pipe2">
+  <span class="source-link">process.jda:217</span><span class="badge fn">fn</span><h3>pipe2</h3>
+  <code class="sig">fn pipe2(fds: &amp;i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="dup2">
+  <span class="source-link">process.jda:222</span><span class="badge fn">fn</span><h3>dup2</h3>
+  <code class="sig">fn dup2(old_fd: i32, new_fd: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="close_fd">
+  <span class="source-link">process.jda:226</span><span class="badge fn">fn</span><h3>close_fd</h3>
+  <code class="sig">fn close_fd(fd: i32)</code>
+</div>
+<div class="item fn" id="spawn">
+  <span class="source-link">process.jda:232</span><span class="badge fn">fn</span><h3>spawn</h3>
+  <code class="sig">fn spawn(path: &amp;i8, argv: &amp;&amp;i8, opts: &amp;SpawnOpts) -&gt; ChildProc</code>
+</div>
+<div class="item fn" id="spawn_output">
+  <span class="source-link">process.jda:302</span><span class="badge fn">fn</span><h3>spawn_output</h3>
+  <code class="sig">fn spawn_output(path: &amp;i8, argv: &amp;&amp;i8, out: &amp;i8, cap: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="kill">
+  <span class="source-link">process.jda:332</span><span class="badge fn">fn</span><h3>kill</h3>
+  <code class="sig">fn kill(pid: i32, sig: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="killpg">
+  <span class="source-link">process.jda:336</span><span class="badge fn">fn</span><h3>killpg</h3>
+  <code class="sig">fn killpg(pgid: i32, sig: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="raise_sig">
+  <span class="source-link">process.jda:340</span><span class="badge fn">fn</span><h3>raise_sig</h3>
+  <code class="sig">fn raise_sig(sig: i32)</code>
+</div>
+<div class="item fn" id="signal">
+  <span class="source-link">process.jda:344</span><span class="badge fn">fn</span><h3>signal</h3>
+  <code class="sig">fn signal(sig: i32, handler: i64) -&gt; i32</code>
+</div>
+<div class="item fn" id="signal_ignore">
+  <span class="source-link">process.jda:352</span><span class="badge fn">fn</span><h3>signal_ignore</h3>
+  <code class="sig">fn signal_ignore(sig: i32)</code>
+</div>
+<div class="item fn" id="signal_default">
+  <span class="source-link">process.jda:356</span><span class="badge fn">fn</span><h3>signal_default</h3>
+  <code class="sig">fn signal_default(sig: i32)</code>
+</div>
+<div class="item fn" id="signal_block">
+  <span class="source-link">process.jda:361</span><span class="badge fn">fn</span><h3>signal_block</h3>
+  <code class="sig">fn signal_block(sig: i32)</code>
+</div>
+<div class="item fn" id="signal_unblock">
+  <span class="source-link">process.jda:369</span><span class="badge fn">fn</span><h3>signal_unblock</h3>
+  <code class="sig">fn signal_unblock(sig: i32)</code>
+</div>
+<div class="item fn" id="environ">
+  <span class="source-link">process.jda:386</span><span class="badge fn">fn</span><h3>environ</h3>
+  <code class="sig">fn environ() -&gt; &amp;&amp;i8</code>
+</div>
+<div class="item fn" id="process_init">
+  <span class="source-link">process.jda:392</span><span class="badge fn">fn</span><h3>process_init</h3>
+  <code class="sig">fn process_init(argc: i64, argv: &amp;&amp;i8)</code>
+</div>
+<div class="item fn" id="getenv">
+  <span class="source-link">process.jda:397</span><span class="badge fn">fn</span><h3>getenv</h3>
+  <code class="sig">fn getenv(name: &amp;i8) -&gt; &amp;i8</code>
+</div>
+<div class="item fn" id="setenv">
+  <span class="source-link">process.jda:419</span><span class="badge fn">fn</span><h3>setenv</h3>
+  <code class="sig">fn setenv(name: &amp;i8, value: &amp;i8, overwrite: i32) -&gt; i32</code>
+</div>
+<div class="item fn" id="unsetenv">
+  <span class="source-link">process.jda:445</span><span class="badge fn">fn</span><h3>unsetenv</h3>
+  <code class="sig">fn unsetenv(name: &amp;i8) -&gt; i32</code>
+</div>
+<div class="item fn" id="proc_info">
+  <span class="source-link">process.jda:470</span><span class="badge fn">fn</span><h3>proc_info</h3>
+  <code class="sig">fn proc_info() -&gt; ProcInfo</code>
+</div>
+<div class="item fn" id="pipe_open">
+  <span class="source-link">process.jda:492</span><span class="badge fn">fn</span><h3>pipe_open</h3>
+  <code class="sig">fn pipe_open() -&gt; Pipe</code>
+</div>
+<div class="item fn" id="pipe_write">
+  <span class="source-link">process.jda:501</span><span class="badge fn">fn</span><h3>pipe_write</h3>
+  <code class="sig">fn pipe_write(p: &amp;Pipe, data: &amp;i8, len: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="pipe_read">
+  <span class="source-link">process.jda:505</span><span class="badge fn">fn</span><h3>pipe_read</h3>
+  <code class="sig">fn pipe_read(p: &amp;Pipe, buf: &amp;i8, cap: i64) -&gt; i64</code>
+</div>
+<div class="item fn" id="pipe_close_write">
+  <span class="source-link">process.jda:509</span><span class="badge fn">fn</span><h3>pipe_close_write</h3>
+  <code class="sig">fn pipe_close_write(p: &amp;Pipe)</code>
+</div>
+<div class="item fn" id="pipe_close_read">
+  <span class="source-link">process.jda:510</span><span class="badge fn">fn</span><h3>pipe_close_read</h3>
+  <code class="sig">fn pipe_close_read(p: &amp;Pipe)</code>
+</div>
+<div class="item fn" id="daemonize">
+  <span class="source-link">process.jda:516</span><span class="badge fn">fn</span><h3>daemonize</h3>
+  <code class="sig">fn daemonize() -&gt; i32</code>
+</div>
+<div class="item fn" id="set_process_name">
+  <span class="source-link">process.jda:549</span><span class="badge fn">fn</span><h3>set_process_name</h3>
+  <code class="sig">fn set_process_name(name: &amp;i8)</code>
+</div>
+<div class="item fn" id="get_process_name">
+  <span class="source-link">process.jda:553</span><span class="badge fn">fn</span><h3>get_process_name</h3>
+  <code class="sig">fn get_process_name(out: &amp;i8)</code>
+</div>
+<div class="item fn" id="set_pdeathsig">
+  <span class="source-link">process.jda:558</span><span class="badge fn">fn</span><h3>set_pdeathsig</h3>
+  <code class="sig">fn set_pdeathsig(sig: i32)</code>
+</div>
+<div class="item fn" id="disable_coredump">
+  <span class="source-link">process.jda:563</span><span class="badge fn">fn</span><h3>disable_coredump</h3>
+  <code class="sig">fn disable_coredump()</code>
+</div>
+<h2>Structs</h2>
+<div class="item struct" id="SigAction">
+  <span class="source-link">process.jda:100</span><span class="badge struct">struct</span><h3>SigAction</h3>
+  <code class="sig">struct SigAction { handler:  i64      ; fn pointer or SIG_DFL / SIG_IGN, flags:    i64      ; SA_* flags, restorer: i64      ; signal trampoline (kernel sets this), mask:     u64[2]   ; signal mask (128 bits) }</code>
+</div>
+<div class="item struct" id="ProcInfo">
+  <span class="source-link">process.jda:111</span><span class="badge struct">struct</span><h3>ProcInfo</h3>
+  <code class="sig">struct ProcInfo { pid:      i32, ppid:     i32, uid:      i32, gid:      i32, euid:     i32, egid:     i32, pgid:     i32, sid:      i32 }</code>
+</div>
+<div class="item struct" id="SpawnOpts">
+  <span class="source-link">process.jda:120</span><span class="badge struct">struct</span><h3>SpawnOpts</h3>
+  <code class="sig">struct SpawnOpts { stdin_fd:  i32   ; -1 = inherit, stdout_fd: i32   ; -1 = inherit, stderr_fd: i32   ; -1 = inherit, cwd:       &amp;i8   ; null = inherit, env:       &amp;&amp;i8  ; null = inherit current environ, detach:    i32   ; 1 = new session (setsid) }</code>
+</div>
+<div class="item struct" id="ChildProc">
+  <span class="source-link">process.jda:127</span><span class="badge struct">struct</span><h3>ChildProc</h3>
+  <code class="sig">struct ChildProc { pid:    i32, stdin:  i32   ; write end of stdin pipe  (-1 if not piped), stdout: i32   ; read  end of stdout pipe (-1 if not piped), stderr: i32   ; read  end of stderr pipe (-1 if not piped) }</code>
+</div>
+<div class="item struct" id="WaitResult">
+  <span class="source-link">process.jda:135</span><span class="badge struct">struct</span><h3>WaitResult</h3>
+  <code class="sig">struct WaitResult { pid:    i32, status: i32, exited: i32, code:   i32     ; exit code if exited, signal: i32     ; signal if killed by signal }</code>
+</div>
+<div class="item struct" id="Pipe">
+  <span class="source-link">process.jda:490</span><span class="badge struct">struct</span><h3>Pipe</h3>
+  <code class="sig">struct Pipe { read_fd:  i32, write_fd: i32 }</code>
+</div>
+<h2>Constants</h2>
+<div class="item const" id="SYS_READ">
+  <span class="source-link">process.jda:13</span><span class="badge const">const</span><h3>SYS_READ</h3>
+  <code class="sig">const SYS_READ      =  0</code>
+</div>
+<div class="item const" id="SYS_WRITE">
+  <span class="source-link">process.jda:14</span><span class="badge const">const</span><h3>SYS_WRITE</h3>
+  <code class="sig">const SYS_WRITE     =  1</code>
+</div>
+<div class="item const" id="SYS_OPEN">
+  <span class="source-link">process.jda:15</span><span class="badge const">const</span><h3>SYS_OPEN</h3>
+  <code class="sig">const SYS_OPEN      =  2</code>
+</div>
+<div class="item const" id="SYS_CLOSE">
+  <span class="source-link">process.jda:16</span><span class="badge const">const</span><h3>SYS_CLOSE</h3>
+  <code class="sig">const SYS_CLOSE     =  3</code>
+</div>
+<div class="item const" id="SYS_STAT">
+  <span class="source-link">process.jda:17</span><span class="badge const">const</span><h3>SYS_STAT</h3>
+  <code class="sig">const SYS_STAT      =  4</code>
+</div>
+<div class="item const" id="SYS_MMAP">
+  <span class="source-link">process.jda:18</span><span class="badge const">const</span><h3>SYS_MMAP</h3>
+  <code class="sig">const SYS_MMAP      =  9</code>
+</div>
+<div class="item const" id="SYS_RT_SIGACTION">
+  <span class="source-link">process.jda:19</span><span class="badge const">const</span><h3>SYS_RT_SIGACTION</h3>
+  <code class="sig">const SYS_RT_SIGACTION   = 13</code>
+</div>
+<div class="item const" id="SYS_RT_SIGPROCMASK">
+  <span class="source-link">process.jda:20</span><span class="badge const">const</span><h3>SYS_RT_SIGPROCMASK</h3>
+  <code class="sig">const SYS_RT_SIGPROCMASK = 14</code>
+</div>
+<div class="item const" id="SYS_RT_SIGRETURN">
+  <span class="source-link">process.jda:21</span><span class="badge const">const</span><h3>SYS_RT_SIGRETURN</h3>
+  <code class="sig">const SYS_RT_SIGRETURN   = 15</code>
+</div>
+<div class="item const" id="SYS_IOCTL">
+  <span class="source-link">process.jda:22</span><span class="badge const">const</span><h3>SYS_IOCTL</h3>
+  <code class="sig">const SYS_IOCTL     = 16</code>
+</div>
+<div class="item const" id="SYS_PIPE">
+  <span class="source-link">process.jda:23</span><span class="badge const">const</span><h3>SYS_PIPE</h3>
+  <code class="sig">const SYS_PIPE      = 22</code>
+</div>
+<div class="item const" id="SYS_DUP">
+  <span class="source-link">process.jda:24</span><span class="badge const">const</span><h3>SYS_DUP</h3>
+  <code class="sig">const SYS_DUP       = 32</code>
+</div>
+<div class="item const" id="SYS_DUP2">
+  <span class="source-link">process.jda:25</span><span class="badge const">const</span><h3>SYS_DUP2</h3>
+  <code class="sig">const SYS_DUP2      = 33</code>
+</div>
+<div class="item const" id="SYS_GETPID">
+  <span class="source-link">process.jda:26</span><span class="badge const">const</span><h3>SYS_GETPID</h3>
+  <code class="sig">const SYS_GETPID    = 39</code>
+</div>
+<div class="item const" id="SYS_CLONE">
+  <span class="source-link">process.jda:27</span><span class="badge const">const</span><h3>SYS_CLONE</h3>
+  <code class="sig">const SYS_CLONE     = 56</code>
+</div>
+<div class="item const" id="SYS_FORK">
+  <span class="source-link">process.jda:28</span><span class="badge const">const</span><h3>SYS_FORK</h3>
+  <code class="sig">const SYS_FORK      = 57</code>
+</div>
+<div class="item const" id="SYS_VFORK">
+  <span class="source-link">process.jda:29</span><span class="badge const">const</span><h3>SYS_VFORK</h3>
+  <code class="sig">const SYS_VFORK     = 58</code>
+</div>
+<div class="item const" id="SYS_EXECVE">
+  <span class="source-link">process.jda:30</span><span class="badge const">const</span><h3>SYS_EXECVE</h3>
+  <code class="sig">const SYS_EXECVE    = 59</code>
+</div>
+<div class="item const" id="SYS_EXIT">
+  <span class="source-link">process.jda:31</span><span class="badge const">const</span><h3>SYS_EXIT</h3>
+  <code class="sig">const SYS_EXIT      = 60</code>
+</div>
+<div class="item const" id="SYS_WAIT4">
+  <span class="source-link">process.jda:32</span><span class="badge const">const</span><h3>SYS_WAIT4</h3>
+  <code class="sig">const SYS_WAIT4     = 61</code>
+</div>
+<div class="item const" id="SYS_KILL">
+  <span class="source-link">process.jda:33</span><span class="badge const">const</span><h3>SYS_KILL</h3>
+  <code class="sig">const SYS_KILL      = 62</code>
+</div>
+<div class="item const" id="SYS_GETPPID">
+  <span class="source-link">process.jda:34</span><span class="badge const">const</span><h3>SYS_GETPPID</h3>
+  <code class="sig">const SYS_GETPPID   = 110</code>
+</div>
+<div class="item const" id="SYS_GETUID">
+  <span class="source-link">process.jda:35</span><span class="badge const">const</span><h3>SYS_GETUID</h3>
+  <code class="sig">const SYS_GETUID    = 102</code>
+</div>
+<div class="item const" id="SYS_GETGID">
+  <span class="source-link">process.jda:36</span><span class="badge const">const</span><h3>SYS_GETGID</h3>
+  <code class="sig">const SYS_GETGID    = 104</code>
+</div>
+<div class="item const" id="SYS_GETEUID">
+  <span class="source-link">process.jda:37</span><span class="badge const">const</span><h3>SYS_GETEUID</h3>
+  <code class="sig">const SYS_GETEUID   = 107</code>
+</div>
+<div class="item const" id="SYS_GETEGID">
+  <span class="source-link">process.jda:38</span><span class="badge const">const</span><h3>SYS_GETEGID</h3>
+  <code class="sig">const SYS_GETEGID   = 108</code>
+</div>
+<div class="item const" id="SYS_SIGALTSTACK">
+  <span class="source-link">process.jda:39</span><span class="badge const">const</span><h3>SYS_SIGALTSTACK</h3>
+  <code class="sig">const SYS_SIGALTSTACK= 131</code>
+</div>
+<div class="item const" id="SYS_PRCTL">
+  <span class="source-link">process.jda:40</span><span class="badge const">const</span><h3>SYS_PRCTL</h3>
+  <code class="sig">const SYS_PRCTL     = 157</code>
+</div>
+<div class="item const" id="SYS_SETPGID">
+  <span class="source-link">process.jda:41</span><span class="badge const">const</span><h3>SYS_SETPGID</h3>
+  <code class="sig">const SYS_SETPGID   = 109</code>
+</div>
+<div class="item const" id="SYS_GETPGID">
+  <span class="source-link">process.jda:42</span><span class="badge const">const</span><h3>SYS_GETPGID</h3>
+  <code class="sig">const SYS_GETPGID   = 121</code>
+</div>
+<div class="item const" id="SYS_SETSID">
+  <span class="source-link">process.jda:43</span><span class="badge const">const</span><h3>SYS_SETSID</h3>
+  <code class="sig">const SYS_SETSID    = 112</code>
+</div>
+<div class="item const" id="SYS_ENVIRON">
+  <span class="source-link">process.jda:44</span><span class="badge const">const</span><h3>SYS_ENVIRON</h3>
+  <code class="sig">const SYS_ENVIRON   = -1   ; accessed via auxv, not a syscall</code>
+</div>
+<div class="item const" id="SIGHUP">
+  <span class="source-link">process.jda:50</span><span class="badge const">const</span><h3>SIGHUP</h3>
+  <code class="sig">const SIGHUP    =  1    ; hangup</code>
+</div>
+<div class="item const" id="SIGINT">
+  <span class="source-link">process.jda:51</span><span class="badge const">const</span><h3>SIGINT</h3>
+  <code class="sig">const SIGINT    =  2    ; interrupt (Ctrl-C)</code>
+</div>
+<div class="item const" id="SIGQUIT">
+  <span class="source-link">process.jda:52</span><span class="badge const">const</span><h3>SIGQUIT</h3>
+  <code class="sig">const SIGQUIT   =  3    ; quit</code>
+</div>
+<div class="item const" id="SIGILL">
+  <span class="source-link">process.jda:53</span><span class="badge const">const</span><h3>SIGILL</h3>
+  <code class="sig">const SIGILL    =  4    ; illegal instruction</code>
+</div>
+<div class="item const" id="SIGTRAP">
+  <span class="source-link">process.jda:54</span><span class="badge const">const</span><h3>SIGTRAP</h3>
+  <code class="sig">const SIGTRAP   =  5    ; trace / breakpoint</code>
+</div>
+<div class="item const" id="SIGABRT">
+  <span class="source-link">process.jda:55</span><span class="badge const">const</span><h3>SIGABRT</h3>
+  <code class="sig">const SIGABRT   =  6    ; abort</code>
+</div>
+<div class="item const" id="SIGBUS">
+  <span class="source-link">process.jda:56</span><span class="badge const">const</span><h3>SIGBUS</h3>
+  <code class="sig">const SIGBUS    =  7    ; bus error</code>
+</div>
+<div class="item const" id="SIGFPE">
+  <span class="source-link">process.jda:57</span><span class="badge const">const</span><h3>SIGFPE</h3>
+  <code class="sig">const SIGFPE    =  8    ; floating-point exception</code>
+</div>
+<div class="item const" id="SIGKILL">
+  <span class="source-link">process.jda:58</span><span class="badge const">const</span><h3>SIGKILL</h3>
+  <code class="sig">const SIGKILL   =  9    ; kill (cannot be caught)</code>
+</div>
+<div class="item const" id="SIGUSR1">
+  <span class="source-link">process.jda:59</span><span class="badge const">const</span><h3>SIGUSR1</h3>
+  <code class="sig">const SIGUSR1   = 10    ; user-defined 1</code>
+</div>
+<div class="item const" id="SIGSEGV">
+  <span class="source-link">process.jda:60</span><span class="badge const">const</span><h3>SIGSEGV</h3>
+  <code class="sig">const SIGSEGV   = 11    ; segfault</code>
+</div>
+<div class="item const" id="SIGUSR2">
+  <span class="source-link">process.jda:61</span><span class="badge const">const</span><h3>SIGUSR2</h3>
+  <code class="sig">const SIGUSR2   = 12    ; user-defined 2</code>
+</div>
+<div class="item const" id="SIGPIPE">
+  <span class="source-link">process.jda:62</span><span class="badge const">const</span><h3>SIGPIPE</h3>
+  <code class="sig">const SIGPIPE   = 13    ; broken pipe</code>
+</div>
+<div class="item const" id="SIGALRM">
+  <span class="source-link">process.jda:63</span><span class="badge const">const</span><h3>SIGALRM</h3>
+  <code class="sig">const SIGALRM   = 14    ; alarm clock</code>
+</div>
+<div class="item const" id="SIGTERM">
+  <span class="source-link">process.jda:64</span><span class="badge const">const</span><h3>SIGTERM</h3>
+  <code class="sig">const SIGTERM   = 15    ; termination</code>
+</div>
+<div class="item const" id="SIGCHLD">
+  <span class="source-link">process.jda:65</span><span class="badge const">const</span><h3>SIGCHLD</h3>
+  <code class="sig">const SIGCHLD   = 17    ; child stopped or exited</code>
+</div>
+<div class="item const" id="SIGCONT">
+  <span class="source-link">process.jda:66</span><span class="badge const">const</span><h3>SIGCONT</h3>
+  <code class="sig">const SIGCONT   = 18    ; continue</code>
+</div>
+<div class="item const" id="SIGSTOP">
+  <span class="source-link">process.jda:67</span><span class="badge const">const</span><h3>SIGSTOP</h3>
+  <code class="sig">const SIGSTOP   = 19    ; stop (cannot be caught)</code>
+</div>
+<div class="item const" id="SIGTSTP">
+  <span class="source-link">process.jda:68</span><span class="badge const">const</span><h3>SIGTSTP</h3>
+  <code class="sig">const SIGTSTP   = 20    ; terminal stop (Ctrl-Z)</code>
+</div>
+<div class="item const" id="SIGTTIN">
+  <span class="source-link">process.jda:69</span><span class="badge const">const</span><h3>SIGTTIN</h3>
+  <code class="sig">const SIGTTIN   = 21    ; background read from tty</code>
+</div>
+<div class="item const" id="SIGTTOU">
+  <span class="source-link">process.jda:70</span><span class="badge const">const</span><h3>SIGTTOU</h3>
+  <code class="sig">const SIGTTOU   = 22    ; background write to tty</code>
+</div>
+<div class="item const" id="SIGURG">
+  <span class="source-link">process.jda:71</span><span class="badge const">const</span><h3>SIGURG</h3>
+  <code class="sig">const SIGURG    = 23    ; urgent data on socket</code>
+</div>
+<div class="item const" id="SIGWINCH">
+  <span class="source-link">process.jda:72</span><span class="badge const">const</span><h3>SIGWINCH</h3>
+  <code class="sig">const SIGWINCH  = 28    ; terminal resize</code>
+</div>
+<div class="item const" id="SIG_DFL">
+  <span class="source-link">process.jda:75</span><span class="badge const">const</span><h3>SIG_DFL</h3>
+  <code class="sig">const SIG_DFL   = 0     ; default action</code>
+</div>
+<div class="item const" id="SIG_IGN">
+  <span class="source-link">process.jda:76</span><span class="badge const">const</span><h3>SIG_IGN</h3>
+  <code class="sig">const SIG_IGN   = 1     ; ignore signal</code>
+</div>
+<div class="item const" id="WNOHANG">
+  <span class="source-link">process.jda:82</span><span class="badge const">const</span><h3>WNOHANG</h3>
+  <code class="sig">const WNOHANG   = 1     ; non-blocking waitpid</code>
+</div>
+<div class="item const" id="PR_SET_NAME">
+  <span class="source-link">process.jda:543</span><span class="badge const">const</span><h3>PR_SET_NAME</h3>
+  <code class="sig">const PR_SET_NAME   = 15</code>
+</div>
+<div class="item const" id="PR_GET_NAME">
+  <span class="source-link">process.jda:544</span><span class="badge const">const</span><h3>PR_GET_NAME</h3>
+  <code class="sig">const PR_GET_NAME   = 16</code>
+</div>
+<div class="item const" id="PR_SET_DUMPABLE">
+  <span class="source-link">process.jda:545</span><span class="badge const">const</span><h3>PR_SET_DUMPABLE</h3>
+  <code class="sig">const PR_SET_DUMPABLE = 4</code>
+</div>
+<div class="item const" id="PR_GET_DUMPABLE">
+  <span class="source-link">process.jda:546</span><span class="badge const">const</span><h3>PR_GET_DUMPABLE</h3>
+  <code class="sig">const PR_GET_DUMPABLE = 3</code>
+</div>
+<div class="item const" id="PR_SET_PDEATHSIG">
+  <span class="source-link">process.jda:547</span><span class="badge const">const</span><h3>PR_SET_PDEATHSIG</h3>
+  <code class="sig">const PR_SET_PDEATHSIG = 1   ; signal sent to child when parent dies</code>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>
