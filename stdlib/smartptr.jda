@@ -1,0 +1,117 @@
+; =============================================================================
+; jda::smartptr -- Smart Pointers (Box, Rc, Arc)
+; =============================================================================
+; Convention-based smart pointers for Jda. Since there's no GC or
+; borrow checker, these provide reference counting and ownership
+; semantics via explicit calls.
+;
+; Box — unique ownership (single owner, no sharing):
+;   box_new(val)              -> &i64   create boxed value
+;   box_get(b)                -> i64    read value
+;   box_set(b, val)                     write value
+;   box_into(b)               -> i64    consume box, return value
+;
+; Rc — reference counted (shared ownership, single thread):
+;   [0] = value, [1] = refcount
+;   rc_new(val)               -> &i64   create with refcount=1
+;   rc_clone(r)               -> &i64   increment refcount, return same ptr
+;   rc_get(r)                 -> i64    read value
+;   rc_set(r, val)                      write value
+;   rc_count(r)               -> i64    current refcount
+;   rc_drop(r)                -> i64    decrement; returns 1 if freed (count=0)
+;
+; Weak — weak reference (does not prevent cleanup):
+;   [0] = target Rc ptr, [1] = alive flag
+;   weak_new(r)               -> &i64   create weak ref to Rc
+;   weak_upgrade(w)           -> &i64   get Rc if alive (0 if dead)
+;   weak_is_alive(w)          -> i64    1 if target still alive
+;   weak_invalidate(w)                  mark as dead
+; =============================================================================
+
+;; Create a boxed value (unique ownership).
+fn box_new(val: i64) -> &i64 {
+    let b: &i64 = alloc_pages(1)
+    b[0] = val
+    ret b
+}
+
+;; Read boxed value.
+fn box_get(b: &i64) -> i64 {
+    ret b[0]
+}
+
+;; Write boxed value.
+fn box_set(b: &i64, val: i64) {
+    b[0] = val
+}
+
+;; Consume box, return inner value.
+fn box_into(b: &i64) -> i64 {
+    let v = b[0]
+    b[0] = 0
+    ret v
+}
+
+;; Create a reference-counted value (refcount=1).
+fn rc_new(val: i64) -> &i64 {
+    let r: &i64 = alloc_pages(1)
+    r[0] = val
+    r[1] = 1
+    ret r
+}
+
+;; Clone: increment refcount, return same pointer.
+fn rc_clone(r: &i64) -> &i64 {
+    r[1] = r[1] + 1
+    ret r
+}
+
+;; Read value.
+fn rc_get(r: &i64) -> i64 {
+    ret r[0]
+}
+
+;; Write value.
+fn rc_set(r: &i64, val: i64) {
+    r[0] = val
+}
+
+;; Get current reference count.
+fn rc_count(r: &i64) -> i64 {
+    ret r[1]
+}
+
+;; Decrement refcount. Returns 1 if count reached 0 (freed).
+fn rc_drop(r: &i64) -> i64 {
+    r[1] = r[1] - 1
+    if r[1] <= 0 {
+        r[0] = 0
+        r[1] = 0
+        ret 1
+    }
+    ret 0
+}
+
+;; Create a weak reference to an Rc.
+fn weak_new(r: &i64) -> &i64 {
+    let w: &i64 = alloc_pages(1)
+    w[0] = r
+    w[1] = 1
+    ret w
+}
+
+;; Upgrade weak ref to Rc. Returns 0 if dead.
+fn weak_upgrade(w: &i64) -> &i64 {
+    if w[1] == 0 { ret 0 }
+    ret w[0]
+}
+
+;; Check if weak ref target is still alive.
+fn weak_is_alive(w: &i64) -> i64 {
+    ret w[1]
+}
+
+;; Mark weak reference as dead.
+fn weak_invalidate(w: &i64) {
+    w[1] = 0
+}

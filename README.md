@@ -24,8 +24,8 @@
 - **33x faster compilation than Rust** — 42ms average compile time ([benchmarks](benchmarks/RESULTS.md))
 - **Beats C on 2 of 4 benchmarks** — faster than gcc -O2 on sieve and sum loop
 - **24–53x faster than Python/Ruby** — compiled performance with scripting-speed iteration
-- **114 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, and more
-- **361 conformance tests** — all passing
+- **117 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, debugging, profiling, and more
+- **388 conformance tests** — all passing
 - **Cross-platform** — native on Linux, Docker-based on macOS/Windows
 - **Built-in concurrency** — goroutine-style green threads with channels
 - **ML primitives** — tensors, autograd, neural networks, AVX-512 acceleration
@@ -188,7 +188,7 @@ Legacy syntax is also supported for backward compatibility:
 jda hello.jda output_binary
 ```
 
-### Standard Library (114 packages)
+### Standard Library (117 packages)
 
 Use `--include` to link standard library packages:
 
@@ -347,7 +347,7 @@ apps/              Real applications (jda-grep)
 bootstrap/
   stage0/          Build system + jda0 (assembly bootstrap)
   stage1/          jda1 compiler source (jda1.jda — self-hosted)
-stdlib/            114 standard library packages
+stdlib/            117 standard library packages
 tools/             CLI tools (jda, jdavm, jda-doc, jda-test, jda-pkg, etc.)
 tests/             361 conformance tests (pass + fail)
 benchmarks/        Performance benchmarks (Jda vs C/Go/Rust/Python/Ruby)
@@ -373,7 +373,7 @@ docker/            Dockerfile for build environment
 ### Language Reference (Markdown — GitHub)
 - [Syntax](docs/language/syntax.md) — variables, types, functions, control flow, operators
 - [Structs & OOP](docs/language/structs.md) — structs, traits, impl, derive, generics, closures, unsafe
-- [Standard Library](docs/language/stdlib.md) — all 114 packages by category
+- [Standard Library](docs/language/stdlib.md) — all 117 packages by category
 - [Toolchain](docs/language/toolchain.md) — CLI commands, package manager, doc generator, testing
 - [Compiler Architecture](docs/language/compiler.md) — pipeline, data structures, self-hosting
 

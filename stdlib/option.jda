@@ -14,12 +14,41 @@
 ;   opt_is_some(o)           -> i64    1 if Some
 ;   opt_is_none(o)           -> i64    1 if None
 ;   opt_unwrap(o)            -> i64    value (0 if None)
+;   opt_expect(o, msg)       -> i64    value or panic with msg
 ;   opt_unwrap_or(o, def)    -> i64    value or default
 ;   opt_or(o, other)         -> &i64   o if Some, else other
 ;   opt_eq(a, b)             -> i64    structural equality
 ;   opt_print(o)                       print as Some(v) or None
 ;   opt_println(o)                     print + newline
 ; =============================================================================
+
+;; Internal: compute c-string length.
+fn _opt_cstr_len(s: &i8) -> i64 {
+    let n = 0
+    loop n < 256 {
+        if s[n] == 0 { ret n }
+        n = n + 1
+    }
+    ret 256
+}
+
+;; Internal: write to stderr.
+fn _opt_write_err(s: &i8, len: i64) {
+    syscall(1, 2, s, len)
+}
+
+;; Internal: exit with code 1.
+fn _opt_exit() {
+    syscall(60, 1, 0, 0)
+}
+
+;; Internal: panic with message (write to stderr + exit).
+fn _opt_panic(msg: &i8) {
+    let n = _opt_cstr_len(msg)
+    _opt_write_err(msg, n)
+    _opt_write_err("\n", 1)
+    _opt_exit()
+}
 
 ;; Create a Some value.
 fn some(val: i64) -> &i64 {
@@ -49,8 +78,15 @@ fn opt_is_none(o: &i64) -> i64 {
     ret 0
 }
 
-;; Get the value. Returns 0 if None.
+;; Get the value. Panics if None.
 fn opt_unwrap(o: &i64) -> i64 {
+    if o[0] == 0 { _opt_panic("unwrap called on None") }
+    ret o[1]
+}
+
+;; Get the value, or panic with a custom message if None.
+fn opt_expect(o: &i64, msg: &i8) -> i64 {
+    if o[0] == 0 { _opt_panic(msg) }
     ret o[1]
 }
 

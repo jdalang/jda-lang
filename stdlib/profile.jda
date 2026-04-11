@@ -1,0 +1,272 @@
+; =============================================================================
+; jda::profile -- Function-Level Profiler
+; =============================================================================
+; In-process profiling using monotonic clock. Track function call counts and
+; cumulative time. Provides a flat profile report similar to gprof/cProfile.
+;
+; Usage:
+;   prof_init()
+;   prof_enter(0, "my_func")        ; slot 0
+;   ; ... do work ...
+;   prof_leave(0)
+;   prof_report()
+;
+; Functions:
+;   prof_init()                          initialize profiler (call once)
+;   prof_enter(slot, name)               start timing slot (0-63)
+;   prof_leave(slot)                     stop timing slot, accumulate
+;   prof_calls(slot)         -> i64      call count for slot
+;   prof_total_ns(slot)      -> i64      total nanoseconds for slot
+;   prof_avg_ns(slot)        -> i64      average ns per call
+;   prof_name(slot)          -> &i8      name registered at slot
+;   prof_reset(slot)                     reset a single slot
+;   prof_reset_all()                     reset all slots
+;   prof_report()                        print flat profile report
+;   prof_slot_count()        -> i64      number of active slots
+;   prof_enabled()           -> i64      1 if profiling on
+;   prof_enable()                        turn on profiling
+;   prof_disable()                       turn off (enter/leave become no-ops)
+; =============================================================================
+
+const _PROF_MAX_SLOTS = 64
+
+; Parallel arrays: name_ptr, call_count, total_ns, start_ns, active
+let _prof_names: &i64 = 0
+let _prof_calls: &i64 = 0
+let _prof_total: &i64 = 0
+let _prof_start: &i64 = 0
+let _prof_active: &i64 = 0
+let _prof_count: i64 = 0
+let _prof_on: i64 = 1
+let _prof_inited: i64 = 0
+
+; --- Internal helpers ---
+
+fn _prof_cstr_len(s: &i8) -> i64 {
+    let n = 0
+    loop n < 256 {
+        if s[n] == 0 { ret n }
+        n = n + 1
+    }
+    ret 256
+}
+
+fn _prof_write(s: &i8, len: i64) {
+    syscall(1, 1, s, len)
+}
+
+fn _prof_print_str(s: &i8) {
+    let n = _prof_cstr_len(s)
+    _prof_write(s, n)
+}
+
+fn _prof_now_ns() -> i64 {
+    let ts: &i64 = alloc_pages(1)
+    syscall(228, 1, ts, 0)
+    ret ts[0] * 1000000000 + ts[1]
+}
+
+fn _prof_print_int(val: i64) {
+    print("{val}")
+}
+
+fn _prof_print_int_padded(val: i64, width: i64) {
+    ; Print integer right-aligned in width chars
+    ; First count digits
+    let v = val
+    let digits = 0
+    if v == 0 {
+        digits = 1
+    } else {
+        let tmp = v
+        loop tmp > 0 {
+            digits = digits + 1
+            tmp = tmp / 10
+        }
+    }
+    let pad = width - digits
+    loop pad > 0 {
+        _prof_write(" ", 1)
+        pad = pad - 1
+    }
+    _prof_print_int(val)
+}
+
+; --- Initialization ---
+
+;; Initialize the profiler. Call once at program start.
+fn prof_init() {
+    if _prof_inited == 1 { ret }
+    _prof_names = alloc_pages(1)
+    _prof_calls = alloc_pages(1)
+    _prof_total = alloc_pages(1)
+    _prof_start = alloc_pages(1)
+    _prof_active = alloc_pages(1)
+    ; Zero everything
+    let i = 0
+    loop i < 64 {
+        _prof_names[i] = 0
+        _prof_calls[i] = 0
+        _prof_total[i] = 0
+        _prof_start[i] = 0
+        _prof_active[i] = 0
+        i = i + 1
+    }
+    _prof_count = 0
+    _prof_on = 1
+    _prof_inited = 1
+}
+
+; --- Enable / Disable ---
+
+;; Enable profiling.
+fn prof_enable() {
+    _prof_on = 1
+}
+
+;; Disable profiling (enter/leave become no-ops).
+fn prof_disable() {
+    _prof_on = 0
+}
+
+;; Check if profiling is enabled.
+fn prof_enabled() -> i64 {
+    ret _prof_on
+}
+
+; --- Enter / Leave ---
+
+;; Start timing a function at slot (0-63). Registers name on first call.
+fn prof_enter(slot: i64, name: &i8) {
+    if _prof_on == 0 { ret }
+    if slot >= 64 { ret }
+    if slot < 0 { ret }
+    if _prof_active[slot] == 0 {
+        _prof_names[slot] = name
+        _prof_active[slot] = 1
+        _prof_count = _prof_count + 1
+    }
+    _prof_start[slot] = _prof_now_ns()
+}
+
+;; Stop timing slot. Accumulate elapsed time and increment call count.
+fn prof_leave(slot: i64) {
+    if _prof_on == 0 { ret }
+    if slot >= 64 { ret }
+    if slot < 0 { ret }
+    if _prof_active[slot] == 0 { ret }
+    let end = _prof_now_ns()
+    let s = _prof_start[slot]
+    let elapsed = end - s
+    _prof_total[slot] = _prof_total[slot] + elapsed
+    _prof_calls[slot] = _prof_calls[slot] + 1
+}
+
+; --- Queries ---
+
+;; Get call count for slot.
+fn prof_calls(slot: i64) -> i64 {
+    if slot >= 64 { ret 0 }
+    ret _prof_calls[slot]
+}
+
+;; Get total nanoseconds for slot.
+fn prof_total_ns(slot: i64) -> i64 {
+    if slot >= 64 { ret 0 }
+    ret _prof_total[slot]
+}
+
+;; Get average nanoseconds per call for slot.
+fn prof_avg_ns(slot: i64) -> i64 {
+    if slot >= 64 { ret 0 }
+    let c = _prof_calls[slot]
+    if c == 0 { ret 0 }
+    ret _prof_total[slot] / c
+}
+
+;; Get name for slot.
+fn prof_name(slot: i64) -> &i8 {
+    if slot >= 64 { ret "<invalid>" }
+    ret _prof_names[slot]
+}
+
+;; Get number of active slots.
+fn prof_slot_count() -> i64 {
+    ret _prof_count
+}
+
+; --- Reset ---
+
+;; Reset a single slot.
+fn prof_reset(slot: i64) {
+    if slot >= 64 { ret }
+    if _prof_active[slot] == 1 {
+        _prof_count = _prof_count - 1
+    }
+    _prof_names[slot] = 0
+    _prof_calls[slot] = 0
+    _prof_total[slot] = 0
+    _prof_start[slot] = 0
+    _prof_active[slot] = 0
+}
+
+;; Reset all slots.
+fn prof_reset_all() {
+    let i = 0
+    loop i < 64 {
+        _prof_names[i] = 0
+        _prof_calls[i] = 0
+        _prof_total[i] = 0
+        _prof_start[i] = 0
+        _prof_active[i] = 0
+        i = i + 1
+    }
+    _prof_count = 0
+}
+
+; --- Report ---
+
+fn _prof_report_slot(slot: i64) {
+    if _prof_active[slot] == 0 { ret }
+    _prof_write("  ", 2)
+    let name: &i8 = _prof_names[slot]
+    _prof_print_str(name)
+    ; Pad name to 20 chars
+    let nlen = _prof_cstr_len(name)
+    let pad = 20 - nlen
+    loop pad > 0 {
+        _prof_write(" ", 1)
+        pad = pad - 1
+    }
+    _prof_write("  calls=", 8)
+    let c = _prof_calls[slot]
+    _prof_print_int(c)
+    _prof_write("  total=", 8)
+    let t = _prof_total[slot]
+    let tus = t / 1000
+    _prof_print_int(tus)
+    _prof_write("us", 2)
+    _prof_write("  avg=", 6)
+    let avg = 0
+    if c > 0 {
+        avg = t / c
+    }
+    let avgus = avg / 1000
+    _prof_print_int(avgus)
+    _prof_write("us\n", 3)
+}
+
+;; Print flat profile report.
+fn prof_report() {
+    _prof_write("=== Profile Report ===\n", 23)
+    let cnt = _prof_count
+    _prof_write("  active slots: ", 16)
+    _prof_print_int(cnt)
+    _prof_write("\n", 1)
+    let i = 0
+    loop i < 64 {
+        _prof_report_slot(i)
+        i = i + 1
+    }
+    _prof_write("======================\n", 23)
+}

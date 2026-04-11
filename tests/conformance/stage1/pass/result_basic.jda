@@ -1,8 +1,82 @@
+; Test Result — standard error return pattern
+
+; Example fallible function using the Result pattern
+fn safe_div(a: i64, b: i64) -> &i64 {
+    if b == 0 { ret err(ERR_INVALID) }
+    ret ok(a / b)
+}
+
+fn lookup(key: i64) -> &i64 {
+    if key == 42 { ret ok(100) }
+    ret err_with(ERR_NOT_FOUND, key)
+}
+
 fn main() {
-    let r = Result.Ok(42)
-    let tag = r[0]
-    let val = r[1]
-    if tag == 0 and val == 42 {
-        print("ok")
-    }
+    ; ok / err
+    let r1 = ok(42)
+    let r2 = err(ERR_NOT_FOUND)
+
+    ; res_is_ok / res_is_err
+    let ok1 = res_is_ok(r1)
+    let ok2 = res_is_ok(r2)
+    let er1 = res_is_err(r1)
+    let er2 = res_is_err(r2)
+    print("{ok1}\n")
+    print("{ok2}\n")
+    print("{er1}\n")
+    print("{er2}\n")
+
+    ; res_val / res_err
+    let v = res_val(r1)
+    let e = res_err(r2)
+    print("{v}\n")
+    print("{e}\n")
+
+    ; res_unwrap_or
+    let u1 = res_unwrap_or(r1, 0)
+    let u2 = res_unwrap_or(r2, 99)
+    print("{u1}\n")
+    print("{u2}\n")
+
+    ; err_with / res_detail
+    let r3 = err_with(ERR_IO, 5)
+    let d = res_detail(r3)
+    print("{d}\n")
+
+    ; res_or
+    let r4 = res_or(r2, r1)
+    let ov = res_val(r4)
+    print("{ov}\n")
+
+    ; res_eq
+    let eq1 = res_eq(r1, ok(42))
+    let eq2 = res_eq(r1, ok(10))
+    print("{eq1}\n")
+    print("{eq2}\n")
+
+    ; res_print
+    res_println(r1)
+    res_println(r2)
+
+    ; Use pattern: safe_div
+    let d1 = safe_div(10, 3)
+    let d2 = safe_div(10, 0)
+    res_println(d1)
+    res_println(d2)
+
+    ; Use pattern: lookup with detail
+    let l1 = lookup(42)
+    let l2 = lookup(7)
+    let lv = res_unwrap_or(l1, 0)
+    let le = res_err(l2)
+    let ld = res_detail(l2)
+    print("{lv}\n")
+    print("{le}\n")
+    print("{ld}\n")
+
+    ; Error constants
+    let c = ERR_PARSE
+    print("{c}\n")
+
+    print("ok\n")
 }

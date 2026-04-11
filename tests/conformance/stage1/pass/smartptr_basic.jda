@@ -1,0 +1,80 @@
+; Test stdlib/smartptr — Box, Rc, Weak
+
+fn test_box() {
+    let b = box_new(42)
+    let v = box_get(b)
+    print("box: ")
+    print("{v}")
+    print("\n")
+    box_set(b, 99)
+    let v2 = box_get(b)
+    print("set: ")
+    print("{v2}")
+    print("\n")
+    let v3 = box_into(b)
+    print("into: ")
+    print("{v3}")
+    print("\n")
+}
+
+fn test_rc() {
+    let r = rc_new(10)
+    let c1 = rc_count(r)
+    print("rc count: ")
+    print("{c1}")
+    print("\n")
+
+    let r2 = rc_clone(r)
+    let c2 = rc_count(r)
+    print("after clone: ")
+    print("{c2}")
+    print("\n")
+
+    let val = rc_get(r)
+    print("rc val: ")
+    print("{val}")
+    print("\n")
+
+    rc_set(r, 20)
+    let val2 = rc_get(r2)
+    print("shared set: ")
+    print("{val2}")
+    print("\n")
+
+    let freed1 = rc_drop(r)
+    print("drop1 freed: ")
+    print("{freed1}")
+    print("\n")
+    let c3 = rc_count(r)
+    print("count after drop1: ")
+    print("{c3}")
+    print("\n")
+
+    let freed2 = rc_drop(r)
+    print("drop2 freed: ")
+    print("{freed2}")
+    print("\n")
+}
+
+fn test_weak() {
+    let r = rc_new(55)
+    let w = weak_new(r)
+    let alive = weak_is_alive(w)
+    print("alive: ")
+    print("{alive}")
+    print("\n")
+
+    weak_invalidate(w)
+    let alive2 = weak_is_alive(w)
+    print("after invalidate: ")
+    print("{alive2}")
+    print("\n")
+}
+
+fn main() -> i64 {
+    test_box()
+    test_rc()
+    test_weak()
+    print("PASS\n")
+    ret 0
+}
