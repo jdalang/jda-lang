@@ -1,0 +1,212 @@
+// Ray tracer — 800x600, 5 spheres, shadows + Blinn-Phong lighting
+// Reports pixel checksum and timing.
+// Uses scaled integers (x10000) for sphere data storage.
+// IMPORTANT: All f64 variables MUST have explicit `: f64` type annotation.
+// IMPORTANT: Store fn return values to `: f64` local before further f64 ops.
+// IMPORTANT: Never store f64 to &i64 memory (load uses cvtsi2sd, not movq).
+
+let mem: &i64
+
+fn _clk(buf: &i8) -> i64 { ret syscall(228, 1, buf, 0, 0) }
+
+fn now_ms(ts: &i8) -> i64 {
+    _clk(ts)
+    let s: i64 = ts[0]; let ptr: &i8 = ts + 8; let ns: i64 = ptr[0]
+    ret s * 1000 + ns / 1000000
+}
+
+// Sphere data: 8 fields per sphere (cx,cy,cz,r, cr,cg,cb,spec) as i64 * 10000
+
+fn sget(i: i64, f: i64) -> f64 {
+    let raw: i64 = mem[i * 8 + f]
+    let v: f64 = f64_from_int(raw)
+    ret v / 10000.0
+}
+
+fn sset(i: i64, f: i64, v: i64) {
+    mem[i * 8 + f] = v
+}
+
+fn v3dot(ax: f64, ay: f64, az: f64, bx: f64, by: f64, bz: f64) -> f64 {
+    ret ax * bx + ay * by + az * bz
+}
+
+fn clamp(v: i64) -> i64 {
+    if v < 0 { ret 0 }
+    if v > 255 { ret 255 }
+    ret v
+}
+
+// Globals for f64 communication between functions (can't store f64 in i64 mem)
+let g_closest: f64
+let g_lx: f64
+let g_ly: f64
+let g_lz: f64
+// Globals to avoid 7-arg functions (max 6 args)
+let g_skip = 0
+let g_hit = 0
+let g_si = 0
+
+fn intersect(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> f64 {
+    let cx: f64 = sget(g_si, 0); let cy: f64 = sget(g_si, 1); let cz: f64 = sget(g_si, 2)
+    let ocx: f64 = ox - cx; let ocy: f64 = oy - cy; let ocz: f64 = oz - cz
+    let a: f64 = v3dot(dx, dy, dz, dx, dy, dz)
+    let dot_ocd: f64 = v3dot(ocx, ocy, ocz, dx, dy, dz)
+    let b: f64 = 2.0 * dot_ocd
+    let rad: f64 = sget(g_si, 3)
+    let dot_ococ: f64 = v3dot(ocx, ocy, ocz, ocx, ocy, ocz)
+    let rr: f64 = rad * rad
+    let c: f64 = dot_ococ - rr
+    let bb: f64 = b * b
+    let four_ac: f64 = 4.0 * a * c
+    let disc: f64 = bb - four_ac
+    let big: f64 = 100000000000000000.0
+    if disc < 0.0 { ret big }
+    let sq: f64 = f64_sqrt(disc)
+    let two_a: f64 = 2.0 * a
+    let nb: f64 = f64_neg(b)
+    let num1: f64 = nb - sq
+    let t1: f64 = num1 / two_a
+    if t1 > 0.001 { ret t1 }
+    let num2: f64 = nb + sq
+    let t2: f64 = num2 / two_a
+    if t2 > 0.001 { ret t2 }
+    ret big
+}
+
+fn find_hit(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> i64 {
+    let big: f64 = 100000000000000000.0
+    let closest: f64 = big; let hit: i64 = 0 - 1; let i: i64 = 0
+    loop i < 5 {
+        g_si = i
+        let t: f64 = intersect(ox, oy, oz, dx, dy, dz)
+        if t < closest { closest = t; hit = i }
+        i = i + 1
+    }
+    g_closest = closest
+    ret hit
+}
+
+fn shadow_check(px: f64, py: f64, pz: f64, lx: f64, ly: f64, lz: f64) -> i64 {
+    let si: i64 = 0
+    loop si < 5 {
+        if si != g_skip {
+            g_si = si
+            let st: f64 = intersect(px, py, pz, lx, ly, lz)
+            if st < 10000000000000000.0 { ret 1 }
+        }
+        si = si + 1
+    }
+    ret 0
+}
+
+fn spec_calc(dx: f64, dy: f64, dz: f64, nx: f64, ny: f64, nz: f64) -> f64 {
+    let lx: f64 = g_lx; let ly: f64 = g_ly; let lz: f64 = g_lz
+    let vx: f64 = f64_neg(dx); let vy: f64 = f64_neg(dy); let vz: f64 = f64_neg(dz)
+    let hx: f64 = lx + vx; let hy: f64 = ly + vy; let hz: f64 = lz + vz
+    let hlen: f64 = hx * hx + hy * hy + hz * hz
+    let hl: f64 = f64_sqrt(hlen)
+    hx = hx / hl; hy = hy / hl; hz = hz / hl
+    let s: f64 = v3dot(nx, ny, nz, hx, hy, hz)
+    if s > 0.0 {
+        let spec_exp: f64 = sget(g_hit, 7)
+        let p: f64 = f64_pow(s, spec_exp)
+        ret p
+    }
+    ret 0.0
+}
+
+fn trace(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> i64 {
+    let hit: i64 = find_hit(ox, oy, oz, dx, dy, dz)
+    if hit < 0 { ret 30 * 17 + 30 * 31 + 60 * 53 }
+
+    let closest: f64 = g_closest
+    let px: f64 = ox + dx * closest; let py: f64 = oy + dy * closest; let pz: f64 = oz + dz * closest
+
+    let scx: f64 = sget(hit, 0); let scy: f64 = sget(hit, 1); let scz: f64 = sget(hit, 2)
+    let nx: f64 = px - scx; let ny: f64 = py - scy; let nz: f64 = pz - scz
+    let nlen: f64 = nx * nx + ny * ny + nz * nz
+    let nl: f64 = f64_sqrt(nlen)
+    nx = nx / nl; ny = ny / nl; nz = nz / nl
+
+    let neg5: f64 = f64_neg(5.0)
+    let lx: f64 = neg5 - px; let ly: f64 = 5.0 - py; let lz: f64 = 0.0 - pz
+    let llen: f64 = lx * lx + ly * ly + lz * lz
+    let ll: f64 = f64_sqrt(llen)
+    lx = lx / ll; ly = ly / ll; lz = lz / ll
+
+    g_skip = hit; g_hit = hit
+    let shadow: i64 = shadow_check(px, py, pz, lx, ly, lz)
+
+    let ambient: f64 = 0.15
+    let diffuse: f64 = 0.0; let specular: f64 = 0.0
+    if shadow == 0 {
+        let diff_dot: f64 = v3dot(nx, ny, nz, lx, ly, lz)
+        if diff_dot < 0.0 { diff_dot = 0.0 }
+        diffuse = diff_dot
+        g_lx = lx; g_ly = ly; g_lz = lz
+        let spec_raw: f64 = spec_calc(dx, dy, dz, nx, ny, nz)
+        specular = 0.3 * spec_raw
+    }
+
+    let diff_term: f64 = 0.7 * diffuse
+    let intensity: f64 = ambient + diff_term + specular
+    let cr: f64 = sget(g_hit, 4); let cg: f64 = sget(g_hit, 5); let cb: f64 = sget(g_hit, 6)
+    let ri: f64 = cr * intensity; let gi: f64 = cg * intensity; let bi: f64 = cb * intensity
+    let r: i64 = f64_to_int(ri); let g: i64 = f64_to_int(gi); let b: i64 = f64_to_int(bi)
+    r = clamp(r); g = clamp(g); b = clamp(b)
+    ret r * 17 + g * 31 + b * 53
+}
+
+fn main() -> i64 {
+    mem = alloc_pages(4)
+
+    // Scene setup: all values scaled by 10000
+    // Sphere 0: red (0,-1,8) r=2 spec=500
+    sset(0, 0, 0); sset(0, 1, 0 - 10000); sset(0, 2, 80000); sset(0, 3, 20000)
+    sset(0, 4, 2550000); sset(0, 5, 500000); sset(0, 6, 500000); sset(0, 7, 5000000)
+
+    // Sphere 1: blue (3,0,10) r=1.5 spec=100
+    sset(1, 0, 30000); sset(1, 1, 0); sset(1, 2, 100000); sset(1, 3, 15000)
+    sset(1, 4, 500000); sset(1, 5, 500000); sset(1, 6, 2550000); sset(1, 7, 1000000)
+
+    // Sphere 2: green (-3,0,10) r=1.5 spec=200
+    sset(2, 0, 0 - 30000); sset(2, 1, 0); sset(2, 2, 100000); sset(2, 3, 15000)
+    sset(2, 4, 500000); sset(2, 5, 2550000); sset(2, 6, 500000); sset(2, 7, 2000000)
+
+    // Sphere 3: yellow (0,2,12) r=1 spec=1000
+    sset(3, 0, 0); sset(3, 1, 20000); sset(3, 2, 120000); sset(3, 3, 10000)
+    sset(3, 4, 2550000); sset(3, 5, 2550000); sset(3, 6, 500000); sset(3, 7, 10000000)
+
+    // Sphere 4: gray floor (0,-5001,0) r=5000 spec=10
+    sset(4, 0, 0); sset(4, 1, 0 - 50010000); sset(4, 2, 0); sset(4, 3, 50000000)
+    sset(4, 4, 2000000); sset(4, 5, 2000000); sset(4, 6, 2000000); sset(4, 7, 100000)
+
+    let W: i64 = 800; let H: i64 = 600
+    let Wf: f64 = 800.0; let half_w: f64 = 400.0; let half_h: f64 = 300.0
+
+    let ts: &i8 = mem + 200 * 8
+    let t0: i64 = now_ms(ts)
+
+    let checksum: i64 = 0; let y: i64 = 0
+    loop y < H {
+        let x: i64 = 0
+        loop x < W {
+            let xf: f64 = f64_from_int(x); let yf: f64 = f64_from_int(y)
+            let px: f64 = (xf - half_w) / Wf
+            let yh: f64 = yf - half_h
+            let py: f64 = f64_neg(yh / Wf)
+            let one: f64 = 1.0
+            let dl2: f64 = px * px + py * py + one
+            let dl: f64 = f64_sqrt(dl2)
+            checksum = checksum + trace(0.0, 0.0, 0.0, px / dl, py / dl, one / dl)
+            x = x + 1
+        }
+        y = y + 1
+    }
+
+    let t1: i64 = now_ms(ts)
+    let elapsed: i64 = t1 - t0
+    print("checksum: {checksum}\ntime: {elapsed} ms\n")
+    ret 0
+}

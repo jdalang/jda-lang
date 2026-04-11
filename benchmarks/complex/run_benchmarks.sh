@@ -1,92 +1,129 @@
 #!/bin/bash
-# Run all complex benchmarks across all languages in Docker
-# Usage: bash benchmarks/complex/run_benchmarks.sh
+# Run all complex benchmarks across 6 languages in Docker
+# Usage: docker run ... bash benchmarks/complex/run_benchmarks.sh
+# Or:    bash benchmarks/complex/run_benchmarks.sh  (from inside Docker)
 
 set -e
 
-BENCHMARKS="sudoku raytracer regex btree lz77"
+BENCH_DIR="benchmarks/complex"
+JDA="./bootstrap/stage0/jda1"
+BENCHMARKS="sudoku btree lz77 regex raytracer"
 
 echo "============================================"
-echo "  Complex Benchmarks — All Languages"
+echo "  Complex Benchmarks — 6 Languages"
 echo "============================================"
 echo ""
 
-# Compile C benchmarks
-echo "--- Compiling C ---"
+# --- Compile all languages ---
+echo "--- Compiling C (gcc -O2) ---"
 for b in $BENCHMARKS; do
+    src="$BENCH_DIR/$b/$b.c"
+    [ ! -f "$src" ] && continue
     if [ "$b" = "raytracer" ]; then
-        gcc -O2 -o /tmp/${b}_c /bench/$b/$b.c -lm 2>/dev/null
+        gcc -O2 -o /tmp/${b}_c "$src" -lm 2>/dev/null
     else
-        gcc -O2 -o /tmp/${b}_c /bench/$b/$b.c 2>/dev/null
+        gcc -O2 -o /tmp/${b}_c "$src" 2>/dev/null
     fi
     echo "  $b: OK"
 done
 
-# Compile Rust benchmarks
-echo "--- Compiling Rust ---"
+echo "--- Compiling Rust (rustc -O) ---"
 for b in $BENCHMARKS; do
-    rustc -O -o /tmp/${b}_rs /bench/$b/$b.rs 2>/dev/null
+    src="$BENCH_DIR/$b/$b.rs"
+    [ ! -f "$src" ] && continue
+    rustc -O -o /tmp/${b}_rs "$src" 2>/dev/null
     echo "  $b: OK"
 done
 
-# Compile Go benchmarks
 echo "--- Compiling Go ---"
 for b in $BENCHMARKS; do
-    go build -o /tmp/${b}_go /bench/$b/$b.go 2>/dev/null
+    src="$BENCH_DIR/$b/$b.go"
+    [ ! -f "$src" ] && continue
+    go build -o /tmp/${b}_go "$src" 2>/dev/null
     echo "  $b: OK"
 done
 
-# Compile Jda benchmarks (if jda1 available)
-JDA=""
-if [ -f /bench/../bootstrap/stage0/jda1 ]; then
-    JDA="/bench/../bootstrap/stage0/jda1"
-fi
+echo "--- Compiling Jda ---"
+for b in $BENCHMARKS; do
+    src="$BENCH_DIR/$b/$b.jda"
+    [ ! -f "$src" ] && continue
+    if $JDA "$src" /tmp/${b}_jda 2>/dev/null; then
+        echo "  $b: OK"
+    else
+        echo "  $b: FAILED"
+    fi
+done
 
 echo ""
 echo "============================================"
 echo "  Running Benchmarks"
 echo "============================================"
 
+run_bench() {
+    local name=$1
+    local bin=$2
+    local input=$3
+
+    if [ ! -f "$bin" ]; then
+        echo "    [SKIP] not compiled"
+        return
+    fi
+    if [ -n "$input" ]; then
+        "$bin" < "$input"
+    else
+        "$bin"
+    fi
+}
+
 for b in $BENCHMARKS; do
     echo ""
     echo "=== $b ==="
-    echo ""
 
-    # Sudoku needs puzzle input
+    INPUT=""
     if [ "$b" = "sudoku" ]; then
-        INPUT="/bench/$b/puzzles.txt"
+        INPUT="$BENCH_DIR/$b/puzzles.txt"
         if [ ! -f "$INPUT" ]; then
             echo "  [SKIP] No puzzle file"
             continue
         fi
-        echo "  C:"
-        /tmp/${b}_c < "$INPUT"
-        echo "  Rust:"
-        /tmp/${b}_rs < "$INPUT"
-        echo "  Go:"
-        /tmp/${b}_go < "$INPUT"
-        if [ -n "$JDA" ]; then
-            echo "  Jda:"
-            $JDA /bench/$b/$b.jda /tmp/${b}_jda 2>/dev/null && /tmp/${b}_jda < "$INPUT" || echo "    [SKIP]"
-        fi
-        echo "  Python:"
-        python3 /bench/$b/$b.py < "$INPUT"
-        echo "  Ruby:"
-        ruby /bench/$b/$b.rb < "$INPUT"
-    else
-        echo "  C:"
-        /tmp/${b}_c
-        echo "  Rust:"
-        /tmp/${b}_rs
-        echo "  Go:"
-        /tmp/${b}_go
-        if [ -n "$JDA" ] && [ -f "/bench/$b/$b.jda" ]; then
-            echo "  Jda:"
-            $JDA /bench/$b/$b.jda /tmp/${b}_jda 2>/dev/null && /tmp/${b}_jda || echo "    [SKIP]"
-        fi
-        echo "  Python:"
-        python3 /bench/$b/$b.py
-        echo "  Ruby:"
-        ruby /bench/$b/$b.rb
     fi
+
+    for lang in C Rust Go Jda Python Ruby; do
+        echo "  $lang:"
+        case $lang in
+            C)      run_bench "$b" "/tmp/${b}_c" "$INPUT" ;;
+            Rust)   run_bench "$b" "/tmp/${b}_rs" "$INPUT" ;;
+            Go)     run_bench "$b" "/tmp/${b}_go" "$INPUT" ;;
+            Jda)    run_bench "$b" "/tmp/${b}_jda" "$INPUT" ;;
+            Python)
+                src="$BENCH_DIR/$b/$b.py"
+                if [ -f "$src" ]; then
+                    if [ -n "$INPUT" ]; then
+                        python3 "$src" < "$INPUT"
+                    else
+                        python3 "$src"
+                    fi
+                else
+                    echo "    [SKIP]"
+                fi
+                ;;
+            Ruby)
+                src="$BENCH_DIR/$b/$b.rb"
+                if [ -f "$src" ]; then
+                    if [ -n "$INPUT" ]; then
+                        ruby "$src" < "$INPUT"
+                    else
+                        ruby "$src"
+                    fi
+                else
+                    echo "    [SKIP]"
+                fi
+                ;;
+        esac
+    done
 done
+
+echo ""
+echo "============================================"
+echo "  Done"
+echo "============================================"
