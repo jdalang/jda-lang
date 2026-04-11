@@ -220,6 +220,67 @@ JDA_NO_MODIFY_PATH=1 curl -fsSL .../install.sh | sh
 
 ---
 
+## Version Manager
+
+**jdavm** lets you install and switch between multiple Jda versions — like rustup, nvm, or rvm.
+
+### Install jdavm
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install-jdavm.sh | sh
+```
+
+### Usage
+
+```bash
+# Install versions
+jdavm install latest        # latest release
+jdavm install 0.2.0         # specific version
+jdavm install 0.1.1         # older version
+
+# Switch versions
+jdavm use 0.2.0             # switch active version
+jdavm default 0.2.0         # set default (persists across shells)
+
+# Info
+jdavm list                  # installed versions
+jdavm list-remote           # available versions on GitHub
+jdavm current               # active version
+
+# Remove
+jdavm uninstall 0.1.1       # remove a version
+```
+
+### How it works
+
+jdavm stores each version in its own directory:
+
+```
+~/.jdavm/
+  bin/
+    jdavm                   # version manager
+    jda                     # wrapper → delegates to active version
+  versions/
+    0.1.1/
+      bin/jda1
+      stdlib/
+      tools/
+    0.2.0/
+      bin/jda1
+      stdlib/
+      tools/
+  current -> versions/0.2.0  # symlink to active version
+  default                    # persisted default version
+```
+
+The `jda` wrapper in `~/.jdavm/bin/` always delegates to the currently active version. Switching is instant (just updates a symlink).
+
+### Migrating from ~/.jda
+
+If you previously installed via `install.sh`, jdavm automatically detects and migrates your existing installation on first run.
+
+---
+
 ## Uninstall
 
 ### Native installers
