@@ -44,7 +44,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | set | Hash set — add, has, del, union, intersect, diff, subset |
 | shell | Shell word splitting and escaping — escape, quote, join, split |
 | sort | Sorting — quicksort, binary search, reverse, unique, merge |
-| string | String library — length-prefixed, eq, concat, slice, search, case |
+| string | String library — length-prefixed, from_cstr, concat, slice, replace, trim, split, join, cmp, reverse, pad, from_i64 |
 | tensor_ops | Tensor operations — create, add, mul, matmul, transpose, reshape |
 | tempfile | Temporary files and directories — create, read, write, remove |
 | tensor_slice | Tensor slicing — broadcast, axis reduce, slice, concat, arange |

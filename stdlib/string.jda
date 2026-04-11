@@ -12,10 +12,14 @@
 ; Functions:
 ;   str_new()                  -> &i64   empty string
 ;   str_from(src, len)         -> &i64   copy from literal
+;   str_from_cstr(src)         -> &i64   from null-terminated string
+;   str_from_i64(n)            -> &i64   integer to string
 ;   str_clone(s)               -> &i64   deep copy
 ;   str_len(s)                 -> i64    byte length
 ;   str_byte(s, idx)           -> i64    byte at index
+;   str_is_empty(s)            -> i64    1 if length is 0
 ;   str_eq(a, b)               -> i64    content equality (1/0)
+;   str_cmp(a, b)              -> i64    lexicographic -1/0/1
 ;   str_concat(a, b)           -> &i64   concatenation
 ;   str_append(s, src, len)    -> &i64   append literal bytes
 ;   str_slice(s, start, end)   -> &i64   substring [start, end)
@@ -24,9 +28,22 @@
 ;   str_starts_with(s, pfx)    -> i64    1/0
 ;   str_ends_with(s, sfx)      -> i64    1/0
 ;   str_count(s, sub)          -> i64    non-overlapping count
+;   str_replace(s, old, new)   -> &i64   replace all occurrences
+;   str_trim(s)                -> &i64   trim whitespace both ends
+;   str_trim_left(s)           -> &i64   trim leading whitespace
+;   str_trim_right(s)          -> &i64   trim trailing whitespace
+;   str_repeat(s, n)           -> &i64   repeat n times
+;   str_reverse(s)             -> &i64   reverse bytes
+;   str_insert(s, pos, ins)    -> &i64   insert at position
+;   str_remove(s, start, end)  -> &i64   remove range [start, end)
+;   str_pad_left(s, w, ch)     -> &i64   left-pad to width
+;   str_pad_right(s, w, ch)    -> &i64   right-pad to width
+;   str_split(s, delim, buf, cnt)        split by char delimiter
+;   str_join(parts, n, sep)    -> &i64   join array with separator
 ;   str_to_upper(s)            -> &i64   ASCII uppercase copy
 ;   str_to_lower(s)            -> &i64   ASCII lowercase copy
 ;   str_print(s)                         write to stdout
+;   str_println(s)                       write to stdout + newline
 ; =============================================================================
 
 ; Globals for byte-level access (compiler needs &i8 typed globals for
@@ -302,4 +319,294 @@ fn str_print(s: &i64) {
     let len = s[0]
     g_str_a = s[2]
     syscall(1, 1, g_str_a, len)
+}
+
+;; Write string to stdout followed by newline.
+fn str_println(s: &i64) {
+    str_print(s)
+    print("\n")
+}
+
+;; Create string from null-terminated C string (no manual length needed).
+fn str_from_cstr(src: &i8) -> &i64 {
+    let len = 0
+    g_str_a = src
+    loop g_str_a[len] != 0 {
+        len = len + 1
+    }
+    ret str_from(src, len)
+}
+
+;; Check if string is empty.
+fn str_is_empty(s: &i64) -> i64 {
+    if s[0] == 0 { ret 1 }
+    ret 0
+}
+
+;; Lexicographic comparison. Returns -1, 0, or 1.
+fn str_cmp(a: &i64, b: &i64) -> i64 {
+    let alen = a[0]
+    let blen = b[0]
+    let min_len = alen
+    if blen < min_len { min_len = blen }
+    g_str_a = a[2]
+    g_str_b = b[2]
+    let i = 0
+    loop i < min_len {
+        let ca = g_str_a[i]
+        let cb = g_str_b[i]
+        if ca < cb { ret 0 - 1 }
+        if ca > cb { ret 1 }
+        i = i + 1
+    }
+    if alen < blen { ret 0 - 1 }
+    if alen > blen { ret 1 }
+    ret 0
+}
+
+;; Trim leading and trailing ASCII whitespace.
+fn str_trim(s: &i64) -> &i64 {
+    let len = s[0]
+    if len == 0 { ret str_new() }
+    g_str_a = s[2]
+    let start = 0
+    loop start < len {
+        let c = g_str_a[start]
+        if c != 32 and c != 9 and c != 10 and c != 13 { ret str_trim_end(s, start) }
+        start = start + 1
+    }
+    ret str_new()
+}
+
+;; Internal helper: trim trailing whitespace given a known start.
+fn str_trim_end(s: &i64, start: i64) -> &i64 {
+    let slen = s[0]
+    g_str_a = s[2]
+    let end = slen
+    loop end > start {
+        let idx = end - 1
+        let c = g_str_a[idx]
+        if c != 32 and c != 9 and c != 10 and c != 13 { ret str_slice(s, start, end) }
+        end = end - 1
+    }
+    ret str_new()
+}
+
+;; Trim leading whitespace.
+fn str_trim_left(s: &i64) -> &i64 {
+    let len = s[0]
+    if len == 0 { ret str_new() }
+    g_str_a = s[2]
+    let start = 0
+    loop start < len {
+        let c = g_str_a[start]
+        if c != 32 and c != 9 and c != 10 and c != 13 { ret str_slice(s, start, len) }
+        start = start + 1
+    }
+    ret str_new()
+}
+
+;; Trim trailing whitespace.
+fn str_trim_right(s: &i64) -> &i64 {
+    let slen = s[0]
+    if slen == 0 { ret str_new() }
+    g_str_a = s[2]
+    let end = slen
+    loop end > 0 {
+        let idx = end - 1
+        let c = g_str_a[idx]
+        if c != 32 and c != 9 and c != 10 and c != 13 { ret str_slice(s, 0, end) }
+        end = end - 1
+    }
+    ret str_new()
+}
+
+;; Replace all occurrences of old with new_s. Returns new string.
+fn str_replace(s: &i64, old: &i64, new_s: &i64) -> &i64 {
+    let oldlen = old[0]
+    if oldlen == 0 { ret str_clone(s) }
+    let slen = s[0]
+    let newlen = new_s[0]
+    let result = str_new()
+    let i = 0
+    loop i < slen {
+        let m = str_match_at(s, i, old)
+        if m == 1 {
+            result = str_concat(result, new_s)
+            i = i + oldlen
+        }
+        if m == 0 {
+            ; Append single byte
+            let one = str_slice(s, i, i + 1)
+            result = str_concat(result, one)
+            i = i + 1
+        }
+    }
+    ret result
+}
+
+;; Repeat string n times.
+fn str_repeat(s: &i64, n: i64) -> &i64 {
+    let result = str_new()
+    let i = 0
+    loop i < n {
+        result = str_concat(result, s)
+        i = i + 1
+    }
+    ret result
+}
+
+;; Reverse a string.
+fn str_reverse(s: &i64) -> &i64 {
+    let len = s[0]
+    if len == 0 { ret str_new() }
+    let r = str_alloc(len)
+    g_str_a = s[2]
+    g_str_b = r[2]
+    let i = 0
+    let last = len - 1
+    loop i < len {
+        let src_idx = last - i
+        let b = g_str_a[src_idx]
+        poke_byte(g_str_b, i, b)
+        i = i + 1
+    }
+    r[0] = len
+    ret r
+}
+
+;; Internal: count decimal digits in a positive number.
+fn str_i64_digits(val: i64) -> i64 {
+    let count = 0
+    let v = val
+    loop v > 0 {
+        count = count + 1
+        v = v / 10
+    }
+    ret count
+}
+
+;; Convert i64 to string (decimal representation).
+fn str_from_i64(n: i64) -> &i64 {
+    if n == 0 { ret str_from("0", 1) }
+    let neg = 0
+    let val = n
+    if n < 0 {
+        neg = 1
+        val = 0 - n
+    }
+    let ndigits = str_i64_digits(val)
+    let total = ndigits + neg
+    let r = str_alloc(total)
+    g_str_b = r[2]
+    if neg == 1 {
+        poke_byte(g_str_b, 0, 45)
+    }
+    ; Write digits from right to left
+    let pos = total - 1
+    loop val > 0 {
+        let digit = val - (val / 10) * 10
+        let ch = digit + 48
+        poke_byte(g_str_b, pos, ch)
+        pos = pos - 1
+        val = val / 10
+    }
+    r[0] = total
+    ret r
+}
+
+;; Split string by single-char delimiter. Returns array of string pointers.
+;; Writes count to out_count. Caller provides result buffer.
+fn str_split(s: &i64, delim: i64, result: &i64, out_count: &i64) {
+    let slen = s[0]
+    let count = 0
+    let start = 0
+    g_str_a = s[2]
+    let i = 0
+    loop i < slen {
+        let c = g_str_a[i]
+        if c == delim {
+            let part = str_slice(s, start, i)
+            result[count] = part
+            count = count + 1
+            start = i + 1
+        }
+        i = i + 1
+    }
+    ; Last segment
+    let last = str_slice(s, start, slen)
+    result[count] = last
+    count = count + 1
+    out_count[0] = count
+}
+
+;; Join array of strings with separator.
+fn str_join(parts: &i64, count: i64, sep: &i64) -> &i64 {
+    if count == 0 { ret str_new() }
+    let result: &i64 = parts[0]
+    let i = 1
+    loop i < count {
+        result = str_concat(result, sep)
+        let part: &i64 = parts[i]
+        result = str_concat(result, part)
+        i = i + 1
+    }
+    ret result
+}
+
+;; Insert string at position.
+fn str_insert(s: &i64, pos: i64, ins: &i64) -> &i64 {
+    let left = str_slice(s, 0, pos)
+    let slen = s[0]
+    let right = str_slice(s, pos, slen)
+    let tmp = str_concat(left, ins)
+    ret str_concat(tmp, right)
+}
+
+;; Remove range [start, end) from string.
+fn str_remove(s: &i64, start: i64, end: i64) -> &i64 {
+    let left = str_slice(s, 0, start)
+    let slen = s[0]
+    let right = str_slice(s, end, slen)
+    ret str_concat(left, right)
+}
+
+;; Pad string on the left to given width.
+fn str_pad_left(s: &i64, width: i64, ch: i64) -> &i64 {
+    let len = s[0]
+    if len >= width { ret str_clone(s) }
+    let pad_n = width - len
+    let r = str_alloc(width)
+    g_str_b = r[2]
+    let i = 0
+    loop i < pad_n {
+        poke_byte(g_str_b, i, ch)
+        i = i + 1
+    }
+    g_str_a = s[2]
+    let j = 0
+    loop j < len {
+        let b = g_str_a[j]
+        poke_byte(g_str_b, pad_n + j, b)
+        j = j + 1
+    }
+    r[0] = width
+    ret r
+}
+
+;; Pad string on the right to given width.
+fn str_pad_right(s: &i64, width: i64, ch: i64) -> &i64 {
+    let len = s[0]
+    if len >= width { ret str_clone(s) }
+    let r = str_alloc(width)
+    g_str_a = s[2]
+    g_str_b = r[2]
+    str_copy(len)
+    let i = len
+    loop i < width {
+        poke_byte(g_str_b, i, ch)
+        i = i + 1
+    }
+    r[0] = width
+    ret r
 }
