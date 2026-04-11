@@ -58,6 +58,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | uuid | UUID v4 generation — random UUIDs |
 | vec | Dynamic arrays — push, pop, get, set, grow, contains, remove |
 | bignum | Arbitrary precision integers — add, sub, mul, div, compare, string conversion |
+| i128 | 128-bit integer arithmetic — add, sub, mul, cmp, shifts, bitwise, string conversion |
 | complex | Complex number arithmetic — add, sub, mul, div, abs, conjugate |
 | dns | DNS resolver — hostname lookup, /etc/resolv.conf parsing, UDP query |
 | digest | Message digests — MD5, SHA-512 (extends crypto's SHA-256/SHA-1) |
