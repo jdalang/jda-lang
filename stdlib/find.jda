@@ -1,0 +1,196 @@
+; =============================================================================
+; jda::find -- Recursive Directory Traversal
+; =============================================================================
+; Walk a directory tree collecting file/directory paths. Uses Linux getdents64
+; syscall directly (no libc).
+;
+; Memory layout per FindResult (&i64):
+;   [0] count         number of entries found
+;   [1] paths_vec     vec of path buffer pointers (&i8)
+;   [2] lengths_vec   vec of path lengths
+;   [3] types_vec     vec of entry types (DT_REG=8, DT_DIR=4)
+;
+; Functions:
+;   find_walk(dir, dlen)           -> &i64  recursively walk directory
+;   find_count(result)             -> i64   number of entries
+;   find_path(result, idx, dst)    -> i64   copy path at idx to dst, return len
+;   find_type(result, idx)         -> i64   entry type (8=file, 4=dir)
+;   find_is_file(result, idx)      -> i64   1 if regular file
+;   find_is_dir(result, idx)       -> i64   1 if directory
+;   find_files(dir, dlen)          -> &i64  walk, return only files
+; =============================================================================
+
+const FIND_DT_DIR = 4
+const FIND_DT_REG = 8
+
+;; Internal: strlen of null-terminated string.
+fn find_strlen(s: &i8) -> i64 {
+    let i = 0
+    loop load_i8_at(s, i) != 0 { i = i + 1 }
+    ret i
+}
+
+;; Internal: copy bytes.
+fn find_copy(dst: &i8, doff: i64, src: &i8, soff: i64, len: i64) {
+    let i = 0
+    loop i < len {
+        poke_byte(dst, doff + i, load_i8_at(src, soff + i))
+        i = i + 1
+    }
+}
+
+;; Internal: build full path "dir/name" into dst, return length.
+fn find_join_path(dir: &i8, dlen: i64, name: &i8, nlen: i64, dst: &i8) -> i64 {
+    find_copy(dst, 0, dir, 0, dlen)
+    poke_byte(dst, dlen, 47)  ; '/'
+    find_copy(dst, dlen + 1, name, 0, nlen)
+    let total = dlen + 1 + nlen
+    poke_byte(dst, total, 0)
+    ret total
+}
+
+;; Internal: is this "." or ".."?
+fn find_is_dot(name: &i8) -> i64 {
+    let c0 = load_i8_at(name, 0)
+    if c0 != 46 { ret 0 }  ; not '.'
+    let c1 = load_i8_at(name, 1)
+    if c1 == 0 { ret 1 }   ; "."
+    if c1 == 46 and load_i8_at(name, 2) == 0 { ret 1 }  ; ".."
+    ret 0
+}
+
+;; Internal: store a path in the result.
+fn find_add_entry(result: &i64, path: &i8, plen: i64, dtype: i64) {
+    let paths: &i64 = result[1]
+    let lengths: &i64 = result[2]
+    let types: &i64 = result[3]
+    ; Copy path to new buffer
+    let pbuf: &i8 = alloc_pages(1)
+    find_copy(pbuf, 0, path, 0, plen)
+    poke_byte(pbuf, plen, 0)
+    vec_push(paths, pbuf)
+    vec_push(lengths, plen)
+    vec_push(types, dtype)
+    result[0] = result[0] + 1
+}
+
+;; Internal: read directory entries using getdents64.
+fn find_readdir(result: &i64, dir: &i8, dlen: i64) {
+    ; Null-terminate dir for syscall
+    let dirpath: &i8 = alloc_pages(1)
+    find_copy(dirpath, 0, dir, 0, dlen)
+    poke_byte(dirpath, dlen, 0)
+
+    ; open(dir, O_RDONLY|O_DIRECTORY)
+    ; O_RDONLY=0, O_DIRECTORY=65536 → flags=65536
+    let fd = syscall(2, dirpath, 65536, 0)
+    if fd < 0 { ret }
+
+    let buf: &i8 = alloc_pages(2)  ; 8KB buffer
+    let bufsize = 8192
+
+    let cont = 1
+    loop cont == 1 {
+        let nread = syscall(217, fd, buf, bufsize)  ; getdents64
+        if nread <= 0 {
+            cont = 0
+        } else {
+            let pos = 0
+            loop pos < nread {
+                ; struct linux_dirent64:
+                ;   i64 d_ino      (offset 0)
+                ;   i64 d_off      (offset 8)
+                ;   u16 d_reclen   (offset 16)
+                ;   u8  d_type     (offset 18)
+                ;   char d_name[]  (offset 19)
+                let reclen_lo = load_i8_at(buf, pos + 16)
+                let reclen_hi = load_i8_at(buf, pos + 17)
+                let reclen = reclen_lo + reclen_hi * 256
+                let dtype = load_i8_at(buf, pos + 18)
+                let name: &i8 = buf + pos + 19
+                let nlen = find_strlen(name)
+
+                if find_is_dot(name) == 0 {
+                    let fullpath: &i8 = alloc_pages(1)
+                    let fplen = find_join_path(dir, dlen, name, nlen, fullpath)
+
+                    find_add_entry(result, fullpath, fplen, dtype)
+
+                    ; Recurse into subdirectories
+                    if dtype == FIND_DT_DIR {
+                        find_readdir(result, fullpath, fplen)
+                    }
+                }
+
+                pos = pos + reclen
+            }
+        }
+    }
+
+    ; close(fd)
+    syscall(3, fd, 0, 0)
+}
+
+;; Recursively walk a directory. Returns FindResult.
+fn find_walk(dir: &i8, dlen: i64) -> &i64 {
+    let result: &i64 = alloc_pages(1)
+    result[0] = 0
+    result[1] = vec_new(64)
+    result[2] = vec_new(64)
+    result[3] = vec_new(64)
+    find_readdir(result, dir, dlen)
+    ret result
+}
+
+;; Number of entries found.
+fn find_count(result: &i64) -> i64 { ret result[0] }
+
+;; Copy path at index to dst. Returns length.
+fn find_path(result: &i64, idx: i64, dst: &i8) -> i64 {
+    let paths: &i64 = result[1]
+    let lengths: &i64 = result[2]
+    let plen = vec_get(lengths, idx)
+    let pbuf: &i8 = vec_get(paths, idx)
+    find_copy(dst, 0, pbuf, 0, plen)
+    ret plen
+}
+
+;; Entry type at index.
+fn find_type(result: &i64, idx: i64) -> i64 {
+    ret vec_get(result[3], idx)
+}
+
+;; Is entry at index a regular file?
+fn find_is_file(result: &i64, idx: i64) -> i64 {
+    if find_type(result, idx) == FIND_DT_REG { ret 1 }
+    ret 0
+}
+
+;; Is entry at index a directory?
+fn find_is_dir(result: &i64, idx: i64) -> i64 {
+    if find_type(result, idx) == FIND_DT_DIR { ret 1 }
+    ret 0
+}
+
+;; Walk directory returning only files.
+fn find_files(dir: &i8, dlen: i64) -> &i64 {
+    let all = find_walk(dir, dlen)
+    let result: &i64 = alloc_pages(1)
+    result[0] = 0
+    result[1] = vec_new(64)
+    result[2] = vec_new(64)
+    result[3] = vec_new(64)
+    let i = 0
+    let total = all[0]
+    loop i < total {
+        if find_is_file(all, i) == 1 {
+            let paths: &i64 = all[1]
+            let lengths: &i64 = all[2]
+            let pbuf: &i8 = vec_get(paths, i)
+            let plen = vec_get(lengths, i)
+            find_add_entry(result, pbuf, plen, FIND_DT_REG)
+        }
+        i = i + 1
+    }
+    ret result
+}

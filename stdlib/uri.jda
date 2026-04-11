@@ -1,0 +1,297 @@
+; =============================================================================
+; jda::uri -- URI/URL Parsing and Encoding
+; =============================================================================
+; RFC 3986 URI parsing. Decomposes URLs into scheme, host, port, path, query,
+; fragment. Percent-encoding and decoding.
+;
+; Memory layout per Uri (&i64):
+;   [0]  scheme_off     [1]  scheme_len
+;   [2]  host_off       [3]  host_len
+;   [4]  port
+;   [5]  path_off       [6]  path_len
+;   [7]  query_off      [8]  query_len
+;   [9]  fragment_off   [10] fragment_len
+;   [11] src_ptr        (&i8 — original string)
+;   [12] src_len
+;
+; Functions:
+;   uri_parse(src, len)            -> &i64  parse URI string
+;   uri_scheme(u, dst)             -> i64   copy scheme to dst, return length
+;   uri_host(u, dst)               -> i64   copy host to dst, return length
+;   uri_port(u)                    -> i64   port number (0 if absent)
+;   uri_path(u, dst)               -> i64   copy path to dst, return length
+;   uri_query(u, dst)              -> i64   copy query to dst, return length
+;   uri_fragment(u, dst)           -> i64   copy fragment to dst, return length
+;   uri_encode(src, len, dst)      -> i64   percent-encode, return length
+;   uri_decode(src, len, dst)      -> i64   percent-decode, return length
+;   uri_query_get(query, qlen, key, klen, dst) -> i64  get query param value
+; =============================================================================
+
+;; Internal: copy bytes from src+off to dst, return len.
+fn uri_copy(src: &i8, off: i64, len: i64, dst: &i8) -> i64 {
+    let i = 0
+    loop i < len {
+        poke_byte(dst, i, load_i8_at(src, off + i))
+        i = i + 1
+    }
+    ret len
+}
+
+;; Internal: is this byte unreserved (RFC 3986)?
+fn uri_is_unreserved(ch: i64) -> i64 {
+    if ch >= 65 and ch <= 90 { ret 1 }   ; A-Z
+    if ch >= 97 and ch <= 122 { ret 1 }  ; a-z
+    if ch >= 48 and ch <= 57 { ret 1 }   ; 0-9
+    if ch == 45 { ret 1 }  ; -
+    if ch == 46 { ret 1 }  ; .
+    if ch == 95 { ret 1 }  ; _
+    if ch == 126 { ret 1 } ; ~
+    ret 0
+}
+
+;; Internal: hex nibble to char.
+fn uri_hex_char(n: i64) -> i64 {
+    if n < 10 { ret n + 48 }
+    ret n - 10 + 65
+}
+
+;; Internal: hex char to nibble.
+fn uri_hex_val(ch: i64) -> i64 {
+    if ch >= 48 and ch <= 57 { ret ch - 48 }
+    if ch >= 65 and ch <= 70 { ret ch - 65 + 10 }
+    if ch >= 97 and ch <= 102 { ret ch - 97 + 10 }
+    ret 0
+}
+
+;; Parse a URI string into components.
+fn uri_parse(src: &i8, len: i64) -> &i64 {
+    let u: &i64 = alloc_pages(1)
+    u[0] = 0  u[1] = 0   ; scheme
+    u[2] = 0  u[3] = 0   ; host
+    u[4] = 0              ; port
+    u[5] = 0  u[6] = 0   ; path
+    u[7] = 0  u[8] = 0   ; query
+    u[9] = 0  u[10] = 0  ; fragment
+    u[11] = src
+    u[12] = len
+
+    let pos = 0
+
+    ; Parse scheme: look for "://"
+    let si = 0
+    let found_scheme = 0
+    loop si < len and found_scheme == 0 {
+        if load_i8_at(src, si) == 58 {  ; ':'
+            if si + 2 < len {
+                if load_i8_at(src, si + 1) == 47 and load_i8_at(src, si + 2) == 47 {
+                    u[0] = 0
+                    u[1] = si
+                    pos = si + 3
+                    found_scheme = 1
+                }
+            }
+        }
+        if found_scheme == 0 { si = si + 1 }
+    }
+
+    if found_scheme == 0 { pos = 0 }
+
+    ; Parse host (and optional port)
+    if found_scheme == 1 {
+        let host_start = pos
+        let host_end = pos
+        loop host_end < len {
+            let ch = load_i8_at(src, host_end)
+            if ch == 47 or ch == 63 or ch == 35 { host_end = len + 1 }
+            if ch == 58 { host_end = len + 2 }  ; port separator
+            if host_end <= len { host_end = host_end + 1 }
+        }
+        if host_end > len + 1 {
+            ; Found port separator
+            let actual_end = host_end - len - 2
+            host_end = actual_end
+        }
+        if host_end > len {
+            host_end = host_end - len - 1
+        }
+
+        ; Simpler approach: scan for host end
+        let he = pos
+        loop he < len {
+            let ch = load_i8_at(src, he)
+            if ch == 47 or ch == 63 or ch == 35 or ch == 58 {
+                he = len + 1  ; break
+            }
+            if he <= len { he = he + 1 }
+        }
+        if he > len { he = he - len - 1 }
+
+        u[2] = pos
+        u[3] = he - pos
+        pos = he
+
+        ; Check for port
+        if pos < len and load_i8_at(src, pos) == 58 {
+            pos = pos + 1
+            let port_val = 0
+            loop pos < len {
+                let ch = load_i8_at(src, pos)
+                if ch >= 48 and ch <= 57 {
+                    port_val = port_val * 10 + ch - 48
+                    pos = pos + 1
+                } else {
+                    pos = len + 1  ; break
+                }
+            }
+            if pos > len { pos = pos - len - 1 }
+            u[4] = port_val
+        }
+    }
+
+    ; Parse path
+    let path_start = pos
+    loop pos < len {
+        let ch = load_i8_at(src, pos)
+        if ch == 63 or ch == 35 {
+            pos = len + 1  ; break
+        }
+        if pos <= len { pos = pos + 1 }
+    }
+    if pos > len { pos = pos - len - 1 }
+    u[5] = path_start
+    u[6] = pos - path_start
+
+    ; Parse query
+    if pos < len and load_i8_at(src, pos) == 63 {
+        pos = pos + 1
+        let query_start = pos
+        loop pos < len {
+            if load_i8_at(src, pos) == 35 {
+                pos = len + 1  ; break
+            }
+            if pos <= len { pos = pos + 1 }
+        }
+        if pos > len { pos = pos - len - 1 }
+        u[7] = query_start
+        u[8] = pos - query_start
+    }
+
+    ; Parse fragment
+    if pos < len and load_i8_at(src, pos) == 35 {
+        pos = pos + 1
+        u[9] = pos
+        u[10] = len - pos
+    }
+
+    ret u
+}
+
+fn uri_scheme(u: &i64, dst: &i8) -> i64 {
+    let src: &i8 = u[11]
+    ret uri_copy(src, u[0], u[1], dst)
+}
+
+fn uri_host(u: &i64, dst: &i8) -> i64 {
+    let src: &i8 = u[11]
+    ret uri_copy(src, u[2], u[3], dst)
+}
+
+fn uri_port(u: &i64) -> i64 { ret u[4] }
+
+fn uri_path(u: &i64, dst: &i8) -> i64 {
+    let src: &i8 = u[11]
+    ret uri_copy(src, u[5], u[6], dst)
+}
+
+fn uri_query(u: &i64, dst: &i8) -> i64 {
+    let src: &i8 = u[11]
+    ret uri_copy(src, u[7], u[8], dst)
+}
+
+fn uri_fragment(u: &i64, dst: &i8) -> i64 {
+    let src: &i8 = u[11]
+    ret uri_copy(src, u[9], u[10], dst)
+}
+
+;; Percent-encode a string. Returns output length.
+fn uri_encode(src: &i8, len: i64, dst: &i8) -> i64 {
+    let si = 0
+    let di = 0
+    loop si < len {
+        let ch = load_i8_at(src, si)
+        if uri_is_unreserved(ch) == 1 {
+            poke_byte(dst, di, ch)
+            di = di + 1
+        } else {
+            poke_byte(dst, di, 37)  ; '%'
+            let hi = ch / 16
+            let lo = ch - hi * 16
+            poke_byte(dst, di + 1, uri_hex_char(hi))
+            poke_byte(dst, di + 2, uri_hex_char(lo))
+            di = di + 3
+        }
+        si = si + 1
+    }
+    ret di
+}
+
+;; Percent-decode a string. Returns output length.
+fn uri_decode(src: &i8, len: i64, dst: &i8) -> i64 {
+    let si = 0
+    let di = 0
+    loop si < len {
+        let ch = load_i8_at(src, si)
+        if ch == 37 and si + 2 < len {
+            let hi = uri_hex_val(load_i8_at(src, si + 1))
+            let lo = uri_hex_val(load_i8_at(src, si + 2))
+            poke_byte(dst, di, hi * 16 + lo)
+            si = si + 3
+            di = di + 1
+        } else {
+            if ch == 43 {
+                poke_byte(dst, di, 32)  ; '+' → space
+            } else {
+                poke_byte(dst, di, ch)
+            }
+            si = si + 1
+            di = di + 1
+        }
+    }
+    ret di
+}
+
+;; Get a query parameter value by key. Returns length (0 if not found).
+;; query/qlen is the raw query string, key/klen is the parameter name.
+fn uri_query_get(query: &i8, qlen: i64, key: &i8, klen: i64, dst: &i8) -> i64 {
+    let pos = 0
+    loop pos < qlen {
+        ; Match key
+        let match = 1
+        let ki = 0
+        loop ki < klen and pos + ki < qlen {
+            if load_i8_at(query, pos + ki) != load_i8_at(key, ki) { match = 0 ki = klen }
+            ki = ki + 1
+        }
+        if match == 1 and pos + klen < qlen and load_i8_at(query, pos + klen) == 61 {
+            ; Found key=, extract value
+            let vstart = pos + klen + 1
+            let vend = vstart
+            loop vend < qlen and load_i8_at(query, vend) != 38 {
+                vend = vend + 1
+            }
+            let vlen = vend - vstart
+            let vi = 0
+            loop vi < vlen {
+                poke_byte(dst, vi, load_i8_at(query, vstart + vi))
+                vi = vi + 1
+            }
+            ret vlen
+        }
+        ; Skip to next &
+        loop pos < qlen and load_i8_at(query, pos) != 38 {
+            pos = pos + 1
+        }
+        pos = pos + 1  ; skip '&'
+    }
+    ret 0
+}

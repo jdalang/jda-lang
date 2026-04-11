@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crypto — Jda Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>crypto</h1>
+<div class="nav"><a href="index.html">Index</a> | <a href="args.html">args</a> | <a href="autograd.html">autograd</a> | <a href="avx512_ops.html">avx512_ops</a> | <a href="base64.html">base64</a> | <a href="benchmark.html">benchmark</a> | <a href="bitops.html">bitops</a> | <a href="comprehension.html">comprehension</a> | <a href="comprehension_all.html">comprehension_all</a> | <a href="context.html">context</a> | <a href="conv.html">conv</a> | <strong>crypto</strong> | <a href="csv.html">csv</a> | <a href="data.html">data</a> | <a href="dataclass.html">dataclass</a> | <a href="decorator.html">decorator</a> | <a href="file_io.html">file_io</a> | <a href="file_io_all.html">file_io_all</a> | <a href="find.html">find</a> | <a href="fmt.html">fmt</a> | <a href="fs.html">fs</a> | <a href="hashmap.html">hashmap</a> | <a href="heap.html">heap</a> | <a href="http.html">http</a> | <a href="io.html">io</a> | <a href="ipaddr.html">ipaddr</a> | <a href="iter.html">iter</a> | <a href="json.html">json</a> | <a href="log.html">log</a> | <a href="math.html">math</a> | <a href="matrix.html">matrix</a> | <a href="metrics.html">metrics</a> | <a href="nn.html">nn</a> | <a href="observer.html">observer</a> | <a href="os.html">os</a> | <a href="plot.html">plot</a> | <a href="pp.html">pp</a> | <a href="prelude.html">prelude</a> | <a href="process.html">process</a> | <a href="ptx.html">ptx</a> | <a href="queue.html">queue</a> | <a href="regex.html">regex</a> | <a href="ring.html">ring</a> | <a href="rocm.html">rocm</a> | <a href="select.html">select</a> | <a href="set.html">set</a> | <a href="shell.html">shell</a> | <a href="sort.html">sort</a> | <a href="string.html">string</a> | <a href="tcp.html">tcp</a> | <a href="tempfile.html">tempfile</a> | <a href="tensor_ops.html">tensor_ops</a> | <a href="tensor_slice.html">tensor_slice</a> | <a href="testing.html">testing</a> | <a href="time.html">time</a> | <a href="timeout.html">timeout</a> | <a href="transformer.html">transformer</a> | <a href="tsort.html">tsort</a> | <a href="tuple.html">tuple</a> | <a href="udp.html">udp</a> | <a href="uri.html">uri</a> | <a href="uuid.html">uuid</a> | <a href="vec.html">vec</a> | <a href="ws.html">ws</a></div>
+<ul class="toc"><li><span class="badge const">const</span><a href="#SHA256_BLOCK">SHA256_BLOCK</a></li><li><span class="badge const">const</span><a href="#SHA256_DIGEST">SHA256_DIGEST</a></li><li><span class="badge struct">struct</span><a href="#Sha256Ctx">Sha256Ctx</a></li><li><span class="badge fn">fn</span><a href="#sha256_k">sha256_k</a></li><li><span class="badge fn">fn</span><a href="#rotr32">rotr32</a></li><li><span class="badge fn">fn</span><a href="#sha256_transform">sha256_transform</a></li><li><span class="badge fn">fn</span><a href="#sha256_init">sha256_init</a></li><li><span class="badge fn">fn</span><a href="#sha256_update">sha256_update</a></li><li><span class="badge fn">fn</span><a href="#sha256_final">sha256_final</a></li><li><span class="badge fn">fn</span><a href="#sha256">sha256</a></li><li><span class="badge const">const</span><a href="#SHA1_DIGEST">SHA1_DIGEST</a></li><li><span class="badge struct">struct</span><a href="#Sha1Ctx">Sha1Ctx</a></li><li><span class="badge fn">fn</span><a href="#rotl32">rotl32</a></li><li><span class="badge fn">fn</span><a href="#sha1_transform">sha1_transform</a></li><li><span class="badge fn">fn</span><a href="#sha1_init">sha1_init</a></li><li><span class="badge fn">fn</span><a href="#sha1_update">sha1_update</a></li><li><span class="badge fn">fn</span><a href="#sha1_final">sha1_final</a></li><li><span class="badge fn">fn</span><a href="#sha1">sha1</a></li><li><span class="badge fn">fn</span><a href="#hmac_sha256">hmac_sha256</a></li><li><span class="badge const">const</span><a href="#AES_BLOCK">AES_BLOCK</a></li><li><span class="badge fn">fn</span><a href="#aes_sbox">aes_sbox</a></li><li><span class="badge fn">fn</span><a href="#xtime">xtime</a></li><li><span class="badge fn">fn</span><a href="#gf_mul">gf_mul</a></li><li><span class="badge struct">struct</span><a href="#AesCtx">AesCtx</a></li><li><span class="badge fn">fn</span><a href="#aes_key_expand">aes_key_expand</a></li><li><span class="badge fn">fn</span><a href="#aes_add_round_key">aes_add_round_key</a></li><li><span class="badge fn">fn</span><a href="#aes_sub_bytes">aes_sub_bytes</a></li><li><span class="badge fn">fn</span><a href="#aes_shift_rows">aes_shift_rows</a></li><li><span class="badge fn">fn</span><a href="#aes_mix_columns">aes_mix_columns</a></li><li><span class="badge fn">fn</span><a href="#aes_encrypt_block">aes_encrypt_block</a></li><li><span class="badge fn">fn</span><a href="#aes_ctr">aes_ctr</a></li><li><span class="badge fn">fn</span><a href="#aes128_ctr_init">aes128_ctr_init</a></li><li><span class="badge fn">fn</span><a href="#aes256_ctr_init">aes256_ctr_init</a></li><li><span class="badge fn">fn</span><a href="#chacha20_quarter_round">chacha20_quarter_round</a></li><li><span class="badge fn">fn</span><a href="#chacha20_block">chacha20_block</a></li><li><span class="badge fn">fn</span><a href="#chacha20_encrypt">chacha20_encrypt</a></li><li><span class="badge struct">struct</span><a href="#Poly1305Ctx">Poly1305Ctx</a></li><li><span class="badge fn">fn</span><a href="#poly1305_init">poly1305_init</a></li><li><span class="badge fn">fn</span><a href="#poly1305_mac">poly1305_mac</a></li><li><span class="badge fn">fn</span><a href="#chacha20_poly1305_seal">chacha20_poly1305_seal</a></li><li><span class="badge fn">fn</span><a href="#chacha20_poly1305_open">chacha20_poly1305_open</a></li><li><span class="badge fn">fn</span><a href="#ct_memcmp">ct_memcmp</a></li><li><span class="badge fn">fn</span><a href="#hex_encode">hex_encode</a></li><li><span class="badge fn">fn</span><a href="#base64_encode">base64_encode</a></li></ul>
+<h2>Functions</h2>
+<div class="item fn" id="sha256_k">
+  <span class="source-link">crypto.jda:26</span><span class="badge fn">fn</span><h3>sha256_k</h3>
+  <code class="sig">fn sha256_k(i: i64) -&gt; u32</code>
+</div>
+<div class="item fn" id="rotr32">
+  <span class="source-link">crypto.jda:47</span><span class="badge fn">fn</span><h3>rotr32</h3>
+  <code class="sig">fn rotr32(x: u32, n: u32) -&gt; u32</code>
+</div>
+<div class="item fn" id="sha256_transform">
+  <span class="source-link">crypto.jda:49</span><span class="badge fn">fn</span><h3>sha256_transform</h3>
+  <code class="sig">fn sha256_transform(ctx: &amp;Sha256Ctx, blk: &amp;u8)</code>
+</div>
+<div class="item fn" id="sha256_init">
+  <span class="source-link">crypto.jda:94</span><span class="badge fn">fn</span><h3>sha256_init</h3>
+  <code class="sig">fn sha256_init(ctx: &amp;Sha256Ctx)</code>
+</div>
+<div class="item fn" id="sha256_update">
+  <span class="source-link">crypto.jda:103</span><span class="badge fn">fn</span><h3>sha256_update</h3>
+  <code class="sig">fn sha256_update(ctx: &amp;Sha256Ctx, data: &amp;u8, len: i64)</code>
+</div>
+<div class="item fn" id="sha256_final">
+  <span class="source-link">crypto.jda:117</span><span class="badge fn">fn</span><h3>sha256_final</h3>
+  <code class="sig">fn sha256_final(ctx: &amp;Sha256Ctx, out: &amp;u8)</code>
+</div>
+<div class="item fn" id="sha256">
+  <span class="source-link">crypto.jda:152</span><span class="badge fn">fn</span><h3>sha256</h3>
+  <code class="sig">fn sha256(data: &amp;u8, len: i64, out: &amp;u8)</code>
+</div>
+<div class="item fn" id="rotl32">
+  <span class="source-link">crypto.jda:172</span><span class="badge fn">fn</span><h3>rotl32</h3>
+  <code class="sig">fn rotl32(x: u32, n: u32) -&gt; u32</code>
+</div>
+<div class="item fn" id="sha1_transform">
+  <span class="source-link">crypto.jda:174</span><span class="badge fn">fn</span><h3>sha1_transform</h3>
+  <code class="sig">fn sha1_transform(ctx: &amp;Sha1Ctx, blk: &amp;u8)</code>
+</div>
+<div class="item fn" id="sha1_init">
+  <span class="source-link">crypto.jda:212</span><span class="badge fn">fn</span><h3>sha1_init</h3>
+  <code class="sig">fn sha1_init(ctx: &amp;Sha1Ctx)</code>
+</div>
+<div class="item fn" id="sha1_update">
+  <span class="source-link">crypto.jda:219</span><span class="badge fn">fn</span><h3>sha1_update</h3>
+  <code class="sig">fn sha1_update(ctx: &amp;Sha1Ctx, data: &amp;u8, len: i64)</code>
+</div>
+<div class="item fn" id="sha1_final">
+  <span class="source-link">crypto.jda:233</span><span class="badge fn">fn</span><h3>sha1_final</h3>
+  <code class="sig">fn sha1_final(ctx: &amp;Sha1Ctx, out: &amp;u8)</code>
+</div>
+<div class="item fn" id="sha1">
+  <span class="source-link">crypto.jda:257</span><span class="badge fn">fn</span><h3>sha1</h3>
+  <code class="sig">fn sha1(data: &amp;u8, len: i64, out: &amp;u8)</code>
+</div>
+<div class="item fn" id="hmac_sha256">
+  <span class="source-link">crypto.jda:269</span><span class="badge fn">fn</span><h3>hmac_sha256</h3>
+  <code class="sig">fn hmac_sha256(key: &amp;u8, key_len: i64, msg: &amp;u8, msg_len: i64, out: &amp;u8)</code>
+</div>
+<div class="item fn" id="aes_sbox">
+  <span class="source-link">crypto.jda:314</span><span class="badge fn">fn</span><h3>aes_sbox</h3>
+  <code class="sig">fn aes_sbox(x: u8) -&gt; u8</code>
+</div>
+<div class="item fn" id="xtime">
+  <span class="source-link">crypto.jda:353</span><span class="badge fn">fn</span><h3>xtime</h3>
+  <code class="sig">fn xtime(x: u8) -&gt; u8</code>
+</div>
+<div class="item fn" id="gf_mul">
+  <span class="source-link">crypto.jda:358</span><span class="badge fn">fn</span><h3>gf_mul</h3>
+  <code class="sig">fn gf_mul(a: u8, b: u8) -&gt; u8</code>
+</div>
+<div class="item fn" id="aes_key_expand">
+  <span class="source-link">crypto.jda:378</span><span class="badge fn">fn</span><h3>aes_key_expand</h3>
+  <code class="sig">fn aes_key_expand(ctx: &amp;AesCtx, key: &amp;u8, key_len: i32)</code>
+</div>
+<div class="item fn" id="aes_add_round_key">
+  <span class="source-link">crypto.jda:419</span><span class="badge fn">fn</span><h3>aes_add_round_key</h3>
+  <code class="sig">fn aes_add_round_key(state: &amp;u8, rk: &amp;u8)</code>
+</div>
+<div class="item fn" id="aes_sub_bytes">
+  <span class="source-link">crypto.jda:424</span><span class="badge fn">fn</span><h3>aes_sub_bytes</h3>
+  <code class="sig">fn aes_sub_bytes(state: &amp;u8)</code>
+</div>
+<div class="item fn" id="aes_shift_rows">
+  <span class="source-link">crypto.jda:429</span><span class="badge fn">fn</span><h3>aes_shift_rows</h3>
+  <code class="sig">fn aes_shift_rows(state: &amp;u8)</code>
+</div>
+<div class="item fn" id="aes_mix_columns">
+  <span class="source-link">crypto.jda:438</span><span class="badge fn">fn</span><h3>aes_mix_columns</h3>
+  <code class="sig">fn aes_mix_columns(state: &amp;u8)</code>
+</div>
+<div class="item fn" id="aes_encrypt_block">
+  <span class="source-link">crypto.jda:453</span><span class="badge fn">fn</span><h3>aes_encrypt_block</h3>
+  <code class="sig">fn aes_encrypt_block(ctx: &amp;AesCtx, inp: &amp;u8, out: &amp;u8)</code>
+</div>
+<div class="item fn" id="aes_ctr">
+  <span class="source-link">crypto.jda:475</span><span class="badge fn">fn</span><h3>aes_ctr</h3>
+  <code class="sig">fn aes_ctr(ctx: &amp;AesCtx, nonce: &amp;u8, inp: &amp;u8, len: i64, out: &amp;u8)</code>
+</div>
+<div class="item fn" id="aes128_ctr_init">
+  <span class="source-link">crypto.jda:505</span><span class="badge fn">fn</span><h3>aes128_ctr_init</h3>
+  <code class="sig">fn aes128_ctr_init(ctx: &amp;AesCtx, key: &amp;u8)</code>
+</div>
+<div class="item fn" id="aes256_ctr_init">
+  <span class="source-link">crypto.jda:506</span><span class="badge fn">fn</span><h3>aes256_ctr_init</h3>
+  <code class="sig">fn aes256_ctr_init(ctx: &amp;AesCtx, key: &amp;u8)</code>
+</div>
+<div class="item fn" id="chacha20_quarter_round">
+  <span class="source-link">crypto.jda:513</span><span class="badge fn">fn</span><h3>chacha20_quarter_round</h3>
+  <code class="sig">fn chacha20_quarter_round(a: &amp;u32, b: &amp;u32, c: &amp;u32, d: &amp;u32)</code>
+</div>
+<div class="item fn" id="chacha20_block">
+  <span class="source-link">crypto.jda:520</span><span class="badge fn">fn</span><h3>chacha20_block</h3>
+  <code class="sig">fn chacha20_block(key: &amp;u32, counter: u32, nonce: &amp;u32, out: &amp;u32)</code>
+</div>
+<div class="item fn" id="chacha20_encrypt">
+  <span class="source-link">crypto.jda:554</span><span class="badge fn">fn</span><h3>chacha20_encrypt</h3>
+  <code class="sig">fn chacha20_encrypt(key: &amp;u8, nonce: &amp;u8, counter: u32,</code>
+</div>
+<div class="item fn" id="poly1305_init">
+  <span class="source-link">crypto.jda:596</span><span class="badge fn">fn</span><h3>poly1305_init</h3>
+  <code class="sig">fn poly1305_init(ctx: &amp;Poly1305Ctx, key: &amp;u8)</code>
+</div>
+<div class="item fn" id="poly1305_mac">
+  <span class="source-link">crypto.jda:612</span><span class="badge fn">fn</span><h3>poly1305_mac</h3>
+  <code class="sig">fn poly1305_mac(key: &amp;u8, msg: &amp;u8, msg_len: i64, out: &amp;u8)</code>
+</div>
+<div class="item fn" id="chacha20_poly1305_seal">
+  <span class="source-link">crypto.jda:659</span><span class="badge fn">fn</span><h3>chacha20_poly1305_seal</h3>
+  <code class="sig">fn chacha20_poly1305_seal(key: &amp;u8, nonce: &amp;u8,</code>
+</div>
+<div class="item fn" id="chacha20_poly1305_open">
+  <span class="source-link">crypto.jda:715</span><span class="badge fn">fn</span><h3>chacha20_poly1305_open</h3>
+  <code class="sig">fn chacha20_poly1305_open(key: &amp;u8, nonce: &amp;u8,</code>
+</div>
+<div class="item fn" id="ct_memcmp">
+  <span class="source-link">crypto.jda:738</span><span class="badge fn">fn</span><h3>ct_memcmp</h3>
+  <code class="sig">fn ct_memcmp(a: &amp;u8, b: &amp;u8, len: i64) -&gt; i32</code>
+</div>
+<div class="item fn" id="hex_encode">
+  <span class="source-link">crypto.jda:746</span><span class="badge fn">fn</span><h3>hex_encode</h3>
+  <code class="sig">fn hex_encode(inp: &amp;u8, len: i64, out: &amp;i8)</code>
+</div>
+<div class="item fn" id="base64_encode">
+  <span class="source-link">crypto.jda:758</span><span class="badge fn">fn</span><h3>base64_encode</h3>
+  <code class="sig">fn base64_encode(inp: &amp;u8, in_len: i64, out: &amp;i8) -&gt; i64</code>
+</div>
+<h2>Structs</h2>
+<div class="item struct" id="Sha256Ctx">
+  <span class="source-link">crypto.jda:23</span><span class="badge struct">struct</span><h3>Sha256Ctx</h3>
+  <code class="sig">struct Sha256Ctx { state:   u32[8]          ; H0-H7, count:   u64             ; total bytes hashed, buf:     u8[64]          ; partial block, buf_len: i64 }</code>
+</div>
+<div class="item struct" id="Sha1Ctx">
+  <span class="source-link">crypto.jda:170</span><span class="badge struct">struct</span><h3>Sha1Ctx</h3>
+  <code class="sig">struct Sha1Ctx { state:   u32[5], count:   u64, buf:     u8[64], buf_len: i64 }</code>
+</div>
+<div class="item struct" id="AesCtx">
+  <span class="source-link">crypto.jda:376</span><span class="badge struct">struct</span><h3>AesCtx</h3>
+  <code class="sig">struct AesCtx { round_keys: u8[240]    ; enough for AES-256 (15×16 bytes), nr:         i32        ; number of rounds: 10 for AES-128, 14 for AES-256, nk:         i32        ; key size in u32 words: 4 or 8 }</code>
+</div>
+<div class="item struct" id="Poly1305Ctx">
+  <span class="source-link">crypto.jda:594</span><span class="badge struct">struct</span><h3>Poly1305Ctx</h3>
+  <code class="sig">struct Poly1305Ctx { r:   u32[5]    ; clamped key r (130-bit), h:   u32[5]    ; accumulator, pad: u32[4]    ; s (pad key) }</code>
+</div>
+<h2>Constants</h2>
+<div class="item const" id="SHA256_BLOCK">
+  <span class="source-link">crypto.jda:15</span><span class="badge const">const</span><h3>SHA256_BLOCK</h3>
+  <code class="sig">const SHA256_BLOCK  = 64    ; bytes per block</code>
+</div>
+<div class="item const" id="SHA256_DIGEST">
+  <span class="source-link">crypto.jda:16</span><span class="badge const">const</span><h3>SHA256_DIGEST</h3>
+  <code class="sig">const SHA256_DIGEST = 32    ; bytes in output</code>
+</div>
+<div class="item const" id="SHA1_DIGEST">
+  <span class="source-link">crypto.jda:163</span><span class="badge const">const</span><h3>SHA1_DIGEST</h3>
+  <code class="sig">const SHA1_DIGEST = 20</code>
+</div>
+<div class="item const" id="AES_BLOCK">
+  <span class="source-link">crypto.jda:311</span><span class="badge const">const</span><h3>AES_BLOCK</h3>
+  <code class="sig">const AES_BLOCK = 16</code>
+</div>
+<footer>Generated by <code>jda-doc</code></footer>
+</body>
+</html>
