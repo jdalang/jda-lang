@@ -30,11 +30,15 @@ jda run hello.jda
 | `i64` | 64-bit signed integer (default) | `let x = 42` |
 | `i32` | 32-bit signed integer | `let y: i32 = 10` |
 | `i8` | 8-bit signed byte | `let b: i8 = 65` |
+| `u64` | 64-bit unsigned integer | `let n: u64 = 42` |
+| `u32` | 32-bit unsigned integer | `let n: u32 = 100000` |
+| `u16` | 16-bit unsigned integer | `let n: u16 = 65535` |
+| `u8` | 8-bit unsigned integer | `let n: u8 = 255` |
 | `f64` | 64-bit float | `let pi: f64 = 3.14` |
 | `&T` | Pointer/reference to T | `let p: &i64 = &x` |
 | `&i8` | Byte buffer / C-string pointer | `let s: &i8 = "hello"` |
 
-There is no dedicated `bool` type — `true` compiles to `1` and `false` compiles to `0` (both i64). There is no `u64` — all integers are signed.
+There is no dedicated `bool` type — `true` compiles to `1` and `false` compiles to `0` (both i64). Unsigned types use zero-extension for loads, unsigned comparisons (jb/ja), and unsigned division (DIV instead of IDIV).
 
 ## Variables
 
