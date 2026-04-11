@@ -523,6 +523,7 @@ let g_lex_pos_i = 0
 let g_lex_cur_char: i64 = 0
 let g_lex_handled: i64 = 0
 let g_lower_is_main = 0
+let g_lower_is_leaf = 0
 // Loop register promotion state
 let g_promo_cnt = 0
 let g_promo_slot0 = -1
@@ -12859,6 +12860,51 @@ fn copy_prop(jfn: &JirFunction) {
     }
 }
 
+// ============================================================
+// 7b. DEAD STORE ELIMINATION
+// ============================================================
+// Within each basic block, if slot X is stored twice with no
+// intervening LOAD of X, the first store is dead.
+
+fn dse_scan_block(jfn: &JirFunction, bi: i64) {
+    // Reuse g_cp_slot_val: slot/8 → index of last STORE instruction
+    cp_init_slots()
+    let ii = 0
+    loop ii < jfn.blocks[bi].instr_cnt {
+        let op = jfn.blocks[bi].instrs[ii].op
+        let dead = jfn.blocks[bi].instrs[ii].dead
+        if dead == 0 and op == OP_LOAD {
+            // A load invalidates the tracked store for this slot
+            let slot = jfn.blocks[bi].instrs[ii].operand0
+            let idx = slot / 8
+            if idx >= 0 and idx < 2048 {
+                g_cp_slot_val[idx] = -1
+            }
+        }
+        if dead == 0 and op == OP_STORE {
+            let slot = jfn.blocks[bi].instrs[ii].operand1
+            let idx = slot / 8
+            if idx >= 0 and idx < 2048 {
+                let prev = g_cp_slot_val[idx]
+                if prev >= 0 and prev < 128 {
+                    // Previous store is dead — overwritten before read
+                    instr_set_dead(&jfn.blocks[bi].instrs[prev], 1)
+                }
+                g_cp_slot_val[idx] = ii
+            }
+        }
+        ii = ii + 1
+    }
+}
+
+fn dead_store_elim(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        dse_scan_block(jfn, bi)
+        bi = bi + 1
+    }
+}
+
 fn fold_constants(jfn: &JirFunction) {
     let bi = 0
     loop bi < jfn.block_cnt {
@@ -13275,7 +13321,7 @@ fn loop_promote_scan(jfn: &JirFunction) {
             if lop == OP_SYSCALL { has_call = 1 }
             if lop == OP_PRINT_INT or lop == OP_PRINT_FLOAT { has_call = 1 }
             if lop == OP_ALLOC { has_call = 1 }
-            li = li + 1
+        li = li + 1
         }
         lb = lb + 1
     }
@@ -21050,6 +21096,24 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
     }
 }
 
+fn check_is_leaf(jfn: &JirFunction) -> i64 {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let op = jfn.blocks[bi].instrs[ii].op
+            if op == OP_CALL or op == OP_CALL_IND { ret 0 }
+            if op == OP_TAIL_CALL { ret 0 }
+            if op == OP_SYSCALL { ret 0 }
+            if op == OP_PRINT_INT or op == OP_PRINT_FLOAT { ret 0 }
+            if op == OP_ALLOC { ret 0 }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+    ret 1
+}
+
 fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) {
     emit_push_r(out, pos, PHYS_RBP)
     emit_byte(out, pos, 0x48)
@@ -21316,6 +21380,7 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
     g_lower_is_main = is_main
     g_fused_cmp_cc = -1
+    g_lower_is_leaf = 0  // check_is_leaf(jfn) — disabled: breaks closure compilation in self-hosted binary
     let fn_start = pos[0]
     lower_fn_emit_prologue(jfn, out, pos, is_main)
     lower_fn_store_params(jfn, out, pos)
@@ -21348,7 +21413,28 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
             poke_byte(out, fn_start + 19, 0x21)
         }
     }
+    let epi_start = pos[0]
     lower_fn_emit_epilogue(out, pos, is_main)
+    // P5: NOP out R13/R14/R15 saves for leaf functions without promotion
+    if is_main != 1 and g_lower_is_leaf == 1 and g_promo_cnt == 0 {
+        // NOP prologue pushes: R13 at fn_start+5 (2b), R14 at +7 (2b), R15 at +9 (2b)
+        poke_byte(out, fn_start + 5, 0x90)
+        poke_byte(out, fn_start + 6, 0x90)
+        poke_byte(out, fn_start + 7, 0x90)
+        poke_byte(out, fn_start + 8, 0x90)
+        poke_byte(out, fn_start + 9, 0x90)
+        poke_byte(out, fn_start + 10, 0x90)
+        // Patch epilogue: LEA RSP, [RBP-8] instead of [RBP-32]
+        // LEA is 4 bytes: 48 8D 65 XX where XX is signed offset
+        poke_byte(out, epi_start + 3, 0xF8)
+        // NOP out pop R15 (2b at epi+4), pop R14 (2b at epi+6), pop R13 (2b at epi+8)
+        poke_byte(out, epi_start + 4, 0x90)
+        poke_byte(out, epi_start + 5, 0x90)
+        poke_byte(out, epi_start + 6, 0x90)
+        poke_byte(out, epi_start + 7, 0x90)
+        poke_byte(out, epi_start + 8, 0x90)
+        poke_byte(out, epi_start + 9, 0x90)
+    }
     g_lower_is_main = 0
     lower_fn_patch_fixups(jfn, ctx, out, pos)
     nop_fallthrough_jmps(out, fn_start, pos[0])
@@ -21655,6 +21741,7 @@ fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx
     fold_constants(jfn)
     copy_prop(jfn)
     fold_constants(jfn)
+    dead_store_elim(jfn)
     dce(jfn)
     tail_call_opt(jfn)
     peephole(jfn)
@@ -22711,6 +22798,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 fold_constants(jfn)
                 copy_prop(jfn)
                 fold_constants(jfn)
+                dead_store_elim(jfn)
                 dce(jfn)
                 tail_call_opt(jfn)
                 peephole(jfn)
