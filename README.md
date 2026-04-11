@@ -50,16 +50,43 @@ fn main() -> i64 {
 
 **Working**: functions, structs, arrays, pointers, references, if/else-if/else, loops, const declarations, logical operators, inline assembly, syscalls, string literals with escapes, print/print_i64, SSA-based IR with constant folding and DCE, register allocator with spill, x86-64 native code generation, ELF binary output.
 
-## Quick Install (Linux x86-64)
+## Installation
+
+### Linux / macOS / WSL2
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | sh
 ```
 
-Or specify a version:
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/jdalang/jda-lang/main/install.ps1 | iex
+```
+
+### Windows (CMD)
+
+```cmd
+curl -o install.bat https://raw.githubusercontent.com/jdalang/jda-lang/main/install.bat && install.bat
+```
+
+### Platform Details
+
+| Platform | Method | Requirements |
+|----------|--------|-------------|
+| Linux x86-64 | Native binary | None |
+| Linux ARM64 | Docker emulation | Docker |
+| macOS (Intel/Apple Silicon) | Docker | Docker Desktop |
+| Windows 10/11 | WSL2 (recommended) | `wsl --install` |
+| Windows 10/11 | Docker | Docker Desktop |
+| FreeBSD x86-64 | Native (Linux compat) | Linux compat layer |
+
+### Options
 
 ```bash
-JDA_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | bash
+JDA_VERSION=0.1.0 curl -fsSL .../install.sh | sh   # Specific version
+JDA_INSTALL_DIR=/opt/jda ... | sh                    # Custom location
+curl -fsSL .../install.sh | sh -s -- --uninstall     # Uninstall
 ```
 
 ## Building from Source
