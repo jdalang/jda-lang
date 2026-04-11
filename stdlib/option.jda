@@ -1,0 +1,91 @@
+; =============================================================================
+; jda::option -- Option Type (nullable values)
+; =============================================================================
+; Safe nullable values using tagged &i64 pairs. Avoids null pointer
+; dereference by requiring explicit unwrap or default.
+;
+; Memory layout (&i64):
+;   [0] tag    (0 = None, 1 = Some)
+;   [1] value  (the inner value if Some)
+;
+; Functions:
+;   some(val)                -> &i64   wrap a value
+;   none()                   -> &i64   no value
+;   opt_is_some(o)           -> i64    1 if Some
+;   opt_is_none(o)           -> i64    1 if None
+;   opt_unwrap(o)            -> i64    value (0 if None)
+;   opt_unwrap_or(o, def)    -> i64    value or default
+;   opt_or(o, other)         -> &i64   o if Some, else other
+;   opt_eq(a, b)             -> i64    structural equality
+;   opt_print(o)                       print as Some(v) or None
+;   opt_println(o)                     print + newline
+; =============================================================================
+
+;; Create a Some value.
+fn some(val: i64) -> &i64 {
+    let o: &i64 = alloc_pages(1)
+    o[0] = 1
+    o[1] = val
+    ret o
+}
+
+;; Create a None value.
+fn none() -> &i64 {
+    let o: &i64 = alloc_pages(1)
+    o[0] = 0
+    o[1] = 0
+    ret o
+}
+
+;; Check if option is Some.
+fn opt_is_some(o: &i64) -> i64 {
+    if o[0] == 1 { ret 1 }
+    ret 0
+}
+
+;; Check if option is None.
+fn opt_is_none(o: &i64) -> i64 {
+    if o[0] == 0 { ret 1 }
+    ret 0
+}
+
+;; Get the value. Returns 0 if None.
+fn opt_unwrap(o: &i64) -> i64 {
+    ret o[1]
+}
+
+;; Get the value, or return default if None.
+fn opt_unwrap_or(o: &i64, def: i64) -> i64 {
+    if o[0] == 1 { ret o[1] }
+    ret def
+}
+
+;; Return o if Some, otherwise return other.
+fn opt_or(o: &i64, other: &i64) -> &i64 {
+    if o[0] == 1 { ret o }
+    ret other
+}
+
+;; Structural equality: both None, or both Some with same value.
+fn opt_eq(a: &i64, b: &i64) -> i64 {
+    if a[0] != b[0] { ret 0 }
+    if a[0] == 0 { ret 1 }
+    if a[1] == b[1] { ret 1 }
+    ret 0
+}
+
+;; Print as Some(v) or None.
+fn opt_print(o: &i64) {
+    if o[0] == 1 {
+        let v = o[1]
+        print("Some({v})")
+    } else {
+        print("None")
+    }
+}
+
+;; Print + newline.
+fn opt_println(o: &i64) {
+    opt_print(o)
+    print("\n")
+}

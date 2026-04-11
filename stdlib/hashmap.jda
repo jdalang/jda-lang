@@ -13,11 +13,21 @@
 ;
 ; Functions:
 ;   map_new(cap)              -> &i64   create map
+;   map_of2(k1,v1,k2,v2)     -> &i64   literal {k1:v1, k2:v2}
+;   map_of3(k1,v1,k2,v2,k3,v3) -> &i64 literal {k1:v1, k2:v2, k3:v3}
 ;   map_put(m, key, val)                insert or update
 ;   map_get(m, key)           -> i64    lookup (0 if missing)
 ;   map_has(m, key)           -> i64    1 if exists, 0 otherwise
 ;   map_del(m, key)           -> i64    1 if deleted, 0 if not found
 ;   map_len(m)                -> i64    entry count
+;   map_clear(m)                        remove all entries
+;   map_keys(m, out)          -> i64    copy keys to out, return count
+;   map_values(m, out)        -> i64    copy values to out, return count
+;   map_copy(m)               -> &i64   shallow copy
+;   map_merge(dst, src)                 merge src into dst
+;   map_get_or(m, key, def)   -> i64    lookup with default
+;   map_print(m)                        print as {k1: v1, k2: v2}
+;   map_println(m)                      print + newline
 ;   str_hash(s, len)          -> i64    djb2 hash for byte buffers
 ;   map_puts(m, key, klen, val)         string-keyed insert
 ;   map_gets(m, key, klen)    -> i64    string-keyed lookup
@@ -221,4 +231,145 @@ fn map_gets(m: &i64, key: &i8, klen: i64) -> i64 {
 fn map_hass(m: &i64, key: &i8, klen: i64) -> i64 {
     let h = str_hash(key, klen)
     ret map_has(m, h)
+}
+
+; --- Literal constructors (pairs of key, value) ---
+
+;; Create map with 1 entry. Usage: map_of1(k1, v1)
+fn map_of1(k1: i64, v1: i64) -> &i64 {
+    let m = map_new(16)
+    map_put(m, k1, v1)
+    ret m
+}
+
+;; Create map with 2 entries. Usage: map_of2(k1, v1, k2, v2)
+fn map_of2(k1: i64, v1: i64, k2: i64, v2: i64) -> &i64 {
+    let m = map_new(16)
+    map_put(m, k1, v1)
+    map_put(m, k2, v2)
+    ret m
+}
+
+;; Create map with 3 entries. Usage: map_of3(k1, v1, k2, v2, k3, v3)
+fn map_of3(k1: i64, v1: i64, k2: i64, v2: i64, k3: i64, v3: i64) -> &i64 {
+    let m = map_new(16)
+    map_put(m, k1, v1)
+    map_put(m, k2, v2)
+    map_put(m, k3, v3)
+    ret m
+}
+
+; --- Utilities ---
+
+;; Lookup with default value.
+fn map_get_or(m: &i64, key: i64, def: i64) -> i64 {
+    let h = map_has(m, key)
+    if h == 1 { ret map_get(m, key) }
+    ret def
+}
+
+;; Remove all entries (reset size, clear state array).
+fn map_clear(m: &i64) {
+    let cap = m[0]
+    let state: &i64 = m[4]
+    let i = 0
+    loop i < cap {
+        state[i] = 0
+        i = i + 1
+    }
+    m[1] = 0
+}
+
+;; Copy all occupied keys into out array. Returns count.
+fn map_keys(m: &i64, out: &i64) -> i64 {
+    let cap = m[0]
+    let keys: &i64 = m[2]
+    let state: &i64 = m[4]
+    let n = 0
+    let i = 0
+    loop i < cap {
+        if state[i] == 1 {
+            out[n] = keys[i]
+            n = n + 1
+        }
+        i = i + 1
+    }
+    ret n
+}
+
+;; Copy all occupied values into out array. Returns count.
+fn map_values(m: &i64, out: &i64) -> i64 {
+    let cap = m[0]
+    let vals: &i64 = m[3]
+    let state: &i64 = m[4]
+    let n = 0
+    let i = 0
+    loop i < cap {
+        if state[i] == 1 {
+            out[n] = vals[i]
+            n = n + 1
+        }
+        i = i + 1
+    }
+    ret n
+}
+
+;; Shallow copy of map.
+fn map_copy(m: &i64) -> &i64 {
+    let cap = m[0]
+    let keys: &i64 = m[2]
+    let vals: &i64 = m[3]
+    let state: &i64 = m[4]
+    let c = map_new(cap)
+    let i = 0
+    loop i < cap {
+        if state[i] == 1 {
+            map_put(c, keys[i], vals[i])
+        }
+        i = i + 1
+    }
+    ret c
+}
+
+;; Merge all entries from src into dst (overwrites on conflict).
+fn map_merge(dst: &i64, src: &i64) {
+    let cap = src[0]
+    let keys: &i64 = src[2]
+    let vals: &i64 = src[3]
+    let state: &i64 = src[4]
+    let i = 0
+    loop i < cap {
+        if state[i] == 1 {
+            map_put(dst, keys[i], vals[i])
+        }
+        i = i + 1
+    }
+}
+
+;; Print map as {k1: v1, k2: v2}.
+fn map_print(m: &i64) {
+    let cap = m[0]
+    let keys: &i64 = m[2]
+    let vals: &i64 = m[3]
+    let state: &i64 = m[4]
+    print("{")
+    let first = 1
+    let i = 0
+    loop i < cap {
+        if state[i] == 1 {
+            if first == 0 { print(", ") }
+            let k = keys[i]
+            let v = vals[i]
+            print("{k}: {v}")
+            first = 0
+        }
+        i = i + 1
+    }
+    print("}")
+}
+
+;; Print map followed by newline.
+fn map_println(m: &i64) {
+    map_print(m)
+    print("\n")
 }
