@@ -1,0 +1,69 @@
+// Matrix multiply benchmark: 256x256 integer matrices
+// C = A * B, checksum = sum(C) % 1000000007
+// macOS-compatible: alloc_pages, rdtsc timing
+
+fn mat_set(m: &i64, n: i64, i: i64, j: i64, v: i64) {
+    m[i * n + j] = v
+}
+
+fn mat_get(m: &i64, n: i64, i: i64, j: i64) -> i64 {
+    ret m[i * n + j]
+}
+
+fn main() -> i64 {
+    let N: i64 = 256
+    let sz = N * N   // 65536 i64s = 512KB per matrix
+    // 3 matrices * 512KB = 1.5MB → alloc_pages(384) each
+    let A = alloc_pages(128) as &i64
+    let B = alloc_pages(128) as &i64
+    let C = alloc_pages(128) as &i64
+
+    // Init A[i][j] = (i*7 + j*13 + 1) % 100
+    let i: i64 = 0
+    loop i < N {
+        let j: i64 = 0
+        loop j < N {
+            mat_set(A, N, i, j, (i * 7 + j * 13 + 1) % 100)
+            mat_set(B, N, i, j, (i * 11 + j * 5 + 3) % 100)
+            j = j + 1
+        }
+        i = i + 1
+    }
+
+    let t0 = rdtsc()
+
+    // C = A * B
+    i = 0
+    loop i < N {
+        let j: i64 = 0
+        loop j < N {
+            let sum: i64 = 0
+            let k: i64 = 0
+            loop k < N {
+                sum = sum + mat_get(A, N, i, k) * mat_get(B, N, k, j)
+                k = k + 1
+            }
+            mat_set(C, N, i, j, sum)
+            j = j + 1
+        }
+        i = i + 1
+    }
+
+    let t1 = rdtsc()
+
+    let mod: i64 = 1000000007
+    let chk: i64 = 0
+    i = 0
+    loop i < N {
+        let j: i64 = 0
+        loop j < N {
+            chk = (chk + mat_get(C, N, i, j)) % mod
+            j = j + 1
+        }
+        i = i + 1
+    }
+
+    let ms = (t1 - t0) / 1000000
+    print("n: {N}\nchecksum: {chk}\ntime: {ms} ms\n")
+    ret 0
+}

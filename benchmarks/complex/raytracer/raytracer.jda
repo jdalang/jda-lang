@@ -7,28 +7,16 @@
 
 let mem: &i64
 
-fn _clk(buf: &i8) -> i64 { ret syscall(228, 1, buf, 0, 0) }
-
-fn now_ms(ts: &i8) -> i64 {
-    _clk(ts)
-    let s: i64 = ts[0]; let ptr: &i8 = ts + 8; let ns: i64 = ptr[0]
+fn now_ms(ts: &i64) -> i64 {
+    syscall(228, 1, ts, 0, 0)
+    let s = ts[0]; let ns = ts[1]
     ret s * 1000 + ns / 1000000
 }
 
 // Sphere data: 8 fields per sphere (cx,cy,cz,r, cr,cg,cb,spec) as i64 * 10000
 
-fn sget(i: i64, f: i64) -> f64 {
-    let raw: i64 = mem[i * 8 + f]
-    let v: f64 = f64_from_int(raw)
-    ret v / 10000.0
-}
-
 fn sset(i: i64, f: i64, v: i64) {
     mem[i * 8 + f] = v
-}
-
-fn v3dot(ax: f64, ay: f64, az: f64, bx: f64, by: f64, bz: f64) -> f64 {
-    ret ax * bx + ay * by + az * bz
 }
 
 fn clamp(v: i64) -> i64 {
@@ -48,28 +36,25 @@ let g_hit = 0
 let g_si = 0
 
 fn intersect(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> f64 {
-    let cx: f64 = sget(g_si, 0); let cy: f64 = sget(g_si, 1); let cz: f64 = sget(g_si, 2)
+    let base = g_si * 8
+    let row = mem + base * 8
+    let inv: f64 = 0.0001
+    let cx: f64 = f64_from_int(row[0]) * inv
+    let cy: f64 = f64_from_int(row[1]) * inv
+    let cz: f64 = f64_from_int(row[2]) * inv
     let ocx: f64 = ox - cx; let ocy: f64 = oy - cy; let ocz: f64 = oz - cz
-    let a: f64 = v3dot(dx, dy, dz, dx, dy, dz)
-    let dot_ocd: f64 = v3dot(ocx, ocy, ocz, dx, dy, dz)
-    let b: f64 = 2.0 * dot_ocd
-    let rad: f64 = sget(g_si, 3)
-    let dot_ococ: f64 = v3dot(ocx, ocy, ocz, ocx, ocy, ocz)
+    let dot_ocd: f64 = ocx * dx + ocy * dy + ocz * dz
+    let rad: f64 = f64_from_int(row[3]) * inv
+    let dot_ococ: f64 = ocx * ocx + ocy * ocy + ocz * ocz
     let rr: f64 = rad * rad
-    let c: f64 = dot_ococ - rr
-    let bb: f64 = b * b
-    let four_ac: f64 = 4.0 * a * c
-    let disc: f64 = bb - four_ac
+    let disc: f64 = dot_ocd * dot_ocd - dot_ococ + rr
     let big: f64 = 100000000000000000.0
     if disc < 0.0 { ret big }
     let sq: f64 = f64_sqrt(disc)
-    let two_a: f64 = 2.0 * a
-    let nb: f64 = f64_neg(b)
-    let num1: f64 = nb - sq
-    let t1: f64 = num1 / two_a
+    let neg_dot: f64 = f64_neg(dot_ocd)
+    let t1: f64 = neg_dot - sq
     if t1 > 0.001 { ret t1 }
-    let num2: f64 = nb + sq
-    let t2: f64 = num2 / two_a
+    let t2: f64 = neg_dot + sq
     if t2 > 0.001 { ret t2 }
     ret big
 }
@@ -107,9 +92,9 @@ fn spec_calc(dx: f64, dy: f64, dz: f64, nx: f64, ny: f64, nz: f64) -> f64 {
     let hlen: f64 = hx * hx + hy * hy + hz * hz
     let hl: f64 = f64_sqrt(hlen)
     hx = hx / hl; hy = hy / hl; hz = hz / hl
-    let s: f64 = v3dot(nx, ny, nz, hx, hy, hz)
+    let s: f64 = nx * hx + ny * hy + nz * hz
     if s > 0.0 {
-        let spec_exp: f64 = sget(g_hit, 7)
+        let spec_exp: f64 = f64_from_int(mem[g_hit * 8 + 7]) * 0.0001
         let p: f64 = f64_pow(s, spec_exp)
         ret p
     }
@@ -123,7 +108,11 @@ fn trace(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> i64 {
     let closest: f64 = g_closest
     let px: f64 = ox + dx * closest; let py: f64 = oy + dy * closest; let pz: f64 = oz + dz * closest
 
-    let scx: f64 = sget(hit, 0); let scy: f64 = sget(hit, 1); let scz: f64 = sget(hit, 2)
+    let row = mem + hit * 64
+    let inv2: f64 = 0.0001
+    let scx: f64 = f64_from_int(row[0]) * inv2
+    let scy: f64 = f64_from_int(row[1]) * inv2
+    let scz: f64 = f64_from_int(row[2]) * inv2
     let nx: f64 = px - scx; let ny: f64 = py - scy; let nz: f64 = pz - scz
     let nlen: f64 = nx * nx + ny * ny + nz * nz
     let nl: f64 = f64_sqrt(nlen)
@@ -141,7 +130,7 @@ fn trace(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> i64 {
     let ambient: f64 = 0.15
     let diffuse: f64 = 0.0; let specular: f64 = 0.0
     if shadow == 0 {
-        let diff_dot: f64 = v3dot(nx, ny, nz, lx, ly, lz)
+        let diff_dot: f64 = nx * lx + ny * ly + nz * lz
         if diff_dot < 0.0 { diff_dot = 0.0 }
         diffuse = diff_dot
         g_lx = lx; g_ly = ly; g_lz = lz
@@ -151,7 +140,9 @@ fn trace(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> i64 {
 
     let diff_term: f64 = 0.7 * diffuse
     let intensity: f64 = ambient + diff_term + specular
-    let cr: f64 = sget(g_hit, 4); let cg: f64 = sget(g_hit, 5); let cb: f64 = sget(g_hit, 6)
+    let cr: f64 = f64_from_int(row[4]) * inv2
+    let cg: f64 = f64_from_int(row[5]) * inv2
+    let cb: f64 = f64_from_int(row[6]) * inv2
     let ri: f64 = cr * intensity; let gi: f64 = cg * intensity; let bi: f64 = cb * intensity
     let r: i64 = f64_to_int(ri); let g: i64 = f64_to_int(gi); let b: i64 = f64_to_int(bi)
     r = clamp(r); g = clamp(g); b = clamp(b)
@@ -185,7 +176,7 @@ fn main() -> i64 {
     let W: i64 = 800; let H: i64 = 600
     let Wf: f64 = 800.0; let half_w: f64 = 400.0; let half_h: f64 = 300.0
 
-    let ts: &i8 = mem + 200 * 8
+    let ts = mem + 200 * 8
     let t0: i64 = now_ms(ts)
 
     let checksum: i64 = 0; let y: i64 = 0
