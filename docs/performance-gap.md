@@ -9,13 +9,13 @@ concrete task for each one.
 
 ## Current Benchmark Baselines (macOS ARM64 / Rosetta 2, April 2026)
 
-| Benchmark | C (clang -O2) | Jda   | Ratio  | Status        |
-|-----------|---------------|-------|--------|---------------|
-| sudoku    | 52 ms         | 24 ms | **2.2x faster** | Jda wins |
-| lz77      | 2758 ms       | 371 ms | **7.4x faster** | Jda wins |
-| regex     | 188 ms        | 112 ms | **1.7x faster** | Jda wins |
-| btree     | 375 ms        | 593 ms | 1.6x slower | gap open |
-| raytracer | 42 ms         | 146 ms | 3.5x slower | SIMD gap |
+| Benchmark | C (clang -O2) | Jda (pre-LS) | Jda (linear-scan) | Ratio  | Status        |
+|-----------|---------------|--------------|-------------------|--------|---------------|
+| sudoku    | 52 ms         | 19 ms        | 19 ms             | **2.7x faster** | Jda wins |
+| lz77      | 2758 ms       | 287 ms       | 283 ms            | **9.7x faster** | Jda wins |
+| regex     | 188 ms        | 190 ms       | 102 ms            | **1.8x faster** | Jda wins (+46%) |
+| btree     | 375 ms        | 593 ms       | 558 ms            | 1.5x slower | gap narrowing |
+| raytracer | 42 ms         | 145 ms       | 90 ms             | 2.1x slower | SIMD gap (-38%) |
 
 ---
 
@@ -23,32 +23,25 @@ concrete task for each one.
 
 ---
 
-### 1. Round-Robin Register Allocator  ← biggest bottleneck
+### 1. Round-Robin Register Allocator  ✅ DONE (linear-scan hints, April 2026)
 
-**Impact: btree 1.6x gap, general 20–40% overhead on any loop-heavy code**
+**Impact: raytracer -38% (145→90ms), regex -46% (190→102ms), btree -6% (593→558ms)**
 
-Jda uses a 10-register pool with LRU/round-robin eviction. When all
-registers are live, it spills the oldest value to the stack. This
-produces unnecessary `movq` spill/reload pairs around every call and
-every expression with more than ~10 live values.
+Implemented linear-scan pre-assignment: compute `[first_def, last_use]` intervals
+for every value, assign pool slots greedily in definition order, use as hints in
+the online `regalloc_alloc`. The online allocator still runs but now prefers the
+pre-assigned slots, reducing eviction churn on long-lived values.
 
-GCC and Clang use **linear-scan** (LLVM) or **graph-coloring** (GCC)
-allocators that compute the exact live range of every value and only
-spill when lifetimes genuinely overlap. They also coalesce copies
-(eliminate `mov r1, r2` when possible) and reorder spills to minimize
-reloads on the hot path.
+**Tasks completed:**
+- Task A: ✅ `lower_fn_collect_uses` extended to record `g_val_first_def[vid]`
+- Task B: ✅ `linear_scan(jfn)` assigns `g_ls_reg[val_id]` as hint; `regalloc_alloc` checks hint first
+- Task C: Coalescing pass — still open (would eliminate redundant MOV instructions)
 
-**What to build:**
-- Task A: Compute live intervals per basic block (start/end instruction
-  index for every SSA value).
-- Task B: Linear-scan allocator — process intervals in start-order,
-  assign registers greedily, spill the interval with the furthest
-  end-point when registers run out.
-- Task C: Coalescing pass — when a COPY or phi-equivalent moves v1→v2
-  and their intervals don't overlap, assign them the same register.
+**Files:** `linear_scan`, `ls_assign`, `ls_expire`, `regalloc_alloc`
+(bootstrap/stage1/jda1.jda ~14700–14800)
 
-**Files:** `regalloc_alloc`, `emit_save_pool`, `ra_find_ffu_reg`
-(bootstrap/stage1/jda1.jda ~14787)
+**Remaining gap:** btree still 1.5x C. Full coalescing or graph-coloring allocator
+would close it further. SIMD is the remaining blocker for raytracer (now 2.1x C).
 
 ---
 

@@ -573,6 +573,14 @@ let g_val_imm: &i64 = 0
 let g_val_load_slot: &i64 = 0
 let g_val_promo_reg: &i64 = 0
 let g_val_last_use: &i64 = 0
+let g_val_first_def: &i64 = 0
+let g_ls_reg: &i32 = 0
+let g_ls_active: &i64 = 0
+let g_ls_free: &i64 = 0
+let g_ls_active_cnt: i64 = 0
+let g_ls_free_cnt: i64 = 0
+let g_spill_free: &i64 = 0
+let g_spill_free_cnt: i64 = 0
 let g_cand_slots: &i64 = 0
 let g_cand_load: &i64 = 0
 let g_cand_store: &i64 = 0
@@ -14685,6 +14693,117 @@ fn promo_reg_for_slot(slot: i64) -> i32 {
 }
 
 // ============================================================
+// 8a. LINEAR-SCAN REGISTER PRE-ASSIGNMENT
+// ============================================================
+
+fn ls_init_globals() {
+    g_val_first_def = alloc_pages(16) as &i64
+    g_ls_reg = alloc_pages(8) as &i32
+    g_ls_active = alloc_pages(1) as &i64
+    g_ls_free = alloc_pages(1) as &i64
+    g_spill_free = alloc_pages(1) as &i64
+}
+
+fn ls_init_free(pinned_cnt: i64) {
+    g_ls_active_cnt = 0
+    g_ls_free_cnt = 0
+    let i = 0
+    loop i < N_ALLOC_REGS {
+        let is_pinned = 0
+        if i == 10 and pinned_cnt >= 1 { is_pinned = 1 }
+        if i == 11 and pinned_cnt >= 2 { is_pinned = 1 }
+        if i == 12 and pinned_cnt >= 3 { is_pinned = 1 }
+        if i == 7  and pinned_cnt >= 4 { is_pinned = 1 }
+        if is_pinned == 0 {
+            g_ls_free[g_ls_free_cnt] = i
+            g_ls_free_cnt = g_ls_free_cnt + 1
+        }
+        i = i + 1
+    }
+}
+
+fn ls_expire(cur_pos: i64) {
+    let i = 0
+    loop i < g_ls_active_cnt {
+        let vid = g_ls_active[i]
+        let expired = 0
+        if vid >= 0 and vid < 8192 {
+            if g_val_last_use[vid] < cur_pos { expired = 1 }
+        }
+        if expired == 1 {
+            let p = g_ls_reg[vid]
+            if p >= 0 and p < N_ALLOC_REGS {
+                g_ls_free[g_ls_free_cnt] = p
+                g_ls_free_cnt = g_ls_free_cnt + 1
+            }
+            let last = g_ls_active_cnt - 1
+            g_ls_active[i] = g_ls_active[last]
+            g_ls_active_cnt = last
+            i = i - 1
+        }
+        i = i + 1
+    }
+}
+
+fn ls_max_active() -> i64 {
+    let max_lu = -1
+    let max_i = 0
+    let i = 0
+    loop i < g_ls_active_cnt {
+        let vid = g_ls_active[i]
+        let lu = 0
+        if vid >= 0 and vid < 8192 { lu = g_val_last_use[vid] }
+        if lu > max_lu { max_lu = lu  max_i = i }
+        i = i + 1
+    }
+    ret max_i
+}
+
+fn ls_assign(val_id: i64, cur_pos: i64) {
+    if val_id < 0 { ret ok(0) }
+    if val_id >= 8192 { ret ok(0) }
+    ls_expire(cur_pos)
+    let my_lu = g_val_last_use[val_id]
+    if g_ls_free_cnt > 0 {
+        let fi = g_ls_free_cnt - 1
+        g_ls_free_cnt = fi
+        g_ls_reg[val_id] = g_ls_free[fi]
+        g_ls_active[g_ls_active_cnt] = val_id
+        g_ls_active_cnt = g_ls_active_cnt + 1
+    } else {
+        let max_i = ls_max_active()
+        let spill_vid = g_ls_active[max_i]
+        let spill_lu = 0
+        if spill_vid >= 0 and spill_vid < 8192 { spill_lu = g_val_last_use[spill_vid] }
+        if spill_lu > my_lu {
+            let p = g_ls_reg[spill_vid]
+            g_ls_reg[spill_vid] = -2
+            g_ls_reg[val_id] = p
+            g_ls_active[max_i] = val_id
+        }
+    }
+}
+
+fn linear_scan(jfn: &JirFunction) {
+    fill_bytes(g_ls_reg as &i8, 32768, 255)
+    ls_init_free(g_promo_cnt)
+    g_spill_free_cnt = 0
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let vid = jfn.blocks[bi].instrs[ii].id
+            if vid >= 0 and vid < 8192 {
+                let cur_pos = bi * 128 + ii
+                ls_assign(vid, cur_pos)
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+// ============================================================
 // 8. GREEDY REGISTER ALLOCATOR
 // ============================================================
 // Pool: rax rcx rdx rbx rsi rdi r10 r11
@@ -14817,6 +14936,18 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
         }
         i = i + 1
     }
+    // Check linear-scan pre-assignment: if the pre-assigned pool slot is free, use it
+    if val_id >= 0 and val_id < 8192 {
+        let lsp = g_ls_reg[val_id]
+        if lsp >= 0 and lsp < N_ALLOC_REGS {
+            if ra.reg2val[lsp] == -1 {
+                ra.reg2val[lsp] = val_id
+                ra.val2reg[val_id] = lsp
+                ra.reg_time[lsp] = ra.tick
+                ret reg_pool_at(lsp)
+            }
+        }
+    }
     // Furthest-future-use eviction — prefer dead values, then spill latest
     let ei = ra_find_dead_reg(ra)
     if ei == -1 { ei = ra_find_ffu_reg(ra) }
@@ -14836,7 +14967,7 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     if do_spill == 1 {
         let next_sp = ra.sp_top + 8
         ra.sp_top = next_sp
-        ra.spill_off[victim]  = next_sp
+        ra.spill_off[victim] = next_sp
         emit_store_spill(out, pos, next_sp, spill_reg)
     }
     if victim >= 0 and victim < 8192 { ra.val2reg[victim] = -1 }
@@ -23279,6 +23410,7 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
         g_val_load_slot[ui] = -1
         g_val_promo_reg[ui] = -1
         g_val_last_use[ui] = 0
+        g_val_first_def[ui] = -1
         ui = ui + 1
     }
     let bi = 0
@@ -23294,6 +23426,9 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
                 g_val_imm[vid] = jfn.blocks[bi].instrs[ii].imm
                 if jfn.blocks[bi].instrs[ii].op == OP_LOAD {
                     g_val_load_slot[vid] = jfn.blocks[bi].instrs[ii].operand0
+                }
+                if g_val_first_def[vid] == -1 {
+                    g_val_first_def[vid] = bi * 128 + ii
                 }
             }
             ii = ii + 1
@@ -23570,6 +23705,7 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     lower_fn_collect_uses(jfn, ctx)
     loop_promote_scan(jfn)
     lower_fn_mark_promo_patterns(jfn, ctx)
+    linear_scan(jfn)
     lower_fn_preload_promo_params(jfn, out, pos)
     lower_fn_emit_blocks(jfn, ctx, out, pos)
     // Patch frame size to actual usage (P1: right-sized stack frames)
@@ -25051,6 +25187,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_val_load_slot = alloc_pages(16) as &i64
     g_val_promo_reg = alloc_pages(16) as &i64
     g_val_last_use = alloc_pages(16) as &i64
+    ls_init_globals()
     // Copy propagation arrays
     g_cp_slot_val = alloc_pages(4) as &i64
     g_block_indeg = alloc_pages(1) as &i64
