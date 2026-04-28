@@ -1,0 +1,71 @@
+// Matrix multiply benchmark: 256x256 i64 matrices
+// ARM64 native via AWK compiler; mmap for heap, clock_gettime for timing
+
+fn now_ms(ts: &i64) -> i64 {
+    syscall(116, ts, 0)
+    ret ts[0] * 1000 + ts[1] / 1000
+}
+
+fn main() -> i64 {
+    let ts: [2]i64
+    let N: i64 = 256
+    // 256*256*8 = 524288 bytes each — round up to 528384 (129 pages)
+    let a = syscall(197, 0, 528384, 3, 0x1002, -1, 0)
+    let b = syscall(197, 0, 528384, 3, 0x1002, -1, 0)
+    let c = syscall(197, 0, 528384, 3, 0x1002, -1, 0)
+
+    let i: i64 = 0
+    loop i < N {
+        let j: i64 = 0
+        loop j < N {
+            a[i * N + j] = (i * 7 + j * 13 + 1) & 0x7fffffffffffffff
+            let tmp = a[i * N + j]
+            if tmp < 0 { tmp = 0 - tmp }
+            a[i * N + j] = tmp - (tmp / 100) * 100
+            b[i * N + j] = (i * 11 + j * 5 + 3) & 0x7fffffffffffffff
+            tmp = b[i * N + j]
+            if tmp < 0 { tmp = 0 - tmp }
+            b[i * N + j] = tmp - (tmp / 100) * 100
+            j = j + 1
+        }
+        i = i + 1
+    }
+
+    let t0 = now_ms(ts)
+
+    i = 0
+    loop i < N {
+        let j: i64 = 0
+        loop j < N {
+            let s: i64 = 0
+            let k: i64 = 0
+            loop k < N {
+                s = s + a[i * N + k] * b[k * N + j]
+                k = k + 1
+            }
+            c[i * N + j] = s
+            j = j + 1
+        }
+        i = i + 1
+    }
+
+    let t1 = now_ms(ts)
+
+    let mod: i64 = 1000000007
+    let chk: i64 = 0
+    i = 0
+    loop i < N {
+        let j: i64 = 0
+        loop j < N {
+            let tmp = chk + c[i * N + j]
+            chk = tmp - (tmp / mod) * mod
+            j = j + 1
+        }
+        i = i + 1
+    }
+    let chkmod = chk
+
+    let ms = t1 - t0
+    print("n: {N}\nchecksum: {chkmod}\ntime: {ms} ms\n")
+    ret 0
+}

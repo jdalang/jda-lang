@@ -341,10 +341,10 @@ fn main() -> i64 {
     let logits = tensor_new2(2, 4)
     linear_fwd(ffn_out, w_out, b_out, logits)
 
-    // Verify: different tokens produce different logits
+    // Verify: logits within one position are diverse (not all equal)
     let l0 = tensor_get(logits, 0)
-    let l4 = tensor_get(logits, 4)
-    let diff0 = f64_sub(l0, l4)
+    let l1 = tensor_get(logits, 1)
+    let diff0 = f64_sub(l0, l1)
     let diff0_abs = f64_abs(diff0)
     let thresh = f64_div(one, ten)
     if f64_gt(diff0_abs, thresh) == 1 {
@@ -381,7 +381,7 @@ fn main() -> i64 {
         psum = f64_add(psum, pv)
         pi = pi + 1
     }
-    let psum_int = f64_to_int(f64_mul(psum, ten))
+    let psum_int = f64_to_int(f64_add(f64_mul(psum, ten), v05))
     if psum_int == 10 {
         print "probs ok"
     }

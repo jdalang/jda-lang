@@ -1,0 +1,92 @@
+// Mergesort benchmark: 2M integers, LCG generated
+// ARM64 native via AWK compiler; mmap for heap, clock_gettime for timing
+
+fn now_ms(ts: &i64) -> i64 {
+    syscall(116, ts, 0)
+    ret ts[0] * 1000 + ts[1] / 1000
+}
+
+fn lcg_next(rng: &i64) -> i64 {
+    rng[0] = (rng[0] * 1103515245 + 12345) & 2147483647
+    ret rng[0]
+}
+
+fn merge(arr: &i64, tmp: &i64, lo: i64, mid: i64, hi: i64) {
+    let i = lo
+    let j = mid
+    let k = lo
+    loop k < hi {
+        if i < mid {
+            if j < hi {
+                if arr[i] <= arr[j] {
+                    tmp[k] = arr[i]
+                    i = i + 1
+                    k = k + 1
+                } else {
+                    tmp[k] = arr[j]
+                    j = j + 1
+                    k = k + 1
+                }
+            } else {
+                tmp[k] = arr[i]
+                i = i + 1
+                k = k + 1
+            }
+        } else {
+            tmp[k] = arr[j]
+            j = j + 1
+            k = k + 1
+        }
+    }
+    let m = lo
+    loop m < hi {
+        arr[m] = tmp[m]
+        m = m + 1
+    }
+}
+
+fn mergesort(arr: &i64, tmp: &i64, lo: i64, hi: i64) {
+    if hi - lo <= 1 { ret }
+    let mid = lo + (hi - lo) / 2
+    mergesort(arr, tmp, lo, mid)
+    mergesort(arr, tmp, mid, hi)
+    merge(arr, tmp, lo, mid, hi)
+}
+
+fn main() -> i64 {
+    let ts: [2]i64
+    let N: i64 = 2000000
+    // 2M * 8 bytes = 16MB each
+    let arr = syscall(197, 0, 16777216, 3, 0x1002, -1, 0)
+    let tmp = syscall(197, 0, 16777216, 3, 0x1002, -1, 0)
+    let rng = syscall(197, 0, 4096, 3, 0x1002, -1, 0)
+
+    rng[0] = 42
+    let i: i64 = 0
+    loop i < N {
+        arr[i] = lcg_next(rng)
+        i = i + 1
+    }
+
+    let t0 = now_ms(ts)
+    mergesort(arr, tmp, 0, N)
+    let t1 = now_ms(ts)
+
+    let ok: i64 = 1
+    i = 1
+    loop i < N {
+        if arr[i] < arr[i - 1] { ok = 0 }
+        i = i + 1
+    }
+
+    let chk: i64 = 0
+    i = 0
+    loop i < N {
+        chk = (chk + arr[i]) & 4294967295
+        i = i + 1
+    }
+
+    let ms = t1 - t0
+    print("n: {N}\nsorted_ok: {ok}\nchecksum: {chk}\ntime: {ms} ms\n")
+    ret 0
+}
