@@ -45,9 +45,9 @@ would close it further. SIMD is the remaining blocker for raytracer (now 2.1x C)
 
 ---
 
-### 2. No SIMD / Auto-Vectorization  ✅ DONE (SLP Phase 1+2+3, April 2026)
+### 2. No SIMD / Auto-Vectorization  ✅ DONE (SLP Phase 1+2+3 + OP_BITCAST, April 2026)
 
-**Impact: raytracer 3.5x gap (entire gap is SIMD)**
+**Impact: raytracer 2.1x gap (SIMD + I2F conversion cost)**
 
 Clang auto-vectorizes loops like `for i { a[i] += b[i] }` into 4-wide
 or 8-wide AVX2/AVX-512 instructions. A single `vaddps ymm0, ymm1, ymm2`
@@ -57,20 +57,30 @@ The raytracer inner loop computes dot products, cross products, and
 reflection vectors — all trivially vectorizable. Jda emits one scalar
 `FADD/FMUL` per element.
 
-**What to build:**
+**SLP (Superword-Level Parallelism) implemented:**
+- OP_F64X2_BIN = 100: new JIR opcode for SSE2 packed f64×2
+- `slp_vectorize` detects adjacent identical FADD/FSUB/FMUL/FDIV pairs
+  whose operand pairs are adjacent LOAD_MEM (same base, offset+8)
+- Emits MOVUPD (128-bit load) + ADDPD/SUBPD/MULPD/DIVPD
+- Fires for struct/array adjacent-field f64 access patterns (raw float bits in memory)
+- **Phase 3 (broadcast, April 2026):** also fuses `FMUL(LOAD_MEM[base,off], const)` +
+  `FMUL(LOAD_MEM[base,off+8], const)` where both ops share the same scalar constant.
+  Emits MOVUPD + UNPCKLPD (broadcast) + MULPD.
+- **Fundamental limit for raytracer:** all sphere data goes through `I2F(LOAD_MEM)` 
+  (integers stored scaled by 0001, converted via CVTSI2SD). MOVUPD loads raw bits —
+  it cannot substitute for CVTSI2SD. Closing this gap requires AVX-512 VCVTQQ2PD
+  or explicit scalar+pack sequences.
+
+**Remaining tasks:**
 - Task A: Detect reduction loops (`acc = acc OP a[i]`) and emit
   horizontal SIMD (vhaddps / vpermilps).
-- Task B: Detect element-wise loops (`b[i] = a[i] OP c[i]`) and emit
-  packed SIMD (vaddps, vmulps, etc.).
-- Task C: Add AVX2 f64×4 and f32×8 loop patterns to the peephole /
+- Task B: Add AVX2 f64×4 and f32×8 loop patterns to the peephole /
   lowering pipeline.
-
-**Note:** This alone closes the entire raytracer gap. SIMD on
-scalar f64 ops would also benefit matrix multiply.
+- Task C: AVX-512 VCVTQQ2PD to vectorize I2F(LOAD_MEM) pairs (closes raytracer gap).
 
 ---
 
-### 3. No Inlining of Hot Callees  ✅ DONE (Phase 1a+1b + splicer built, April 2026)
+### 3. No Inlining of Hot Callees  🚧 Phase 1a+1b done — splicer parked (OP_DIV/OP_MUL bugs)
 
 **Impact: 5x upper bound measured on accessor-heavy code (April 2026)**
 
