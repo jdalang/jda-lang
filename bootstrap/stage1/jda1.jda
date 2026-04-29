@@ -264,6 +264,8 @@ const OP_MOD      = 96
 const OP_LOAD_MEM_SIB  = 97
 const OP_STORE_MEM_SIB = 98
 const OP_COPY          = 99
+const OP_F64X2_BIN     = 100  // SLP-fused packed f64×2 binary op (ADDPD/SUBPD/MULPD/DIVPD)
+const OP_BITCAST       = 101  // i64→f64 bitwise reinterpret (no instruction; enables SLP on f64 memory)
 
 // x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -599,6 +601,10 @@ let g_lea_uses: &i32 = 0
 // XMM handoff cache: value_id currently in XMM0/XMM1 (-1 = unknown)
 let g_xmm0_id: i64 = -1
 let g_xmm1_id: i64 = -1
+// SLP vectorization: per-val operand0 (base pointer) for adjacency detection
+let g_slp_o0: &i64 = 0
+// SLP broadcast flag: set by slp_find_pair when b operand is broadcast (same id)
+let g_slp_bcast: i64 = 0
 // Token write cursor (avoids 5-arg calls and local-ptr bugs)
 let g_ltw_base: &i64 = 0
 let g_ltw_off: i64 = 0
@@ -8804,6 +8810,37 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
     ret ret_emit
 }
 
+fn codegen_ident_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    if tok_str_len_at(toks, pos[0]) == 2 and streq(src, tok_str_start_at(toks, pos[0]), 2, "fn") == 1 and tok_type_at(toks, pos[0] + 1) == TOK_LPAREN {
+        ret codegen_lambda_inline(toks, pos, src, jfn, bb)
+    }
+    let ci_ts = tok_str_start_at(toks, pos[0])
+    let ci_tl = tok_str_len_at(toks, pos[0])
+    if ci_tl == 11 and streq(src, ci_ts, 11, "f64_bitcast") == 1 {
+        pos[0] = pos[0] + 1
+        ret emit_f64_bitcast_old(toks, pos, stab, src, jfn, bb)
+    }
+    ret codegen_primary_ident_inline(toks, pos, stab, src, jfn, bb)
+}
+
+fn codegen_arr_primary(toks: &Token, pos: &i64, t_type: i64, jfn: &JirFunction, bb: i64) -> i64 {
+    let arr_next_t = tok_type_at(toks, pos[0] + 1)
+    if arr_next_t != TOK_LBRACK { ret -1 }
+    let arr_elem_sz = 8
+    if t_type == TOK_I32 { arr_elem_sz = 4 }
+    if t_type == TOK_I8  { arr_elem_sz = 1 }
+    pos[0] = pos[0] + 2
+    let arr_count = tok_imm_at(toks, pos[0])
+    pos[0] = pos[0] + 1
+    pos[0] = pos[0] + 1
+    let arr_total = arr_count * arr_elem_sz
+    let arr_sz_id = emit_const(jfn, bb, TYPE_I64, arr_total)
+    let arr_ins = Instr{}
+    arr_ins.op = OP_ALLOC
+    arr_ins.operand0 = arr_sz_id
+    ret emit(jfn, bb, &arr_ins)
+}
+
 fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     if pos[0] < 0 or pos[0] >= g_dbg_tok_cnt {
         ret emit_const(jfn, bb, TYPE_I64, 0)
@@ -8854,13 +8891,8 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         let fl2_dv = emit_binop(jfn, bb, OP_FDIV, fl2_f1, fl2_f2)
         ret emit_binop(jfn, bb, OP_FADD, fl2_f0, fl2_dv)
     }
-    // Lambda: fn(...) -> T { ... }
-    // TOK_FN==0 so keyword classifier can't produce it; fn is lexed as TOK_IDENT
-    if t_type == TOK_IDENT and tok_str_len_at(toks, pos[0]) == 2 and streq(src, tok_str_start_at(toks, pos[0]), 2, "fn") == 1 and tok_type_at(toks, pos[0] + 1) == TOK_LPAREN {
-        ret codegen_lambda_inline(toks, pos, src, jfn, bb)
-    }
     if t_type == TOK_IDENT {
-        ret codegen_primary_ident_inline(toks, pos, stab, src, jfn, bb)
+        ret codegen_ident_primary(toks, pos, stab, src, jfn, bb)
     }
     if t_type == TOK_SPAWN {
         pos[0] = pos[0] + 1
@@ -8883,24 +8915,8 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         pos[0] = pos[0] + 1
         ret s_id
     }
-    // Local array: type[N] — e.g. let regs = i32[7]
     if t_type == TOK_I64 or t_type == TOK_I32 or t_type == TOK_I8 {
-        let arr_next_t = tok_type_at(toks, pos[0] + 1)
-        if arr_next_t == TOK_LBRACK {
-            let arr_elem_sz = 8
-            if t_type == TOK_I32 { arr_elem_sz = 4 }
-            if t_type == TOK_I8  { arr_elem_sz = 1 }
-            pos[0] = pos[0] + 2
-            let arr_count = tok_imm_at(toks, pos[0])
-            pos[0] = pos[0] + 1
-            pos[0] = pos[0] + 1
-            let arr_total = arr_count * arr_elem_sz
-            let arr_sz_id = emit_const(jfn, bb, TYPE_I64, arr_total)
-            let arr_ins = Instr{}
-            arr_ins.op = OP_ALLOC
-            arr_ins.operand0 = arr_sz_id
-            ret emit(jfn, bb, &arr_ins)
-        }
+        ret codegen_arr_primary(toks, pos, t_type, jfn, bb)
     }
     ret -1
 }
@@ -11442,6 +11458,13 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
     ret expr_id
 }
 
+fn live_check_f64bitcast(ts: i64, tl: i64, bb: i64) -> i64 {
+    if tl != 11 { ret -1 }
+    if streq(g_src_buf_ptr, ts, 11, "f64_bitcast") != 1 { ret -1 }
+    g_main_pos = g_main_pos + 1
+    ret emit_f64_bitcast_live(bb)
+}
+
 fn live_codegen_primary2_inline(bb: i64) -> i64 {
     let tt = tok_type_at(g_dbg_toks_init, g_main_pos)
     // Lambda: fn(...) -> T { ... }
@@ -11456,6 +11479,8 @@ fn live_codegen_primary2_inline(bb: i64) -> i64 {
         let t = Token{}
         t.str_start = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos)
         t.str_len = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos)
+        let fbc_id = live_check_f64bitcast(t.str_start, t.str_len, bb)
+        if fbc_id >= 0 { ret fbc_id }
         ret live_codegen_primary_ident_inline(&t, bb)
     }
     ret live_codegen_primary_small_inline(tt, bb)
@@ -11635,6 +11660,28 @@ fn live_codegen_primary_inline(bb: i64) -> i64 {
         ret inner_id
     }
     ret -1
+}
+
+fn emit_f64_bitcast_live(bb: i64) -> i64 {
+    expect(TOK_LPAREN)
+    let a0 = live_codegen_expr_inline(bb)
+    expect(TOK_RPAREN)
+    let ins = Instr{}
+    ins.op = OP_BITCAST
+    ins.operand0 = a0
+    g_codegen_stype = TYPE_F64
+    ret emit(g_jfn, bb, &ins)
+}
+
+fn emit_f64_bitcast_old(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    pos[0] = pos[0] + 1
+    let a0 = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+    pos[0] = pos[0] + 1
+    let ins = Instr{}
+    ins.op = OP_BITCAST
+    ins.operand0 = a0
+    g_codegen_stype = TYPE_F64
+    ret emit(jfn, bb, &ins)
 }
 
 fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
@@ -13445,7 +13492,7 @@ fn fold_constants(jfn: &JirFunction) {
                     instr_set_imm(&jfn.blocks[bi].instrs[ii], result)
                 }
             }
-            if iop == OP_COPY {
+            if iop == OP_COPY or iop == OP_BITCAST {
                 let cv = find_const(jfn, jfn.blocks[bi].instrs[ii].operand0)
                 if cv.found == 1 {
                     instr_set_op(&jfn.blocks[bi].instrs[ii], OP_CONST)
@@ -13459,7 +13506,7 @@ fn fold_constants(jfn: &JirFunction) {
 }
 
 fn dce_mark_float(op: i64, o0: i64, o1: i64, used: &i32) {
-    if op == OP_I2F or op == OP_F2I or op == OP_FNEG or op == OP_FSQRT or op == OP_PRINT_FLOAT {
+    if op == OP_I2F or op == OP_F2I or op == OP_FNEG or op == OP_FSQRT or op == OP_PRINT_FLOAT or op == OP_BITCAST {
         if o0 >= 0 { used[o0] = 1 }
     }
     if op == OP_FABS or op == OP_FEXP or op == OP_FLOG or op == OP_FSIN or op == OP_FCOS or op == OP_FTANH {
@@ -13519,7 +13566,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_STORE {
                 if o0 >= 0 { used[o0] = 1 }
             }
-            if op == OP_LOAD_MEM or op == OP_COPY {
+            if op == OP_LOAD_MEM or op == OP_COPY or op == OP_BITCAST {
                 if o0 >= 0 { used[o0] = 1 }
             }
             if op == OP_STORE_MEM {
@@ -14352,7 +14399,7 @@ fn lea_count_instr_uses(ins: &Instr) {
         lea_mark_use(ins.operand0)
         lea_mark_use(ins.operand1)
     }
-    if op == OP_FNEG or op == OP_FSQRT or op == OP_I2F or op == OP_F2I or op == OP_FABS or op == OP_FEXP or op == OP_FLOG or op == OP_FSIN or op == OP_FCOS or op == OP_FTANH or op == OP_PRINT_FLOAT {
+    if op == OP_FNEG or op == OP_FSQRT or op == OP_I2F or op == OP_F2I or op == OP_FABS or op == OP_FEXP or op == OP_FLOG or op == OP_FSIN or op == OP_FCOS or op == OP_FTANH or op == OP_PRINT_FLOAT or op == OP_BITCAST {
         lea_mark_use(ins.operand0)
     }
     if op == OP_TNEW1 or op == OP_TLEN or op == OP_TDATA or op == OP_TFREE { lea_mark_use(ins.operand0) }
@@ -14525,6 +14572,11 @@ fn lea_fuse(jfn: &JirFunction) {
     }
 }
 
+fn lea_fuse_and_slp(jfn: &JirFunction) {
+    lea_fuse(jfn)
+    slp_vectorize(jfn)
+}
+
 fn loop_promote_scan(jfn: &JirFunction) {
     // Reset promotion state
     g_promo_cnt = 0
@@ -14693,6 +14745,200 @@ fn promo_reg_for_slot(slot: i64) -> i32 {
 }
 
 // ============================================================
+// 8b. SLP (SUPERWORD-LEVEL PARALLELISM) VECTORIZATION
+// ============================================================
+// Detects pairs of identical f64 binary ops where both operand pairs
+// come from adjacent LOAD_MEM (same base, offset+8). Fuses them into
+// OP_F64X2_BIN which emits MOVUPD + ADDPD/SUBPD/MULPD/DIVPD.
+
+fn slp_init(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let id = jfn.blocks[bi].instrs[ii].id
+            if id >= 0 and id < 8192 {
+                g_val_op[id] = jfn.blocks[bi].instrs[ii].op
+                g_val_imm[id] = jfn.blocks[bi].instrs[ii].imm
+                g_slp_o0[id] = jfn.blocks[bi].instrs[ii].operand0
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+fn slp_resolve_load(v: i64) -> i64 {
+    if v >= 0 and v < 8192 {
+        let op = g_val_op[v]
+        if op == OP_BITCAST {
+            let src = g_slp_o0[v]
+            if src >= 0 and src < 8192 { ret src }
+        }
+    }
+    ret v
+}
+
+fn slp_adj(v1: i64, v2: i64) -> i64 {
+    if v1 < 0 or v1 >= 8192 or v2 < 0 or v2 >= 8192 { ret 0 }
+    let r1 = slp_resolve_load(v1)
+    let r2 = slp_resolve_load(v2)
+    if g_val_op[r1] != OP_LOAD_MEM { ret 0 }
+    if g_val_op[r2] != OP_LOAD_MEM { ret 0 }
+    if g_slp_o0[r1] != g_slp_o0[r2] { ret 0 }
+    if g_val_imm[r1] + 8 != g_val_imm[r2] { ret 0 }
+    ret 1
+}
+
+fn slp_val_use_cnt(jfn: &JirFunction, v: i64) -> i64 {
+    let cnt = 0
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            if jfn.blocks[bi].instrs[ii].dead == 0 {
+                if jfn.blocks[bi].instrs[ii].operand0 == v { cnt = cnt + 1 }
+                if jfn.blocks[bi].instrs[ii].operand1 == v { cnt = cnt + 1 }
+                if jfn.blocks[bi].instrs[ii].operand2 == v { cnt = cnt + 1 }
+                if jfn.blocks[bi].instrs[ii].operand3 == v { cnt = cnt + 1 }
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+    ret cnt
+}
+
+fn slp_mark_dead_if_unused(jfn: &JirFunction, v: i64, op: i64) {
+    if slp_val_use_cnt(jfn, v) != 0 { ret }
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            if jfn.blocks[bi].instrs[ii].id == v {
+                instr_set_dead(&jfn.blocks[bi].instrs[ii], 1)
+                if op == OP_I2F or op == OP_BITCAST {
+                    let src = g_slp_o0[v]
+                    slp_mark_single_use_dead(jfn, src)
+                }
+                ret
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+fn slp_mark_single_use_dead(jfn: &JirFunction, v: i64) {
+    if v < 0 or v >= 8192 { ret }
+    let op = g_val_op[v]
+    if op != OP_I2F and op != OP_LOAD_MEM and op != OP_CONST and op != OP_BITCAST { ret }
+    slp_mark_dead_if_unused(jfn, v, op)
+}
+
+fn slp_find_pair_check(jfn: &JirFunction, bi: i64, jj: i64, lo_b: i64, hi_b: i64) -> i64 {
+    let adj_b = slp_adj(lo_b, hi_b)
+    if adj_b == 0 and lo_b != hi_b {
+        // Also broadcast-match when both are OP_CONST with same bit-pattern (e.g. scalar * inv)
+        if g_val_op[lo_b] != OP_CONST { ret 0 - 1 }
+        if g_val_op[hi_b] != OP_CONST { ret 0 - 1 }
+        if g_val_imm[lo_b] != g_val_imm[hi_b] { ret 0 - 1 }
+    }
+    if adj_b == 0 { g_slp_bcast = 1 } else { g_slp_bcast = 0 }
+    ret jj
+}
+
+fn slp_find_pair(jfn: &JirFunction, bi: i64, ii: i64, op1: i64, lo_a: i64, lo_b: i64) -> i64 {
+    let icnt = jfn.blocks[bi].instr_cnt
+    let jj = ii + 1
+    loop jj < icnt and jj < ii + 9 {
+        let jop = jfn.blocks[bi].instrs[jj].op
+        let is_unsafe = jop == OP_STORE_MEM or jop == OP_CALL
+        if is_unsafe == 0 {
+            is_unsafe = jop == OP_CALL_IND or jop == OP_SYSCALL or jop == OP_TAIL_CALL
+        }
+        if is_unsafe == 1 { ret 0 - 1 }
+        if jop == op1 and jfn.blocks[bi].instrs[jj].dead == 0 {
+            let hi_a = jfn.blocks[bi].instrs[jj].operand0
+            let hi_b = jfn.blocks[bi].instrs[jj].operand1
+            if slp_adj(lo_a, hi_a) == 0 { ret 0 - 1 }
+            ret slp_find_pair_check(jfn, bi, jj, lo_b, hi_b)
+        }
+        jj = jj + 1
+    }
+    ret 0 - 1
+}
+
+fn slp_emit_pair(jfn: &JirFunction, bi: i64, ii: i64, jj: i64, op1: i64) {
+    let lo_a = jfn.blocks[bi].instrs[ii].operand0
+    let lo_b = jfn.blocks[bi].instrs[ii].operand1
+    let bcast_b = g_slp_bcast
+    let fbin_op = 0
+    if op1 == OP_FADD { fbin_op = 0x58 }
+    if op1 == OP_FSUB { fbin_op = 0x5C }
+    if op1 == OP_FMUL { fbin_op = 0x59 }
+    if op1 == OP_FDIV { fbin_op = 0x5E }
+    let hi_result_id = jfn.blocks[bi].instrs[jj].id
+    let r_lo_a = slp_resolve_load(lo_a)
+    let base_a = g_slp_o0[r_lo_a]
+    let off_a = g_val_imm[r_lo_a]
+    jfn.blocks[bi].instrs[ii].op = OP_F64X2_BIN
+    jfn.blocks[bi].instrs[ii].operand0 = base_a
+    jfn.blocks[bi].instrs[ii].operand2 = off_a
+    jfn.blocks[bi].instrs[ii].itype = hi_result_id
+    jfn.blocks[bi].instrs[ii].imm = fbin_op
+    if bcast_b == 1 {
+        jfn.blocks[bi].instrs[ii].operand1 = lo_b
+        jfn.blocks[bi].instrs[ii].operand3 = 0 - 1
+    }
+    if bcast_b == 0 {
+        let r_lo_b = slp_resolve_load(lo_b)
+        jfn.blocks[bi].instrs[ii].operand1 = g_slp_o0[r_lo_b]
+        jfn.blocks[bi].instrs[ii].operand3 = g_val_imm[r_lo_b]
+    }
+    let hi_a = jfn.blocks[bi].instrs[jj].operand0
+    let hi_b = jfn.blocks[bi].instrs[jj].operand1
+    instr_set_dead(&jfn.blocks[bi].instrs[jj], 1)
+    slp_mark_single_use_dead(jfn, lo_a)
+    slp_mark_single_use_dead(jfn, hi_a)
+    if bcast_b == 0 {
+        slp_mark_single_use_dead(jfn, lo_b)
+        slp_mark_single_use_dead(jfn, hi_b)
+    }
+    if bcast_b == 1 {
+        // hi_b's only consumer was the dead hi op; kill it if now unused
+        slp_mark_single_use_dead(jfn, hi_b)
+    }
+}
+
+fn slp_vectorize(jfn: &JirFunction) {
+    slp_init(jfn)
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let icnt = jfn.blocks[bi].instr_cnt
+        let ii = 0
+        loop ii < icnt {
+            let op1 = jfn.blocks[bi].instrs[ii].op
+            let is_fb = op1 == OP_FADD or op1 == OP_FSUB or op1 == OP_FMUL or op1 == OP_FDIV
+            let skip = 1
+            if is_fb == 1 and jfn.blocks[bi].instrs[ii].dead == 0 { skip = 0 }
+            if skip == 0 {
+                let lo_a = jfn.blocks[bi].instrs[ii].operand0
+                let lo_b = jfn.blocks[bi].instrs[ii].operand1
+                let jj = slp_find_pair(jfn, bi, ii, op1, lo_a, lo_b)
+                if jj >= 0 {
+                    slp_emit_pair(jfn, bi, ii, jj, op1)
+                    ii = jj + 1
+                    skip = 0 - 1
+                }
+            }
+            if skip != 0 - 1 { ii = ii + 1 }
+        }
+        bi = bi + 1
+    }
+}
+
+// ============================================================
 // 8a. LINEAR-SCAN REGISTER PRE-ASSIGNMENT
 // ============================================================
 
@@ -14702,6 +14948,7 @@ fn ls_init_globals() {
     g_ls_active = alloc_pages(1) as &i64
     g_ls_free = alloc_pages(1) as &i64
     g_spill_free = alloc_pages(1) as &i64
+    g_slp_o0 = alloc_pages(16) as &i64
 }
 
 fn ls_init_free(pinned_cnt: i64) {
@@ -16435,7 +16682,7 @@ fn lower_store_mem_sib(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 
 }
 
 fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    if ins.op == OP_COPY {
+    if ins.op == OP_COPY or ins.op == OP_BITCAST {
         let src = get_or_load(ctx.ra, out, pos, ins.operand0)
         consume_use(ctx, ins.operand0)
         let dst = regalloc_alloc_hint(ctx.ra, out, pos, ins.id, src)
@@ -19015,6 +19262,103 @@ fn emit_movsd_store_spill(out: &i8, pos: &i64, xmm: i64, spill_off: i64) {
     emit_i32_le(out, pos, neg)
 }
 
+fn emit_movhlps(out: &i8, pos: &i64, dst_xmm: i64, src_xmm: i64) {
+    // MOVHLPS dst, src: 0F 12 /r — moves high64 of src to low64 of dst
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x12)
+    emit_byte(out, pos, 0xC0 + dst_xmm * 8 + src_xmm)
+}
+
+fn emit_movlhps(out: &i8, pos: &i64, dst_xmm: i64, src_xmm: i64) {
+    // MOVLHPS dst, src: 0F 16 /r — moves low64 of src to high64 of dst
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x16)
+    emit_byte(out, pos, 0xC0 + dst_xmm * 8 + src_xmm)
+}
+
+fn emit_movupd_xmm_mem(out: &i8, pos: &i64, dst_xmm: i64, base: i64, disp: i64) {
+    // MOVUPD xmm, [base+disp]: 66 [REX.B] 0F 10 ModRM [disp32]
+    let base_hi = base / 8
+    let base3 = mod8(base)
+    let dst3 = dst_xmm
+    emit_byte(out, pos, 0x66)
+    if base_hi != 0 { emit_byte(out, pos, 0x41) }
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x10)
+    if base3 == 4 {
+        emit_byte(out, pos, 0x80 + dst3 * 8 + 0x04)
+        emit_byte(out, pos, 0x20 + base3)
+        emit_i32_le(out, pos, disp)
+    } else {
+        emit_byte(out, pos, 0x80 + dst3 * 8 + base3)
+        emit_i32_le(out, pos, disp)
+    }
+}
+
+fn sse_pack_xmm(ctx: &LowerCtx, out: &i8, pos: &i64, xmm_dst: i64, lo_id: i64, hi_id: i64) {
+    // Pack lo_id into xmm_dst low lane, hi_id into xmm_dst high lane.
+    // If lo and hi come from adjacent LOAD_MEM, use single MOVUPD.
+    let use_movupd = 0
+    if lo_id >= 0 and lo_id < 8192 and hi_id >= 0 and hi_id < 8192 {
+        if slp_adj(lo_id, hi_id) == 1 {
+            use_movupd = 1
+        }
+    }
+    if use_movupd == 1 {
+        let base_v = g_slp_o0[lo_id]
+        let base_r = get_or_load(ctx.ra, out, pos, base_v)
+        let offset = g_val_imm[lo_id]
+        emit_movupd_xmm_mem(out, pos, xmm_dst, base_r, offset)
+    } else {
+        let tmp_xmm = xmm_dst + 1
+        f64_load_op(ctx, out, pos, xmm_dst, lo_id)
+        f64_load_op(ctx, out, pos, tmp_xmm, hi_id)
+        emit_movlhps(out, pos, xmm_dst, tmp_xmm)
+        if xmm_dst == 0 { g_xmm0_id = -1 }
+        if xmm_dst == 1 { g_xmm1_id = -1 }
+    }
+}
+
+fn lower_f64x2_bin(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    // Phase 3 format: operand0=base_a, operand1=base_b (or scalar_b if bcast)
+    // operand2=off_a, operand3=off_b (-1 = broadcast)
+    let base_a = ins.operand0; let base_b = ins.operand1
+    let off_a = ins.operand2; let off_b = ins.operand3
+    let fbin_op = ins.imm
+    // Load xmm0 with [base_a + off_a] (128-bit pair)
+    let ra = get_or_load(ctx.ra, out, pos, base_a)
+    emit_movupd_xmm_mem(out, pos, 0, ra, off_a)
+    g_xmm0_id = -1
+    consume_use(ctx, base_a)
+    // Load xmm1
+    if off_b == 0 - 1 {
+        // broadcast: load scalar base_b into xmm1, UNPCKLPD xmm1, xmm1
+        f64_load_op(ctx, out, pos, 1, base_b)
+        emit_byte(out, pos, 0x66)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x14)
+        emit_byte(out, pos, 0xC9)
+        g_xmm1_id = -1
+        consume_use(ctx, base_b)
+    }
+    if off_b != 0 - 1 {
+        let rb = get_or_load(ctx.ra, out, pos, base_b)
+        emit_movupd_xmm_mem(out, pos, 1, rb, off_b)
+        g_xmm1_id = -1
+        consume_use(ctx, base_b)
+    }
+    emit_sse_rr(out, pos, 0x66, fbin_op, 0, 1)
+    g_xmm0_id = -1; g_xmm1_id = -1
+    let lo_dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_movq_xmm_to_gpr(out, pos, lo_dst, 0)
+    g_xmm0_id = ins.id
+    emit_movhlps(out, pos, 0, 0)
+    g_xmm0_id = -1
+    let hi_dst = regalloc_alloc(ctx.ra, out, pos, ins.itype)
+    emit_movq_xmm_to_gpr(out, pos, hi_dst, 0)
+    ret 1
+}
+
 fn emit_sse_rr(out: &i8, pos: &i64, prefix: i64, opcode: i64, dst_xmm: i64, src_xmm: i64) {
     // prefix 0F opcode ModRM(11, dst, src)
     emit_byte(out, pos, prefix)
@@ -19180,6 +19524,9 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         g_xmm0_id = ins.id
         ret 1
     }
+
+    // SLP-fused packed f64×2 binary op
+    if op == OP_F64X2_BIN { ret lower_f64x2_bin(ins, ctx, out, pos) }
 
     // Unary float ops: FNEG, FSQRT
     if op == OP_FNEG {
@@ -22177,6 +22524,76 @@ fn live_compile_compound_assign(stab: &StructTable, src: &i8, jfn: &JirFunction,
     ret cur
 }
 
+fn live_compile_for(stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -> i64 {
+    let toks0 = g_dbg_toks_init
+    g_main_pos = g_main_pos + 1
+    let for_var_s = tok_str_start_at(toks0, g_main_pos)
+    let for_var_l = tok_str_len_at(toks0, g_main_pos)
+    g_main_pos = g_main_pos + 1
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_IDENT { g_main_pos = g_main_pos + 1 }
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_IDENT { g_main_pos = g_main_pos + 1 }
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_LPAREN { g_main_pos = g_main_pos + 1 }
+    let for_first = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+    let for_limit = for_first
+    let for_zero = emit_const(jfn, cur, TYPE_I64, 0)
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_COMMA {
+        g_main_pos = g_main_pos + 1
+        for_limit = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+        for_zero = for_first
+    }
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_RPAREN { g_main_pos = g_main_pos + 1 }
+    let for_slot = bind_name(jfn, for_var_s, for_var_l, 0)
+    let for_st_init = Instr{}
+    for_st_init.op = OP_STORE
+    for_st_init.operand0 = for_zero
+    for_st_init.operand1 = for_slot
+    emit(jfn, cur, &for_st_init)
+    let for_lim_slot = alloc_slot(jfn)
+    let for_st_lim = Instr{}
+    for_st_lim.op = OP_STORE
+    for_st_lim.operand0 = for_limit
+    for_st_lim.operand1 = for_lim_slot
+    emit(jfn, cur, &for_st_lim)
+    let for_start = create_block_live(jfn)
+    emit_jmp(jfn, cur, for_start)
+    let for_body = create_block_live(jfn)
+    let for_inc_bb = create_block_live(jfn)
+    let for_merge = create_block_live(jfn)
+    let for_saved_ctrl = g_loop_ctrl
+    let for_saved_head = g_loop_head
+    g_loop_ctrl = for_merge
+    g_loop_head = for_inc_bb
+    let for_ld_cond = Instr{}
+    for_ld_cond.op = OP_LOAD
+    for_ld_cond.operand0 = for_slot
+    let for_cur_val = emit(jfn, for_start, &for_ld_cond)
+    let for_ld_lim = Instr{}
+    for_ld_lim.op = OP_LOAD
+    for_ld_lim.operand0 = for_lim_slot
+    let for_limit_r = emit(jfn, for_start, &for_ld_lim)
+    let for_cmp = emit_binop(jfn, for_start, OP_CMP_LT, for_cur_val, for_limit_r)
+    emit_br(jfn, for_start, for_cmp, for_body, for_merge)
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_LBRACE { g_main_pos = g_main_pos + 1 }
+    let for_body_end = live_compile_block(toks0, stab, src, jfn, for_body)
+    g_loop_ctrl = for_saved_ctrl
+    g_loop_head = for_saved_head
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_RBRACE { g_main_pos = g_main_pos + 1 }
+    emit_jmp(jfn, for_body_end, for_inc_bb)
+    let for_ld_inc = Instr{}
+    for_ld_inc.op = OP_LOAD
+    for_ld_inc.operand0 = for_slot
+    let for_inc_val = emit(jfn, for_inc_bb, &for_ld_inc)
+    let for_one = emit_const(jfn, for_inc_bb, TYPE_I64, 1)
+    let for_next = emit_binop(jfn, for_inc_bb, OP_ADD, for_inc_val, for_one)
+    let for_st_inc = Instr{}
+    for_st_inc.op = OP_STORE
+    for_st_inc.operand0 = for_next
+    for_st_inc.operand1 = for_slot
+    emit(jfn, for_inc_bb, &for_st_inc)
+    emit_jmp(jfn, for_inc_bb, for_start)
+    ret for_merge
+}
+
 fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let cur = bb
     let saved_var_cnt = jfn.var_cnt
@@ -22204,86 +22621,7 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                     } else if t == TOK_LOOP {
                         cur = live_compile_loop(toks0, stab, src, jfn, cur)
                     } else if t == TOK_FOR {
-                        // for i in range(n) { body }
-                        // Desugars to: let i = 0; loop i < n { body; i = i + 1 }
-                        g_main_pos = g_main_pos + 1
-                        // Get loop variable name
-                        let for_var_s = tok_str_start_at(toks0, g_main_pos)
-                        let for_var_l = tok_str_len_at(toks0, g_main_pos)
-                        g_main_pos = g_main_pos + 1
-                        // Skip 'in'
-                        if tok_type_at_raw(toks0, g_main_pos) == TOK_IDENT { g_main_pos = g_main_pos + 1 }
-                        // Skip 'range' and '('
-                        if tok_type_at_raw(toks0, g_main_pos) == TOK_IDENT { g_main_pos = g_main_pos + 1 }
-                        if tok_type_at_raw(toks0, g_main_pos) == TOK_LPAREN { g_main_pos = g_main_pos + 1 }
-                        // Codegen first expression (could be limit or start)
-                        let for_first = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
-                        // Check for range(start, end) two-arg form
-                        let for_limit = for_first
-                        let for_zero = emit_const(jfn, cur, TYPE_I64, 0)
-                        if tok_type_at_raw(toks0, g_main_pos) == TOK_COMMA {
-                            g_main_pos = g_main_pos + 1
-                            for_limit = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
-                            for_zero = for_first
-                        }
-                        // Skip ')'
-                        if tok_type_at_raw(toks0, g_main_pos) == TOK_RPAREN { g_main_pos = g_main_pos + 1 }
-                        let for_slot = bind_name(jfn, for_var_s, for_var_l, 0)
-                        let for_st_init = Instr{}
-                        for_st_init.op = OP_STORE
-                        for_st_init.operand0 = for_zero
-                        for_st_init.operand1 = for_slot
-                        emit(jfn, cur, &for_st_init)
-                        // Spill limit to stack slot so it survives loop body calls
-                        let for_lim_slot = alloc_slot(jfn)
-                        let for_st_lim = Instr{}
-                        for_st_lim.op = OP_STORE
-                        for_st_lim.operand0 = for_limit
-                        for_st_lim.operand1 = for_lim_slot
-                        emit(jfn, cur, &for_st_lim)
-                        // Build loop: cond block, body block, inc block, merge block
-                        let for_start = create_block_live(jfn)
-                        emit_jmp(jfn, cur, for_start)
-                        let for_body = create_block_live(jfn)
-                        let for_inc_bb = create_block_live(jfn)
-                        let for_merge = create_block_live(jfn)
-                        let for_saved_ctrl = g_loop_ctrl
-                        let for_saved_head = g_loop_head
-                        g_loop_ctrl = for_merge
-                        g_loop_head = for_inc_bb
-                        // Cond: i < limit (reload limit from stack)
-                        let for_ld_cond = Instr{}
-                        for_ld_cond.op = OP_LOAD
-                        for_ld_cond.operand0 = for_slot
-                        let for_cur_val = emit(jfn, for_start, &for_ld_cond)
-                        let for_ld_lim = Instr{}
-                        for_ld_lim.op = OP_LOAD
-                        for_ld_lim.operand0 = for_lim_slot
-                        let for_limit_r = emit(jfn, for_start, &for_ld_lim)
-                        let for_cmp = emit_binop(jfn, for_start, OP_CMP_LT, for_cur_val, for_limit_r)
-                        emit_br(jfn, for_start, for_cmp, for_body, for_merge)
-                        // Body
-                        if tok_type_at_raw(toks0, g_main_pos) == TOK_LBRACE { g_main_pos = g_main_pos + 1 }
-                        let for_body_end = live_compile_block(toks0, stab, src, jfn, for_body)
-                        g_loop_ctrl = for_saved_ctrl
-                        g_loop_head = for_saved_head
-                        if tok_type_at_raw(toks0, g_main_pos) == TOK_RBRACE { g_main_pos = g_main_pos + 1 }
-                        // Body end jumps to increment block
-                        emit_jmp(jfn, for_body_end, for_inc_bb)
-                        // Increment block: i = i + 1, then jump to cond
-                        let for_ld_inc = Instr{}
-                        for_ld_inc.op = OP_LOAD
-                        for_ld_inc.operand0 = for_slot
-                        let for_inc_val = emit(jfn, for_inc_bb, &for_ld_inc)
-                        let for_one = emit_const(jfn, for_inc_bb, TYPE_I64, 1)
-                        let for_next = emit_binop(jfn, for_inc_bb, OP_ADD, for_inc_val, for_one)
-                        let for_st_inc = Instr{}
-                        for_st_inc.op = OP_STORE
-                        for_st_inc.operand0 = for_next
-                        for_st_inc.operand1 = for_slot
-                        emit(jfn, for_inc_bb, &for_st_inc)
-                        emit_jmp(jfn, for_inc_bb, for_start)
-                        cur = for_merge
+                        cur = live_compile_for(stab, src, jfn, cur)
                     } else if t == TOK_LET {
                         cur = live_compile_let_stmt(toks0, stab, src, jfn, cur)
                     } else if t == TOK_RET {
@@ -23218,7 +23556,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
     if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_STORE or op == OP_PRINT_INT {
         mark_use(ctx, o0)
     }
-    if op == OP_LOAD_MEM or op == OP_COPY {
+    if op == OP_LOAD_MEM or op == OP_COPY or op == OP_BITCAST {
         mark_use(ctx, o0)
     }
     if op == OP_STORE_MEM {
@@ -23275,6 +23613,11 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
     }
     if op == OP_FADD or op == OP_FSUB or op == OP_FMUL or op == OP_FDIV or op == OP_TNEW2 or op == OP_TGET or op == OP_TFILL or op == OP_TSHAPE {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
+    }
+    if op == OP_F64X2_BIN {
+        // Phase 3: operand0=base_a, operand1=base_b (ptr value_ids); o2/o3 are byte offsets
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
@@ -23429,6 +23772,14 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
                 }
                 if g_val_first_def[vid] == -1 {
                     g_val_first_def[vid] = bi * 128 + ii
+                }
+                if jfn.blocks[bi].instrs[ii].op == OP_F64X2_BIN {
+                    let hi_vid = jfn.blocks[bi].instrs[ii].itype
+                    if hi_vid >= 0 and hi_vid < 8192 {
+                        if g_val_first_def[hi_vid] == -1 {
+                            g_val_first_def[hi_vid] = bi * 128 + ii
+                        }
+                    }
                 }
             }
             ii = ii + 1
@@ -24277,7 +24628,7 @@ fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx
     tail_call_opt(jfn)
     peephole(jfn)
     dce(jfn)
-    lea_fuse(jfn)
+    lea_fuse_and_slp(jfn)
     lower_fn(jfn, ctx, g_code_buf, &g_lam_code_len, 0)
     compile_lambda_fixups(ctx)
 }
@@ -25368,7 +25719,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 tail_call_opt(jfn)
                 peephole(jfn)
                 dce(jfn)
-                lea_fuse(jfn)
+                lea_fuse_and_slp(jfn)
                 lower_fn(jfn, ctx, code_buf, &code_len, is_main)
                 // Collect fixups
                 let ci = 0
