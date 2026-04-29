@@ -45,7 +45,7 @@ would close it further. SIMD is the remaining blocker for raytracer (now 2.1x C)
 
 ---
 
-### 2. No SIMD / Auto-Vectorization
+### 2. No SIMD / Auto-Vectorization  ✅ DONE (SLP Phase 1+2+3, April 2026)
 
 **Impact: raytracer 3.5x gap (entire gap is SIMD)**
 
