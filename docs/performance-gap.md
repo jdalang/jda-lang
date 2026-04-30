@@ -80,7 +80,7 @@ reflection vectors — all trivially vectorizable. Jda emits one scalar
 
 ---
 
-### 3. No Inlining of Hot Callees  🚧 Phase 1a+1b+2 done — OP_DIV fixed, OP_MUL guarded
+### 3. No Inlining of Hot Callees  ✅ DONE (splicer active, all ops inlined, April 2026)
 
 **Impact: 5x upper bound measured on accessor-heavy code (April 2026)**
 
@@ -96,13 +96,12 @@ clobbering RAX/RDX in mixed-call contexts). OP_MUL remains guarded by
 `is_mul_setter` check (regalloc drift bug not yet root-caused).
 
 **Status (April 2026):**
-- ✅ Task A: OP_DIV inlining fixed — `has_div` guard at `base+13`, guard
-  via `inline_block_has_non_inline_call`. 393/393 tests pass, sh2==sh3.
-- Task B: Fix OP_MUL regalloc drift — root cause still open; currently
-  guarded by `is_mul_setter` (only inline MUL-setters into all-setter blocks).
-- Task C: Benchmark OP_DIV inlining impact — impact likely small since
-  most hot-path divisions are pow2 (→ SHR via peephole). Main win was
-  unblocking the splicer for future non-pow2 division helpers.
+- ✅ Task A: OP_DIV/OP_MOD inlining — `has_div` guard at `base+13`, uses
+  `inline_block_has_non_inline_call` (IDIV clobbers RAX/RDX). 393/393 pass.
+- ✅ Task B: OP_MUL — `is_mul_setter` guard removed; IMUL (3-operand) does not
+  clobber RDX. 393/393 pass, sh2==sh3 (2,076,476 bytes).
+- ✅ Task C: Splicer active for all arithmetic ops. Hot accessors in sudoku/btree/
+  regex inline freely. Dead-code guards removed; alignment-safe.
 
 **Files:** `inline_capture_meta`, `inline_splice_block`, `inline_op_arith_ok`
 (bootstrap/stage1/jda1.jda ~13758–14270)
