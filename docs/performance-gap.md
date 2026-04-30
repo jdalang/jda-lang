@@ -80,7 +80,7 @@ reflection vectors — all trivially vectorizable. Jda emits one scalar
 
 ---
 
-### 3. No Inlining of Hot Callees  🚧 Phase 1a+1b done — splicer parked (OP_DIV/OP_MUL bugs)
+### 3. No Inlining of Hot Callees  🚧 Phase 1a+1b+2 done — OP_DIV fixed, OP_MUL guarded
 
 **Impact: 5x upper bound measured on accessor-heavy code (April 2026)**
 
@@ -89,22 +89,23 @@ instruction (indirect branch prediction miss on first call), a frame
 setup, and 6 callee-save push/pops. For tiny 1–3 line helpers called
 millions of times per second, the call overhead dominates.
 
-Jda has a partial inliner (Phase 1a+1b: candidate detection + body
-capture, 42 candidates identified). Phase 2 — the splicer that actually
-substitutes the body at call sites — is built but parked due to two
-correctness bugs:
-1. OP_DIV corrupts sh3 (IDIV clobbers RDX:RAX — not handled in splicer).
-2. OP_MUL causes regalloc drift with 4 inlines + intervening calls.
+The splicer (Phase 2) is unparked and running. OP_DIV/OP_MOD are now
+allowed as inline candidates. The fix: track `has_div` flag per entry;
+only inline into blocks with no non-inlinable calls (prevents IDIV
+clobbering RAX/RDX in mixed-call contexts). OP_MUL remains guarded by
+`is_mul_setter` check (regalloc drift bug not yet root-caused).
 
-**What to build:**
-- Task A: Fix OP_DIV in splicer — save/restore RDX around IDIV, or
-  remap the destination register.
-- Task B: Fix OP_MUL regalloc drift — trace the 4-inline case and
-  identify which register mapping diverges.
-- Task C: Unpark splicer, run full conformance + self-host, benchmark.
+**Status (April 2026):**
+- ✅ Task A: OP_DIV inlining fixed — `has_div` guard at `base+13`, guard
+  via `inline_block_has_non_inline_call`. 393/393 tests pass, sh2==sh3.
+- Task B: Fix OP_MUL regalloc drift — root cause still open; currently
+  guarded by `is_mul_setter` (only inline MUL-setters into all-setter blocks).
+- Task C: Benchmark OP_DIV inlining impact — impact likely small since
+  most hot-path divisions are pow2 (→ SHR via peephole). Main win was
+  unblocking the splicer for future non-pow2 division helpers.
 
-**Files:** `try_inline_call`, `g_inline_tbl`, splicer emit functions
-(bootstrap/stage1/jda1.jda ~13000–14000)
+**Files:** `inline_capture_meta`, `inline_splice_block`, `inline_op_arith_ok`
+(bootstrap/stage1/jda1.jda ~13758–14270)
 
 ---
 

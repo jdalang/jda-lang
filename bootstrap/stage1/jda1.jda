@@ -13760,7 +13760,8 @@ fn inline_op_arith_ok(op: i64) -> i64 {
     if op == OP_ADD { ret 1 }
     if op == OP_SUB { ret 1 }
     if op == OP_MUL { ret 1 }
-    // OP_DIV excluded: IDIV implicit RDX:RAX regalloc causes sh3 corruption.
+    if op == OP_DIV { ret 1 }
+    if op == OP_MOD { ret 1 }
     ret 0
 }
 
@@ -13882,6 +13883,7 @@ fn inline_capture_meta(jfn: &JirFunction) {
     let saw_ret = 0
     let cap_has_sm = 0
     let cap_has_mul = 0
+    let cap_has_div = 0
     let ii = 0
     loop ii < jfn.blocks[bi].instr_cnt {
         if saw_ret == 0 and jfn.blocks[bi].instrs[ii].dead == 0 {
@@ -13906,11 +13908,14 @@ fn inline_capture_meta(jfn: &JirFunction) {
                 op_cnt = op_cnt + 1
                 if op == OP_STORE_MEM { cap_has_sm = 1 }
                 if op == OP_MUL { cap_has_mul = 1 }
+                if op == OP_DIV { cap_has_div = 1 }
+                if op == OP_MOD { cap_has_div = 1 }
             }
         }
         ii = ii + 1
     }
     g_inline_tbl[base + 12] = cap_has_sm * cap_has_mul
+    g_inline_tbl[base + 13] = cap_has_div
     g_inline_tbl[base + 0] = fi
     g_inline_tbl[base + 1] = jfn.param_cnt
     g_inline_tbl[base + 2] = op_cnt
@@ -14215,16 +14220,9 @@ fn inline_block_has_non_inline_call(orig_cnt: i64) -> i64 {
 }
 
 fn inline_splice_block(jfn: &JirFunction, bi: i64) {
-    // PARKED: splicer infrastructure is here (phases 1a/1b captured bodies), but
-    // unparking exposes two bugs not yet debugged:
-    //   1. OP_DIV: IDIV's implicit RDX:RAX regalloc not handled → corrupts sh3.
-    //      Mitigation: DIV excluded from inline_op_arith_ok.
-    //   2. OP_MUL: fp_from_int(n) = n * 10000 inlines cleanly into small tests,
-    //      but the full fixedpoint_basic sequence (4 inlines + intervening
-    //      non-inlined calls + syscalls) produces a bad code path that leaves
-    //      `out` pointer invalid at the final syscall — ~5-line output becomes
-    //      4 lines with one blank. Root cause TBD; likely regalloc state drift.
-    // OP_MUL and OP_DIV excluded from arith_ok; OP_LOAD_MEM/OP_STORE_MEM added to mem_ok.
+    // Splicer: inline single-block candidate calls in-place.
+    // OP_DIV/OP_MOD now allowed — lower_instr_arith evicts RAX/RDX before IDIV.
+    // OP_MUL guarded by is_mul_setter check for mixed-call blocks.
     let orig_cnt = jfn.blocks[bi].instr_cnt
     if orig_cnt == 0 { ret }
     if orig_cnt > 2000 { ret }
@@ -14246,9 +14244,13 @@ fn inline_splice_block(jfn: &JirFunction, bi: i64) {
                     let call_ac = g_inline_tbl[k + 7]
                     let callee_pc = g_inline_tbl[16 + slot * 256 + 1]
                     let is_mul_setter = g_inline_tbl[16 + slot * 256 + 12]
+                    let is_div = g_inline_tbl[16 + slot * 256 + 13]
                     let do_inline = 1
                     if is_mul_setter == 1 {
                         if inline_block_has_non_mul_setter(orig_cnt) == 1 { do_inline = 0 }
+                    }
+                    if is_div == 1 {
+                        if inline_block_has_non_inline_call(orig_cnt) == 1 { do_inline = 0 }
                     }
                     if do_inline == 1 {
                         if call_ac >= callee_pc {
