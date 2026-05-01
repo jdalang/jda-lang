@@ -266,6 +266,7 @@ const OP_STORE_MEM_SIB = 98
 const OP_COPY          = 99
 const OP_F64X2_BIN     = 100  // SLP-fused packed f64×2 binary op (ADDPD/SUBPD/MULPD/DIVPD)
 const OP_BITCAST       = 101  // i64→f64 bitwise reinterpret (no instruction; enables SLP on f64 memory)
+const OP_I2FX2_BIN     = 102  // SLP-fused I2F pair: CVTSI2SD×2 + MOVLHPS + packed fbin (broadcast)
 
 // x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -14914,7 +14915,7 @@ fn slp_init(jfn: &JirFunction) {
 fn slp_resolve_load(v: i64) -> i64 {
     if v >= 0 and v < 8192 {
         let op = g_val_op[v]
-        if op == OP_BITCAST {
+        if op == OP_BITCAST or op == OP_I2F {
             let src = g_slp_o0[v]
             if src >= 0 and src < 8192 { ret src }
         }
@@ -15025,7 +15026,10 @@ fn slp_emit_pair(jfn: &JirFunction, bi: i64, ii: i64, jj: i64, op1: i64) {
     let r_lo_a = slp_resolve_load(lo_a)
     let base_a = g_slp_o0[r_lo_a]
     let off_a = g_val_imm[r_lo_a]
-    jfn.blocks[bi].instrs[ii].op = OP_F64X2_BIN
+    let is_i2f_bcast = 0
+    if g_val_op[lo_a] == OP_I2F and bcast_b == 1 { is_i2f_bcast = 1 }
+    if is_i2f_bcast == 0 { jfn.blocks[bi].instrs[ii].op = OP_F64X2_BIN }
+    if is_i2f_bcast == 1 { jfn.blocks[bi].instrs[ii].op = OP_I2FX2_BIN }
     jfn.blocks[bi].instrs[ii].operand0 = base_a
     jfn.blocks[bi].instrs[ii].operand2 = off_a
     jfn.blocks[bi].instrs[ii].itype = hi_result_id
@@ -19440,6 +19444,57 @@ fn emit_movupd_xmm_mem(out: &i8, pos: &i64, dst_xmm: i64, base: i64, disp: i64) 
     }
 }
 
+fn emit_cvtsi2sd_xmm_mem(out: &i8, pos: &i64, dst_xmm: i64, base: i64, disp: i64) {
+    // CVTSI2SD xmm, [base+disp]: F2 [REX.W+REX.B?] 0F 2A ModRM [SIB?] disp32
+    let base3 = mod8(base)
+    emit_byte(out, pos, 0xF2)
+    if base >= 8 { emit_byte(out, pos, 0x49) }
+    if base < 8 { emit_byte(out, pos, 0x48) }
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x2A)
+    if base3 == 4 {
+        emit_byte(out, pos, 0x80 + dst_xmm * 8 + 0x04)
+        emit_byte(out, pos, 0x24)
+        emit_i32_le(out, pos, disp)
+    } else {
+        emit_byte(out, pos, 0x80 + dst_xmm * 8 + base3)
+        emit_i32_le(out, pos, disp)
+    }
+}
+
+fn lower_i2fx2_bin(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    // I2F broadcast pair: CVTSI2SD xmm0,[base+off]; CVTSI2SD xmm1,[base+off+8];
+    // MOVLHPS xmm0,xmm1; broadcast scalar→xmm1; MULPD/ADDPD/etc xmm0,xmm1
+    let base_a = ins.operand0; let off_a = ins.operand2; let fbin_op = ins.imm
+    let ra = get_or_load(ctx.ra, out, pos, base_a)
+    emit_cvtsi2sd_xmm_mem(out, pos, 0, ra, off_a)
+    emit_cvtsi2sd_xmm_mem(out, pos, 1, ra, off_a + 8)
+    consume_use(ctx, base_a)
+    // MOVLHPS xmm0, xmm1: 0F 16 C1  — moves xmm1[lo] into xmm0[hi]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x16)
+    emit_byte(out, pos, 0xC1)
+    g_xmm0_id = -1; g_xmm1_id = -1
+    // broadcast scalar const into xmm1: load → UNPCKLPD xmm1,xmm1
+    f64_load_op(ctx, out, pos, 1, ins.operand1)
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x14)
+    emit_byte(out, pos, 0xC9)
+    g_xmm1_id = -1
+    consume_use(ctx, ins.operand1)
+    emit_sse_rr(out, pos, 0x66, fbin_op, 0, 1)
+    g_xmm0_id = -1; g_xmm1_id = -1
+    let lo_dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_movq_xmm_to_gpr(out, pos, lo_dst, 0)
+    g_xmm0_id = ins.id
+    emit_movhlps(out, pos, 0, 0)
+    g_xmm0_id = -1
+    let hi_dst = regalloc_alloc(ctx.ra, out, pos, ins.itype)
+    emit_movq_xmm_to_gpr(out, pos, hi_dst, 0)
+    ret 1
+}
+
 fn sse_pack_xmm(ctx: &LowerCtx, out: &i8, pos: &i64, xmm_dst: i64, lo_id: i64, hi_id: i64) {
     // Pack lo_id into xmm_dst low lane, hi_id into xmm_dst high lane.
     // If lo and hi come from adjacent LOAD_MEM, use single MOVUPD.
@@ -19672,6 +19727,7 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 
     // SLP-fused packed f64×2 binary op
     if op == OP_F64X2_BIN { ret lower_f64x2_bin(ins, ctx, out, pos) }
+    if op == OP_I2FX2_BIN { ret lower_i2fx2_bin(ins, ctx, out, pos) }
 
     // Unary float ops: FNEG, FSQRT
     if op == OP_FNEG {
@@ -23761,8 +23817,8 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
-    if op == OP_F64X2_BIN {
-        // Phase 3: operand0=base_a, operand1=base_b (ptr value_ids); o2/o3 are byte offsets
+    if op == OP_F64X2_BIN or op == OP_I2FX2_BIN {
+        // operand0=base_a (ptr value_id); operand1=base_b or const; o2/o3 are byte offsets
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
@@ -23918,7 +23974,7 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
                 if g_val_first_def[vid] == -1 {
                     g_val_first_def[vid] = bi * 128 + ii
                 }
-                if jfn.blocks[bi].instrs[ii].op == OP_F64X2_BIN {
+                if jfn.blocks[bi].instrs[ii].op == OP_F64X2_BIN or jfn.blocks[bi].instrs[ii].op == OP_I2FX2_BIN {
                     let hi_vid = jfn.blocks[bi].instrs[ii].itype
                     if hi_vid >= 0 and hi_vid < 8192 {
                         if g_val_first_def[hi_vid] == -1 {
