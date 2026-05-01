@@ -35,7 +35,13 @@ pre-assigned slots, reducing eviction churn on long-lived values.
 **Tasks completed:**
 - Task A: ✅ `lower_fn_collect_uses` extended to record `g_val_first_def[vid]`
 - Task B: ✅ `linear_scan(jfn)` assigns `g_ls_reg[val_id]` as hint; `regalloc_alloc` checks hint first
-- Task C: Coalescing pass — still open (would eliminate redundant MOV instructions)
+- Task C: ✅ Coalescing pass — `coalesce_copies_block` in `copy_prop` loop (April 2026).
+  Substitutes OP_COPY(dst, src) → replaces all subsequent uses of dst with src in-block,
+  letting DCE kill the dead OP_COPY. Convergence constraint: peephole context diverges
+  (jda0 function-size limit); only copy_prop context converges. Inliner-created OP_COPYs
+  not reachable from copy_prop context, so btree impact is ~0% (inlining already handled).
+  `linear_scan` also updated to skip dead instructions (prevents dead OP_COPYs from
+  evicting live register hints). 390/395 tests pass, sh2==sh3 (2,082,575 bytes).
 
 **Files:** `linear_scan`, `ls_assign`, `ls_expire`, `regalloc_alloc`
 (bootstrap/stage1/jda1.jda ~14700–14800)
