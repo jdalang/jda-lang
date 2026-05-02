@@ -1,0 +1,199 @@
+; Jda Tensor Operations Library (Phase 7 M4)
+; CPU scalar implementations using M3 tensor builtins and M1/M2 f64 builtins.
+; All tensors store f64 values as i64 bit patterns in GPRs.
+; NOTE: Always pre-compute f64 results into locals before passing to tensor_set.
+
+; --- Elementwise Operations ---
+
+fn tensor_add(a: i64, b: i64, out: i64) {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_add(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn tensor_sub(a: i64, b: i64, out: i64) {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_sub(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn tensor_mul_elem(a: i64, b: i64, out: i64) {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_mul(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn tensor_scale(a: i64, s: i64, out: i64) {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let r = f64_mul(va, s)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+; --- Reductions ---
+
+fn tensor_sum(a: i64) -> i64 {
+    let n = tensor_len(a)
+    let acc = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        acc = f64_add(acc, v)
+        i = i + 1
+    }
+    ret acc
+}
+
+fn tensor_mean(a: i64) -> i64 {
+    let s = tensor_sum(a)
+    let n = tensor_len(a)
+    let fn_val = f64_from_int(n)
+    ret f64_div(s, fn_val)
+}
+
+fn tensor_max(a: i64) -> i64 {
+    let n = tensor_len(a)
+    let mx = tensor_get(a, 0)
+    let i = 1
+    loop i < n {
+        let v = tensor_get(a, i)
+        if f64_gt(v, mx) == 1 {
+            mx = v
+        }
+        i = i + 1
+    }
+    ret mx
+}
+
+; --- Activation Functions ---
+
+fn tensor_relu(a: i64, out: i64) {
+    let n = tensor_len(a)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        if f64_gt(v, zero) == 1 {
+            tensor_set(out, i, v)
+        } else {
+            tensor_set(out, i, zero)
+        }
+        i = i + 1
+    }
+}
+
+fn tensor_sigmoid(a: i64, out: i64) {
+    let n = tensor_len(a)
+    let one = f64_from_int(1)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        let neg_v = f64_neg(v)
+        let e = f64_exp(neg_v)
+        let denom = f64_add(one, e)
+        let r = f64_div(one, denom)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn tensor_tanh_t(a: i64, out: i64) {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        let r = f64_tanh(v)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+fn tensor_softmax(a: i64, out: i64) {
+    let n = tensor_len(a)
+    let mx = tensor_max(a)
+    let exp_sum = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let v = tensor_get(a, i)
+        let shifted = f64_sub(v, mx)
+        let e = f64_exp(shifted)
+        tensor_set(out, i, e)
+        exp_sum = f64_add(exp_sum, e)
+        i = i + 1
+    }
+    i = 0
+    loop i < n {
+        let v = tensor_get(out, i)
+        let r = f64_div(v, exp_sum)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+}
+
+; --- Matrix Operations ---
+
+fn tensor_transpose(a: i64, out: i64) {
+    let rows = tensor_shape(a, 0)
+    let cols = tensor_shape(a, 1)
+    let i = 0
+    loop i < rows {
+        let j = 0
+        loop j < cols {
+            let idx_a = i * cols + j
+            let v = tensor_get(a, idx_a)
+            let idx_o = j * rows + i
+            tensor_set(out, idx_o, v)
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+fn matmul(a: i64, b: i64, out: i64) {
+    let M = tensor_shape(a, 0)
+    let K = tensor_shape(a, 1)
+    let N = tensor_shape(b, 1)
+    let i = 0
+    loop i < M {
+        let j = 0
+        loop j < N {
+            let acc = f64_from_int(0)
+            let k = 0
+            loop k < K {
+                let idx_a = i * K + k
+                let av = tensor_get(a, idx_a)
+                let idx_b = k * N + j
+                let bv = tensor_get(b, idx_b)
+                let prod = f64_mul(av, bv)
+                acc = f64_add(acc, prod)
+                k = k + 1
+            }
+            let idx_o = i * N + j
+            tensor_set(out, idx_o, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+}

@@ -1,0 +1,106 @@
+fn tensor_add(a: i64, b: i64, out: i64) -> i64 {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_add(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn tensor_sub(a: i64, b: i64, out: i64) -> i64 {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_sub(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn tensor_mul_elem(a: i64, b: i64, out: i64) -> i64 {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let r = f64_mul(va, vb)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn tensor_scale(a: i64, s: i64, out: i64) -> i64 {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let r = f64_mul(va, s)
+        tensor_set(out, i, r)
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    let a = tensor_new1(3)
+    let b = tensor_new1(3)
+    let out = tensor_new1(3)
+    ; a = [1, 2, 3], b = [10, 20, 30]
+    let v1 = f64_from_int(1)
+    tensor_set(a, 0, v1)
+    let v2 = f64_from_int(2)
+    tensor_set(a, 1, v2)
+    let v3 = f64_from_int(3)
+    tensor_set(a, 2, v3)
+    let v10 = f64_from_int(10)
+    tensor_set(b, 0, v10)
+    let v20 = f64_from_int(20)
+    tensor_set(b, 1, v20)
+    let v30 = f64_from_int(30)
+    tensor_set(b, 2, v30)
+    ; Test add: [11, 22, 33]
+    tensor_add(a, b, out)
+    let s0 = f64_to_int(tensor_get(out, 0))
+    let s1 = f64_to_int(tensor_get(out, 1))
+    let s2 = f64_to_int(tensor_get(out, 2))
+    if s0 == 11 and s1 == 22 and s2 == 33 {
+        print "add ok"
+    }
+    ; Test sub: [-9, -18, -27]
+    tensor_sub(a, b, out)
+    let d0 = f64_to_int(tensor_get(out, 0))
+    let d1 = f64_to_int(tensor_get(out, 1))
+    let d2 = f64_to_int(tensor_get(out, 2))
+    if d0 == -9 and d1 == -18 and d2 == -27 {
+        print "sub ok"
+    }
+    ; Test mul_elem: [10, 40, 90]
+    tensor_mul_elem(a, b, out)
+    let m0 = f64_to_int(tensor_get(out, 0))
+    let m1 = f64_to_int(tensor_get(out, 1))
+    let m2 = f64_to_int(tensor_get(out, 2))
+    if m0 == 10 and m1 == 40 and m2 == 90 {
+        print "mul ok"
+    }
+    ; Test scale: a * 5 = [5, 10, 15]
+    let five = f64_from_int(5)
+    tensor_scale(a, five, out)
+    let sc0 = f64_to_int(tensor_get(out, 0))
+    let sc1 = f64_to_int(tensor_get(out, 1))
+    let sc2 = f64_to_int(tensor_get(out, 2))
+    if sc0 == 5 and sc1 == 10 and sc2 == 15 {
+        print "scale ok"
+    }
+    tensor_free(a)
+    tensor_free(b)
+    tensor_free(out)
+    ret 0
+}
