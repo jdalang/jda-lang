@@ -4,14 +4,7 @@
 
 <h1 align="center">Jda</h1>
 
-<p align="center">A systems programming language built from scratch — zero dependency on C, C++, Rust, or Python.<br>Bootstrapped from raw x86-64 assembly. The compiler compiles itself.</p>
-
-Jda is designed to resolve the performance/safety/ergonomics trilemma:
-
-- **Replace the C stack** — no libc, direct kernel syscalls, zero dependency conflicts
-- **Displace Python in AI** — native tensor primitives and compile-time autograd, no "two-language problem"
-- **Match Go's scalability** — lightweight actor-based concurrency without GC pauses
-- **Emulate Ruby's joy** — clean block-based syntax, minimal boilerplate
+<p align="center"><strong>A high-performance systems language with built-in concurrency and ML — without GC.</strong><br>Bootstrapped from raw x86-64 assembly. The compiler compiles itself.</p>
 
 ## Current Status
 
