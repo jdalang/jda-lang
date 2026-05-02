@@ -9728,6 +9728,71 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
     ret val
 }
 
+; Compare two null-terminated C strings. Returns 1 if equal, 0 otherwise.
+fn cstr_eq(a: &i8, b: &i8) -> i64 {
+    if a == 0 or b == 0 { ret 0 }
+    let i = 0
+    let matching = 1
+    loop matching == 1 {
+        let ca = a[i]
+        let cb = b[i]
+        if ca != cb { ret 0 }
+        if ca == 0 { ret 1 }
+        i = i + 1
+    }
+    ret 1
+}
+
+; Strip directory path from filename: "/foo/bar/baz.jda" -> start of "baz.jda"
+; Returns pointer into the same string (no allocation).
+fn basename(path: &i8) -> &i8 {
+    let len = cstr_len_max(path, 1024)
+    let last_slash = -1
+    let i = 0
+    loop i < len {
+        if path[i] == 47 { last_slash = i }
+        i = i + 1
+    }
+    if last_slash >= 0 {
+        ret path + last_slash + 1
+    }
+    ret path
+}
+
+; Strip .jda extension from a path, write result into buf. Returns length written.
+; "foo.jda" -> "foo", "bar" -> "bar"
+fn strip_ext(path: &i8, buf: &i8, buf_max: i64) -> i64 {
+    let len = cstr_len_max(path, 1024)
+    let dot = -1
+    let i = 0
+    loop i < len {
+        if path[i] == 46 { dot = i }
+        i = i + 1
+    }
+    let copy_len = len
+    if dot >= 0 { copy_len = dot }
+    if copy_len > buf_max - 1 { copy_len = buf_max - 1 }
+    i = 0
+    loop i < copy_len {
+        buf[i] = path[i]
+        i = i + 1
+    }
+    buf[copy_len] = 0
+    ret copy_len
+}
+
+fn print_version() {
+    print("jda 0.1.0-dev\n")
+}
+
+fn print_usage() {
+    eprint("usage: jda build <file.jda> [-o output]\n")
+    eprint("       jda run <file.jda>\n")
+    eprint("       jda <input.jda> <output>   (legacy)\n")
+    eprint("       jda --version\n")
+    eprint("       jda --help\n")
+}
+
 ; ============================================================
 ; 13. ENTRY POINT
 ; ============================================================
@@ -9735,15 +9800,70 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
 fn main(argc: i64, argv_ptr: &i64) {
     let src_path: &i8 = 0
     let out_path: &i8 = 0
+    let do_run = 0
     g_argv_base = argv_ptr
 
-    if argc < 3 {
-
-        syscall(60, 1, 0, 0)
+    if argc < 2 {
+        print_usage()
+        syscall(60, 2, 0, 0)
     }
 
-    src_path = get_argv(argv_ptr, 1)
-    out_path = get_argv(argv_ptr, 2)
+    let arg1 = get_argv(argv_ptr, 1)
+
+    let out_buf = alloc_pages(1) ; 4KB for output path buffer
+
+    ; --help / -h
+    if cstr_eq(arg1, "--help") == 1 or cstr_eq(arg1, "-h") == 1 {
+        print_usage()
+        syscall(60, 0, 0, 0)
+    }
+
+    ; --version / -V
+    if cstr_eq(arg1, "--version") == 1 or cstr_eq(arg1, "-V") == 1 {
+        print_version()
+        syscall(60, 0, 0, 0)
+    }
+
+    ; jda build <file> [-o output]
+    if cstr_eq(arg1, "build") == 1 {
+        if argc < 3 {
+            eprint("error: missing input file\n")
+            print_usage()
+            syscall(60, 2, 0, 0)
+        }
+        src_path = get_argv(argv_ptr, 2)
+        ; Check for -o flag
+        if argc >= 5 {
+            let arg3 = get_argv(argv_ptr, 3)
+            if cstr_eq(arg3, "-o") == 1 {
+                out_path = get_argv(argv_ptr, 4)
+            }
+        }
+        if out_path == 0 {
+            strip_ext(src_path, out_buf, 256)
+            out_path = out_buf
+        }
+    } else if cstr_eq(arg1, "run") == 1 {
+        ; jda run <file>
+        if argc < 3 {
+            eprint("error: missing input file\n")
+            print_usage()
+            syscall(60, 2, 0, 0)
+        }
+        src_path = get_argv(argv_ptr, 2)
+        out_path = "/tmp/jda_run_out"
+        do_run = 1
+    } else if argc >= 3 {
+        ; Legacy mode: jda <input> <output>
+        src_path = arg1
+        out_path = get_argv(argv_ptr, 2)
+    } else {
+        ; Single arg that isn't a subcommand — treat as build
+        src_path = arg1
+        strip_ext(src_path, out_buf, 256)
+        out_path = out_buf
+    }
+
     g_out_path_ptr = out_path
 
     let src_buf = alloc_pages(128)  ; 512KB
@@ -10163,5 +10283,23 @@ fn main(argc: i64, argv_ptr: &i64) {
     
     write_elf(out_fd, code_buf, code_len, merged_str, merged_pos)
     syscall(3, out_fd, 0, 0)
+
+    ; chmod +x the output
+    syscall(90, out_path, 493, 0)
+
+    if do_run == 1 {
+        ; execve(out_path, argv={out_path, NULL}, envp={NULL})
+        let exec_argv = alloc_pages(1)
+        store_i64_at(exec_argv, 0, out_path)
+        store_i64_at(exec_argv, 1, 0)
+        let exec_envp = alloc_pages(1)
+        store_i64_at(exec_envp, 0, 0)
+        syscall(59, out_path, exec_argv, exec_envp)
+        ; If execve returns, it failed
+        eprint("error: failed to execute ")
+        eprint(out_path)
+        eprint("\n")
+        syscall(60, 1, 0, 0)
+    }
     syscall(60, 0, 0, 0)
 }
