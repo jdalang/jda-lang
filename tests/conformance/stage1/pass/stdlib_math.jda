@@ -1,0 +1,27 @@
+fn math_abs(x: i64) -> i64 {
+    if x < 0 { ret 0 - x }
+    ret x
+}
+fn math_pow(base: i64, exp: i64) -> i64 {
+    if exp == 0 { ret 1 }
+    let result = 1
+    let b = base
+    let e = exp
+    loop e > 0 {
+        if e - (e / 2) * 2 == 1 {
+            result = result * b
+        }
+        b = b * b
+        e = e / 2
+    }
+    ret result
+}
+fn main() {
+    let a = math_abs(-42)
+    let p = math_pow(2, 10)
+    if a == 42 {
+        if p == 1024 {
+            print("stdlib_math ok")
+        }
+    }
+}
