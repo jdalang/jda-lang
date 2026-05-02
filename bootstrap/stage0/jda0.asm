@@ -107,6 +107,8 @@ section .bss
     lv_sid resb 8
     lv_esz resb 8
     lv_isptr resb 8
+    ga_from_dot resb 8      ; 1 if last .ga_post_loop entry came from .ga_dot
+    ga_acnt     resb 8      ; array count from field; >0 means embedded array
     glb_tbl resb 32768
     glb_cnt resb 8
     glb_r15 resb 8
@@ -126,6 +128,7 @@ section .bss
     frm_patch_off resb 8    ; frame size placeholder offset (gen_fn, r15 not safe)
     prm_cnt_bss  resb 8    ; param count during gen_fn loop (all regs clobbered)
     prec_stop    resb 1    ; 0=normal, 1=stop-before-or, 2=stop-before-or-and
+    asm_reglen   resb 8    ; asm handler: register name length (r15 must not be clobbered)
 
 section .data
     m_usage db `Usage: jda0 <src.jda> <out>\n`,0
@@ -1980,7 +1983,7 @@ parse_reg_name:
     cmp     r9, 2
     je      .prn_2char
     cmp     r9, 3
-    jg      .prn_3plus
+    jge     .prn_3plus
     jmp     .prn_fail
 .prn_2char:
     mov     cl, byte [r8+1]
@@ -2014,7 +2017,9 @@ parse_reg_name:
     mov     cl, byte [r8+1]
     mov     dl, byte [r8+2]
     cmp     cl, 'd'
-    je      .prn_set_7
+    je      .prn_di_or_dx
+    cmp     cl, 's'
+    je      .prn_si
     cmp     cl, 'b'
     je      .prn_bp_sp
     cmp     cl, '8'
@@ -2024,6 +2029,18 @@ parse_reg_name:
     cmp     cl, '1'
     je      .prn_r1x
     jmp     .prn_fail
+.prn_di_or_dx:
+    cmp     dl, 'i'
+    je      .prn_set_7      ; rdi
+    cmp     dl, 'x'
+    jne     .prn_fail
+    mov     eax, 2          ; rdx
+    jmp     .prn_done
+.prn_si:
+    cmp     dl, 'i'
+    jne     .prn_fail
+    mov     eax, 6          ; rsi
+    jmp     .prn_done
 .prn_set_7:
     mov     eax, 7
     jmp     .prn_done
@@ -2105,6 +2122,10 @@ gen_expr:
     push    rbp
     mov     rbp, rsp
     push    r14
+    ; Reset lvalue metadata so callers (e.g. gs_let_expr) don't see stale values
+    mov     qword [lv_sid], -1
+    mov     qword [lv_esz], 8
+    mov     qword [lv_isptr], 0
     call    gen_expr_and
 .lp:
     call    cur_tok_type
@@ -2460,17 +2481,19 @@ gen_expr_base:
     ; --- Address-of &x ---
     cmp     rax, TOK_AMP
     jne     .not_amp
-    call    adv_tok
-    call    gen_addr        ; generates address of the variable/field into rax
+    call    adv_tok             ; skip '&'
+    call    gen_addr
+    ; For &scalar (lv_isptr=0): gen_addr emits lea, keep the stack address.
+    ; For &ptr (lv_isptr=1): emit mov rax,[rax] to load the heap pointer.
     cmp     qword [lv_isptr], 0
-    je      .maybe_binary
-    ; if it's already a pointer value, load it
+    je      .amp_done
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x8B
     call    emit1
     mov     rdi, 0x00
     call    emit1
+.amp_done:
     jmp     .maybe_binary
 
 .not_amp:
@@ -2782,41 +2805,6 @@ gen_expr_base:
     jmp     .sc_arg_loop
 .sc_done_args:
     call    adv_tok         ; skip ')'
-    cmp     r14, 1
-    jl      .sc_emit_done
-    mov     rdi, 0x58
-    call    emit1 ; pop rax (nr)
-    cmp     r14, 2
-    jl      .sc_call
-    mov     rdi, 0x5F
-    call    emit1 ; pop rdi
-    cmp     r14, 3
-    jl      .sc_call
-    mov     rdi, 0x5E
-    call    emit1 ; pop rsi
-    cmp     r14, 4
-    jl      .sc_call
-    mov     rdi, 0x5A
-    call    emit1 ; pop rdx
-    cmp     r14, 5
-    jl      .sc_call
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x5A
-    call    emit1 ; pop r10
-    cmp     r14, 6
-    jl      .sc_call
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x58
-    call    emit1 ; pop r8
-    cmp     r14, 7
-    jl      .sc_call
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x59
-    call    emit1 ; pop r9
-=======
     ; pop args: syscall(nr, a1..a6)
     ; Stack (top first): aN, ..., a1, nr
     ; Pop in reverse so rax gets nr last.
@@ -2890,30 +2878,6 @@ gen_expr_base:
     je      .do_mul
     cmp     rax, TOK_SLASH
     je      .do_div
-    cmp     rax, TOK_EQEQ
-    je      .do_cmp_eq
-    cmp     rax, TOK_NEQ
-    je      .do_cmp_ne
-    cmp     rax, TOK_LT
-    je      .do_cmp_lt
-    cmp     rax, TOK_GT
-    je      .do_cmp_gt
-    cmp     rax, TOK_LTEQ
-    je      .do_cmp_le
-    cmp     rax, TOK_GTEQ
-    je      .do_cmp_ge
-    cmp     rax, TOK_AND
-    jne     .chk_or_prec
-    cmp     byte [prec_stop], 2   ; stop-before-and: don't consume 'and'
-    jge     .expr_done
-    jmp     .do_and
-.chk_or_prec:
-    cmp     rax, TOK_OR
-    jne     .chk_pipe_prec
-    cmp     byte [prec_stop], 1   ; stop-before-or: don't consume 'or'
-    jge     .expr_done
-    jmp     .do_or
-.chk_pipe_prec:
     cmp     rax, TOK_PIPE
     je      .do_bitor
     cmp     rax, TOK_AMP
@@ -3406,21 +3370,28 @@ gen_addr:
     call    emit4
 
 .ga_post:
-    ; For pointer locals (lv_isptr=1): always deref to load the pointer value for navigation/read.
-    ; For struct locals (lv_sid != -1): skip deref, navigate from stack address.
-    ; For plain scalar locals (lv_isptr=0, lv_sid=-1): only deref if navigation (.[) follows;
-    ; otherwise gen_expr emits the correct-width load from the stack address returned.
-    cmp     qword [lv_isptr], 0
-    jne     .ga_post_do_deref
-    cmp     qword [lv_sid], -1
-    jne     .ga_post_loop       ; struct local (stored as ptr but lv_sid is set)
-    ; scalar: only deref if navigation (. or [) follows
+    mov     qword [ga_from_dot], 0
+    mov     qword [ga_acnt], 0
+    ; Check if navigation (. or [) follows — needed to decide pointer deref behavior.
     call    cur_tok_type
     cmp     rax, TOK_DOT
-    je      .ga_post_do_deref
+    je      .ga_post_nav
     cmp     rax, TOK_LBRACK
-    je      .ga_post_do_deref
-    jmp     .ga_post_loop       ; plain scalar: return stack addr; gen_expr loads the value
+    je      .ga_post_nav
+    ; NO navigation: struct locals return their stack address as-is;
+    ; pointer and scalar locals also return stack addr — caller loads the value.
+    cmp     qword [lv_sid], -1
+    jne     .ga_post_loop       ; struct local
+    jmp     .ga_post_loop       ; scalar/pointer: caller (.do_lvalue) loads the value
+.ga_post_nav:
+    ; Navigation follows: pointers must be derefed to get the heap address.
+    ; Struct locals stored on stack navigate from the stack address (no deref).
+    cmp     qword [lv_isptr], 0
+    jne     .ga_post_do_deref   ; pointer → deref to load heap address
+    cmp     qword [lv_sid], -1
+    jne     .ga_post_loop       ; struct local → navigate from stack addr
+    ; scalar with navigation (e.g. int used as pointer) → deref
+    jmp     .ga_post_do_deref
 .ga_post_do_deref:
     ; emit: mov rax, [rax]
     mov     rdi, 0x48
@@ -3435,8 +3406,30 @@ gen_addr:
     cmp     rax, TOK_DOT
     je      .ga_dot
     cmp     rax, TOK_LBRACK
-    je      .ga_index
+    je      .ga_pre_index
     jmp     .ga_done
+
+.ga_pre_index:
+    ; Before array indexing after a dot, deref to load the stored pointer/value
+    ; UNLESS it's an embedded array (ga_acnt > 0) — data is inline at field addr.
+    ; Examples:
+    ;   block.children[i]  (children: i64)       → acnt=0  → deref  ✓
+    ;   jfn.strtab[i]      (strtab: &i8)         → acnt=0  → deref  ✓
+    ;   jfn.blocks[i]      (blocks: BB[64])      → acnt=64 → skip   ✓
+    ;   ctx.ra.pool[i]     (pool: i32[8])        → acnt=8  → skip   ✓
+    cmp     qword [ga_from_dot], 0
+    je      .ga_index               ; not from dot → no deref needed
+    mov     qword [ga_from_dot], 0
+    cmp     qword [ga_acnt], 0
+    jne     .ga_index               ; embedded array (acnt>0) → no deref
+    ; scalar or pointer field → deref to load the base address
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x8B
+    call    emit1
+    mov     rdi, 0x00
+    call    emit1           ; mov rax, [rax]
+    jmp     .ga_index
 
 .ga_dot:
     call    adv_tok         ; skip '.'
@@ -3456,6 +3449,10 @@ gen_addr:
     mov     r14, [rax+16]   ; field offset
     mov     r15, [rax+24]   ; elem_size
     mov     r13, [rax+40]   ; type_id (use r13 — emit1 clobbers rbx!)
+    push    rdi
+    mov     rdi, [rax+32]   ; acnt
+    mov     [ga_acnt], rdi
+    pop     rdi
     ; emit: add rax, field_off
     mov     rdi, 0x48
     call    emit1
@@ -3468,6 +3465,7 @@ gen_addr:
     mov     [lv_esz], r15
     mov     qword [lv_sid], -1
     mov     qword [lv_isptr], 0
+    mov     qword [ga_from_dot], 1  ; flag: field address needs deref before [
     ; small non-pointer fields are scalars even if type_id is unknown
     cmp     r15, 8
     jg      .ga_type_check
@@ -3578,6 +3576,8 @@ gen_addr:
     ; lv_esz already carries the element size; lv_isptr stays 0 so
     ; the caller (gen_expr / gen_expr_stmt) uses the esz-based load/store path.
 .ga_idx_done:
+    mov     qword [ga_from_dot], 0  ; clear: result is element address, not field
+    mov     qword [ga_acnt], 0
     jmp     .ga_post_loop
 
 .ga_done:
@@ -3885,8 +3885,28 @@ gen_stmt:
 
 .gs_let_expr:
     call    gen_expr
+    ; Check if expression result is a struct address — if so, store as pointer
+    ; so that field access (t.field) works correctly on the local.
+    mov     rax, [lv_sid]
+    cmp     rax, -1
+    je      .gs_let_scalar
+    ; struct address — create a pointer-to-struct local
+    push    qword [lv_sid]
+    push    qword [lv_esz]
+    mov     r8, r12
+    mov     r9, r13
+    mov     r10, TK_PTR
+    pop     r12             ; esz = struct element size
+    pop     r11             ; sid = struct id
+    push    r12
+    push    r13
+    call    add_local
+    pop     r13
+    pop     r12
+    mov     r15, rax        ; rbp_offset
+    jmp     .gs_let_store
+.gs_let_scalar:
     ; allocate local var and store rax (scalar)
-    push    rax
     push    r12
     push    r13
     mov     r8, r12
@@ -3897,8 +3917,8 @@ gen_stmt:
     call    add_local
     pop     r13
     pop     r12
-    pop     rbx             ; discard compile-time temp; emit uses rax (runtime value)
     mov     r15, rax        ; rbp_offset (from add_local)
+.gs_let_store:
     ; emit: mov [rbp-off], rax  (0x85 = rax, expression result in rax at runtime)
     mov     rdi, 0x48
     call    emit1
@@ -4270,7 +4290,8 @@ gen_stmt:
     ; reg name
     call    get_cur_tok_ptr
     mov     r14, [rax+8]    ; reg name start in src
-    mov     r15, [rax+16]   ; reg name len
+    mov     rax, [rax+16]
+    mov     [asm_reglen], rax ; reg name len (saved to BSS; r15 is globals base, must not clobber)
     call    adv_tok
     ; look up var
     mov     r8, r12
@@ -4287,19 +4308,28 @@ gen_stmt:
     lea     rbx, [loc_tbl]
     add     rbx, rax
     mov     r12, [rbx+16]   ; rbp_offset
+    ; parse register name from r14 (src_buf offset) and asm_reglen
+    lea     r8, [src_buf]
+    add     r8, r14
+    mov     r9, [asm_reglen]
+    call    parse_reg_name
+    cmp     rax, -1
+    je      .gs_asm_loop
+    mov     r11d, eax
     jmp     .gs_asm_out_local_emit
 .gs_asm_out_local:
     mov     r12, [rax+16]   ; rbp_offset
-    ; parse register name from r14/r15
-    mov     r8, r14
-    mov     r9, r15
+    ; parse register name from r14 (src_buf offset) and asm_reglen
+    lea     r8, [src_buf]
+    add     r8, r14         ; r8 = &src_buf[r14] = pointer to reg name
+    mov     r9, [asm_reglen]
     call    parse_reg_name
     cmp     rax, -1
     je      .gs_asm_loop    ; skip invalid register
     mov     r11d, eax       ; r11d = register code
-    ; emit: mov [rbp + disp8], <reg>
+    ; emit: mov [rbp + disp32], <reg>
     ; 48 89 /r (mov r64, r/m64)
-    ; ModRM = mod(2) | reg(3) | rm(3)
+    ; ModRM = mod(10) | reg(3) | rm(3)  — mod=10 means 32-bit displacement
 .gs_asm_out_local_emit:
     mov     rdi, 0x48
     call    emit1
@@ -4307,7 +4337,7 @@ gen_stmt:
     call    emit1
     mov     rax, r11
     shl     rax, 3
-    or      rax, 0x45       ; mod=01, rm=101 (rbp)
+    or      rax, 0x85       ; mod=10, rm=101 (rbp) — 32-bit disp
     mov     rdi, rax
     call    emit1
     neg     r12
@@ -4322,9 +4352,10 @@ gen_stmt:
     cmp     rax, 0
     je      .gs_asm_loop
     mov     r12, [rax+16]   ; r15_offset
-    ; parse register name from r14/r15
-    mov     r8, r14
-    mov     r9, r15
+    ; parse register name from r14 (src_buf offset) and asm_reglen
+    lea     r8, [src_buf]
+    add     r8, r14         ; r8 = &src_buf[r14] = pointer to reg name
+    mov     r9, [asm_reglen]
     call    parse_reg_name
     cmp     rax, -1
     je      .gs_asm_loop    ; skip invalid register
@@ -4686,7 +4717,7 @@ gen_fn:
     push    r12
     push    r13
     cmp     rcx, 4
-    jge     .gf_param_next  ; r8/r9: pop 4 values and advance
+    jge     .gf_param_r8r9  ; r8/r9: need REX.WR prefix
     ; param regs: 0=rdi(7),1=rsi(6),2=rdx(2),3=rcx(1)
     ; emit REX.W + MOV [rbp-off], regN  (AFTER skip check)
     mov     rdi, 0x48
@@ -4724,6 +4755,43 @@ gen_fn:
     mov     rdi, 0x8D
     call    emit1
 .gf_store_disp:
+    pop     r13
+    pop     r12
+    pop     rcx
+    pop     rax             ; rbp_offset
+    neg     rax
+    mov     rdi, rax
+    push    rcx
+    push    r12
+    push    r13
+    call    emit4
+    pop     r13
+    pop     r12
+    pop     rcx
+    jmp     .gf_param_next_nostack
+.gf_param_r8r9:
+    ; emit: mov [rbp-off], r8 or r9
+    ; REX.WR (4C) MOV (89) ModRM (85=r8/rbp+disp32, 8D=r9/rbp+disp32)
+    mov     rdi, 0x4C
+    call    emit1
+    mov     rdi, 0x89
+    call    emit1
+    pop     r13
+    pop     r12
+    pop     rcx
+    push    rcx
+    push    r12
+    push    r13
+    cmp     rcx, 4
+    je      .gf_store_r8
+    ; param 5 = r9
+    mov     rdi, 0x8D
+    call    emit1
+    jmp     .gf_store_r8r9_disp
+.gf_store_r8:
+    mov     rdi, 0x85
+    call    emit1
+.gf_store_r8r9_disp:
     pop     r13
     pop     r12
     pop     rcx
