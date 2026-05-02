@@ -558,6 +558,7 @@ let g_jfn: &JirFunction = 0
 let g_ctx_heap: &i8 = 0
 let g_ctx: &LowerCtx = 0
 let g_pi64_char: i64 = 0
+let g_codegen_stype: i64 = 0
 
 ; REPL state
 let g_repl_def_buf: &i8 = 0
@@ -7282,6 +7283,7 @@ fn codegen_and_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
 
 fn codegen_eq_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let left_id = codegen_rel_inline(toks, pos, stab, src, jfn, bb)
+    let eq_left_stype = g_codegen_stype
     let eq_more = 1
     loop eq_more == 1 {
         let op = tok_type_at(toks, pos[0])
@@ -7294,6 +7296,7 @@ fn codegen_eq_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn:
         pos[0] = pos[0] + 1
         let right_id = codegen_rel_inline(toks, pos, stab, src, jfn, bb)
         let jir_op = tok_to_jir_op(op)
+        if eq_left_stype == TYPE_F64 { jir_op = tok_to_jir_op_f64(op) }
         left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
     }
     ret left_id
@@ -7301,6 +7304,7 @@ fn codegen_eq_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn:
 
 fn codegen_rel_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let left_id = fold_add_chain_inline(toks, pos, stab, src, jfn, bb)
+    let rel_left_stype = g_codegen_stype
     let rel_more = 1
     loop rel_more == 1 {
         let op = tok_type_at(toks, pos[0])
@@ -7317,6 +7321,7 @@ fn codegen_rel_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         pos[0] = pos[0] + 1
         let right_id = fold_add_chain_inline(toks, pos, stab, src, jfn, bb)
         let jir_op = tok_to_jir_op(op)
+        if rel_left_stype == TYPE_F64 { jir_op = tok_to_jir_op_f64(op) }
         left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
     }
     ret left_id
@@ -7327,6 +7332,7 @@ fn fold_add_chain_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, 
     if left_id < 0 {
         ret left_id
     }
+    let left_stype = g_codegen_stype
     let op = tok_type_at(toks, pos[0])
     let add_like = is_add_like_op(op)
     loop add_like == 1 {
@@ -7337,6 +7343,8 @@ fn fold_add_chain_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, 
             ret left_id
         }
         let jir_op = tok_to_jir_op(op)
+        if left_stype == TYPE_F64 { jir_op = tok_to_jir_op_f64(op) }
+        g_codegen_stype = left_stype
         ret emit_binop(jfn, bb, jir_op, left_id, right_id)
     }
     ret left_id
@@ -7409,6 +7417,7 @@ fn codegen_mul_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
     if left_id < 0 {
         ret left_id
     }
+    let mul_left_stype = g_codegen_stype
     let mul_more = 1
     loop mul_more == 1 {
         let op = tok_type_at(toks, pos[0])
@@ -7425,7 +7434,9 @@ fn codegen_mul_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
             }
             if mul_more == 1 {
                 let jir_op = tok_to_jir_op(op)
+                if mul_left_stype == TYPE_F64 { jir_op = tok_to_jir_op_f64(op) }
                 left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
+                g_codegen_stype = mul_left_stype
             }
         }
     }
@@ -7445,8 +7456,14 @@ fn codegen_unary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
     }
     if tt == TOK_MINUS {
         pos[0] = pos[0] + 1
-        let zero_id = emit_const(jfn, bb, TYPE_I64, 0)
         let rhs_id = codegen_postfix_inline(toks, pos, stab, src, jfn, bb)
+        if g_codegen_stype == TYPE_F64 {
+            let neg_ins = Instr{}
+            neg_ins.op = OP_FNEG
+            neg_ins.operand0 = rhs_id
+            ret emit(jfn, bb, &neg_ins)
+        }
+        let zero_id = emit_const(jfn, bb, TYPE_I64, 0)
         ret emit_binop(jfn, bb, OP_SUB, zero_id, rhs_id)
     }
     if tt == TOK_TILDE {
@@ -7653,6 +7670,7 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         ret emit_const(jfn, bb, TYPE_I64, 0)
     }
     let start_pos = pos[0]
+    g_codegen_stype = 0
     let expr_id = codegen_primary_inline(toks, pos, stab, src, jfn, bb)
     let cur_stype = TYPE_I64
     let cur_is_struct = 0
@@ -7661,6 +7679,11 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         if cur_stype == -1 {
             let cps_gi = lookup_global2(tok_str_start_at(toks, start_pos), tok_str_len_at(toks, start_pos), src)
             if cps_gi != -1 { cur_stype = load_i64_at(g_glob_stype, cps_gi) }
+        }
+        ; Override g_codegen_stype if variable/global lookup succeeded
+        ; For function calls (cur_stype==-1), keep what f64 builtins set
+        if cur_stype != -1 {
+            g_codegen_stype = cur_stype
         }
     }
     let cpi_more = 1
@@ -8659,11 +8682,12 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.operand2 = arg2
         ret emit(jfn, bb, &ins)
     }
-    ; Float builtins (Phase 7 M1)
+    ; Float builtins (Phase 7 M1) — set g_codegen_stype for operator overloading
     if name_len == 12 and streq(src, name_start, 12, "f64_from_int") == 1 {
         let ins = Instr{}
         ins.op = OP_I2F
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 10 and streq(src, name_start, 10, "f64_to_int") == 1 {
@@ -8677,6 +8701,7 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.op = OP_FADD
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_sub") == 1 {
@@ -8684,6 +8709,7 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.op = OP_FSUB
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_mul") == 1 {
@@ -8691,6 +8717,7 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.op = OP_FMUL
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_div") == 1 {
@@ -8698,18 +8725,21 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.op = OP_FDIV
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_neg") == 1 {
         let ins = Instr{}
         ins.op = OP_FNEG
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 8 and streq(src, name_start, 8, "f64_sqrt") == 1 {
         let ins = Instr{}
         ins.op = OP_FSQRT
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 6 and streq(src, name_start, 6, "f64_lt") == 1 {
@@ -8743,18 +8773,21 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         let ins = Instr{}
         ins.op = OP_FABS
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_exp") == 1 {
         let ins = Instr{}
         ins.op = OP_FEXP
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_log") == 1 {
         let ins = Instr{}
         ins.op = OP_FLOG
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_pow") == 1 {
@@ -8762,24 +8795,28 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.op = OP_FPOW
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_sin") == 1 {
         let ins = Instr{}
         ins.op = OP_FSIN
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 7 and streq(src, name_start, 7, "f64_cos") == 1 {
         let ins = Instr{}
         ins.op = OP_FCOS
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 8 and streq(src, name_start, 8, "f64_tanh") == 1 {
         let ins = Instr{}
         ins.op = OP_FTANH
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(jfn, bb, &ins)
     }
     if name_len == 11 and streq(src, name_start, 11, "tensor_new1") == 1 {
@@ -8940,6 +8977,8 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ret emit(jfn, bb, &ins)
     }
 
+    ; General function call — reset f64 type since return type is unknown
+    g_codegen_stype = 0
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -10470,10 +10509,13 @@ fn live_codegen_binop_rest(min_prec: i32, bb: i64, left_id: i64) -> i64 {
     if prec == 0 { keep = 0 }
     if prec < min_prec { keep = 0 }
     if keep != 1 { ret left_id }
+    let left_stype = g_codegen_stype
     g_main_pos = g_main_pos + 1
     let right_id = live_codegen_binop_inline(prec + 1, bb)
     let jir_op = tok_to_jir_op(op)
+    if left_stype == TYPE_F64 { jir_op = tok_to_jir_op_f64(op) }
     let next_left = emit_binop(g_jfn, bb, jir_op, left_id, right_id)
+    g_codegen_stype = left_stype
     ret live_codegen_binop_rest(min_prec, bb, next_left)
 }
 
@@ -10498,6 +10540,14 @@ fn live_codegen_postfix_inline(bb: i64) -> i64 {
             let gi = lookup_global2(ns, nl, g_src_buf_ptr)
             if gi != -1 { cur_stype = base_type(load_i64_at(g_glob_stype, gi)) }
         }
+    }
+    ; Track type for f64 operator overloading
+    if cur_stype == TYPE_F64 {
+        g_codegen_stype = TYPE_F64
+    } else if cur_stype != -1 {
+        ; Known non-f64 type — reset (but if cur_stype == -1, leave g_codegen_stype
+        ; as-is so call handler's TYPE_F64 survives)
+        g_codegen_stype = 0
     }
     ret live_codegen_postfix_rest(bb, expr_id, cur_stype)
 }
@@ -10632,8 +10682,14 @@ fn live_codegen_primary_small_inline(tt: i64, bb: i64) -> i64 {
     }
     if tt == TOK_MINUS {
         g_main_pos = g_main_pos + 1
-        let zero_id = emit_const(g_jfn, bb, TYPE_I64, 0)
         let neg_rhs = live_codegen_postfix_inline(bb)
+        if g_codegen_stype == TYPE_F64 {
+            let fneg_ins = Instr{}
+            fneg_ins.op = OP_FNEG
+            fneg_ins.operand0 = neg_rhs
+            ret emit(g_jfn, bb, &fneg_ins)
+        }
+        let zero_id = emit_const(g_jfn, bb, TYPE_I64, 0)
         ret emit_binop(g_jfn, bb, OP_SUB, zero_id, neg_rhs)
     }
     if tt == TOK_TILDE {
@@ -11449,12 +11505,14 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         let ins = Instr{}
         ins.op = OP_I2F
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "f64_to_int") == 1 {
         let ins = Instr{}
         ins.op = OP_F2I
         ins.operand0 = arg0
+        g_codegen_stype = 0
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_add") == 1 {
@@ -11462,6 +11520,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_FADD
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_sub") == 1 {
@@ -11469,6 +11528,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_FSUB
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_mul") == 1 {
@@ -11476,6 +11536,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_FMUL
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_div") == 1 {
@@ -11483,18 +11544,21 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_FDIV
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_neg") == 1 {
         let ins = Instr{}
         ins.op = OP_FNEG
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 8 and streq(g_src_buf_ptr, name.str_start, 8, "f64_sqrt") == 1 {
         let ins = Instr{}
         ins.op = OP_FSQRT
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 6 and streq(g_src_buf_ptr, name.str_start, 6, "f64_lt") == 1 {
@@ -11502,6 +11566,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_FCMP_LT
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = 0
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 6 and streq(g_src_buf_ptr, name.str_start, 6, "f64_gt") == 1 {
@@ -11509,6 +11574,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_FCMP_GT
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = 0
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 6 and streq(g_src_buf_ptr, name.str_start, 6, "f64_eq") == 1 {
@@ -11516,30 +11582,35 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_FCMP_EQ
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = 0
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "print_float") == 1 {
         let ins = Instr{}
         ins.op = OP_PRINT_FLOAT
         ins.operand0 = arg0
+        g_codegen_stype = 0
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_abs") == 1 {
         let ins = Instr{}
         ins.op = OP_FABS
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_exp") == 1 {
         let ins = Instr{}
         ins.op = OP_FEXP
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_log") == 1 {
         let ins = Instr{}
         ins.op = OP_FLOG
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_pow") == 1 {
@@ -11547,24 +11618,28 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_FPOW
         ins.operand0 = arg0
         ins.operand1 = arg1
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_sin") == 1 {
         let ins = Instr{}
         ins.op = OP_FSIN
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "f64_cos") == 1 {
         let ins = Instr{}
         ins.op = OP_FCOS
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 8 and streq(g_src_buf_ptr, name.str_start, 8, "f64_tanh") == 1 {
         let ins = Instr{}
         ins.op = OP_FTANH
         ins.operand0 = arg0
+        g_codegen_stype = TYPE_F64
         ret emit(g_jfn, bb, &ins)
     }
     if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "tensor_new1") == 1 {
@@ -11725,6 +11800,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ret emit(g_jfn, bb, &ins)
     }
 
+    g_codegen_stype = 0
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -11902,6 +11978,17 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_SHR { ret OP_SHR }
     if tok == TOK_SHL { ret OP_SHL }
     ret -1
+}
+
+fn tok_to_jir_op_f64(tok: i32) -> i32 {
+    if tok == TOK_PLUS  { ret OP_FADD }
+    if tok == TOK_MINUS { ret OP_FSUB }
+    if tok == TOK_STAR  { ret OP_FMUL }
+    if tok == TOK_SLASH { ret OP_FDIV }
+    if tok == TOK_LT    { ret OP_FCMP_LT }
+    if tok == TOK_GT    { ret OP_FCMP_GT }
+    if tok == TOK_EQEQ  { ret OP_FCMP_EQ }
+    ret tok_to_jir_op(tok)
 }
 
 ; ============================================================
@@ -18603,6 +18690,10 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
     g_main_pos = g_main_pos + 1
     let skip_store = 0
     let bind_stype = TYPE_I64
+    ; Use explicit type annotation if present (e.g. let x: f64 = ...)
+    if arr_type_tok == TOK_F64 { bind_stype = TYPE_F64 }
+    if arr_type_tok == TOK_I32 { bind_stype = TYPE_I32 }
+    if arr_type_tok == TOK_I8 { bind_stype = TYPE_I8 }
     let rhs_id = -1
     let ctrc_pages = 0
     let rhs_t = tok_type_at_raw(toks0, g_main_pos)
