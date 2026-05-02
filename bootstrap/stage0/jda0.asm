@@ -2476,7 +2476,7 @@ gen_expr_cmp:
     call    gen_expr_base
 .lp:
     call    cur_tok_type
-    mov     r12, rax        ; r12 = operator
+    mov     r12, rax        ; operator token
     cmp     rax, TOK_EQEQ
     je      .do_cmp
     cmp     rax, TOK_NEQ
@@ -2494,8 +2494,8 @@ gen_expr_cmp:
     call    adv_tok
     mov     rdi, 0x50       ; push rax (LHS)
     call    emit1
-    call    gen_expr_base
-    mov     rdi, 0x5B       ; pop rbx (LHS)
+    call    gen_expr_base   ; RHS -> rax at runtime
+    mov     rdi, 0x5B       ; pop rbx (LHS) at runtime
     call    emit1
     ; cmp rbx, rax
     mov     rdi, 0x48
@@ -2504,7 +2504,7 @@ gen_expr_cmp:
     call    emit1
     mov     rdi, 0xC3
     call    emit1
-    ; setCC al
+    ; setCC al based on r12 (operator)
     mov     rax, r12
     cmp     rax, TOK_EQEQ
     je      .eq
@@ -2518,24 +2518,18 @@ gen_expr_cmp:
     je      .le
     cmp     rax, TOK_GTEQ
     je      .ge
-.eq:
-    mov rdi, 0x94
-    jmp .sc
-.ne:
-    mov rdi, 0x95
-    jmp .sc
-.lt:
-    mov rdi, 0x9C
-    jmp .sc
-.gt:
-    mov rdi, 0x9F
-    jmp .sc
-.le:
-    mov rdi, 0x9E
-    jmp .sc
-.ge:
-    mov rdi, 0x9D
-    jmp .sc
+.eq: mov rdi, 0x94
+jmp .sc
+.ne: mov rdi, 0x95
+jmp .sc
+.lt: mov rdi, 0x9C
+jmp .sc
+.gt: mov rdi, 0x9F
+jmp .sc
+.le: mov rdi, 0x9E
+jmp .sc
+.ge: mov rdi, 0x9D
+jmp .sc
 .sc:
     push    rdi
     mov     rdi, 0x0F
@@ -2543,7 +2537,7 @@ gen_expr_cmp:
     pop     rdi
     call    emit1
     mov     rdi, 0xC0
-    call    emit1   ; setCC al
+    call    emit1
     ; movzx rax, al
     mov     rdi, 0x48
     call    emit1
