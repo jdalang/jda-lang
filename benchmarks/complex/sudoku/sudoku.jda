@@ -1,248 +1,211 @@
-// Sudoku solver — backtracking with MRV heuristic
-// Single alloc_pages call, partitioned into regions
+// Sudoku solver — constraint propagation + backtracking (MRV heuristic)
+// Reads puzzles from stdin, solves each one, reports count and timing.
 
 let mem: &i64
 
-fn _sb(buf: &i8, idx: i64) -> i64 {
-    ret buf[idx]
-}
+fn _sb(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-fn _clk(buf: &i8) -> i64 {
-    let r = syscall(228, 1, buf, 0, 0)
-    ret r
-}
+fn _clk(buf: &i8) -> i64 { ret syscall(228, 1, buf, 0, 0) }
 
-fn _rd(buf: &i8, n: i64) -> i64 {
-    let r = syscall(0, 0, buf, n, 0)
-    ret r
-}
+fn _rd(buf: &i8, n: i64) -> i64 { ret syscall(0, 0, buf, n, 0) }
 
 fn now_ms(ts: &i8) -> i64 {
     _clk(ts)
-    let s = ts[0]
-    let ptr = ts + 8
-    let ns = ptr[0]
-    let ms = s * 1000 + ns / 1000000
-    ret ms
+    let s = ts[0]; let ptr = ts + 8; let ns = ptr[0]
+    ret s * 1000 + ns / 1000000
 }
 
-// Memory layout (in i64 slots):
-// [0..80]     = grid (81 slots)
-// [81..580]   = puzzle starts (500 slots)
-// [581..582]  = timespec (16 bytes = 2 i64 slots)
-// Page-aligned input buffer starts at offset 4096 bytes from mem
+// Memory layout (i64 slots):
+//   [0..80]        grid (81 cells)
+//   [81..161]      possible bitmasks (81 cells)
+//   [162..170]     row_used (9)
+//   [171..179]     col_used (9)
+//   [180..188]     box_used (9)
+//   [189]          save_depth
+//   [200..200+81*108] save stack (81 levels × 108 slots each)
+//     each level: 81 poss + 9 row + 9 col + 9 box = 108
+//   [9100..9599]   puzzle starts (500)
+//   [9600..9601]   timespec (2 i64 = 16 bytes)
+//   Input buffer at byte offset 80000
 
-fn grd_get(i: i64) -> i64 {
-    ret mem[i]
-}
+fn grid(i: i64) -> i64 { ret mem[i] }
+fn grid_set(i: i64, v: i64) { mem[i] = v }
+fn poss(i: i64) -> i64 { ret mem[81 + i] }
+fn poss_set(i: i64, v: i64) { mem[81 + i] = v }
+fn row_used(i: i64) -> i64 { ret mem[162 + i] }
+fn row_set(i: i64, v: i64) { mem[162 + i] = v }
+fn col_used(i: i64) -> i64 { ret mem[171 + i] }
+fn col_set(i: i64, v: i64) { mem[171 + i] = v }
+fn box_used(i: i64) -> i64 { ret mem[180 + i] }
+fn box_set(i: i64, v: i64) { mem[180 + i] = v }
 
-fn grd_set(i: i64, v: i64) {
-    mem[i] = v
-}
-
-fn starts_get(i: i64) -> i64 {
-    let idx = 81 + i
-    ret mem[idx]
-}
-
-fn starts_set(i: i64, v: i64) {
-    let idx = 81 + i
-    mem[idx] = v
-}
-
-fn bfor(v: i64) -> i64 {
-    let b = 1
-    let i = 0
-    loop i < v {
-        b = b * 2
-        i = i + 1
-    }
-    ret b
+fn save_base() -> i64 {
+    let d = mem[189]
+    ret 200 + d * 108
 }
 
 fn cbits(x: i64) -> i64 {
-    let c = 0
-    let v = x
-    loop v > 0 {
-        let b = v & 1
-        c = c + b
-        v = v / 2
-    }
+    let c = 0; let v = x
+    loop v > 0 { c = c + (v & 1); v = v >> 1 }
     ret c
 }
 
-fn get_poss(pos: i64) -> i64 {
-    let r = pos / 9
-    let t1 = r * 9
-    let c = pos - t1
-    let br = r / 3
-    let bc = c / 3
-    let used = 0
-    let j = r * 9
-    let jend = j + 9
-    loop j < jend {
-        let gv = grd_get(j)
-        if gv != 0 {
-            used = used | bfor(gv)
-        }
-        j = j + 1
-    }
-    j = c
-    loop j < 81 {
-        let gv = grd_get(j)
-        if gv != 0 {
-            used = used | bfor(gv)
-        }
-        j = j + 9
-    }
-    let br3 = br * 3
-    let bc3 = bc * 3
-    let ri = 0
-    loop ri < 3 {
-        let ci = 0
-        loop ci < 3 {
-            let idx = (br3 + ri) * 9 + bc3 + ci
-            let gv = grd_get(idx)
-            if gv != 0 {
-                used = used | bfor(gv)
-            }
-            ci = ci + 1
-        }
-        ri = ri + 1
-    }
-    let neg_used = 0 - 1 - used
-    let result = neg_used & 1022
-    ret result
-}
-
-fn init_b(pz: &i8) {
+fn init_board(pz: &i8) {
     let i = 0
+    loop i < 9 { row_set(i, 0); col_set(i, 0); box_set(i, 0); i = i + 1 }
+    i = 0
     loop i < 81 {
         let ch = _sb(pz, i)
-        let isd = 0
-        if ch >= 49 {
-            if ch <= 57 {
-                isd = 1
-            }
+        if ch >= 49 and ch <= 57 {
+            let v = ch - 48
+            grid_set(i, v)
+            let bit = 1 << v
+            let r = i / 9; let c = i % 9; let b = (r / 3) * 3 + c / 3
+            row_set(r, row_used(r) | bit)
+            col_set(c, col_used(c) | bit)
+            box_set(b, box_used(b) | bit)
+        } else {
+            grid_set(i, 0)
         }
-        if isd == 1 {
-            grd_set(i, ch - 48)
+        i = i + 1
+    }
+    i = 0
+    loop i < 81 {
+        if grid(i) == 0 {
+            let r = i / 9; let c = i % 9; let b = (r / 3) * 3 + c / 3
+            let used = row_used(r) | col_used(c) | box_used(b)
+            let neg = 0 - 1 - used
+            poss_set(i, neg & 1022)
+        } else {
+            poss_set(i, 0)
         }
-        if isd == 0 {
-            grd_set(i, 0)
+        i = i + 1
+    }
+    mem[189] = 0
+}
+
+fn recompute_poss() {
+    let i = 0
+    loop i < 81 {
+        if grid(i) == 0 {
+            let r = i / 9; let c = i % 9; let b = (r / 3) * 3 + c / 3
+            let used = row_used(r) | col_used(c) | box_used(b)
+            let neg = 0 - 1 - used
+            poss_set(i, neg & 1022)
         }
+        i = i + 1
+    }
+}
+
+fn save_state() {
+    let base = save_base()
+    let i = 0
+    loop i < 81 { mem[base + i] = poss(i); i = i + 1 }
+    i = 0
+    loop i < 9 {
+        mem[base + 81 + i] = row_used(i)
+        mem[base + 90 + i] = col_used(i)
+        mem[base + 99 + i] = box_used(i)
+        i = i + 1
+    }
+    mem[189] = mem[189] + 1
+}
+
+fn restore_state() {
+    mem[189] = mem[189] - 1
+    let base = save_base()
+    let i = 0
+    loop i < 81 { poss_set(i, mem[base + i]); i = i + 1 }
+    i = 0
+    loop i < 9 {
+        row_set(i, mem[base + 81 + i])
+        col_set(i, mem[base + 90 + i])
+        box_set(i, mem[base + 99 + i])
         i = i + 1
     }
 }
 
 fn solve() -> i64 {
-    let best = 0 - 1
-    let bc = 10
+    let best = 0 - 1; let bc = 10
     let i = 0
     loop i < 81 {
-        let gv = grd_get(i)
-        if gv == 0 {
-            let p = get_poss(i)
-            let cnt = cbits(p)
-            if cnt == 0 {
-                ret 0
-            }
-            if cnt < bc {
-                best = i
-                bc = cnt
-            }
+        if grid(i) == 0 {
+            let cnt = cbits(poss(i))
+            if cnt == 0 { ret 0 }
+            if cnt < bc { best = i; bc = cnt }
         }
         i = i + 1
     }
-    if best < 0 {
-        ret 1
-    }
+    if best < 0 { ret 1 }
 
-    let bits = get_poss(best)
+    let r = best / 9; let c = best % 9; let b = (r / 3) * 3 + c / 3
+    save_state()
+
+    let bits = poss(best)
     let v = 1
     loop v <= 9 {
-        let bit = bfor(v)
-        let has = bits & bit
-        if has != 0 {
-            grd_set(best, v)
-            let res = solve()
-            if res == 1 {
-                ret 1
-            }
-            grd_set(best, 0)
+        let mask = 1 << v
+        let test = bits & mask
+        if test != 0 {
+            let bit = 1 << v
+            grid_set(best, v)
+            row_set(r, row_used(r) | bit)
+            col_set(c, col_used(c) | bit)
+            box_set(b, box_used(b) | bit)
+            recompute_poss()
+            if solve() == 1 { ret 1 }
+            grid_set(best, 0)
+            restore_state()
         }
         v = v + 1
     }
     ret 0
 }
 
+fn starts_get(i: i64) -> i64 { ret mem[9100 + i] }
+fn starts_set(i: i64, v: i64) { mem[9100 + i] = v }
+
 fn main() -> i64 {
     mem = alloc_pages(128)
 
-    // Input buffer at mem + 8192 (1024 i64 slots offset)
-    let inbuf_off = 8192
-    let inbuf = mem + inbuf_off
-    let total = 0
-    let kr = 1
+    // Read all stdin into input buffer at i64-offset 10000
+    let inbuf = mem + 10000
+    let total = 0; let kr = 1
     loop kr == 1 {
         let rem = 262144 - total
-        if rem <= 0 {
-            kr = 0
-        }
-        if rem > 0 {
+        if rem <= 0 { kr = 0 } else {
             let ptr = inbuf + total
             let n = _rd(ptr, rem)
-            if n <= 0 {
-                kr = 0
-            }
-            if n > 0 {
-                total = total + n
-            }
+            if n <= 0 { kr = 0 } else { total = total + n }
         }
     }
 
-    let np = 0
-    let pos = 0
-    let ls = 0
+    // Parse puzzle start positions (lines of length 81)
+    let np = 0; let pos = 0; let ls = 0
     loop pos < total {
         let ch = _sb(inbuf, pos)
         if ch == 10 {
             let ll = pos - ls
-            if ll == 81 {
-                starts_set(np, ls)
-                np = np + 1
-            }
+            if ll == 81 { starts_set(np, ls); np = np + 1 }
             ls = pos + 1
         }
         pos = pos + 1
     }
 
-    let ts_off = 581 * 8
-    let ts = mem + ts_off
+    let ts = mem + 9600
     let t0 = now_ms(ts)
 
-    let solved = 0
-    let p = 0
+    let solved = 0; let p = 0
     loop p < np {
-        let start = starts_get(p)
-        let pp = inbuf + start
-        init_b(pp)
-        let res = solve()
-        if res == 1 {
-            solved = solved + 1
-        }
+        let pp = inbuf + starts_get(p)
+        init_board(pp)
+        if solve() == 1 { solved = solved + 1 }
         p = p + 1
     }
 
     let t1 = now_ms(ts)
     let elapsed = t1 - t0
 
-    print("solved: ")
-    print("{solved}")
-    print("/")
-    print("{np}")
-    print("\ntime: ")
-    print("{elapsed}")
-    print(" ms\n")
+    print("solved: {solved}/{np}\ntime: {elapsed} ms\n")
     ret 0
 }
