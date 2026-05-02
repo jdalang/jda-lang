@@ -27,8 +27,6 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ChangesEnvironment=yes
-SetupIconFile=jda-icon.ico
-UninstallDisplayIcon={app}\jda-icon.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
