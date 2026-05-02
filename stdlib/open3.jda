@@ -1,0 +1,195 @@
+; =============================================================================
+; jda::open3 -- Capture Child Process I/O
+; =============================================================================
+; Spawn child processes with piped stdin/stdout/stderr. Capture output.
+; Depends on: (uses raw syscalls, no stdlib deps)
+;
+; Functions:
+;   open3_popen(cmd, argv)            -> &i64   spawn with pipes (returns context)
+;   open3_pid(ctx)                    -> i64    get child PID
+;   open3_write(ctx, data, len)       -> i64    write to child stdin
+;   open3_read(ctx, buf, max)         -> i64    read from child stdout
+;   open3_read_err(ctx, buf, max)     -> i64    read from child stderr
+;   open3_close_stdin(ctx)                      close child stdin
+;   open3_wait(ctx)                   -> i64    wait for child, return exit code
+;   open3_capture2(cmd, argv, out, max) -> i64  run cmd, capture stdout
+;   open3_capture3(cmd, argv, out, omax, err, emax) -> i64
+; =============================================================================
+
+; Context layout (&i64):
+;   [0] child_pid
+;   [1] stdin_write_fd    (parent writes to this)
+;   [2] stdout_read_fd    (parent reads from this)
+;   [3] stderr_read_fd    (parent reads from this)
+
+;; Internal: single-syscall wrappers
+
+fn _o3_pipe(fds: &i64) -> i64 {
+    ret syscall(22, fds, 0, 0)
+}
+
+fn _o3_fork() -> i64 {
+    ret syscall(57, 0, 0, 0)
+}
+
+fn _o3_dup2(old: i64, new_fd: i64) -> i64 {
+    ret syscall(33, old, new_fd, 0)
+}
+
+fn _o3_close(fd: i64) -> i64 {
+    ret syscall(3, fd, 0, 0)
+}
+
+fn _o3_execve(path: &i8, argv: &i64, envp: &i64) -> i64 {
+    ret syscall(59, path, argv, envp)
+}
+
+fn _o3_exit(code: i64) {
+    syscall(60, code, 0, 0)
+}
+
+fn _o3_read(fd: i64, buf: &i8, max: i64) -> i64 {
+    ret syscall(0, fd, buf, max)
+}
+
+fn _o3_write(fd: i64, data: &i8, len: i64) -> i64 {
+    ret syscall(1, fd, data, len)
+}
+
+fn _o3_wait4(pid: i64, status: &i64) -> i64 {
+    ret syscall(61, pid, status, 0)
+}
+
+;; Spawn command with piped stdin/stdout/stderr.
+;; cmd = path to executable (null-terminated).
+;; argv = null-terminated array of args (argv[0] = cmd name).
+;; Returns context pointer.
+fn open3_popen(cmd: &i8, argv: &i64) -> &i64 {
+    let ctx: &i64 = alloc_pages(1)
+
+    ; Create 3 pipes: stdin, stdout, stderr
+    let stdin_fds: &i64 = alloc_pages(1)
+    let stdout_fds: &i64 = alloc_pages(1)
+    let stderr_fds: &i64 = alloc_pages(1)
+    _o3_pipe(stdin_fds)
+    _o3_pipe(stdout_fds)
+    _o3_pipe(stderr_fds)
+
+    let pid = _o3_fork()
+    if pid == 0 {
+        ; Child process
+        ; stdin: read from stdin_fds[0]
+        _o3_dup2(stdin_fds[0], 0)
+        _o3_close(stdin_fds[0])
+        _o3_close(stdin_fds[1])
+
+        ; stdout: write to stdout_fds[1]
+        _o3_dup2(stdout_fds[1], 1)
+        _o3_close(stdout_fds[0])
+        _o3_close(stdout_fds[1])
+
+        ; stderr: write to stderr_fds[1]
+        _o3_dup2(stderr_fds[1], 2)
+        _o3_close(stderr_fds[0])
+        _o3_close(stderr_fds[1])
+
+        _o3_execve(cmd, argv, 0)
+        _o3_exit(127)
+    }
+
+    ; Parent
+    _o3_close(stdin_fds[0])   ; close read end of stdin pipe
+    _o3_close(stdout_fds[1])  ; close write end of stdout pipe
+    _o3_close(stderr_fds[1])  ; close write end of stderr pipe
+
+    ctx[0] = pid
+    ctx[1] = stdin_fds[1]     ; parent writes to child stdin
+    ctx[2] = stdout_fds[0]    ; parent reads child stdout
+    ctx[3] = stderr_fds[0]    ; parent reads child stderr
+    ret ctx
+}
+
+;; Get child PID.
+fn open3_pid(ctx: &i64) -> i64 {
+    ret ctx[0]
+}
+
+;; Write data to child's stdin.
+fn open3_write(ctx: &i64, data: &i8, len: i64) -> i64 {
+    ret _o3_write(ctx[1], data, len)
+}
+
+;; Read from child's stdout.
+fn open3_read(ctx: &i64, buf: &i8, max: i64) -> i64 {
+    ret _o3_read(ctx[2], buf, max)
+}
+
+;; Read from child's stderr.
+fn open3_read_err(ctx: &i64, buf: &i8, max: i64) -> i64 {
+    ret _o3_read(ctx[3], buf, max)
+}
+
+;; Close child's stdin (signals EOF to child).
+fn open3_close_stdin(ctx: &i64) {
+    _o3_close(ctx[1])
+    ctx[1] = 0 - 1
+}
+
+;; Wait for child to exit. Returns exit code (0-255) or -1 on error.
+fn open3_wait(ctx: &i64) -> i64 {
+    let status: &i64 = alloc_pages(1)
+    let r = _o3_wait4(ctx[0], status)
+    if r < 0 { ret -1 }
+    let s = status[0]
+    ; WIFEXITED: (s & 0x7F) == 0, then WEXITSTATUS: (s >> 8) & 0xFF
+    let lo7 = s - (s / 128) * 128
+    if lo7 == 0 {
+        ret (s / 256) - ((s / 256) / 256) * 256
+    }
+    ret 0 - 1
+}
+
+;; Run command and capture stdout. Returns bytes read.
+fn open3_capture2(cmd: &i8, argv: &i64, out: &i8, max: i64) -> i64 {
+    let ctx = open3_popen(cmd, argv)
+    open3_close_stdin(ctx)
+    let total = 0
+    let done = 0
+    loop done == 0 {
+        let n = open3_read(ctx, out + total, max - total)
+        if n <= 0 {
+            done = 1
+        } else {
+            total = total + n
+        }
+    }
+    open3_wait(ctx)
+    ret total
+}
+
+;; Run command and capture stdout + stderr. Returns stdout bytes read.
+fn open3_capture3(cmd: &i8, argv: &i64, out: &i8, omax: i64, err: &i8, emax: i64) -> i64 {
+    let ctx = open3_popen(cmd, argv)
+    open3_close_stdin(ctx)
+
+    ; Read stdout
+    let ototal = 0
+    let done = 0
+    loop done == 0 {
+        let n = open3_read(ctx, out + ototal, omax - ototal)
+        if n <= 0 { done = 1 }
+        if done == 0 { ototal = ototal + n }
+    }
+
+    ; Read stderr
+    let etotal = 0
+    done = 0
+    loop done == 0 {
+        let n = open3_read_err(ctx, err + etotal, emax - etotal)
+        if n <= 0 { done = 1 }
+        if done == 0 { etotal = etotal + n }
+    }
+
+    open3_wait(ctx)
+    ret ototal
+}
