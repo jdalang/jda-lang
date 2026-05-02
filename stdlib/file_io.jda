@@ -4,16 +4,16 @@
 ; Ergonomic wrappers around fs.jda's raw syscall functions.
 ; Depends on: stdlib/fs.jda
 ;
-; Python equivalent mapping:
-;   open(f).read()              -> fs_slurp(path, &buf, &len)
-;   open(f).readlines()         -> fs_read_lines(path, &lines, &count)
-;   open(f,'w').write(s)        -> fs_write_str(path, str, len)
-;   shutil.copy(src, dst)       -> fs_copy(src, dst)
-;   os.rename(src, dst)         -> fs_rename(src, dst)
-;   os.path.join(a, b)         -> path_join(a, alen, b, blen, out) -> len
-;   os.path.basename(p)        -> path_basename(path, len) -> (start, blen)
-;   os.path.splitext(p)        -> path_ext(path, len) -> offset of '.'
-;   tempfile.mktemp()           -> fs_tmpname(out) -> len
+; Equivalent mapping:
+;   read_all(f)                 -> fs_slurp(path, &buf, &len)
+;   read_lines(f)               -> fs_read_lines(path, &lines, &count)
+;   write(f, s)                 -> fs_write_str(path, str, len)
+;   copy(src, dst)              -> fs_copy(src, dst)
+;   rename(src, dst)            -> fs_rename(src, dst)
+;   path_join(a, b)             -> path_join(a, alen, b, blen, out) -> len
+;   path_basename(p)            -> path_basename(path, len) -> (start, blen)
+;   path_ext(p)                 -> path_ext(path, len) -> offset of '.'
+;   tmpname()                   -> fs_tmpname(out) -> len
 ;
 ; All functions use &i8 for paths (null-terminated C strings).
 ; Zero compiler changes.
