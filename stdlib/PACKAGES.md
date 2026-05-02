@@ -22,7 +22,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | find | Recursive directory traversal — walk, files-only, type detection |
 | fmt | String formatting — sprintf-style format, pad, align |
 | fs | Filesystem primitives — open, close, read, write, stat, mkdir, unlink |
-| hashmap | Hash map — open addressing, linear probing, string keys, rehash |
+| hashmap | Hash map — open addressing, linear probing, map_of1–of3 constructors, keys/values, copy, merge, print |
 | heap | Binary heap — min-heap, max-heap, heap sort |
 | io | I/O utilities — buffered read/write, stdin/stdout helpers |
 | ipaddr | IP address parsing — IPv4 parse/format, CIDR, private/loopback/multicast |
@@ -33,6 +33,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | matrix | Integer matrix operations — add, mul, transpose, identity, trace |
 | nn | Neural network — layers, activations, loss functions, SGD optimizer |
 | observer | Publish/subscribe event pattern — event bus, topic handlers |
+| option | Option type — Some/None, unwrap, unwrap_or, opt_or, opt_eq, print |
 | os | OS interface — env vars, argv, exit, getpid |
 | plot | Visualization — bar charts, line plots, histograms, scatter, heatmaps |
 | pp | Pretty printer — vec, matrix, hex dump, labeled values for debugging |
@@ -44,6 +45,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | select | Channel select — poll multiple channels, non-blocking receive |
 | set | Hash set — add, has, del, union, intersect, diff, subset |
 | shell | Shell word splitting and escaping — escape, quote, join, split |
+| slice | Slice / dynamic view — view into array, sub-slice, get/set, contains, sum, print |
 | sort | Sorting — quicksort, binary search, reverse, unique, merge |
 | string | String library — length-prefixed, from_cstr, concat, slice, replace, trim, split, join, cmp, reverse, pad, from_i64 |
 | tensor_ops | Tensor operations — create, add, mul, matmul, transpose, reshape |
@@ -57,6 +59,7 @@ Use with `--include stdlib/<name>.jda` or add as a dependency in `jda.toml`.
 | tuple | Tuples — pair, triple, fst/snd/trd, result ok/err/unwrap |
 | uri | URI/URL parsing — scheme, host, port, path, query, percent-encode/decode |
 | uuid | UUID v4 generation — random UUIDs |
+| variant | Sum types / tagged unions — var0–var4, tag, field access, equality, print |
 | vec | Dynamic arrays — push, pop, get, set, grow, contains, remove |
 | bignum | Arbitrary precision integers — add, sub, mul, div, compare, string conversion |
 | i128 | 128-bit integer arithmetic — add, sub, mul, cmp, shifts, bitwise, string conversion |
