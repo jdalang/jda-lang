@@ -370,8 +370,3 @@ docker/            Dockerfile for build environment
 
 ### Contributing
 - [Contributing Guide](CONTRIBUTING.md) — how to build, test, and submit changes
-
-### Design Documents
-- `Jda_A_Convergence_Architecture_for_Post-Moore_Systems_Programming.docx`
-- `Jda-Language-Technical-Implementation-Guide.docx`
-- `Jda-AI-Prompt-Master-Guide.docx`
