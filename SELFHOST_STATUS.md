@@ -64,13 +64,31 @@ jda0 had bugs that appeared unfixable at assembly level:
 - ✅ lex() successfully processes large files and jda1.jda without crashing!
 - jda1 can now lex jda1.jda completely
 
+## Third Fix: Const Declaration Parsing Support
+**Commit**: `bfbdaa4` - add const declaration parsing support to jda1
+
+### Implementation
+- Added `parse_const_decl()` function that skips: `const NAME = VALUE ;`
+- Updated main() to parse const declarations before struct/function declarations
+- Made parsing loops safer with explicit bounds checking
+
+### Result
+- ✅ jda1 can now parse const declarations successfully
+- ✅ jda1 skips past all 40+ const declarations in jda1.jda
+- ❌ Self-hosting still blocked by crash in later compilation phases (codegen or output generation)
+
 ## Remaining Self-Hosting Blocker
-**Issue**: jda1's parser doesn't support `const` declarations
+**Issue**: Crash in compilation phase after parsing (likely codegen, register allocation, or ELF output)
 - ✅ hello.jda → [jda1] → hello_binary ✅ (WORKS)
-- ✅ jda1.jda lex phase → [jda1] → completes successfully ✅ (NEWLY FIXED)
-- ❌ jda1.jda parse phase → [jda1] → **Blocked: parser doesn't handle `const` syntax** ❌
-- Root cause: jda1.jda starts with 40+ const declarations, but jda1's parser only looks for `fn` declarations
-- Solution needed: Either (1) implement const declaration parsing in jda1, or (2) move const declarations out of the main syntax
+- ✅ jda1.jda lex phase → [jda1] → completes successfully ✅
+- ✅ jda1.jda const parsing → [jda1] → completes successfully ✅ (NEWLY FIXED)
+- ✅ jda1.jda struct parsing → [jda1] → completes successfully ✅
+- ❌ jda1.jda function parsing/codegen → [jda1] → **Crash producing 125-byte stub binary** ❌
+
+**Next debugging steps:**
+1. Add debug output in parse_fn() to identify where function parsing crashes
+2. Check if crash is in JIR codegen, lowering, register allocation, or ELF output
+3. May need GDB or memory corruption detection to find exact failure point
 
 ## Current Compilation Chain
 ```
