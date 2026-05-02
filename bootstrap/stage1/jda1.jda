@@ -193,6 +193,15 @@ const OP_FPOW        = 70
 const OP_FSIN        = 71
 const OP_FCOS        = 72
 const OP_FTANH       = 73
+const OP_TNEW1       = 74
+const OP_TNEW2       = 75
+const OP_TFREE       = 76
+const OP_TGET        = 77
+const OP_TSET        = 78
+const OP_TFILL       = 79
+const OP_TLEN        = 80
+const OP_TSHAPE      = 81
+const OP_TDATA       = 82
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -3055,7 +3064,7 @@ fn run_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, fn_n
                     }
                 }
                 let name_len = name_end - name_start
-                if name_len > 0 and g_top_fn_cnt < 512 {
+                if name_len > 0 and g_top_fn_cnt < 1024 {
                     fn_name_off[g_top_fn_cnt] = name_start
                     fn_name_len[g_top_fn_cnt] = name_len
                     g_top_fn_cnt = g_top_fn_cnt + 1
@@ -6931,6 +6940,66 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.operand0 = arg0
         ret emit(jfn, bb, &ins)
     }
+    if name_len == 11 and streq(src, name_start, 11, "tensor_new1") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TNEW1
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 11 and streq(src, name_start, 11, "tensor_new2") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TNEW2
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 11 and streq(src, name_start, 11, "tensor_free") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TFREE
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "tensor_get") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TGET
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "tensor_set") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TSET
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 11 and streq(src, name_start, 11, "tensor_fill") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TFILL
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "tensor_len") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TLEN
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 12 and streq(src, name_start, 12, "tensor_shape") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TSHAPE
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 11 and streq(src, name_start, 11, "tensor_data") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TDATA
+        ins.operand0 = arg0
+        ret emit(jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8506,6 +8575,66 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.operand0 = arg0
         ret emit(g_jfn, bb, &ins)
     }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "tensor_new1") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TNEW1
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "tensor_new2") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TNEW2
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "tensor_free") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TFREE
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "tensor_get") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TGET
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "tensor_set") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TSET
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ins.operand2 = arg2
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "tensor_fill") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TFILL
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "tensor_len") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TLEN
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 12 and streq(g_src_buf_ptr, name.str_start, 12, "tensor_shape") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TSHAPE
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "tensor_data") == 1 {
+        let ins = Instr{}
+        ins.op = OP_TDATA
+        ins.operand0 = arg0
+        ret emit(g_jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8767,6 +8896,13 @@ fn dce_mark_float(op: i64, o0: i64, o1: i64, used: &i32) {
         if o0 >= 0 { used[o0] = 1 }
         if o1 >= 0 { used[o1] = 1 }
     }
+    if op == OP_TNEW1 or op == OP_TLEN or op == OP_TDATA or op == OP_TFREE {
+        if o0 >= 0 { used[o0] = 1 }
+    }
+    if op == OP_TNEW2 or op == OP_TGET or op == OP_TFILL or op == OP_TSHAPE or op == OP_TSET {
+        if o0 >= 0 { used[o0] = 1 }
+        if o1 >= 0 { used[o1] = 1 }
+    }
 }
 
 fn dce(jfn: &JirFunction) {
@@ -8827,7 +8963,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
-            if op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK {
+            if op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK or op == OP_TSET {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
                 if o2 >= 0 { used[o2] = 1 }
@@ -8870,7 +9006,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ATOMIC_CAS   { used[id] = 1 }
             if op == OP_ATOMIC_ADD   { used[id] = 1 }
             if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE or op == OP_GET_TID or op == OP_EPOLL_CREATE or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT or op == OP_DEADLOCK_CHK { used[id] = 1 }
-            if op == OP_PRINT_FLOAT { used[id] = 1 }
+            if op == OP_PRINT_FLOAT or op == OP_TNEW1 or op == OP_TNEW2 or op == OP_TFREE or op == OP_TSET or op == OP_TFILL { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -13049,6 +13185,328 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 0
 }
 
+fn lower_tensor_new1(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let len_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_mov_rr(out, pos, PHYS_RDI, len_r)
+    ; RSI = len * 8 + 80
+    emit_mov_rr(out, pos, PHYS_RSI, PHYS_RDI)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xE6)
+    emit_byte(out, pos, 3)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 80)
+    ; Save len across mmap
+    emit_push_r(out, pos, PHYS_RDI)
+    emit_push_r(out, pos, PHYS_RSI)
+    emit_mov_imm64(out, pos, PHYS_RAX, 9)
+    emit_mov_imm64(out, pos, PHYS_RDI, 0)
+    emit_mov_imm64(out, pos, PHYS_RDX, 3)
+    emit_mov_imm64(out, pos, PHYS_R10, 0x22)
+    emit_mov_imm64(out, pos, PHYS_R8, -1)
+    emit_mov_imm64(out, pos, PHYS_R9, 0)
+    emit_syscall_instr(out, pos)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDI)
+    ; RAX = mmap result; RDI = len
+    ; [RAX+0] = ndim = 1
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x00)
+    emit_i32_le(out, pos, 1)
+    ; [RAX+8] = len
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x78)
+    emit_byte(out, pos, 0x08)
+    ; [RAX+16] = shape[0] = len
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x78)
+    emit_byte(out, pos, 0x10)
+    ; [RAX+48] = strides[0] = 1
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x40)
+    emit_byte(out, pos, 0x30)
+    emit_i32_le(out, pos, 1)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+    consume_use(ctx, ins.operand0)
+}
+
+fn lower_tensor_new2(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
+    let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDI)
+    ; RSI = rows * cols
+    emit_mov_rr(out, pos, PHYS_RSI, PHYS_RDI)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xAF)
+    emit_byte(out, pos, 0xF1)
+    ; Save rows, cols, total_len across mmap
+    emit_push_r(out, pos, PHYS_RDI)
+    emit_push_r(out, pos, PHYS_RCX)
+    emit_push_r(out, pos, PHYS_RSI)
+    ; RSI = total_len * 8 + 80
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xE6)
+    emit_byte(out, pos, 3)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 80)
+    emit_mov_imm64(out, pos, PHYS_RAX, 9)
+    emit_mov_imm64(out, pos, PHYS_RDI, 0)
+    emit_mov_imm64(out, pos, PHYS_RDX, 3)
+    emit_mov_imm64(out, pos, PHYS_R10, 0x22)
+    emit_mov_imm64(out, pos, PHYS_R8, -1)
+    emit_mov_imm64(out, pos, PHYS_R9, 0)
+    emit_syscall_instr(out, pos)
+    emit_pop_r(out, pos, PHYS_RSI)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDI)
+    ; RAX = ptr; RDI = rows; RCX = cols; RSI = total_len
+    ; [RAX+0] = ndim = 2
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x00)
+    emit_i32_le(out, pos, 2)
+    ; [RAX+8] = total_len
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x70)
+    emit_byte(out, pos, 0x08)
+    ; [RAX+16] = shape[0] = rows
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x78)
+    emit_byte(out, pos, 0x10)
+    ; [RAX+24] = shape[1] = cols
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x18)
+    ; [RAX+48] = strides[0] = cols
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x30)
+    ; [RAX+56] = strides[1] = 1
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x40)
+    emit_byte(out, pos, 0x38)
+    emit_i32_le(out, pos, 1)
+    emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+    emit_restore_pool(ctx.ra, out, pos)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_R12)
+    emit_pop_r(out, pos, PHYS_R12)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+}
+
+fn lower_tensor_free(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_mov_rr(out, pos, PHYS_RDI, t_r)
+    ; RSI = [RDI+8] (len)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x77)
+    emit_byte(out, pos, 0x08)
+    ; SHL RSI, 3
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xC1)
+    emit_byte(out, pos, 0xE6)
+    emit_byte(out, pos, 3)
+    ; ADD RSI, 80
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 80)
+    ; munmap(RDI, RSI)
+    emit_mov_imm64(out, pos, PHYS_RAX, 11)
+    emit_syscall_instr(out, pos)
+    emit_restore_pool(ctx.ra, out, pos)
+    emit_pop_r(out, pos, PHYS_R12)
+    consume_use(ctx, ins.operand0)
+}
+
+fn lower_tensor_get(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, t_r)
+    let idx_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, idx_r)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDI)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8D)
+    emit_byte(out, pos, 0x47)
+    emit_byte(out, pos, 0x50)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x04)
+    emit_byte(out, pos, 0xC8)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_mov_rr(out, pos, dst, PHYS_RAX)
+}
+
+fn lower_tensor_set(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, t_r)
+    let idx_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, idx_r)
+    let val_r = get_or_load(ctx.ra, out, pos, ins.operand2)
+    emit_push_r(out, pos, val_r)
+    emit_pop_r(out, pos, PHYS_RDX)
+    emit_pop_r(out, pos, PHYS_RCX)
+    emit_pop_r(out, pos, PHYS_RDI)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8D)
+    emit_byte(out, pos, 0x47)
+    emit_byte(out, pos, 0x50)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x14)
+    emit_byte(out, pos, 0xC8)
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+    consume_use(ctx, ins.operand2)
+}
+
+fn lower_tensor_fill(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, t_r)
+    let val_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, val_r)
+    emit_pop_r(out, pos, PHYS_RDX)
+    emit_pop_r(out, pos, PHYS_RDI)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x4F)
+    emit_byte(out, pos, 0x08)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8D)
+    emit_byte(out, pos, 0x77)
+    emit_byte(out, pos, 0x50)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, 0xC0)
+    let loop_off = pos[0]
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x39)
+    emit_byte(out, pos, 0xC8)
+    let jge_off = pos[0]
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x8D)
+    emit_i32_le(out, pos, 0)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x14)
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC0)
+    let jmp_rel = loop_off - (pos[0] + 5)
+    emit_jmp_rel32(out, pos, jmp_rel)
+    let done_off = pos[0]
+    let jge_rel = done_off - (jge_off + 6)
+    poke_byte(out, jge_off + 2, i32_b0(jge_rel))
+    poke_byte(out, jge_off + 3, i32_b1(jge_rel))
+    poke_byte(out, jge_off + 4, i32_b2(jge_rel))
+    poke_byte(out, jge_off + 5, i32_b3(jge_rel))
+    consume_use(ctx, ins.operand0)
+    consume_use(ctx, ins.operand1)
+}
+
+fn lower_tensor_meta(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    let op = ins.op
+    if op == OP_TLEN {
+        let t_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, t_r)
+        emit_pop_r(out, pos, PHYS_RDI)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x8B)
+        emit_byte(out, pos, 0x47)
+        emit_byte(out, pos, 0x08)
+        consume_use(ctx, ins.operand0)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_RAX)
+    }
+    if op == OP_TSHAPE {
+        let t_r2 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, t_r2)
+        let dim_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, dim_r)
+        emit_pop_r(out, pos, PHYS_RCX)
+        emit_pop_r(out, pos, PHYS_RDI)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x8D)
+        emit_byte(out, pos, 0x47)
+        emit_byte(out, pos, 0x10)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x8B)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0xC8)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        let dst2 = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst2, PHYS_RAX)
+    }
+    if op == OP_TDATA {
+        let t_r3 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, t_r3)
+        emit_pop_r(out, pos, PHYS_RDI)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x8D)
+        emit_byte(out, pos, 0x47)
+        emit_byte(out, pos, 0x50)
+        consume_use(ctx, ins.operand0)
+        let dst3 = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst3, PHYS_RAX)
+    }
+}
+
+fn lower_instr_tensor(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let op = ins.op
+    if op == OP_TNEW1 { lower_tensor_new1(ins, ctx, out, pos) }
+    if op == OP_TNEW1 { ret 1 }
+    if op == OP_TNEW2 { lower_tensor_new2(ins, ctx, out, pos) }
+    if op == OP_TNEW2 { ret 1 }
+    if op == OP_TFREE { lower_tensor_free(ins, ctx, out, pos) }
+    if op == OP_TFREE { ret 1 }
+    if op == OP_TGET { lower_tensor_get(ins, ctx, out, pos) }
+    if op == OP_TGET { ret 1 }
+    if op == OP_TSET { lower_tensor_set(ins, ctx, out, pos) }
+    if op == OP_TSET { ret 1 }
+    if op == OP_TFILL { lower_tensor_fill(ins, ctx, out, pos) }
+    if op == OP_TFILL { ret 1 }
+    if op == OP_TLEN or op == OP_TSHAPE or op == OP_TDATA {
+        lower_tensor_meta(ins, ctx, out, pos)
+        ret 1
+    }
+    ret 0
+}
+
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     if lower_instr_constlike(ins, ctx, jfn, out, pos) == 1 {
@@ -13162,7 +13620,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
-    if lower_instr_float(ins, ctx, out, pos) == 1 {
+    if lower_instr_float(ins, ctx, out, pos) == 1 or lower_instr_tensor(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
@@ -14441,13 +14899,13 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
     if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID or op == OP_EPOLL_CREATE {
         mark_use(ctx, o0)
     }
-    if op == OP_I2F or op == OP_F2I or op == OP_FNEG or op == OP_FSQRT or op == OP_PRINT_FLOAT {
+    if op == OP_I2F or op == OP_F2I or op == OP_FNEG or op == OP_FSQRT or op == OP_PRINT_FLOAT or op == OP_TNEW1 or op == OP_TLEN or op == OP_TDATA or op == OP_TFREE {
         mark_use(ctx, o0)
     }
     if op == OP_FABS or op == OP_FEXP or op == OP_FLOG or op == OP_FSIN or op == OP_FCOS or op == OP_FTANH {
         mark_use(ctx, o0)
     }
-    if op == OP_FADD or op == OP_FSUB or op == OP_FMUL or op == OP_FDIV {
+    if op == OP_FADD or op == OP_FSUB or op == OP_FMUL or op == OP_FDIV or op == OP_TNEW2 or op == OP_TGET or op == OP_TFILL or op == OP_TSHAPE {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
@@ -14459,7 +14917,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
-    if op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK {
+    if op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK or op == OP_TSET {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
         mark_use(ctx, o2)
@@ -14930,11 +15388,11 @@ fn main(argc: i64, argv_ptr: &i64) {
     run_top_struct_prelude(g_dbg_toks_init, g_stab_ptr, g_src_buf_ptr, g_runtime_src_len)
     print("FN_SCAN\n")
     ; Pass 1: Scan for global functions
-    let fn_name_off = alloc_pages(1)
-    let fn_name_len = alloc_pages(1)
+    let fn_name_off = alloc_pages(2)
+    let fn_name_len = alloc_pages(2)
     let fn_code_off = alloc_pages(2) ; 1024 entries
-    let fn_ret_types = alloc_pages(1)
-    let fn_param_cnts = alloc_pages(1)
+    let fn_ret_types = alloc_pages(2)
+    let fn_param_cnts = alloc_pages(2)
     g_fn_name_off_tbl = fn_name_off
     g_fn_name_len_tbl = fn_name_len
     g_fn_param_cnt_tbl = fn_param_cnts
