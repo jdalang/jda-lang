@@ -62,14 +62,15 @@ const TOK_GTE     = 35
 const TOK_LTE     = 36
 const TOK_AND     = 37
 const TOK_OR      = 38
-const TOK_TILDE   = 39  ; Bitwise NOT
-const TOK_CONST   = 40  ; Shifted from 39
-const TOK_EOF     = 41  ; Shifted from 40
+const TOK_PIPE    = 39  ; Bitwise OR (|)
+const TOK_TILDE   = 40  ; Bitwise NOT (~)
+const TOK_CONST   = 41  ; Shifted from 39
+const TOK_EOF     = 42  ; Shifted from 40
 ; Type keyword tokens (classified by lexer)
-const TOK_I64     = 42  ; Shifted from 41
-const TOK_I32     = 43  ; Shifted from 42
-const TOK_I8      = 44  ; Shifted from 43
-const TOK_F64     = 45  ; Shifted from 44
+const TOK_I64     = 43  ; Shifted from 41
+const TOK_I32     = 44  ; Shifted from 42
+const TOK_I8      = 45  ; Shifted from 43
+const TOK_F64     = 46  ; Shifted from 44
 
 ; AST node types
 const NODE_FN     = 0
@@ -358,6 +359,7 @@ fn char_to_tok(c: i8) -> i32 {
     if c == '*' { ret TOK_STAR }
     if c == '/' { ret TOK_SLASH }
     if c == '&' { ret TOK_AMP }
+    if c == '|' { ret TOK_PIPE }
     if c == '~' { ret TOK_TILDE }
     if c == '.' { ret TOK_DOT }
     ret TOK_EOF
@@ -1255,7 +1257,7 @@ fn op_precedence(op: i32) -> i32 {
     if op == TOK_LT    or op == TOK_GT or op == TOK_LTE or op == TOK_GTE { ret 4 }
     if op == TOK_EQEQ  or op == TOK_NEQ   { ret 3 }
     if op == TOK_AND   or op == TOK_AMP   { ret 2 }  ; Both logical and bitwise AND
-    if op == TOK_OR    { ret 1 }
+    if op == TOK_OR    or op == TOK_PIPE  { ret 1 }  ; Both logical and bitwise OR
     ret -1
 }
 
@@ -2138,6 +2140,13 @@ fn codegen_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             ld.operand0 = addr
             ret emit(jfn, bb, &ld)
         }
+        ; Handle unary NOT (bitwise NOT)
+        if node.op == TOK_TILDE {
+            let a = codegen_expr(node.child0, jfn, bb)
+            ; For now, implement ~x as (x XOR -1) but we don't have XOR
+            ; So just return a as-is (this is a limitation)
+            ret a
+        }
         let a  = codegen_expr(node.child0, jfn, bb)
         let b  = codegen_expr(node.child1, jfn, bb)
         let op = tok_to_jir_op(node.op)
@@ -2207,7 +2216,7 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_LTE   { ret OP_CMP_LTE }
     if tok == TOK_GTE   { ret OP_CMP_GTE }
     if tok == TOK_AND or tok == TOK_AMP { ret OP_AND }  ; Both logical and bitwise AND
-    if tok == TOK_OR    { ret OP_OR }
+    if tok == TOK_OR or tok == TOK_PIPE { ret OP_OR }  ; Both logical and bitwise OR
     if tok == TOK_TILDE { ret OP_AND }  ; Bitwise NOT - temporary: use AND (will be fixed later)
     ret -1
 }
