@@ -2437,17 +2437,6 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
 fn compile_expr_stmt_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let pos_before = pos[0]
     let next_tok = tok_type_at(toks, pos[0] + 1)
-    print("EXPRST p=")
-    print(pos[0])
-    print(" t=")
-    print(toks[pos[0]].type)
-    print(" n=")
-    print(next_tok)
-    if toks[pos[0]].type == TOK_IDENT {
-        print(" s=")
-        print_span(src, toks[pos[0]].str_start, toks[pos[0]].str_len)
-    }
-    print("\n")
     if toks[pos[0]].type == TOK_IDENT and next_tok == TOK_EQ {
         let name_start = tok_str_start_at(toks, pos[0])
         let name_len = tok_str_len_at(toks, pos[0])
@@ -2970,29 +2959,15 @@ fn codegen_mul_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
 }
 
 fn codegen_unary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    print("cu p=")
-    print(pos[0])
-    print(" t=")
-    print(toks[pos[0]].type)
-    print("\n")
     if toks[pos[0]].type == TOK_MINUS {
         pos[0] = pos[0] + 1
-        print("cu minus p=")
-        print(pos[0])
-        print("\n")
         if toks[pos[0]].type == TOK_INT {
             let negv = 0 - toks[pos[0]].imm
             pos[0] = pos[0] + 1
             ret emit_const(jfn, bb, TYPE_I64, negv)
         }
         let zero_id = emit_const(jfn, bb, TYPE_I64, 0)
-        print("cu zero=")
-        print(zero_id)
-        print("\n")
         let rhs_id = codegen_postfix_inline(toks, pos, stab, src, jfn, bb)
-        print("cu rhs=")
-        print(rhs_id)
-        print("\n")
         ret emit_binop(jfn, bb, OP_SUB, zero_id, rhs_id)
     }
     if toks[pos[0]].type == TOK_TILDE {
@@ -3021,11 +2996,6 @@ fn codegen_unary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
     if t.type == TOK_INT {
         pos[0] = pos[0] + 1
         expr_id = emit_const(jfn, bb, TYPE_I64, t.imm)
-        print("cint id=")
-        print(expr_id)
-        print(" p=")
-        print(pos[0])
-        print("\n")
     } else if t.type == TOK_IDENT {
         print("prim enter p=")
         print(pos[0])
@@ -3292,11 +3262,6 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     if t.type == TOK_INT {
         pos[0] = pos[0] + 1
         let iid = emit_const(jfn, bb, TYPE_I64, t.imm)
-        print("cint id=")
-        print(iid)
-        print(" p=")
-        print(pos[0])
-        print("\n")
         ret iid
     }
     if t.type == TOK_IDENT {
@@ -3306,11 +3271,6 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         }
         pos[0] = pos[0] - 1
         let slot = lookup(jfn, &t)
-        print("prim ident slot=")
-        print(slot)
-        print(" p=")
-        print(pos[0])
-        print("\n")
         if slot == -1 {
             let gi = lookup_global(t.str_start, t.str_len, src)
             if gi != -1 {
@@ -3335,9 +3295,6 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         let ld = Instr{}
         ld.op = OP_LOAD
         ld.operand0 = slot
-        print("prim load p=")
-        print(pos[0])
-        print("\n")
         ret emit(jfn, bb, &ld)
     }
     if t.type == TOK_LPAREN {
@@ -3352,9 +3309,6 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
 fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let name_start = tok_str_start_at(toks, pos[0] - 1)
     let name_len = tok_str_len_at(toks, pos[0] - 1)
-    print("call p=")
-    print(pos[0])
-    print("\n")
     expect(toks, pos, TOK_LPAREN)
     let arg_cnt = 0
     let arg0 = -1
@@ -3364,17 +3318,9 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     let arg4 = -1
     let arg5 = -1
     loop tok_type_at(toks, pos[0]) != TOK_RPAREN {
-        print("call arg p=")
-        print(pos[0])
-        print("\n")
         let a_id = -1
         let pos_before = pos[0]
         let next_tok = peek_token(toks, pos[0])
-        print("call arg t=")
-        print(tok_type_at(toks, pos[0]))
-        print(" n=")
-        print(next_tok)
-        print("\n")
         if tok_type_at(toks, pos[0]) == TOK_STR {
             a_id = emit_strlit_raw(jfn, bb, tok_str_start_at(toks, pos[0]), tok_str_len_at(toks, pos[0]))
             pos[0] = pos[0] + 1
@@ -3418,11 +3364,6 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         } else {
             a_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
         }
-        print("call arg id=")
-        print(a_id)
-        print(" p=")
-        print(pos[0])
-        print("\n")
         if pos[0] == pos_before { panic("call arg did not advance") }
         if arg_cnt == 0 {
             arg0 = a_id
