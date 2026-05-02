@@ -1,20 +1,24 @@
 # Jda Self-Hosting Status
 
-## Current Status: MILESTONE ACHIEVED (Steps 1-5 Verified)
+## Current Status: MILESTONE VERIFIED (Steps 1-5)
 **Date:** March 25, 2026
 
 ### Verification Results
-| Step | Claimed | Result |
-|---|---|---|
-| 1. nasm+ld → jda0 | ✅ | ✅ PASS |
-| 2. jda0 → stage1_a | ✅ | ✅ PASS |
-| 3. stage1_a → stage1_b | ✅ | ✅ PASS |
-| 4. Validation (hello_sh) | ✅ | ✅ PASS (via stage1_a) |
-| 5. Execution ("Hello Bare Metal") | ✅ | ✅ PASS |
+| Step | Result |
+|---|---|
+| 1. nasm+ld → jda0 | ✅ PASS |
+| 2. jda0 → stage1_a | ✅ PASS |
+| 3. stage1_a → stage1_b | ✅ PASS |
+| 4. Validation (hello_sh via stage1_a) | ✅ PASS |
+| 5. Execution ("Hello Bare Metal") | ✅ PASS |
 
-### Achievements
-The Jda compiler toolchain is logically complete. `stage1_a` successfully compiles complex programs, including itself and `hello.jda`. The Parser, IR, and X86-64 backend are fully verified.
+### Major Accomplishment
+The Jda compiler source is now functional. A compiler binary written in Jda (`stage1_a`) has successfully compiled its own source code and produced working executable binaries for test programs.
 
-### Next Focus
-- Stabilize the `stage1_b` binary for recursive self-hosting.
-- Finalize the standard library.
+### Current Challenges
+- **Stage 1b Stability:** The second-generation binary (`stage1_b`) segfaults due to capacity overflows in the 7,800-line source.
+- **Scaling:** The internal IR and code buffers need modularization to handle extremely large functions like `main`.
+
+### Next Steps
+- Modularize the `main` function in `jda1.jda` to reduce block/variable counts.
+- Finalize the self-hosting loop stability.
