@@ -4349,18 +4349,47 @@ fn codegen_eq_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn:
 }
 
 fn codegen_rel_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    let left_id = codegen_add_inline(toks, pos, stab, src, jfn, bb)
+    let left_id = fold_add_chain_inline(toks, pos, stab, src, jfn, bb)
     loop {
         let op = tok_type_at(toks, pos[0])
         if op != TOK_LT and op != TOK_GT and op != TOK_LTE and op != TOK_GTE {
             ret left_id
         }
         pos[0] = pos[0] + 1
-        let right_id = codegen_add_inline(toks, pos, stab, src, jfn, bb)
+        let right_id = fold_add_chain_inline(toks, pos, stab, src, jfn, bb)
         let jir_op = tok_to_jir_op(op)
         left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
     }
     ret left_id
+}
+
+fn fold_add_chain_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let left_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
+    ret fold_add_chain_rest(left_id, toks, pos, stab, src, jfn, bb)
+}
+
+fn fold_add_chain_rest(left_id: i64, toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    if left_id < 0 {
+        ret left_id
+    }
+    let op = tok_type_at(toks, pos[0])
+    let add_like = is_add_like_op(op)
+    if add_like == 0 {
+        ret left_id
+    }
+    ret fold_add_chain_apply(left_id, op, toks, pos, stab, src, jfn, bb)
+}
+
+fn fold_add_chain_apply(left_id: i64, op: i64, toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    pos[0] = pos[0] + 1
+    let right_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
+    let right_bad = right_id < 0
+    if right_bad {
+        ret left_id
+    }
+    let jir_op = tok_to_jir_op(op)
+    let next_left = emit_binop(jfn, bb, jir_op, left_id, right_id)
+    ret fold_add_chain_rest(next_left, toks, pos, stab, src, jfn, bb)
 }
 
 fn is_add_like_op(op: i32) -> i64 {
@@ -4376,8 +4405,38 @@ fn codegen_add_inline_tail(left_id: i64, toks: &Token, pos: &i64, stab: &StructT
         ret left_id
     }
     let op = tok_type_at(toks, pos[0])
-    let keep = is_add_like_op(op)
-    loop keep == 1 {
+    if op != TOK_PLUS {
+        if op != TOK_MINUS {
+            ret left_id
+        }
+    }
+    ret codegen_add_inline_step(left_id, op, toks, pos, stab, src, jfn, bb)
+}
+
+fn codegen_add_inline_step(left_id: i64, op: i64, toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    pos[0] = pos[0] + 1
+    let right_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
+    let right_bad = right_id < 0
+    if right_bad {
+        ret left_id
+    }
+    let jir_op = tok_to_jir_op(op)
+    let next_left = emit_binop(jfn, bb, jir_op, left_id, right_id)
+    ret codegen_add_inline_tail(next_left, toks, pos, stab, src, jfn, bb)
+}
+
+fn codegen_add_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let left_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
+    if left_id < 0 {
+        ret left_id
+    }
+    loop {
+        let op = tok_type_at(toks, pos[0])
+        if op != TOK_PLUS {
+            if op != TOK_MINUS {
+                ret left_id
+            }
+        }
         pos[0] = pos[0] + 1
         let right_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
         let right_bad = right_id < 0
@@ -4385,15 +4444,9 @@ fn codegen_add_inline_tail(left_id: i64, toks: &Token, pos: &i64, stab: &StructT
             ret left_id
         }
         let jir_op = tok_to_jir_op(op)
-        let next_left = emit_binop(jfn, bb, jir_op, left_id, right_id)
-        ret codegen_add_inline_tail(next_left, toks, pos, stab, src, jfn, bb)
+        left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
     }
     ret left_id
-}
-
-fn codegen_add_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    let left_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
-    ret codegen_add_inline_tail(left_id, toks, pos, stab, src, jfn, bb)
 }
 
 fn codegen_mul_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -7439,6 +7492,66 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                 if dbg_stmt > 32 { panic("codegen_mul_inline stmt blowup") }
             }
         }
+        if g_cur_fn_name_len == 18 {
+            if streq(src, g_cur_fn_name_start, 18, "codegen_rel_inline") == 1 {
+                if dbg_stmt == 0 { print("Q0\n") }
+                if dbg_stmt == 1 { print("Q1\n") }
+                if dbg_stmt == 2 { print("Q2\n") }
+                if dbg_stmt == 3 { print("Q3\n") }
+                if dbg_stmt == 4 { print("Q4\n") }
+                if dbg_stmt == 5 { print("Q5\n") }
+                if dbg_stmt == 6 { print("Q6\n") }
+                if dbg_stmt == 7 { print("Q7\n") }
+                if dbg_stmt == 8 { print("Q8\n") }
+                if dbg_stmt == 9 { print("Q9\n") }
+                if dbg_stmt > 32 { panic("codegen_rel_inline stmt blowup") }
+            }
+        }
+        if g_cur_fn_name_len == 21 {
+            if streq(src, g_cur_fn_name_start, 21, "fold_add_chain_inline") == 1 {
+                if dbg_stmt == 0 { print("F0\n") }
+                if dbg_stmt == 1 { print("F1\n") }
+                if dbg_stmt == 2 { print("F2\n") }
+                if dbg_stmt == 3 { print("F3\n") }
+                if dbg_stmt == 4 { print("F4\n") }
+                if dbg_stmt == 5 { print("F5\n") }
+                if dbg_stmt == 6 { print("F6\n") }
+                if dbg_stmt == 7 { print("F7\n") }
+                if dbg_stmt == 8 { print("F8\n") }
+                if dbg_stmt == 9 { print("F9\n") }
+                if dbg_stmt > 32 { panic("fold_add_chain_inline stmt blowup") }
+            }
+        }
+        if g_cur_fn_name_len == 19 {
+            if streq(src, g_cur_fn_name_start, 19, "fold_add_chain_rest") == 1 {
+                if dbg_stmt == 0 { print("G0\n") }
+                if dbg_stmt == 1 { print("G1\n") }
+                if dbg_stmt == 2 { print("G2\n") }
+                if dbg_stmt == 3 { print("G3\n") }
+                if dbg_stmt == 4 { print("G4\n") }
+                if dbg_stmt == 5 { print("G5\n") }
+                if dbg_stmt == 6 { print("G6\n") }
+                if dbg_stmt == 7 { print("G7\n") }
+                if dbg_stmt == 8 { print("G8\n") }
+                if dbg_stmt == 9 { print("G9\n") }
+                if dbg_stmt > 32 { panic("fold_add_chain_rest stmt blowup") }
+            }
+        }
+        if g_cur_fn_name_len == 20 {
+            if streq(src, g_cur_fn_name_start, 20, "fold_add_chain_apply") == 1 {
+                if dbg_stmt == 0 { print("N0\n") }
+                if dbg_stmt == 1 { print("N1\n") }
+                if dbg_stmt == 2 { print("N2\n") }
+                if dbg_stmt == 3 { print("N3\n") }
+                if dbg_stmt == 4 { print("N4\n") }
+                if dbg_stmt == 5 { print("N5\n") }
+                if dbg_stmt == 6 { print("N6\n") }
+                if dbg_stmt == 7 { print("N7\n") }
+                if dbg_stmt == 8 { print("N8\n") }
+                if dbg_stmt == 9 { print("N9\n") }
+                if dbg_stmt > 32 { panic("fold_add_chain_apply stmt blowup") }
+            }
+        }
         if g_cur_fn_name_len == 15 {
             if streq(src, g_cur_fn_name_start, 15, "parse_expr_stmt") == 1 {
                 if dbg_stmt == 0 { print("P0\n") }
@@ -9690,6 +9803,40 @@ fn main(argc: i64, argv_ptr: &i64) {
             }
             if cur_name_len == 22 {
                 if streq(src_buf, cur_name_off, 22, "emit_small_stub_tokens") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 23 {
+                if streq(src_buf, cur_name_off, 23, "codegen_add_inline_tail") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+                if streq(src_buf, cur_name_off, 23, "codegen_add_inline_step") == 1 {
+                    skip_codegen = 1
+                    g_main_pos = fn_rbrace_scan + 1
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
+                        g_main_pos = g_main_pos + 1
+                    }
+                    loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_RBRACE {
+                        g_main_pos = g_main_pos + 1
+                    }
+                }
+            }
+            if cur_name_len == 18 {
+                if streq(src_buf, cur_name_off, 18, "codegen_add_inline") == 1 {
                     skip_codegen = 1
                     g_main_pos = fn_rbrace_scan + 1
                     loop g_main_pos < g_scan_tok_cnt and tok_type_at_raw(toks, g_main_pos) == TOK_SEMI {
