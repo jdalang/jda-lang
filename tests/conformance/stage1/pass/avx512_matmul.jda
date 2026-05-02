@@ -1,0 +1,111 @@
+fn vec_dot_row(a: i64, b: i64) -> i64 {
+    let ap = tensor_data(a)
+    let bp = tensor_data(b)
+    let n = tensor_len(a)
+    if avx512_check() == 1 {
+        ret avx512_dot_f64(ap, bp, n)
+    }
+    let acc = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let va = tensor_get(a, i)
+        let vb = tensor_get(b, i)
+        let p = f64_mul(va, vb)
+        acc = f64_add(acc, p)
+        i = i + 1
+    }
+    ret acc
+}
+
+fn vec_matmul(a: i64, b: i64, out: i64) -> i64 {
+    ; Standard matmul with scalar ops (vec_dot needs contiguous rows)
+    let M = tensor_shape(a, 0)
+    let K = tensor_shape(a, 1)
+    let N = tensor_shape(b, 1)
+    let i = 0
+    loop i < M {
+        let j = 0
+        loop j < N {
+            let acc = f64_from_int(0)
+            let k = 0
+            loop k < K {
+                let idx_a = i * K + k
+                let av = tensor_get(a, idx_a)
+                let idx_b = k * N + j
+                let bv = tensor_get(b, idx_b)
+                let prod = f64_mul(av, bv)
+                acc = f64_add(acc, prod)
+                k = k + 1
+            }
+            let idx_o = i * N + j
+            tensor_set(out, idx_o, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    ; Test CPUID detection compiles and works alongside tensor ops
+    let has = avx512_check()
+    ; 2x2 matmul: [[1,2],[3,4]] x [[5,6],[7,8]] = [[19,22],[43,50]]
+    let a = tensor_new2(2, 2)
+    let b = tensor_new2(2, 2)
+    let c = tensor_new2(2, 2)
+    let va0 = f64_from_int(1)
+    tensor_set(a, 0, va0)
+    let va1 = f64_from_int(2)
+    tensor_set(a, 1, va1)
+    let va2 = f64_from_int(3)
+    tensor_set(a, 2, va2)
+    let va3 = f64_from_int(4)
+    tensor_set(a, 3, va3)
+    let vb0 = f64_from_int(5)
+    tensor_set(b, 0, vb0)
+    let vb1 = f64_from_int(6)
+    tensor_set(b, 1, vb1)
+    let vb2 = f64_from_int(7)
+    tensor_set(b, 2, vb2)
+    let vb3 = f64_from_int(8)
+    tensor_set(b, 3, vb3)
+    vec_matmul(a, b, c)
+    let c00 = f64_to_int(tensor_get(c, 0))
+    let c01 = f64_to_int(tensor_get(c, 1))
+    let c10 = f64_to_int(tensor_get(c, 2))
+    let c11 = f64_to_int(tensor_get(c, 3))
+    if c00 == 19 and c01 == 22 and c10 == 43 and c11 == 50 {
+        print "vec matmul ok"
+    }
+    ; Test dot product on a row vector
+    let row = tensor_new1(4)
+    let col = tensor_new1(4)
+    let r1 = f64_from_int(1)
+    tensor_set(row, 0, r1)
+    let r2 = f64_from_int(2)
+    tensor_set(row, 1, r2)
+    let r3 = f64_from_int(3)
+    tensor_set(row, 2, r3)
+    let r4 = f64_from_int(4)
+    tensor_set(row, 3, r4)
+    let c1 = f64_from_int(5)
+    tensor_set(col, 0, c1)
+    let c2 = f64_from_int(6)
+    tensor_set(col, 1, c2)
+    let c3 = f64_from_int(7)
+    tensor_set(col, 2, c3)
+    let c4 = f64_from_int(8)
+    tensor_set(col, 3, c4)
+    ; dot = 1*5+2*6+3*7+4*8 = 5+12+21+32 = 70
+    let d = vec_dot_row(row, col)
+    let di = f64_to_int(d)
+    if di == 70 {
+        print "vec dot ok"
+    }
+    tensor_free(a)
+    tensor_free(b)
+    tensor_free(c)
+    tensor_free(row)
+    tensor_free(col)
+    ret 0
+}
