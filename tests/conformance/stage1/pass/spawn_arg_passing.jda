@@ -1,0 +1,47 @@
+; Pass arguments to spawned thread via JThread struct offsets
+let g_queue: &i64 = 0
+let g_head = 0
+let g_tail = 0
+let g_current: &i64 = 0
+let g_main_ctx: &i64 = 0
+
+fn __thread_done() {
+    if g_head == g_tail {
+        ctx_switch(g_current, g_main_ctx)
+    } else {
+        let next: &i64 = g_queue[g_head]
+        g_head = g_head + 1
+        let old = g_current
+        g_current = next
+        ctx_switch(old, next)
+    }
+}
+
+fn worker() {
+    let me: &i64 = g_current
+    let a = me[8]
+    let b = me[9]
+    let ch: &i64 = me[10]
+    chan_send(ch, a + b)
+}
+
+fn main() {
+    g_queue = alloc_pages(1)
+    g_main_ctx = alloc_pages(1)
+    let ch = chan_new(1)
+
+    let t = spawn worker()
+    t[8] = 100
+    t[9] = 200
+    t[10] = ch
+    g_queue[g_tail] = t
+    g_tail = g_tail + 1
+
+    let first: &i64 = g_queue[g_head]
+    g_head = g_head + 1
+    g_current = first
+    ctx_switch(g_main_ctx, first)
+
+    let result = chan_recv(ch)
+    if result == 300 { print("ok") }
+}

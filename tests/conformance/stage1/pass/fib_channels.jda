@@ -1,0 +1,66 @@
+; DoD 1: Fib with spawn + channels — prints 6765 for fib(20)
+; Spawns two workers computing fib(19) and fib(18), adds results
+let g_queue: &i64 = 0
+let g_head = 0
+let g_tail = 0
+let g_current: &i64 = 0
+let g_main_ctx: &i64 = 0
+
+fn __thread_done() {
+    if g_head == g_tail {
+        ctx_switch(g_current, g_main_ctx)
+    } else {
+        let next: &i64 = g_queue[g_head]
+        g_head = g_head + 1
+        let old = g_current
+        g_current = next
+        ctx_switch(old, next)
+    }
+}
+
+fn fib_worker() {
+    let me: &i64 = g_current
+    let n = me[8]
+    let ch: &i64 = me[9]
+    ; Iterative fib(n): after loop, a = fib(n)
+    let a = 0
+    let b = 1
+    let i = 0
+    loop i < n {
+        let tmp = a + b
+        a = b
+        b = tmp
+        i = i + 1
+    }
+    chan_send(ch, a)
+}
+
+fn main() {
+    g_queue = alloc_pages(1)
+    g_main_ctx = alloc_pages(1)
+
+    let ch = chan_new(2)
+
+    ; fib(20) = fib(19) + fib(18) = 4181 + 2584 = 6765
+    let t1 = spawn fib_worker()
+    t1[8] = 19
+    t1[9] = ch
+    g_queue[g_tail] = t1
+    g_tail = g_tail + 1
+
+    let t2 = spawn fib_worker()
+    t2[8] = 18
+    t2[9] = ch
+    g_queue[g_tail] = t2
+    g_tail = g_tail + 1
+
+    let first: &i64 = g_queue[g_head]
+    g_head = g_head + 1
+    g_current = first
+    ctx_switch(g_main_ctx, first)
+
+    let r1 = chan_recv(ch)
+    let r2 = chan_recv(ch)
+    let result = r1 + r2
+    print_int(result)
+}

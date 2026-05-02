@@ -1,0 +1,17 @@
+; Send and receive multiple values in FIFO order
+fn main() {
+    let ch = chan_new(8)
+    chan_send(ch, 1)
+    chan_send(ch, 2)
+    chan_send(ch, 3)
+    chan_send(ch, 4)
+    chan_send(ch, 5)
+    let sum = 0
+    let i = 0
+    loop i < 5 {
+        let v = chan_recv(ch)
+        sum = sum + v
+        i = i + 1
+    }
+    print_int(sum)
+}
