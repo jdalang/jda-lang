@@ -25,19 +25,36 @@ def extract_constants(jda1_path):
     # Match: const NAME = VALUE
     pattern = r'^const\s+(\w+)\s*=\s*(\S+)'
 
+    # Names that jda0 uses as globals in .bss
+    reserved_names = {
+        'src_len', 'tok_cnt', 'tok_pos', 'cst_cnt', 'stt_cnt', 'fn_cnt', 
+        'loc_cnt', 'glb_cnt', 'fix_cnt', 'cod_len', 'sdt_len', 'out_fd', 
+        'glb_r15', 'lbl_seq', 'brk_lbl', 'jmp_top', 'jmp_stk', 'loc_rbp', 
+        'loc_max_rbp', 'lv_sid', 'lv_esz', 'lv_isptr', 'lv_glb', 
+        'p1_glb_tkind', 'p1_glb_sid', 'p1_glb_esz', 'ga_from_dot', 'ga_acnt',
+        'sfx_tbl_ptr', 'sfix_cnt', 'frm_patch_off', 'prm_cnt_bss', 'prec_stop',
+        'arith_stop', 'asm_reglen', 'src_buf', 'tok_buf_ptr', 'cst_tbl_ptr',
+        'stt_tbl_ptr', 'fn_tbl_ptr', 'loc_tbl_ptr', 'glb_tbl_ptr', 'cod_buf_ptr',
+        'sdt_buf_ptr', 'fix_buf_ptr'
+    }
+
     for line in content.split('\n'):
-        match = re.match(pattern, line)
+        # Clean line: remove trailing comments
+        clean_line = line.split(';')[0].strip()
+        match = re.match(pattern, clean_line)
         if match:
             name = match.group(1)
             value = match.group(2)
-            # Handle hex values
-            if value.startswith('0x'):
-                constants[name] = int(value, 16)
-            else:
-                try:
-                    constants[name] = int(value)
-                except:
-                    constants[name] = value
+            # Only keep the first definition and skip reserved names
+            if name not in constants and name not in reserved_names:
+                # Handle hex values
+                if value.startswith('0x'):
+                    constants[name] = int(value, 16)
+                else:
+                    try:
+                        constants[name] = int(value)
+                    except:
+                        constants[name] = value
 
     return constants
 
@@ -71,16 +88,17 @@ def extract_structs(jda1_path):
             
             # Helper to get base type size
             def get_base_size(t):
+                if 'i64' in t: return 8
                 if 'i32' in t: return 4
                 if 'i8' in t: return 1
-                if 'Token' in t: return 28
+                if 'Token' in t: return 40
                 if 'Node' in t: return 88
-                if 'Instr' in t: return 96 # Increased to 96 for padding/alignment in some versions
+                if 'Instr' in t: return 96
                 if 'Fixup' in t: return 32
-                if 'BasicBlock' in t: return 24600 # Estimate for 256 instrs
+                if 'BasicBlock' in t: return 24600
                 if 'VarEntry' in t: return 32
                 if 'RegAlloc' in t: return 49256
-                if 'LowerCtx' in t: return 100000 # Estimate
+                if 'LowerCtx' in t: return 102512
                 return 8
 
             if '[' in field_type:
@@ -100,6 +118,10 @@ def extract_structs(jda1_path):
             else:
                 # Custom struct type (not array, not pointer)
                 size = get_base_size(field_type)
+
+            # 8-byte alignment:
+            if offset % 8 != 0:
+                offset = (offset + 7) & ~7
 
             fields.append({
                 'name': field_name,
