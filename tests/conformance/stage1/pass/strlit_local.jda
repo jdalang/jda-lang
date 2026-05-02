@@ -1,0 +1,29 @@
+fn my_strlen(s: &i8) -> i64 {
+    let i = 0
+    loop s[i] != 0 {
+        i = i + 1
+    }
+    ret i
+}
+
+fn write_buf(fd: i64, buf: &i8, len: i64) {
+    syscall(1, fd, buf, len)
+}
+
+fn main() -> i64 {
+    let s: &i8 = "Hello"
+    let len = my_strlen(s)
+    write_buf(1, s, len)
+    print("\n")
+    print("{len}")
+    print("\n")
+    let cr: &i8 = "A\r\nB"
+    let cr_len = my_strlen(cr)
+    print("{cr_len}")
+    print("\n")
+    let nul: &i8 = "AB\0CD"
+    let nul_len = my_strlen(nul)
+    print("{nul_len}")
+    print("\n")
+    ret 0
+}
