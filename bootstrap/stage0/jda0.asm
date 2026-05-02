@@ -278,7 +278,7 @@ _start:
     mov     eax, SYS_READ
     mov     rdi, r13
     lea     rsi, [src_buf]
-    mov     edx, 65534
+    mov     edx, 1048574
     syscall
     cmp     rax, 0
     jl      .bad_read
