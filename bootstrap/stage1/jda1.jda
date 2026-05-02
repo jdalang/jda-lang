@@ -165,6 +165,11 @@ const OP_CHAN_NEW     = 42
 const OP_CHAN_SEND    = 43
 const OP_CHAN_RECV    = 44
 const OP_CHAN_CLOSE   = 45
+const OP_GET_NPROCS   = 46
+const OP_CLONE_THREAD = 47
+const OP_FUTEX_WAIT   = 48
+const OP_FUTEX_WAKE   = 49
+const OP_GET_TID      = 50
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -6713,6 +6718,39 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ret emit(jfn, bb, &ins)
     }
 
+    ; Thread pool builtins (M6)
+    if name_len == 10 and streq(src, name_start, 10, "get_nprocs") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GET_NPROCS
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 12 and streq(src, name_start, 12, "clone_thread") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CLONE_THREAD
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "futex_wait") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FUTEX_WAIT
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "futex_wake") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FUTEX_WAKE
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 7 and streq(src, name_start, 7, "get_tid") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GET_TID
+        ret emit(jfn, bb, &ins)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -8097,6 +8135,39 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ret emit(g_jfn, bb, &ins)
     }
 
+    ; Thread pool builtins (M6)
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "get_nprocs") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GET_NPROCS
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 12 and streq(g_src_buf_ptr, name.str_start, 12, "clone_thread") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CLONE_THREAD
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "futex_wait") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FUTEX_WAIT
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "futex_wake") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FUTEX_WAKE
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "get_tid") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GET_TID
+        ret emit(g_jfn, bb, &ins)
+    }
+
     let ins = Instr{}
     ins.op        = OP_CALL
     ins.operand0  = arg0
@@ -8392,7 +8463,7 @@ fn dce(jfn: &JirFunction) {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
-            if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE {
+            if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID {
                 if o0 >= 0 { used[o0] = 1 }
             }
             if op == OP_ATOMIC_STORE {
@@ -8404,7 +8475,7 @@ fn dce(jfn: &JirFunction) {
                 if o1 >= 0 { used[o1] = 1 }
                 if o2 >= 0 { used[o2] = 1 }
             }
-            if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND {
+            if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
@@ -8441,7 +8512,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ATOMIC_STORE { used[id] = 1 }
             if op == OP_ATOMIC_CAS   { used[id] = 1 }
             if op == OP_ATOMIC_ADD   { used[id] = 1 }
-            if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE { used[id] = 1 }
+            if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE or op == OP_GET_TID { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -10982,6 +11053,371 @@ fn lower_instr_chan(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 0
 }
 
+; ── M6: OS thread pool builtins ──────────────────────────────────────
+fn lower_instr_mt(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let op = ins.op
+
+    ; ── get_nprocs() ─────────────────────────────────────────────────
+    ; sched_getaffinity(pid=0, size=128, mask_buf) → count set bits
+    ; Returns number of online CPUs
+    if op == OP_GET_NPROCS {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+
+        ; Allocate 128 bytes on stack for cpu mask
+        ; SUB RSP, 128
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x81)
+        emit_byte(out, pos, 0xEC)
+        emit_i32_le(out, pos, 128)
+
+        ; rdi = 0 (pid = self)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xFF)
+        ; rsi = 128 (mask size)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC6)
+        emit_i32_le(out, pos, 128)
+        ; rdx = rsp (mask buffer)
+        emit_mov_rr(out, pos, PHYS_RDX, PHYS_RSP)
+        ; rax = 204 (SYS_sched_getaffinity)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 204)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+
+        ; rax = bytes returned. Now count set bits in mask.
+        ; Save byte count in RCX, use RSI as pointer, RDX as counter
+        emit_mov_rr(out, pos, PHYS_RCX, PHYS_RAX)
+        emit_mov_rr(out, pos, PHYS_RSI, PHYS_RSP)
+        ; XOR EDX, EDX  (bit count = 0)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xD2)
+        ; XOR R8D, R8D  (byte index = 0)
+        emit_byte(out, pos, 0x45)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC0)
+
+        ; .outer_loop:
+        let outer_loop = pos[0]
+        ; CMP R8, RCX  (using 0x3B: reg-rm, so R8 - RCX)
+        emit_byte(out, pos, 0x4C)
+        emit_byte(out, pos, 0x3B)
+        emit_byte(out, pos, 0xC1)
+        ; JGE .done (forward, patch later)
+        emit_byte(out, pos, 0x7D)
+        let done_patch = pos[0]
+        emit_byte(out, pos, 0x00)
+
+        ; MOVZX EAX, byte [RSI + R8]
+        emit_byte(out, pos, 0x42)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0xB6)
+        emit_byte(out, pos, 0x04)
+        emit_byte(out, pos, 0x06)
+
+        ; Count bits in AL using shift loop (8 iterations)
+        ; R9 = 8
+        emit_byte(out, pos, 0x49)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC1)
+        emit_i32_le(out, pos, 8)
+        ; .bit_loop:
+        let bit_loop = pos[0]
+        ; TEST AL, 1
+        emit_byte(out, pos, 0xA8)
+        emit_byte(out, pos, 0x01)
+        ; JZ +3 (skip INC RDX)
+        emit_byte(out, pos, 0x74)
+        emit_byte(out, pos, 0x03)
+        ; INC RDX
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xC2)
+        ; SHR AL, 1
+        emit_byte(out, pos, 0xD0)
+        emit_byte(out, pos, 0xE8)
+        ; DEC R9
+        emit_byte(out, pos, 0x49)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xC9)
+        ; JNZ .bit_loop
+        emit_byte(out, pos, 0x75)
+        let bit_back = pos[0] - bit_loop
+        let bit_neg = 0 - bit_back
+        let bit_rel = bit_neg - 1
+        emit_byte(out, pos, bit_rel + 256)
+
+        ; INC R8
+        emit_byte(out, pos, 0x49)
+        emit_byte(out, pos, 0xFF)
+        emit_byte(out, pos, 0xC0)
+        ; JMP .outer_loop
+        emit_byte(out, pos, 0xEB)
+        let outer_back = pos[0] - outer_loop
+        let outer_neg = 0 - outer_back
+        let outer_rel = outer_neg - 1
+        emit_byte(out, pos, outer_rel + 256)
+
+        ; .done:
+        let done_target = pos[0]
+        let done_diff = done_target - done_patch
+        poke_byte(out, done_patch, done_diff - 1)
+
+        ; Result in RDX → move to R12
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RDX)
+
+        ; ADD RSP, 128 (restore stack)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x81)
+        emit_byte(out, pos, 0xC4)
+        emit_i32_le(out, pos, 128)
+
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        let sp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, sp)
+        ra_set_spill(&ctx.ra, ins.id, sp)
+        emit_store_spill(out, pos, sp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        ret 1
+    }
+
+    ; ── clone_thread(stack_top, fn_ptr) ─────────────────────────────
+    ; Creates an OS thread via clone() syscall.
+    ; stack_top: top of pre-allocated stack for child
+    ; fn_ptr: function address child should call (stored at top of child stack)
+    ; Returns: tid in parent, 0 in child
+    if op == OP_CLONE_THREAD {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        consume_use(ctx, ins.operand0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        consume_use(ctx, ins.operand1)
+
+        ; Pop fn_ptr → R9, stack_top → RSI
+        emit_pop_r(out, pos, PHYS_R9)
+        emit_pop_r(out, pos, PHYS_RSI)
+
+        ; Store fn_ptr at [stack_top - 8] so child can RET into it
+        ; SUB RSI, 8
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x83)
+        emit_byte(out, pos, 0xEE)
+        emit_byte(out, pos, 8)
+        ; MOV [RSI], R9
+        emit_byte(out, pos, 0x4C)
+        emit_byte(out, pos, 0x89)
+        emit_byte(out, pos, 0x0E)
+
+        ; rdi = flags = 0x10F00
+        ; CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC7)
+        emit_i32_le(out, pos, 69376)
+        ; rsi = child_stack (already set)
+        ; rdx = 0 (parent_tid_ptr)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xD2)
+        ; r10 = 0 (child_tid_ptr)
+        emit_byte(out, pos, 0x4D)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xD2)
+        ; r8 = 0 (tls)
+        emit_byte(out, pos, 0x4D)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC0)
+        ; rax = 56 (SYS_clone)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 56)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+
+        ; In child: rax=0. Child's RSP points to fn_ptr, so RET jumps there.
+        ; In parent: rax=tid.
+        ; TEST RAX, RAX
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x85)
+        emit_byte(out, pos, 0xC0)
+        ; JNZ .parent (skip child RET)
+        emit_byte(out, pos, 0x75)
+        emit_byte(out, pos, 0x01)
+        ; RET (child jumps to fn_ptr via stack)
+        emit_byte(out, pos, 0xC3)
+        ; .parent:
+
+        ; Result (tid) in RAX → R12
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        let sp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, sp)
+        ra_set_spill(&ctx.ra, ins.id, sp)
+        emit_store_spill(out, pos, sp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        ret 1
+    }
+
+    ; ── futex_wait(addr, expected) ──────────────────────────────────
+    ; futex(addr, FUTEX_WAIT=0, expected, NULL, NULL, 0)
+    ; Returns: 0 on success, -EAGAIN if *addr != expected, -EINTR if interrupted
+    if op == OP_FUTEX_WAIT {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        consume_use(ctx, ins.operand0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        consume_use(ctx, ins.operand1)
+
+        ; Pop expected → RDX, addr → RDI
+        emit_pop_r(out, pos, PHYS_RDX)
+        emit_pop_r(out, pos, PHYS_RDI)
+
+        ; rsi = 0 (FUTEX_WAIT)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xF6)
+        ; r10 = 0 (timeout = NULL)
+        emit_byte(out, pos, 0x4D)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xD2)
+        ; r8 = 0
+        emit_byte(out, pos, 0x4D)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC0)
+        ; r9 = 0
+        emit_byte(out, pos, 0x4D)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC9)
+        ; rax = 202 (SYS_futex)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 202)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+
+        ; Result in RAX → R12
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        let sp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, sp)
+        ra_set_spill(&ctx.ra, ins.id, sp)
+        emit_store_spill(out, pos, sp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        ret 1
+    }
+
+    ; ── futex_wake(addr, count) ─────────────────────────────────────
+    ; futex(addr, FUTEX_WAKE=1, count, NULL, NULL, 0)
+    ; Returns: number of waiters woken
+    if op == OP_FUTEX_WAKE {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        consume_use(ctx, ins.operand0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        consume_use(ctx, ins.operand1)
+
+        ; Pop count → RDX, addr → RDI
+        emit_pop_r(out, pos, PHYS_RDX)
+        emit_pop_r(out, pos, PHYS_RDI)
+
+        ; rsi = 1 (FUTEX_WAKE)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC6)
+        emit_i32_le(out, pos, 1)
+        ; r10 = 0
+        emit_byte(out, pos, 0x4D)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xD2)
+        ; r8 = 0
+        emit_byte(out, pos, 0x4D)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC0)
+        ; r9 = 0
+        emit_byte(out, pos, 0x4D)
+        emit_byte(out, pos, 0x31)
+        emit_byte(out, pos, 0xC9)
+        ; rax = 202 (SYS_futex)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 202)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+
+        ; Result in RAX → R12
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        let sp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, sp)
+        ra_set_spill(&ctx.ra, ins.id, sp)
+        emit_store_spill(out, pos, sp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        ret 1
+    }
+
+    ; ── get_tid() ───────────────────────────────────────────────────
+    ; gettid() syscall 186 — returns current thread ID
+    if op == OP_GET_TID {
+        emit_push_r(out, pos, PHYS_R12)
+        emit_save_pool(ctx.ra, out, pos)
+
+        ; rax = 186 (SYS_gettid)
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0xC7)
+        emit_byte(out, pos, 0xC0)
+        emit_i32_le(out, pos, 186)
+        ; syscall
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x05)
+
+        ; Result in RAX → R12
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, dst, PHYS_R12)
+        let sp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, sp)
+        ra_set_spill(&ctx.ra, ins.id, sp)
+        emit_store_spill(out, pos, sp, dst)
+        emit_pop_r(out, pos, PHYS_R12)
+        ret 1
+    }
+
+    ret 0
+}
+
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     if lower_instr_constlike(ins, ctx, jfn, out, pos) == 1 {
@@ -11076,6 +11512,11 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if lower_instr_chan(ins, ctx, out, pos) == 1 {
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
+        ret ok(0)
+    }
+
+    if lower_instr_mt(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
@@ -12351,7 +12792,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
         if o3 >= 6 { mark_use(ctx, ins.imm) }
     }
-    if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE {
+    if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID {
         mark_use(ctx, o0)
     }
     if op == OP_ATOMIC_STORE {
@@ -12363,7 +12804,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o1)
         mark_use(ctx, o2)
     }
-    if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND {
+    if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
