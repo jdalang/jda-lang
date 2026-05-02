@@ -195,6 +195,7 @@ struct VarEntry {
 
 struct JirFunction {
     src:        &i8
+    src_len:    i64
     blocks:     BasicBlock[64]
     block_cnt:  i64
     vars:       VarEntry[256]
@@ -474,6 +475,19 @@ fn lookup_field_off(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64) ->
     ret -1
 }
 
+fn lookup_field_off_any(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64) -> i64 {
+    let i = 0
+    loop i < stab.field_cnt {
+        if stab.fowners[i] == sid and stab.flens[i] == fl {
+            if str_match(src, fs, stab.fnames[i], fl) == 1 {
+                ret stab.foffs[i]
+            }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
 fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
     expect(toks, pos, TOK_STRUCT)
     let st_name = toks[pos[0]]
@@ -515,6 +529,62 @@ fn parse_struct_decl(toks: &Token, pos: &i64, stab: &StructTable) {
 }
 
 fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
+    ; Fast path for direct field store: base[optional_idx].field = rhs
+    let save = pos[0]
+    if toks[pos[0]].type == TOK_IDENT {
+        let base = toks[pos[0]]
+        pos[0] = pos[0] + 1
+        let idx = Node{}
+        let has_idx = 0
+        let idx_kind = 0
+        let idx_start = 0
+        let idx_len = 0
+        if toks[pos[0]].type == TOK_LBRACK {
+            pos[0] = pos[0] + 1
+            if toks[pos[0]].type == TOK_IDENT and toks[pos[0] + 1].type == TOK_RBRACK {
+                idx_kind = 1
+                idx_start = toks[pos[0]].str_start
+                idx_len   = toks[pos[0]].str_len
+                pos[0] = pos[0] + 1
+            } else {
+                idx = parse_expr(toks, pos)
+                idx_kind = 2
+            }
+            expect(toks, pos, TOK_RBRACK)
+            has_idx = 1
+        }
+        if toks[pos[0]].type == TOK_DOT {
+            pos[0] = pos[0] + 1
+            let field = toks[pos[0]]
+            expect(toks, pos, TOK_IDENT)
+            if toks[pos[0]].type == TOK_EQ {
+                pos[0] = pos[0] + 1
+                let rhs_tok = toks[pos[0]]
+                let n = Node{}
+                n.node_type = NODE_FIELD_STORE
+                n.token = base.str_start
+                n.child_cnt = base.str_len
+                n.token2 = field.str_start
+                n.imm = field.str_len
+                n.data_type = -1
+                n.child0 = null
+                if has_idx == 1 { n.child0 = idx }
+                if rhs_tok.type == TOK_IDENT {
+                    ; stable rhs encoding: store identifier name on node itself
+                    pos[0] = pos[0] + 1
+                    n.op = 3
+                    n.children = rhs_tok.str_start
+                    n.param_cnt = rhs_tok.str_len
+                    ret n
+                }
+                let rhs = parse_expr(toks, pos)
+                n.child1 = rhs
+                ret n
+            }
+        }
+    }
+    pos[0] = save
+
     let lhs = parse_expr(toks, pos)
     if toks[pos[0]].type == TOK_EQ {
         pos[0] = pos[0] + 1
@@ -523,6 +593,7 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
             let n = Node{}
             n.node_type = NODE_FIELD_STORE
             n.token     = lhs.token
+            n.child_cnt = lhs.child_cnt
             n.token2    = lhs.token2
             n.imm       = lhs.imm
             n.child0    = lhs.child0
@@ -547,7 +618,7 @@ fn parse_expr_stmt(toks: &Token, pos: &i64) -> Node {
 ; 4. PARSER
 ; ============================================================
 
-fn parse_fn(toks: &Token, pos: &i64, out: &Node, stab: &StructTable, src: &i8) -> i32 {
+fn parse_fn(toks: &Token, pos: &i64, jfn: &JirFunction, stab: &StructTable, src: &i8) -> i32 {
     expect(toks, pos, TOK_FN)
     let name_tok = toks[pos[0]]
     expect(toks, pos, TOK_IDENT)
@@ -589,21 +660,33 @@ fn parse_fn(toks: &Token, pos: &i64, out: &Node, stab: &StructTable, src: &i8) -
         ret_type = parse_type(toks, pos)
     }
 
-    let body = parse_block(toks, pos)
+    ; Emit this function immediately to avoid fragile AST lifetimes.
+    jfn.var_cnt       = 0
+    jfn.next_slot_off = 0
+    jfn.param_cnt     = param_cnt
+    let pi = 0
+    loop pi < param_cnt {
+        let ptok = Token{}
+        ptok.str_start = params[pi].token
+        ptok.str_len   = params[pi].token2
+        let pslot = bind(jfn, ptok, params[pi].data_type)
+        jfn.param_slots[pi] = pslot
+        pi = pi + 1
+    }
 
-    out.node_type = NODE_FN
-    out.token     = name_tok
-    out.param_cnt = param_cnt
-    out.ret_type  = ret_type
-    out.child0    = body
-    out.children  = params
-    out.child_cnt = param_cnt
+    expect(toks, pos, TOK_LBRACE)
+    let cur_bb = new_block(jfn)
+    loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
+        let st = parse_stmt(toks, pos)
+        cur_bb = codegen_stmt(st, jfn, cur_bb)
+    }
+    expect(toks, pos, TOK_RBRACE)
     ret ok(0)
 }
 
 fn parse_block(toks: &Token, pos: &i64) -> &Node {
     expect(toks, pos, TOK_LBRACE)
-    let stmts = i64[256]
+    let stmts = Node[256]
     let cnt = 0
     loop toks[pos[0]].type != TOK_RBRACE and toks[pos[0]].type != TOK_EOF {
         stmts[cnt] = parse_stmt(toks, pos)
@@ -671,6 +754,65 @@ fn parse_loop(toks: &Token, pos: &i64) -> Node {
 
 fn parse_ret(toks: &Token, pos: &i64) -> Node {
     expect(toks, pos, TOK_RET)
+    let t0 = toks[pos[0]]
+    if t0.type == TOK_IDENT {
+        ; Simple return by identifier can be encoded without child pointers.
+        if toks[pos[0] + 1].type != TOK_DOT and toks[pos[0] + 1].type != TOK_LBRACK {
+            pos[0] = pos[0] + 1
+            let n = Node{}
+            n.node_type = NODE_RET
+            n.op = 3
+            n.token = t0.str_start
+            n.child_cnt = t0.str_len
+            ret n
+        }
+    }
+    if t0.type == TOK_INT {
+        pos[0] = pos[0] + 1
+        let n = Node{}
+        n.node_type = NODE_RET
+        n.op = 4
+        n.imm = t0.imm
+        ret n
+    }
+
+    ; Fast path for direct field return: ret base[optional_idx].field
+    let save = pos[0]
+    if toks[pos[0]].type == TOK_IDENT {
+        let base = toks[pos[0]]
+        pos[0] = pos[0] + 1
+        let idx = Node{}
+        let has_idx = 0
+        if toks[pos[0]].type == TOK_LBRACK {
+            pos[0] = pos[0] + 1
+            idx = parse_expr(toks, pos)
+            expect(toks, pos, TOK_RBRACK)
+            has_idx = 1
+        }
+        if toks[pos[0]].type == TOK_DOT {
+            pos[0] = pos[0] + 1
+            let field = toks[pos[0]]
+            expect(toks, pos, TOK_IDENT)
+            let n = Node{}
+            n.node_type = NODE_RET
+            n.op = 2
+            n.token = base.str_start
+            n.child_cnt = base.str_len
+            n.token2 = field.str_start
+            n.imm = field.str_len
+            n.data_type = -1
+            n.ret_type = idx_kind
+            n.child1 = null
+            if idx_kind == 1 {
+                n.children = idx_start
+                n.param_cnt = idx_len
+            }
+            if has_idx == 1 and idx_kind == 2 { n.child1 = idx }
+            ret n
+        }
+    }
+    pos[0] = save
+
     let val = parse_expr(toks, pos)
     let n = Node{}
     n.node_type = NODE_RET
@@ -772,7 +914,8 @@ fn parse_primary(toks: &Token, pos: &i64) -> Node {
             expect(toks, pos, TOK_IDENT)
             let fn = Node{}
             fn.node_type = NODE_FIELD
-            fn.token     = t
+            fn.token     = t.str_start
+            fn.child_cnt = t.str_len
             fn.token2    = field.str_start
             fn.imm       = field.str_len
             fn.data_type = -1
@@ -998,6 +1141,31 @@ fn lookup_stype(jfn: &JirFunction, tok: &Token) -> i64 {
     ret jfn.vars[idx].stype
 }
 
+fn lookup_idx_name(jfn: &JirFunction, name_start: i64, name_len: i64) -> i64 {
+    let i = jfn.var_cnt - 1
+    loop i >= 0 {
+        if jfn.vars[i].name_len == name_len {
+            if str_match(jfn.src, name_start, jfn.vars[i].name_start, name_len) == 1 {
+                ret i
+            }
+        }
+        i = i - 1
+    }
+    ret -1
+}
+
+fn lookup_slot_name(jfn: &JirFunction, name_start: i64, name_len: i64) -> i64 {
+    let idx = lookup_idx_name(jfn, name_start, name_len)
+    if idx < 0 { ret -1 }
+    ret jfn.vars[idx].slot_off
+}
+
+fn lookup_stype_name(jfn: &JirFunction, name_start: i64, name_len: i64) -> i64 {
+    let idx = lookup_idx_name(jfn, name_start, name_len)
+    if idx < 0 { ret -1 }
+    ret jfn.vars[idx].stype
+}
+
 fn codegen_call(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
     let arg_ids = i64[16]
     let i = 0
@@ -1044,17 +1212,27 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         }
     }
     if node.node_type == NODE_FIELD {
-        let base_ident = Node{}
-        base_ident.node_type = NODE_IDENT
-        base_ident.token = node.token
-        let base = codegen_expr(base_ident, jfn, bb)
+        let slot = lookup_slot_name(jfn, node.token, node.child_cnt)
+        let ld = Instr{}
+        ld.op = OP_LOAD
+        ld.operand0 = slot
+        let base = emit(jfn, bb, &ld)
         let sid = node.data_type
         if sid < 0 {
-            sid = lookup_stype(jfn, node.token)
+            sid = lookup_stype_name(jfn, node.token, node.child_cnt)
         }
         let obj = base
-        if node.child0 != null {
-            let idx = codegen_expr(node.child0, jfn, bb)
+        if node.child0 != null or node.op == 1 {
+            let idx = 0
+            if node.op == 1 {
+                let islot = lookup_slot_name(jfn, node.children, node.param_cnt)
+                let ild = Instr{}
+                ild.op = OP_LOAD
+                ild.operand0 = islot
+                idx = emit(jfn, bb, &ild)
+            } else {
+                idx = codegen_expr(node.child0, jfn, bb)
+            }
             let elem_sz = 8
             if sid >= 0 { elem_sz = jfn.stab.sizes[sid] }
             let sz_id = emit_const(jfn, bb, TYPE_I64, elem_sz)
@@ -1062,7 +1240,11 @@ fn codegen_addr_expr(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
             obj = emit_binop(jfn, bb, OP_ADD, base, byte_off)
         }
         if sid < 0 { ret obj }
-        let foff = lookup_field_off(jfn.stab, jfn.src, sid, node.token2, node.imm)
+        if sid >= jfn.stab.cnt { ret obj }
+        if node.token2 < 0 or node.imm <= 0 { ret obj }
+        if node.token2 + node.imm > jfn.src_len { ret obj }
+        let foff = lookup_field_off_any(jfn.stab, jfn.src, sid, node.token2, node.imm)
+        if foff < 0 { ret obj }
         ret field_addr_from_base(obj, foff, jfn, bb)
     }
     ret -1
@@ -1096,7 +1278,8 @@ fn codegen_block(block: &Node, jfn: &JirFunction, bb: i64) -> i64 {
 }
 
 fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
-    if node.node_type == NODE_LET {
+    let nt = node.node_type
+    if nt == NODE_LET {
         let val_id = codegen_expr(node.child0, jfn, bb)
         let slot = lookup(jfn, node.token)
         let out_slot = slot
@@ -1118,16 +1301,26 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         emit(jfn, bb, &st)
         ret bb
     }
-    if node.node_type == NODE_FIELD_STORE {
+    if nt == NODE_FIELD_STORE {
         let fexpr = Node{}
         fexpr.node_type = NODE_FIELD
         fexpr.token = node.token
+        fexpr.child_cnt = node.child_cnt
         fexpr.token2 = node.token2
         fexpr.imm = node.imm
         fexpr.child0 = node.child0
         fexpr.data_type = node.data_type
         let faddr = codegen_addr_expr(fexpr, jfn, bb)
-        let rhs = codegen_expr(node.child1, jfn, bb)
+        let rhs = 0
+        if node.op == 3 {
+            let slot = lookup_slot_name(jfn, node.children, node.param_cnt)
+            let ld = Instr{}
+            ld.op = OP_LOAD
+            ld.operand0 = slot
+            rhs = emit(jfn, bb, &ld)
+        } else {
+            rhs = codegen_expr(node.child1, jfn, bb)
+        }
         let st = Instr{}
         st.op = OP_STORE_MEM
         st.operand0 = rhs
@@ -1135,15 +1328,40 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         emit(jfn, bb, &st)
         ret bb
     }
-    if node.node_type == NODE_RET {
-        let val_id = codegen_expr(node.child0, jfn, bb)
+    if nt == NODE_RET {
+        let val_id = 0
+        if node.op == 2 {
+            let fexpr = Node{}
+            fexpr.node_type = NODE_FIELD
+            fexpr.token = node.token
+            fexpr.child_cnt = node.child_cnt
+            fexpr.token2 = node.token2
+            fexpr.imm = node.imm
+            fexpr.data_type = node.data_type
+            fexpr.op = node.ret_type
+            fexpr.children = node.children
+            fexpr.param_cnt = node.param_cnt
+            fexpr.child0 = null
+            if node.ret_type == 2 { fexpr.child0 = node.child1 }
+            val_id = codegen_expr(fexpr, jfn, bb)
+        } else if node.op == 3 {
+            let slot = lookup_slot_name(jfn, node.token, node.child_cnt)
+            let ld = Instr{}
+            ld.op = OP_LOAD
+            ld.operand0 = slot
+            val_id = emit(jfn, bb, &ld)
+        } else if node.op == 4 {
+            val_id = emit_const(jfn, bb, TYPE_I64, node.imm)
+        } else {
+            val_id = codegen_expr(node.child0, jfn, bb)
+        }
         let ret_ins = Instr{}
         ret_ins.op = OP_RET
         ret_ins.operand0 = val_id
         emit(jfn, bb, &ret_ins)
         ret bb
     }
-    if node.node_type == NODE_PRINT {
+    if nt == NODE_PRINT {
         ; print(str) -> SYS_WRITE(1, str_ptr, str_len)
         let str_id = codegen_expr(node.child0, jfn, bb)
         let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)        ; stdout fd
@@ -1151,17 +1369,17 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         emit_syscall3(jfn, bb, 1, fd_id, str_id, len_id)     ; SYS_WRITE=1
         ret bb
     }
-    if node.node_type == NODE_IF {
+    if nt == NODE_IF {
         ret codegen_if(node, jfn, bb)
     }
-    if node.node_type == NODE_LOOP {
+    if nt == NODE_LOOP {
         ret codegen_loop(node, jfn, bb)
     }
-    if node.node_type == NODE_SYSCALL {
+    if nt == NODE_SYSCALL {
         codegen_syscall(node, jfn, bb)
         ret bb
     }
-    if node.node_type == NODE_CALL {
+    if nt == NODE_CALL {
         codegen_call(node, jfn, bb)
         ret bb
     }
@@ -2359,17 +2577,16 @@ fn main() {
 
     ; ---- Parse and compile each function immediately ----
     loop toks[pos].type == TOK_FN {
-        let fn_node = Node{}
         let fi = fn_cnt
         ; Peek at name token (pos+1) before parse_fn advances pos
         fn_name_off[fi] = toks[pos + 1].str_start
         fn_name_len[fi] = toks[pos + 1].str_len
-        parse_fn(toks, &pos, &fn_node, stab, src_buf)
 
         let jfn = JirFunction{}
         jfn.src = src_buf
+        jfn.src_len = src_len
         jfn.stab = stab
-        codegen_fn(&fn_node, &jfn)
+        parse_fn(toks, &pos, &jfn, stab, src_buf)
         fold_constants(&jfn)
         dce(&jfn)
 
