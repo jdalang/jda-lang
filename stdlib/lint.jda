@@ -1,39 +1,39 @@
-; =============================================================================
-; jda::lint -- Code Style Checker / Linter Helpers
-; =============================================================================
-; Convention-based linting utilities for Jda code. Checks naming conventions,
-; common style rules, and reports warnings. Can be used by tools or called
-; from test code to enforce project style.
-;
-; Naming rules:
-;   - Functions: snake_case (lowercase + underscores)
-;   - Constants: UPPER_SNAKE (uppercase + underscores + digits)
-;   - Variables: snake_case
-;   - Struct types: PascalCase (uppercase first letter)
-;   - Private: leading underscore
-;
-; Functions:
-;   lint_init()                          initialize linter (call once)
-;   lint_is_snake(name)      -> i64      1 if valid snake_case
-;   lint_is_upper(name)      -> i64      1 if valid UPPER_SNAKE
-;   lint_is_pascal(name)     -> i64      1 if valid PascalCase
-;   lint_check_fn(name)      -> i64      1 if valid function name
-;   lint_check_const(name)   -> i64      1 if valid constant name
-;   lint_check_struct(name)  -> i64      1 if valid struct name
-;   lint_check_var(name)     -> i64      1 if valid variable name
-;   lint_warn(name, msg)                 print "[LINT] name: msg"
-;   lint_add_warning(msg)                add to warning count
-;   lint_warning_count()     -> i64      get total warnings
-;   lint_reset()                         reset warning count
-;   lint_summary()                       print summary
-;   lint_check_line_len(line, max)  -> i64  1 if line within max chars
-;   lint_has_trailing_ws(line)      -> i64  1 if trailing whitespace
-; =============================================================================
+// =============================================================================
+// jda::lint -- Code Style Checker / Linter Helpers
+// =============================================================================
+// Convention-based linting utilities for Jda code. Checks naming conventions,
+// common style rules, and reports warnings. Can be used by tools or called
+// from test code to enforce project style.
+
+// Naming rules:
+//   - Functions: snake_case (lowercase + underscores)
+//   - Constants: UPPER_SNAKE (uppercase + underscores + digits)
+//   - Variables: snake_case
+//   - Struct types: PascalCase (uppercase first letter)
+//   - Private: leading underscore
+
+// Functions:
+//   lint_init()                          initialize linter (call once)
+//   lint_is_snake(name)      -> i64      1 if valid snake_case
+//   lint_is_upper(name)      -> i64      1 if valid UPPER_SNAKE
+//   lint_is_pascal(name)     -> i64      1 if valid PascalCase
+//   lint_check_fn(name)      -> i64      1 if valid function name
+//   lint_check_const(name)   -> i64      1 if valid constant name
+//   lint_check_struct(name)  -> i64      1 if valid struct name
+//   lint_check_var(name)     -> i64      1 if valid variable name
+//   lint_warn(name, msg)                 print "[LINT] name: msg"
+//   lint_add_warning(msg)                add to warning count
+//   lint_warning_count()     -> i64      get total warnings
+//   lint_reset()                         reset warning count
+//   lint_summary()                       print summary
+//   lint_check_line_len(line, max)  -> i64  1 if line within max chars
+//   lint_has_trailing_ws(line)      -> i64  1 if trailing whitespace
+// =============================================================================
 
 let _lint_warnings: i64 = 0
 let _lint_inited: i64 = 0
 
-; --- Internal helpers ---
+// --- Internal helpers ---
 
 fn _lint_cstr_len(s: &i8) -> i64 {
     let n = 0
@@ -83,24 +83,24 @@ fn _lint_is_underscore(ch: i64) -> i64 {
     ret 0
 }
 
-; --- Initialization ---
+// --- Initialization ---
 
-;; Initialize the linter.
+// Initialize the linter.
 fn lint_init() {
     if _lint_inited == 1 { ret }
     _lint_warnings = 0
     _lint_inited = 1
 }
 
-;; Reset warning count.
+// Reset warning count.
 fn lint_reset() {
     _lint_warnings = 0
 }
 
-; --- Naming checks ---
+// --- Naming checks ---
 
-;; Check if name is valid snake_case: lowercase, digits, underscores.
-;; First char must be lowercase or underscore.
+// Check if name is valid snake_case: lowercase, digits, underscores.
+// First char must be lowercase or underscore.
 fn lint_is_snake(name: &i8) -> i64 {
     let len = _lint_cstr_len(name)
     if len == 0 { ret 0 }
@@ -126,7 +126,7 @@ fn lint_is_snake(name: &i8) -> i64 {
     ret 1
 }
 
-;; Check if name is valid UPPER_SNAKE: uppercase, digits, underscores.
+// Check if name is valid UPPER_SNAKE: uppercase, digits, underscores.
 fn lint_is_upper(name: &i8) -> i64 {
     let len = _lint_cstr_len(name)
     if len == 0 { ret 0 }
@@ -146,7 +146,7 @@ fn lint_is_upper(name: &i8) -> i64 {
     ret 1
 }
 
-;; Check if name is valid PascalCase: starts with uppercase, then letters/digits.
+// Check if name is valid PascalCase: starts with uppercase, then letters/digits.
 fn lint_is_pascal(name: &i8) -> i64 {
     let len = _lint_cstr_len(name)
     if len == 0 { ret 0 }
@@ -169,29 +169,29 @@ fn lint_is_pascal(name: &i8) -> i64 {
     ret 1
 }
 
-;; Check if valid function name: snake_case.
+// Check if valid function name: snake_case.
 fn lint_check_fn(name: &i8) -> i64 {
     ret lint_is_snake(name)
 }
 
-;; Check if valid constant name: UPPER_SNAKE.
+// Check if valid constant name: UPPER_SNAKE.
 fn lint_check_const(name: &i8) -> i64 {
     ret lint_is_upper(name)
 }
 
-;; Check if valid struct name: PascalCase.
+// Check if valid struct name: PascalCase.
 fn lint_check_struct(name: &i8) -> i64 {
     ret lint_is_pascal(name)
 }
 
-;; Check if valid variable name: snake_case.
+// Check if valid variable name: snake_case.
 fn lint_check_var(name: &i8) -> i64 {
     ret lint_is_snake(name)
 }
 
-; --- Warnings ---
+// --- Warnings ---
 
-;; Print a lint warning: "[LINT] name: msg"
+// Print a lint warning: "[LINT] name: msg"
 fn lint_warn(name: &i8, msg: &i8) {
     _lint_write("[LINT] ", 7)
     _lint_print_str(name)
@@ -201,26 +201,26 @@ fn lint_warn(name: &i8, msg: &i8) {
     _lint_warnings = _lint_warnings + 1
 }
 
-;; Add to warning count (silent).
+// Add to warning count (silent).
 fn lint_add_warning(msg: &i8) {
     _lint_warnings = _lint_warnings + 1
 }
 
-;; Get total warning count.
+// Get total warning count.
 fn lint_warning_count() -> i64 {
     ret _lint_warnings
 }
 
-; --- Line checks ---
+// --- Line checks ---
 
-;; Check if line length is within max chars. Returns 1 if ok.
+// Check if line length is within max chars. Returns 1 if ok.
 fn lint_check_line_len(line: &i8, maxlen: i64) -> i64 {
     let len = _lint_cstr_len(line)
     if len <= maxlen { ret 1 }
     ret 0
 }
 
-;; Check if line has trailing whitespace (space or tab before null).
+// Check if line has trailing whitespace (space or tab before null).
 fn lint_has_trailing_ws(line: &i8) -> i64 {
     let len = _lint_cstr_len(line)
     if len == 0 { ret 0 }
@@ -231,9 +231,9 @@ fn lint_has_trailing_ws(line: &i8) -> i64 {
     ret 0
 }
 
-; --- Summary ---
+// --- Summary ---
 
-;; Print lint summary.
+// Print lint summary.
 fn lint_summary() {
     _lint_write("[LINT] ", 7)
     let w = _lint_warnings

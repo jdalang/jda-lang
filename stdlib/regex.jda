@@ -1,37 +1,37 @@
-; =============================================================================
-; jda::regex -- Regular Expression Matching
-; =============================================================================
-; Backtracking regex engine. No external dependencies.
-;
-; Supported syntax:
-;   .        any character
-;   *        zero or more (greedy)
-;   +        one or more (greedy)
-;   ?        zero or one
-;   [abc]    character class
-;   [a-z]    character range
-;   [^abc]   negated class
-;   ^        start anchor
-;   $        end anchor
-;   \d       digit [0-9]
-;   \w       word char [a-zA-Z0-9_]
-;   \s       whitespace [ \t\n\r]
-;   \.       escaped literal
-;
-; Functions:
-;   regex_match(pat, pl, text, tl) -> 1 if full match, 0 otherwise
-;   regex_search(pat, pl, text, tl) -> position of first match, or -1
-;   regex_count(pat, pl, text, tl) -> count of non-overlapping matches
-;   re_match_at(pat, pl, text, tp, tl) -> match length at position, or -1
-; =============================================================================
+// =============================================================================
+// jda::regex -- Regular Expression Matching
+// =============================================================================
+// Backtracking regex engine. No external dependencies.
 
-; Globals to reduce parameter count (max 6 args for correct calling convention)
+// Supported syntax:
+//   .        any character
+//   *        zero or more (greedy)
+//   +        one or more (greedy)
+//   ?        zero or one
+//   [abc]    character class
+//   [a-z]    character range
+//   [^abc]   negated class
+//   ^        start anchor
+//   $        end anchor
+//   \d       digit [0-9]
+//   \w       word char [a-zA-Z0-9_]
+//   \s       whitespace [ \t\n\r]
+//   \.       escaped literal
+
+// Functions:
+//   regex_match(pat, pl, text, tl) -> 1 if full match, 0 otherwise
+//   regex_search(pat, pl, text, tl) -> position of first match, or -1
+//   regex_count(pat, pl, text, tl) -> count of non-overlapping matches
+//   re_match_at(pat, pl, text, tp, tl) -> match length at position, or -1
+// =============================================================================
+
+// Globals to reduce parameter count (max 6 args for correct calling convention)
 let g_re_pat: &i8 = 0
 let g_re_pl = 0
 let g_re_text: &i8 = 0
 let g_re_tl = 0
 
-;; Check if character matches \d, \w, \s escape.
+// Check if character matches \d, \w, \s escape.
 fn re_match_escape(pp: i64, ch: i64) -> i64 {
     let code = g_re_pat[pp]
     if code == 100 {
@@ -53,7 +53,7 @@ fn re_match_escape(pp: i64, ch: i64) -> i64 {
     ret 0
 }
 
-;; Check if ch is in character class. pp points after '[' or '[^'.
+// Check if ch is in character class. pp points after '[' or '[^'.
 fn re_match_class(pp: i64, ch: i64) -> i64 {
     let pat = g_re_pat
     let pl = g_re_pl
@@ -74,7 +74,7 @@ fn re_match_class(pp: i64, ch: i64) -> i64 {
     ret 0
 }
 
-;; Skip past [...] class. pp points after '['.
+// Skip past [...] class. pp points after '['.
 fn re_skip_class(pp: i64) -> i64 {
     let i = pp
     loop i < g_re_pl {
@@ -84,7 +84,7 @@ fn re_skip_class(pp: i64) -> i64 {
     ret g_re_pl
 }
 
-;; Skip one pattern element.
+// Skip one pattern element.
 fn re_skip_elem(pp: i64) -> i64 {
     if pp >= g_re_pl { ret pp }
     let c = g_re_pat[pp]
@@ -97,7 +97,7 @@ fn re_skip_elem(pp: i64) -> i64 {
     ret pp + 1
 }
 
-;; Does one pattern element at pp match character ch?
+// Does one pattern element at pp match character ch?
 fn re_char_match(pp: i64, ch: i64) -> i64 {
     let c = g_re_pat[pp]
     if c == 46 { ret 1 }
@@ -123,7 +123,7 @@ fn re_char_match(pp: i64, ch: i64) -> i64 {
     ret 0
 }
 
-;; Greedy star: match elem zero or more, then rest of pattern.
+// Greedy star: match elem zero or more, then rest of pattern.
 fn re_match_star(ep: i64, rp: i64, tp: i64) -> i64 {
     let text = g_re_text
     let tl = g_re_tl
@@ -147,7 +147,7 @@ fn re_match_star(ep: i64, rp: i64, tp: i64) -> i64 {
     ret 0 - 1
 }
 
-;; Plus: match one or more, then rest.
+// Plus: match one or more, then rest.
 fn re_match_plus(ep: i64, rp: i64, tp: i64) -> i64 {
     if tp >= g_re_tl { ret 0 - 1 }
     let m = re_char_match(ep, g_re_text[tp])
@@ -157,7 +157,7 @@ fn re_match_plus(ep: i64, rp: i64, tp: i64) -> i64 {
     ret 1 + star_r
 }
 
-;; Optional: match zero or one, then rest.
+// Optional: match zero or one, then rest.
 fn re_match_quest(ep: i64, rp: i64, tp: i64) -> i64 {
     if tp < g_re_tl {
         let m = re_char_match(ep, g_re_text[tp])
@@ -171,7 +171,7 @@ fn re_match_quest(ep: i64, rp: i64, tp: i64) -> i64 {
     ret 0 - 1
 }
 
-;; Core recursive matcher. Uses globals for pat/pl/text/tl.
+// Core recursive matcher. Uses globals for pat/pl/text/tl.
 fn re_match_here(pp: i64, tp: i64) -> i64 {
     if pp >= g_re_pl { ret 0 }
 
@@ -206,7 +206,7 @@ fn re_match_here(pp: i64, tp: i64) -> i64 {
     ret 1 + rest
 }
 
-;; Match at specific position. Sets up globals.
+// Match at specific position. Sets up globals.
 fn re_match_at(pat: &i8, pl: i64, text: &i8, tp: i64, tl: i64) -> i64 {
     g_re_pat = pat
     g_re_pl = pl
@@ -220,14 +220,14 @@ fn re_match_at(pat: &i8, pl: i64, text: &i8, tp: i64, tl: i64) -> i64 {
     ret re_match_here(pp, tp)
 }
 
-;; Full match: pattern matches entire text?
+// Full match: pattern matches entire text?
 fn regex_match(pat: &i8, pl: i64, text: &i8, tl: i64) -> i64 {
     let mlen = re_match_at(pat, pl, text, 0, tl)
     if mlen == tl { ret 1 }
     ret 0
 }
 
-;; Search: find first match position, or -1.
+// Search: find first match position, or -1.
 fn regex_search(pat: &i8, pl: i64, text: &i8, tl: i64) -> i64 {
     if pl > 0 and pat[0] == 94 {
         let m = re_match_at(pat, pl, text, 0, tl)
@@ -243,7 +243,7 @@ fn regex_search(pat: &i8, pl: i64, text: &i8, tl: i64) -> i64 {
     ret 0 - 1
 }
 
-;; Count non-overlapping matches.
+// Count non-overlapping matches.
 fn regex_count(pat: &i8, pl: i64, text: &i8, tl: i64) -> i64 {
     let count = 0
     let i = 0

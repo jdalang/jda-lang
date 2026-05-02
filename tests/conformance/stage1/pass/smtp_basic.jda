@@ -1,50 +1,50 @@
 fn main() -> i64 {
     let out: &i8 = alloc_pages(1)
 
-    ; Test EHLO: "EHLO mx\r\n"
+    // Test EHLO: "EHLO mx\r\n"
     let dom: &i8 = alloc_pages(1)
-    poke_byte(dom, 0, 109)  ; m
-    poke_byte(dom, 1, 120)  ; x
+    poke_byte(dom, 0, 109)  // m
+    poke_byte(dom, 1, 120)  // x
     let n = smtp_format_ehlo(dom, 2, out)
-    ; Print without \r\n, just the command part
+    // Print without \r\n, just the command part
     let plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test MAIL FROM
+    // Test MAIL FROM
     let addr: &i8 = alloc_pages(1)
-    poke_byte(addr, 0, 97)   ; a
-    poke_byte(addr, 1, 64)   ; @
-    poke_byte(addr, 2, 98)   ; b
+    poke_byte(addr, 0, 97)   // a
+    poke_byte(addr, 1, 64)   // @
+    poke_byte(addr, 2, 98)   // b
     n = smtp_format_mail_from(addr, 3, out)
     plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test RCPT TO
+    // Test RCPT TO
     n = smtp_format_rcpt_to(addr, 3, out)
     plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test DATA
+    // Test DATA
     n = smtp_format_data(out)
     plen = n - 2
     syscall(1, 1, out, plen)
     print("\n")
 
-    ; Test parse reply: "250 OK\r\n"
+    // Test parse reply: "250 OK\r\n"
     let reply: &i8 = alloc_pages(1)
-    poke_byte(reply, 0, 50)   ; 2
-    poke_byte(reply, 1, 53)   ; 5
-    poke_byte(reply, 2, 48)   ; 0
-    poke_byte(reply, 3, 32)   ; space
-    poke_byte(reply, 4, 79)   ; O
-    poke_byte(reply, 5, 75)   ; K
+    poke_byte(reply, 0, 50)   // 2
+    poke_byte(reply, 1, 53)   // 5
+    poke_byte(reply, 2, 48)   // 0
+    poke_byte(reply, 3, 32)   // space
+    poke_byte(reply, 4, 79)   // O
+    poke_byte(reply, 5, 75)   // K
     let code = smtp_parse_reply(reply, 6)
     print("{code}\n")
 
-    ; Test reply_is_ok
+    // Test reply_is_ok
     let ok = smtp_reply_is_ok(code)
     print("{ok}\n")
 

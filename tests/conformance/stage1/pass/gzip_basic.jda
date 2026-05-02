@@ -1,33 +1,33 @@
 fn _gz_test_byte(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
 fn main() -> i64 {
-    ; Compress "Hello" (5 bytes)
+    // Compress "Hello" (5 bytes)
     let input: &i8 = alloc_pages(1)
-    poke_byte(input, 0, 72)   ; H
-    poke_byte(input, 1, 101)  ; e
-    poke_byte(input, 2, 108)  ; l
-    poke_byte(input, 3, 108)  ; l
-    poke_byte(input, 4, 111)  ; o
+    poke_byte(input, 0, 72)   // H
+    poke_byte(input, 1, 101)  // e
+    poke_byte(input, 2, 108)  // l
+    poke_byte(input, 3, 108)  // l
+    poke_byte(input, 4, 111)  // o
     let in_len = 5
 
     let compressed: &i8 = alloc_pages(1)
     let clen = gzip_compress(input, in_len, compressed)
     print("compressed len: {clen}\n")
 
-    ; Check magic bytes
+    // Check magic bytes
     let is_gz = gzip_is_gzip(compressed, clen)
     print("is gzip: {is_gz}\n")
 
-    ; Check original size from trailer
+    // Check original size from trailer
     let orig = gzip_orig_size(compressed, clen)
     print("orig size: {orig}\n")
 
-    ; Decompress
+    // Decompress
     let decompressed: &i8 = alloc_pages(1)
     let dlen = gzip_decompress(compressed, clen, decompressed)
     print("decompressed len: {dlen}\n")
 
-    ; Verify decompressed content
+    // Verify decompressed content
     let ok = 1
     if dlen != in_len { ok = 0 }
     if ok == 1 {
@@ -41,7 +41,7 @@ fn main() -> i64 {
     }
     print("roundtrip ok: {ok}\n")
 
-    ; Test non-gzip detection
+    // Test non-gzip detection
     let plain: &i8 = alloc_pages(1)
     poke_byte(plain, 0, 65)
     poke_byte(plain, 1, 66)

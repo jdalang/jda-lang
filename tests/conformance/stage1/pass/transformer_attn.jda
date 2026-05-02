@@ -1,9 +1,9 @@
-; Test scaled dot-product attention
-; Q=[[2,0],[0,2]], K=[[2,0],[0,2]], V=[[10,20],[30,40]]
-; scores = Q@K^T / sqrt(2) = [[2.83,0],[0,2.83]]
-; softmax row0 ~ [0.944, 0.056], row1 ~ [0.056, 0.944]
-; out ~ [[11.1, 21.1], [28.9, 38.9]]
-; Truncated: [11, 21, 28, 38]
+// Test scaled dot-product attention
+// Q=[[2,0],[0,2]], K=[[2,0],[0,2]], V=[[10,20],[30,40]]
+// scores = Q@K^T / sqrt(2) = [[2.83,0],[0,2.83]]
+// softmax row0 ~ [0.944, 0.056], row1 ~ [0.056, 0.944]
+// out ~ [[11.1, 21.1], [28.9, 38.9]]
+// Truncated: [11, 21, 28, 38]
 
 fn row_max(x: i64, base: i64, cols: i64) -> i64 {
     let mx = tensor_get(x, base)
@@ -69,7 +69,7 @@ fn attention_fwd(q: i64, k: i64, v: i64, out: i64, seq: i64, dk: i64) -> i64 {
         }
         i = i + 1
     }
-    ; Softmax each row
+    // Softmax each row
     let attn = tensor_new2(seq, seq)
     let r = 0
     loop r < seq {
@@ -77,7 +77,7 @@ fn attention_fwd(q: i64, k: i64, v: i64, out: i64, seq: i64, dk: i64) -> i64 {
         softmax_row(scores, attn, base, seq)
         r = r + 1
     }
-    ; out = attn @ V
+    // out = attn @ V
     i = 0
     loop i < seq {
         let j = 0
@@ -112,21 +112,21 @@ fn main() -> i64 {
     let v30 = f64_from_int(30)
     let v40 = f64_from_int(40)
 
-    ; Q = [[2,0],[0,2]]
+    // Q = [[2,0],[0,2]]
     let q = tensor_new2(2, 2)
     tensor_set(q, 0, two)
     tensor_set(q, 1, zero)
     tensor_set(q, 2, zero)
     tensor_set(q, 3, two)
 
-    ; K = [[2,0],[0,2]]
+    // K = [[2,0],[0,2]]
     let k = tensor_new2(2, 2)
     tensor_set(k, 0, two)
     tensor_set(k, 1, zero)
     tensor_set(k, 2, zero)
     tensor_set(k, 3, two)
 
-    ; V = [[10,20],[30,40]]
+    // V = [[10,20],[30,40]]
     let v = tensor_new2(2, 2)
     tensor_set(v, 0, v10)
     tensor_set(v, 1, v20)
@@ -141,7 +141,7 @@ fn main() -> i64 {
     let r2 = f64_to_int(tensor_get(out, 2))
     let r3 = f64_to_int(tensor_get(out, 3))
 
-    ; Expected: 11, 21, 28, 38 (truncated)
+    // Expected: 11, 21, 28, 38 (truncated)
     if r0 == 11 and r1 == 21 {
         print "attn row0 ok"
     }

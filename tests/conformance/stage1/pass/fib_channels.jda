@@ -1,5 +1,5 @@
-; DoD 1: Fib with spawn + channels — prints 6765 for fib(20)
-; Spawns two workers computing fib(19) and fib(18), adds results
+// DoD 1: Fib with spawn + channels — prints 6765 for fib(20)
+// Spawns two workers computing fib(19) and fib(18), adds results
 let g_queue: &i64 = 0
 let g_head = 0
 let g_tail = 0
@@ -22,7 +22,7 @@ fn fib_worker() {
     let me: &i64 = g_current
     let n = me[8]
     let ch: &i64 = me[9]
-    ; Iterative fib(n): after loop, a = fib(n)
+    // Iterative fib(n): after loop, a = fib(n)
     let a = 0
     let b = 1
     let i = 0
@@ -41,7 +41,7 @@ fn main() {
 
     let ch = chan_new(2)
 
-    ; fib(20) = fib(19) + fib(18) = 4181 + 2584 = 6765
+    // fib(20) = fib(19) + fib(18) = 4181 + 2584 = 6765
     let t1 = spawn fib_worker()
     t1[8] = 19
     t1[9] = ch

@@ -1,4 +1,4 @@
-; Test autograd: addition and subtraction gradient rules
+// Test autograd: addition and subtraction gradient rules
 
 fn grad_check_close(analytical: i64, numerical: i64, eps: i64) -> i64 {
     let diff = f64_sub(analytical, numerical)
@@ -18,12 +18,12 @@ fn main() -> i64 {
     let eps = f64_div(one, hundred)
     let twoh = f64_mul(two, h)
 
-    ; c = a + b → dc/da = 1, dc/db = 1
+    // c = a + b → dc/da = 1, dc/db = 1
     let grad_c = f64_from_int(1)
     let ga = grad_c
     let gb = grad_c
 
-    ; Numerical dc/da
+    // Numerical dc/da
     let ah = f64_add(a, h)
     let amh = f64_sub(a, h)
     let c_plus = f64_add(ah, b)
@@ -31,7 +31,7 @@ fn main() -> i64 {
     let diff_a = f64_sub(c_plus, c_minus)
     let num_ga = f64_div(diff_a, twoh)
 
-    ; Numerical dc/db
+    // Numerical dc/db
     let bh = f64_add(b, h)
     let bmh = f64_sub(b, h)
     let c_plus_b = f64_add(a, bh)
@@ -45,7 +45,7 @@ fn main() -> i64 {
         print "grad add ok"
     }
 
-    ; c = a - b → dc/da = 1, dc/db = -1
+    // c = a - b → dc/da = 1, dc/db = -1
     let gs_a = grad_c
     let gs_b = f64_neg(grad_c)
 

@@ -1,0 +1,323 @@
+// B-tree benchmark — order 64, insert 1M keys, query 2M
+
+let mem: &i64
+let g_nn = 0
+let g_root = 0
+let g_rng = 12345
+
+fn _clk(buf: &i8) -> i64 {
+    let r = syscall(228, 1, buf, 0, 0)
+    ret r
+}
+
+fn now_ms(ts: &i8) -> i64 {
+    _clk(ts)
+    let s = ts[0]
+    let ptr = ts + 8
+    let ns = ptr[0]
+    let ms = s * 1000 + ns / 1000000
+    ret ms
+}
+
+fn imod(a: i64, b: i64) -> i64 {
+    let d = a / b
+    let r = d * b
+    ret a - r
+}
+
+fn nrand() -> i64 {
+    let s = g_rng * 1103515245 + 12345
+    let r = s & 2147483647
+    g_rng = r
+    ret r
+}
+
+// Node: 129 i64 slots — [0..62]=keys [63..126]=children [127]=n [128]=leaf
+
+fn nk(id: i64, i: i64) -> i64 {
+    let off = id * 129 + i
+    ret mem[off]
+}
+
+fn nk_s(id: i64, i: i64, v: i64) {
+    let off = id * 129 + i
+    mem[off] = v
+}
+
+fn nc(id: i64, i: i64) -> i64 {
+    let off = id * 129 + 63 + i
+    ret mem[off]
+}
+
+fn nc_s(id: i64, i: i64, v: i64) {
+    let off = id * 129 + 63 + i
+    mem[off] = v
+}
+
+fn nd_n(id: i64) -> i64 {
+    let off = id * 129 + 127
+    ret mem[off]
+}
+
+fn nd_n_s(id: i64, v: i64) {
+    let off = id * 129 + 127
+    mem[off] = v
+}
+
+fn nd_lf(id: i64) -> i64 {
+    let off = id * 129 + 128
+    ret mem[off]
+}
+
+fn nd_lf_s(id: i64, v: i64) {
+    let off = id * 129 + 128
+    mem[off] = v
+}
+
+fn new_nd(leaf: i64) -> i64 {
+    let id = g_nn
+    g_nn = g_nn + 1
+    nd_n_s(id, 0)
+    nd_lf_s(id, leaf)
+    let i = 0
+    loop i < 64 {
+        nc_s(id, i, 0 - 1)
+        i = i + 1
+    }
+    ret id
+}
+
+fn search(id: i64, key: i64) -> i64 {
+    if id < 0 {
+        ret 0
+    }
+    let n = nd_n(id)
+    let i = 0
+    let done = 0
+    loop done == 0 {
+        if i >= n {
+            done = 1
+        }
+        if done == 0 {
+            let k = nk(id, i)
+            if key <= k {
+                done = 1
+            }
+            if done == 0 {
+                i = i + 1
+            }
+        }
+    }
+    if i < n {
+        let k = nk(id, i)
+        if k == key {
+            ret 1
+        }
+    }
+    let lf = nd_lf(id)
+    if lf == 1 {
+        ret 0
+    }
+    let child = nc(id, i)
+    let r = search(child, key)
+    ret r
+}
+
+fn split_ch(par: i64, idx: i64) {
+    let full = nc(par, idx)
+    let mid = 31
+    let leaf = nd_lf(full)
+    let right = new_nd(leaf)
+    let rn = 31
+    let j = 0
+    loop j < rn {
+        let src = mid + 1 + j
+        let val = nk(full, src)
+        nk_s(right, j, val)
+        j = j + 1
+    }
+    if leaf == 0 {
+        j = 0
+        let rn1 = rn + 1
+        loop j < rn1 {
+            let src = mid + 1 + j
+            let val = nc(full, src)
+            nc_s(right, j, val)
+            j = j + 1
+        }
+    }
+    let pk = nk(full, mid)
+    nd_n_s(full, mid)
+    nd_n_s(right, rn)
+    let pn = nd_n(par)
+    j = pn
+    loop j > idx {
+        let jm = j - 1
+        let kv = nk(par, jm)
+        nk_s(par, j, kv)
+        let jp = j + 1
+        let cv = nc(par, j)
+        nc_s(par, jp, cv)
+        j = j - 1
+    }
+    nk_s(par, idx, pk)
+    let idx1 = idx + 1
+    nc_s(par, idx1, right)
+    let pn1 = pn + 1
+    nd_n_s(par, pn1)
+}
+
+fn ins_leaf(id: i64, key: i64) -> i64 {
+    let n = nd_n(id)
+    let i = n - 1
+    let go = 1
+    loop go == 1 {
+        if i < 0 {
+            go = 0
+        }
+        if go == 1 {
+            let k = nk(id, i)
+            if key >= k {
+                go = 0
+            }
+            if go == 1 {
+                let i1 = i + 1
+                nk_s(id, i1, k)
+                i = i - 1
+            }
+        }
+    }
+    if i >= 0 {
+        let k = nk(id, i)
+        if k == key {
+            ret 0
+        }
+    }
+    let i1 = i + 1
+    nk_s(id, i1, key)
+    let n1 = n + 1
+    nd_n_s(id, n1)
+    ret 0
+}
+
+fn ins_nf(id: i64, key: i64) -> i64 {
+    let lf = nd_lf(id)
+    if lf == 1 {
+        let r = ins_leaf(id, key)
+        ret 0
+    }
+    let n = nd_n(id)
+    let i = n - 1
+    let go = 1
+    loop go == 1 {
+        if i < 0 {
+            go = 0
+        }
+        if go == 1 {
+            let k = nk(id, i)
+            if key >= k {
+                go = 0
+            }
+            if go == 1 {
+                i = i - 1
+            }
+        }
+    }
+    if i >= 0 {
+        let k = nk(id, i)
+        if k == key {
+            ret 0
+        }
+    }
+    i = i + 1
+    let ci = nc(id, i)
+    let cn = nd_n(ci)
+    if cn == 63 {
+        split_ch(id, i)
+        let k2 = nk(id, i)
+        if key > k2 {
+            i = i + 1
+        }
+        let n2 = nd_n(id)
+        if i < n2 {
+            let k3 = nk(id, i)
+            if k3 == key {
+                ret 0
+            }
+        }
+    }
+    let ci2 = nc(id, i)
+    let r = ins_nf(ci2, key)
+    ret 0
+}
+
+fn bt_ins(key: i64) {
+    let rn = nd_n(g_root)
+    if rn == 63 {
+        let s = new_nd(0)
+        nc_s(s, 0, g_root)
+        g_root = s
+        split_ch(s, 0)
+        let r = ins_nf(s, key)
+    }
+    if rn < 63 {
+        let r = ins_nf(g_root, key)
+    }
+}
+
+fn main() -> i64 {
+    mem = alloc_pages(6000)
+    g_root = new_nd(1)
+
+    let N = 1000000
+    let N10 = 10000000
+
+    let ts = mem + 24000000
+
+    let t0 = now_ms(ts)
+
+    g_rng = 12345
+    let i = 0
+    loop i < N {
+        let k = imod(nrand(), N10)
+        bt_ins(k)
+        i = i + 1
+    }
+
+    g_rng = 12345
+    let found = 0
+    i = 0
+    loop i < N {
+        let k = imod(nrand(), N10)
+        let r = search(g_root, k)
+        found = found + r
+        i = i + 1
+    }
+
+    g_rng = 99999
+    let found2 = 0
+    i = 0
+    loop i < N {
+        let k = imod(nrand(), N10)
+        let r = search(g_root, k)
+        found2 = found2 + r
+        i = i + 1
+    }
+
+    let t1 = now_ms(ts)
+    let elapsed = t1 - t0
+
+    print("inserted: ")
+    print("{N}")
+    print("\nfound (known): ")
+    print("{found}")
+    print("\nfound (random): ")
+    print("{found2}")
+    let nn = g_nn
+    print("\nnodes: ")
+    print("{nn}")
+    print("\ntime: ")
+    print("{elapsed}")
+    print(" ms\n")
+    ret 0
+}

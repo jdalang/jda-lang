@@ -1,30 +1,30 @@
-; =============================================================================
-; jda::comprehension -- List/Dict Comprehensions
-; =============================================================================
-; Provides functional collection operations over Vec and HashMap.
-; Depends on: stdlib/vec.jda, stdlib/hashmap.jda
-;
-; Equivalent mapping:
-;   range(5)                    -> range(5)
-;   [x*2 for x in range(10)]   -> vec_map(range(10), fn(x) { ret x*2 })
-;   [x for x in v if x > 3]    -> vec_filter(v, fn(x) { ret x > 3 })
-;   sum(v)                      -> vec_sum(v)
-;   any(x > 3 for x in v)      -> vec_any(v, fn(x) { ret x > 3 })
-;   len([x for x in v if p])   -> vec_count(v, fn(x) { ret p })
-;   enumerate(v)                -> vec_enumerate(v)
-;   zip(a, b)                   -> vec_zip(a, b)
-;   v[1:4]                      -> vec_slice(v, 1, 4)
-;   reversed(v)                 -> vec_reverse(v)
-;   sorted(v)                   -> vec_sort(v)
-;   {k: v for k, v in pairs}   -> map_from_vecs(keys, vals)
-;   dict.keys()                 -> map_keys(m, cap)
-;   dict.values()               -> map_vals(m, cap)
-;
-; Zero compiler changes.
-; =============================================================================
+// =============================================================================
+// jda::comprehension -- List/Dict Comprehensions
+// =============================================================================
+// Provides functional collection operations over Vec and HashMap.
+// Depends on: stdlib/vec.jda, stdlib/hashmap.jda
 
-; --- Range generators ---
-; range(stop) -> Vec of [0, 1, ..., stop-1]
+// Equivalent mapping:
+//   range(5)                    -> range(5)
+//   [x*2 for x in range(10)]   -> vec_map(range(10), fn(x) { ret x*2 })
+//   [x for x in v if x > 3]    -> vec_filter(v, fn(x) { ret x > 3 })
+//   sum(v)                      -> vec_sum(v)
+//   any(x > 3 for x in v)      -> vec_any(v, fn(x) { ret x > 3 })
+//   len([x for x in v if p])   -> vec_count(v, fn(x) { ret p })
+//   enumerate(v)                -> vec_enumerate(v)
+//   zip(a, b)                   -> vec_zip(a, b)
+//   v[1:4]                      -> vec_slice(v, 1, 4)
+//   reversed(v)                 -> vec_reverse(v)
+//   sorted(v)                   -> vec_sort(v)
+//   {k: v for k, v in pairs}   -> map_from_vecs(keys, vals)
+//   dict.keys()                 -> map_keys(m, cap)
+//   dict.values()               -> map_vals(m, cap)
+
+// Zero compiler changes.
+// =============================================================================
+
+// --- Range generators ---
+// range(stop) -> Vec of [0, 1, ..., stop-1]
 fn range(stop: i64) -> &i64 {
     let v = vec_new(stop)
     let i = 0
@@ -35,7 +35,7 @@ fn range(stop: i64) -> &i64 {
     ret v
 }
 
-; range2(start, stop) -> Vec of [start, start+1, ..., stop-1]
+// range2(start, stop) -> Vec of [start, start+1, ..., stop-1]
 fn range2(start: i64, stop: i64) -> &i64 {
     let cap = stop - start
     if cap < 16 { cap = 16 }
@@ -48,7 +48,7 @@ fn range2(start: i64, stop: i64) -> &i64 {
     ret v
 }
 
-; range3(start, stop, step) -> Vec of [start, start+step, ...]
+// range3(start, stop, step) -> Vec of [start, start+step, ...]
 fn range3(start: i64, stop: i64, step: i64) -> &i64 {
     let v = vec_new(16)
     let i = start
@@ -61,9 +61,9 @@ fn range3(start: i64, stop: i64, step: i64) -> &i64 {
     ret v
 }
 
-; --- Vec comprehension: map ---
-; vec_map(v, fn) -> new Vec with fn applied to each element
-; Python: [fn(x) for x in v]
+// --- Vec comprehension: map ---
+// vec_map(v, fn) -> new Vec with fn applied to each element
+// Python: [fn(x) for x in v]
 fn vec_comp_map(v: &i64, f: i64) -> &i64 {
     let n = vec_len(v)
     let out = vec_new(n)
@@ -77,9 +77,9 @@ fn vec_comp_map(v: &i64, f: i64) -> &i64 {
     ret out
 }
 
-; --- Vec comprehension: filter ---
-; vec_filter(v, pred) -> new Vec with elements where pred(x) != 0
-; Python: [x for x in v if pred(x)]
+// --- Vec comprehension: filter ---
+// vec_filter(v, pred) -> new Vec with elements where pred(x) != 0
+// Python: [x for x in v if pred(x)]
 fn vec_comp_filter(v: &i64, pred: i64) -> &i64 {
     let n = vec_len(v)
     let out = vec_new(n)
@@ -95,8 +95,8 @@ fn vec_comp_filter(v: &i64, pred: i64) -> &i64 {
     ret out
 }
 
-; --- Vec comprehension: map + filter ---
-; Python: [f(x) for x in v if pred(x)]
+// --- Vec comprehension: map + filter ---
+// Python: [f(x) for x in v if pred(x)]
 fn vec_comp_map_filter(v: &i64, f: i64, pred: i64) -> &i64 {
     let n = vec_len(v)
     let out = vec_new(n)
@@ -113,8 +113,8 @@ fn vec_comp_map_filter(v: &i64, f: i64, pred: i64) -> &i64 {
     ret out
 }
 
-; --- Vec sum ---
-; Python: sum(v)
+// --- Vec sum ---
+// Python: sum(v)
 fn vec_sum(v: &i64) -> i64 {
     let n = vec_len(v)
     let acc = 0
@@ -127,9 +127,9 @@ fn vec_sum(v: &i64) -> i64 {
     ret acc
 }
 
-; --- Vec any ---
-; Python: any(pred(x) for x in v)
-; Note: closures must capture at least one variable.
+// --- Vec any ---
+// Python: any(pred(x) for x in v)
+// Note: closures must capture at least one variable.
 fn vec_any(v: &i64, pred: i64) -> i64 {
     let n = vec_len(v)
     let i = 0
@@ -142,8 +142,8 @@ fn vec_any(v: &i64, pred: i64) -> i64 {
     ret 0
 }
 
-; --- Vec count ---
-; Python: len([x for x in v if pred(x)])
+// --- Vec count ---
+// Python: len([x for x in v if pred(x)])
 fn vec_count(v: &i64, pred: i64) -> i64 {
     let n = vec_len(v)
     let cnt = 0
@@ -157,8 +157,8 @@ fn vec_count(v: &i64, pred: i64) -> i64 {
     ret cnt
 }
 
-; --- Vec each ---
-; Python: for x in v: f(x)
+// --- Vec each ---
+// Python: for x in v: f(x)
 fn vec_each(v: &i64, f: i64) {
     let n = vec_len(v)
     let i = 0
@@ -169,9 +169,9 @@ fn vec_each(v: &i64, f: i64) {
     }
 }
 
-; --- Vec enumerate ---
-; Returns a flat vec: [idx0, val0, idx1, val1, ...]
-; Access pairs as out[i*2] (index) and out[i*2+1] (value)
+// --- Vec enumerate ---
+// Returns a flat vec: [idx0, val0, idx1, val1, ...]
+// Access pairs as out[i*2] (index) and out[i*2+1] (value)
 fn vec_enumerate(v: &i64) -> &i64 {
     let n = vec_len(v)
     let out = vec_new(n * 2)
@@ -185,9 +185,9 @@ fn vec_enumerate(v: &i64) -> &i64 {
     ret out
 }
 
-; --- Vec zip ---
-; zip two vecs into a flat vec: [a0, b0, a1, b1, ...]
-; Access pairs as out[i*2] and out[i*2+1]
+// --- Vec zip ---
+// zip two vecs into a flat vec: [a0, b0, a1, b1, ...]
+// Access pairs as out[i*2] and out[i*2+1]
 fn vec_zip(a: &i64, b: &i64) -> &i64 {
     let na = vec_len(a)
     let nb = vec_len(b)
@@ -205,8 +205,8 @@ fn vec_zip(a: &i64, b: &i64) -> &i64 {
     ret out
 }
 
-; --- Vec slice ---
-; Python: v[start:stop]
+// --- Vec slice ---
+// Python: v[start:stop]
 fn vec_slice(v: &i64, start: i64, stop: i64) -> &i64 {
     let n = vec_len(v)
     let s = start
@@ -225,9 +225,9 @@ fn vec_slice(v: &i64, start: i64, stop: i64) -> &i64 {
     ret out
 }
 
-; --- Vec reverse ---
-; Returns a new vec with elements in reverse order.
-; Python: list(reversed(v))
+// --- Vec reverse ---
+// Returns a new vec with elements in reverse order.
+// Python: list(reversed(v))
 fn vec_reverse(v: &i64) -> &i64 {
     let n = vec_len(v)
     let out = vec_new(n)
@@ -240,12 +240,12 @@ fn vec_reverse(v: &i64) -> &i64 {
     ret out
 }
 
-; --- Vec sort (insertion sort) ---
-; Returns a new sorted vec (ascending).
-; Python: sorted(v)
+// --- Vec sort (insertion sort) ---
+// Returns a new sorted vec (ascending).
+// Python: sorted(v)
 fn vec_sort(v: &i64) -> &i64 {
     let n = vec_len(v)
-    ; Copy to new vec
+    // Copy to new vec
     let out = vec_new(n)
     let k = 0
     loop k < n {
@@ -253,7 +253,7 @@ fn vec_sort(v: &i64) -> &i64 {
         vec_push(out, x)
         k = k + 1
     }
-    ; Insertion sort in place
+    // Insertion sort in place
     let i = 1
     loop i < n {
         let key = vec_get(out, i)
@@ -274,7 +274,7 @@ fn vec_sort(v: &i64) -> &i64 {
     ret out
 }
 
-; --- Vec min / max ---
+// --- Vec min / max ---
 fn vec_min(v: &i64) -> i64 {
     let n = vec_len(v)
     let m = vec_get(v, 0)
@@ -299,9 +299,9 @@ fn vec_max(v: &i64) -> i64 {
     ret m
 }
 
-; --- Vec flatten ---
-; Flatten a vec of vecs into one flat vec.
-; Input: array of vec pointers (as &i64) and count.
+// --- Vec flatten ---
+// Flatten a vec of vecs into one flat vec.
+// Input: array of vec pointers (as &i64) and count.
 fn vec_flatten(vecs: &i64, n: i64) -> &i64 {
     let out = vec_new(16)
     let i = 0
@@ -319,8 +319,8 @@ fn vec_flatten(vecs: &i64, n: i64) -> &i64 {
     ret out
 }
 
-; --- Vec concat ---
-; Python: a + b
+// --- Vec concat ---
+// Python: a + b
 fn vec_concat(a: &i64, b: &i64) -> &i64 {
     let na = vec_len(a)
     let nb = vec_len(b)
@@ -340,7 +340,7 @@ fn vec_concat(a: &i64, b: &i64) -> &i64 {
     ret out
 }
 
-; --- Vec from raw array ---
+// --- Vec from raw array ---
 fn vec_from_arr(arr: &i64, len: i64) -> &i64 {
     let v = vec_new(len)
     let i = 0
@@ -351,10 +351,10 @@ fn vec_from_arr(arr: &i64, len: i64) -> &i64 {
     ret v
 }
 
-; --- Map comprehension helpers ---
+// --- Map comprehension helpers ---
 
-; map_from_vecs(keys_vec, vals_vec) -> new map
-; Python: {k: v for k, v in zip(keys, vals)}
+// map_from_vecs(keys_vec, vals_vec) -> new map
+// Python: {k: v for k, v in zip(keys, vals)}
 fn map_from_vecs(keys: &i64, vals: &i64) -> &i64 {
     let n = vec_len(keys)
     let m = map_new(n * 2)
@@ -368,8 +368,8 @@ fn map_from_vecs(keys: &i64, vals: &i64) -> &i64 {
     ret m
 }
 
-; map_keys(m, cap) -> Vec of all keys
-; cap = map capacity (m[0])
+// map_keys(m, cap) -> Vec of all keys
+// cap = map capacity (m[0])
 fn map_keys(m: &i64) -> &i64 {
     let cap = m[0]
     let state: &i64 = m[4]
@@ -385,7 +385,7 @@ fn map_keys(m: &i64) -> &i64 {
     ret out
 }
 
-; map_vals(m) -> Vec of all values
+// map_vals(m) -> Vec of all values
 fn map_vals(m: &i64) -> &i64 {
     let cap = m[0]
     let state: &i64 = m[4]
@@ -401,8 +401,8 @@ fn map_vals(m: &i64) -> &i64 {
     ret out
 }
 
-; map_items(m) -> flat Vec of [k0, v0, k1, v1, ...]
-; Access pairs as out[i*2] (key) and out[i*2+1] (value)
+// map_items(m) -> flat Vec of [k0, v0, k1, v1, ...]
+// Access pairs as out[i*2] (key) and out[i*2+1] (value)
 fn map_items(m: &i64) -> &i64 {
     let cap = m[0]
     let state: &i64 = m[4]
@@ -420,8 +420,8 @@ fn map_items(m: &i64) -> &i64 {
     ret out
 }
 
-; map_filter(m, pred) -> new map with entries where pred(key) != 0
-; Python: {k: v for k, v in d.items() if pred(k)}
+// map_filter(m, pred) -> new map with entries where pred(key) != 0
+// Python: {k: v for k, v in d.items() if pred(k)}
 fn map_comp_filter(m: &i64, pred: i64) -> &i64 {
     let cap = m[0]
     let state: &i64 = m[4]
@@ -441,8 +441,8 @@ fn map_comp_filter(m: &i64, pred: i64) -> &i64 {
     ret out
 }
 
-; map_map_vals(m, f) -> new map with f applied to each value
-; Python: {k: f(v) for k, v in d.items()}
+// map_map_vals(m, f) -> new map with f applied to each value
+// Python: {k: f(v) for k, v in d.items()}
 fn map_comp_map_vals(m: &i64, f: i64) -> &i64 {
     let cap = m[0]
     let state: &i64 = m[4]

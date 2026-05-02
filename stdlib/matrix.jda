@@ -1,30 +1,30 @@
-; =============================================================================
-; jda::matrix -- Integer Matrix Operations
-; =============================================================================
-; 2D matrix of i64 values. Row-major layout.
-;
-; Memory layout per matrix (&i64):
-;   [0] rows
-;   [1] cols
-;   [2] data_ptr (&i64)
-;
-; Functions:
-;   mat_new(rows, cols)            -> &i64  create zero matrix
-;   mat_get(m, r, c)              -> i64   element at (r, c)
-;   mat_set(m, r, c, val)                  set element at (r, c)
-;   mat_rows(m)                   -> i64   row count
-;   mat_cols(m)                   -> i64   column count
-;   mat_add(a, b)                 -> &i64  element-wise addition
-;   mat_sub(a, b)                 -> &i64  element-wise subtraction
-;   mat_mul(a, b)                 -> &i64  matrix multiplication
-;   mat_scale(m, s)               -> &i64  scalar multiplication
-;   mat_transpose(m)              -> &i64  transpose
-;   mat_identity(n)               -> &i64  n x n identity matrix
-;   mat_trace(m)                  -> i64   sum of diagonal
-;   mat_eq(a, b)                  -> i64   1 if same dimensions and values
-;   mat_copy(m)                   -> &i64  deep copy
-;   mat_fill(m, val)                       fill all elements with val
-; =============================================================================
+// =============================================================================
+// jda::matrix -- Integer Matrix Operations
+// =============================================================================
+// 2D matrix of i64 values. Row-major layout.
+
+// Memory layout per matrix (&i64):
+//   [0] rows
+//   [1] cols
+//   [2] data_ptr (&i64)
+
+// Functions:
+//   mat_new(rows, cols)            -> &i64  create zero matrix
+//   mat_get(m, r, c)              -> i64   element at (r, c)
+//   mat_set(m, r, c, val)                  set element at (r, c)
+//   mat_rows(m)                   -> i64   row count
+//   mat_cols(m)                   -> i64   column count
+//   mat_add(a, b)                 -> &i64  element-wise addition
+//   mat_sub(a, b)                 -> &i64  element-wise subtraction
+//   mat_mul(a, b)                 -> &i64  matrix multiplication
+//   mat_scale(m, s)               -> &i64  scalar multiplication
+//   mat_transpose(m)              -> &i64  transpose
+//   mat_identity(n)               -> &i64  n x n identity matrix
+//   mat_trace(m)                  -> i64   sum of diagonal
+//   mat_eq(a, b)                  -> i64   1 if same dimensions and values
+//   mat_copy(m)                   -> &i64  deep copy
+//   mat_fill(m, val)                       fill all elements with val
+// =============================================================================
 
 fn mat_pages_for(n: i64) -> i64 {
     let bytes = n * 8
@@ -35,7 +35,7 @@ fn mat_pages_for(n: i64) -> i64 {
     ret pages
 }
 
-;; Create a rows x cols matrix initialized to 0.
+// Create a rows x cols matrix initialized to 0.
 fn mat_new(rows: i64, cols: i64) -> &i64 {
     let hdr: &i64 = alloc_pages(1)
     let total = rows * cols

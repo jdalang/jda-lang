@@ -1,33 +1,33 @@
-; =============================================================================
-; jda::rational -- Rational Number Arithmetic
-; =============================================================================
-; Exact rational numbers (numerator/denominator). Auto-simplified via GCD.
-;
-; Memory layout: global pool of i64 pairs [num, den] at indices 2*n, 2*n+1.
-; Each rational is a &i64 pointer into the pool.
-;
-; Functions:
-;   rat_new(num, den)        -> &i64  create and simplify
-;   rat_add(a, b)            -> &i64  addition
-;   rat_sub(a, b)            -> &i64  subtraction
-;   rat_mul(a, b)            -> &i64  multiplication
-;   rat_div(a, b)            -> &i64  division
-;   rat_cmp(a, b)            -> i64   -1, 0, 1
-;   rat_eq(a, b)             -> i64   1 if equal
-;   rat_to_i64(a)            -> i64   truncated integer
-;   rat_num(a)               -> i64   numerator
-;   rat_den(a)               -> i64   denominator
-;   rat_is_integer(a)        -> i64   1 if den == 1
-;   rat_abs(a)               -> &i64  absolute value
-;   rat_negate(a)            -> &i64  flip sign
-;   rat_to_str(a, out)       -> i64   format as "num/den" string
-; =============================================================================
+// =============================================================================
+// jda::rational -- Rational Number Arithmetic
+// =============================================================================
+// Exact rational numbers (numerator/denominator). Auto-simplified via GCD.
+
+// Memory layout: global pool of i64 pairs [num, den] at indices 2*n, 2*n+1.
+// Each rational is a &i64 pointer into the pool.
+
+// Functions:
+//   rat_new(num, den)        -> &i64  create and simplify
+//   rat_add(a, b)            -> &i64  addition
+//   rat_sub(a, b)            -> &i64  subtraction
+//   rat_mul(a, b)            -> &i64  multiplication
+//   rat_div(a, b)            -> &i64  division
+//   rat_cmp(a, b)            -> i64   -1, 0, 1
+//   rat_eq(a, b)             -> i64   1 if equal
+//   rat_to_i64(a)            -> i64   truncated integer
+//   rat_num(a)               -> i64   numerator
+//   rat_den(a)               -> i64   denominator
+//   rat_is_integer(a)        -> i64   1 if den == 1
+//   rat_abs(a)               -> &i64  absolute value
+//   rat_negate(a)            -> &i64  flip sign
+//   rat_to_str(a, out)       -> i64   format as "num/den" string
+// =============================================================================
 
 let _rat_pool: &i64 = 0
 let _rat_pool_idx = 0
 let _rat_tmp: &i8 = 0
 
-;; Internal: ensure pool is allocated.
+// Internal: ensure pool is allocated.
 fn _rat_init() -> i64 {
     if _rat_pool == 0 {
         _rat_pool = alloc_pages(4)
@@ -36,7 +36,7 @@ fn _rat_init() -> i64 {
     ret 0
 }
 
-;; Internal: allocate a rational slot from pool, returns &i64 pointing to [num, den].
+// Internal: allocate a rational slot from pool, returns &i64 pointing to [num, den].
 fn _rat_slot() -> &i64 {
     let byte_off = _rat_pool_idx * 16
     _rat_pool_idx = _rat_pool_idx + 1
@@ -45,7 +45,7 @@ fn _rat_slot() -> &i64 {
     ret addr
 }
 
-;; Internal: GCD (Euclidean algorithm).
+// Internal: GCD (Euclidean algorithm).
 fn _rat_gcd(a: i64, b: i64) -> i64 {
     if a < 0 { a = 0 - a }
     if b < 0 { b = 0 - b }
@@ -58,22 +58,22 @@ fn _rat_gcd(a: i64, b: i64) -> i64 {
     ret a
 }
 
-;; Internal: absolute value.
+// Internal: absolute value.
 fn _rat_abs(x: i64) -> i64 {
     if x < 0 { ret 0 - x }
     ret x
 }
 
-;; Create rational number, auto-simplified.
+// Create rational number, auto-simplified.
 fn rat_new(num: i64, den: i64) -> &i64 {
     _rat_init()
     if den == 0 { den = 1 }
-    ; Normalize sign: denominator always positive
+    // Normalize sign: denominator always positive
     if den < 0 {
         num = 0 - num
         den = 0 - den
     }
-    ; Inline GCD to avoid function call clobbering stack
+    // Inline GCD to avoid function call clobbering stack
     let ga = num
     if ga < 0 { ga = 0 - ga }
     let gb = den
@@ -84,7 +84,7 @@ fn rat_new(num: i64, den: i64) -> &i64 {
         gb = ga - gq * gb
         ga = gt
     }
-    ; ga is now gcd
+    // ga is now gcd
     if ga > 1 {
         num = num / ga
         den = den / ga
@@ -95,7 +95,7 @@ fn rat_new(num: i64, den: i64) -> &i64 {
     ret r
 }
 
-;; Add: a/b + c/d = (ad + bc) / bd.
+// Add: a/b + c/d = (ad + bc) / bd.
 fn rat_add(a: &i64, b: &i64) -> &i64 {
     let an = a[0]
     let ad = a[1]
@@ -106,7 +106,7 @@ fn rat_add(a: &i64, b: &i64) -> &i64 {
     ret rat_new(num, den)
 }
 
-;; Subtract: a/b - c/d = (ad - bc) / bd.
+// Subtract: a/b - c/d = (ad - bc) / bd.
 fn rat_sub(a: &i64, b: &i64) -> &i64 {
     let an = a[0]
     let ad = a[1]
@@ -117,21 +117,21 @@ fn rat_sub(a: &i64, b: &i64) -> &i64 {
     ret rat_new(num, den)
 }
 
-;; Multiply: (a/b) * (c/d) = ac / bd.
+// Multiply: (a/b) * (c/d) = ac / bd.
 fn rat_mul(a: &i64, b: &i64) -> &i64 {
     let num = a[0] * b[0]
     let den = a[1] * b[1]
     ret rat_new(num, den)
 }
 
-;; Divide: (a/b) / (c/d) = ad / bc.
+// Divide: (a/b) / (c/d) = ad / bc.
 fn rat_div(a: &i64, b: &i64) -> &i64 {
     let num = a[0] * b[1]
     let den = a[1] * b[0]
     ret rat_new(num, den)
 }
 
-;; Compare: returns -1, 0, or 1.
+// Compare: returns -1, 0, or 1.
 fn rat_cmp(a: &i64, b: &i64) -> i64 {
     let lhs = a[0] * b[1]
     let rhs = b[0] * a[1]
@@ -140,42 +140,42 @@ fn rat_cmp(a: &i64, b: &i64) -> i64 {
     ret 0
 }
 
-;; Equality check.
+// Equality check.
 fn rat_eq(a: &i64, b: &i64) -> i64 {
     if a[0] == b[0] and a[1] == b[1] { ret 1 }
     ret 0
 }
 
-;; Truncated integer value (num / den).
+// Truncated integer value (num / den).
 fn rat_to_i64(a: &i64) -> i64 {
     ret a[0] / a[1]
 }
 
-;; Numerator.
+// Numerator.
 fn rat_num(a: &i64) -> i64 { ret a[0] }
 
-;; Denominator.
+// Denominator.
 fn rat_den(a: &i64) -> i64 { ret a[1] }
 
-;; Check if integer (den == 1).
+// Check if integer (den == 1).
 fn rat_is_integer(a: &i64) -> i64 {
     if a[1] == 1 { ret 1 }
     ret 0
 }
 
-;; Absolute value.
+// Absolute value.
 fn rat_abs(a: &i64) -> &i64 {
     let n = a[0]
     if n < 0 { n = 0 - n }
     ret rat_new(n, a[1])
 }
 
-;; Negate.
+// Negate.
 fn rat_negate(a: &i64) -> &i64 {
     ret rat_new(0 - a[0], a[1])
 }
 
-;; Internal: write integer to buffer.
+// Internal: write integer to buffer.
 fn _rat_write_int(val: i64, out: &i8, off: i64) -> i64 {
     if val == 0 {
         poke_byte(out, off, 48)
@@ -207,12 +207,12 @@ fn _rat_write_int(val: i64, out: &i8, off: i64) -> i64 {
     ret pos - off
 }
 
-;; Format as "num/den" string. Returns length.
+// Format as "num/den" string. Returns length.
 fn rat_to_str(a: &i64, out: &i8) -> i64 {
     _rat_init()
     let pos = _rat_write_int(a[0], out, 0)
     if a[1] != 1 {
-        poke_byte(out, pos, 47)  ; '/'
+        poke_byte(out, pos, 47)  // '/'
         pos = pos + 1
         let n = _rat_write_int(a[1], out, pos)
         pos = pos + n

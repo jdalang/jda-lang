@@ -1,38 +1,38 @@
-; =============================================================================
-; jda::semver -- Semantic Versioning
-; =============================================================================
-; Parse, compare, and format semantic version strings (MAJOR.MINOR.PATCH).
-; Follows SemVer 2.0.0 spec (without pre-release/build metadata).
-;
-; Memory layout (&i64):
-;   [0] = major
-;   [1] = minor
-;   [2] = patch
-;
-; Functions:
-;   semver_new(maj, min, pat)     -> &i64   create version
-;   semver_parse(s)               -> &i64   parse "1.2.3" string
-;   semver_major(v)               -> i64    major component
-;   semver_minor(v)               -> i64    minor component
-;   semver_patch(v)               -> i64    patch component
-;   semver_cmp(a, b)              -> i64    -1/0/1 comparison
-;   semver_eq(a, b)               -> i64    1 if equal
-;   semver_lt(a, b)               -> i64    1 if a < b
-;   semver_gt(a, b)               -> i64    1 if a > b
-;   semver_compatible(a, b)       -> i64    1 if same major (^caret)
-;   semver_bump_major(v)          -> &i64   increment major, reset minor/patch
-;   semver_bump_minor(v)          -> &i64   increment minor, reset patch
-;   semver_bump_patch(v)          -> &i64   increment patch
-;   semver_print(v)                         print as "1.2.3"
-;   semver_println(v)                       print + newline
-; =============================================================================
+// =============================================================================
+// jda::semver -- Semantic Versioning
+// =============================================================================
+// Parse, compare, and format semantic version strings (MAJOR.MINOR.PATCH).
+// Follows SemVer 2.0.0 spec (without pre-release/build metadata).
 
-;; Internal: write to stdout.
+// Memory layout (&i64):
+//   [0] = major
+//   [1] = minor
+//   [2] = patch
+
+// Functions:
+//   semver_new(maj, min, pat)     -> &i64   create version
+//   semver_parse(s)               -> &i64   parse "1.2.3" string
+//   semver_major(v)               -> i64    major component
+//   semver_minor(v)               -> i64    minor component
+//   semver_patch(v)               -> i64    patch component
+//   semver_cmp(a, b)              -> i64    -1/0/1 comparison
+//   semver_eq(a, b)               -> i64    1 if equal
+//   semver_lt(a, b)               -> i64    1 if a < b
+//   semver_gt(a, b)               -> i64    1 if a > b
+//   semver_compatible(a, b)       -> i64    1 if same major (^caret)
+//   semver_bump_major(v)          -> &i64   increment major, reset minor/patch
+//   semver_bump_minor(v)          -> &i64   increment minor, reset patch
+//   semver_bump_patch(v)          -> &i64   increment patch
+//   semver_print(v)                         print as "1.2.3"
+//   semver_println(v)                       print + newline
+// =============================================================================
+
+// Internal: write to stdout.
 fn _sv_write(s: &i8, len: i64) {
     syscall(1, 1, s, len)
 }
 
-;; Internal: c-string length.
+// Internal: c-string length.
 fn _sv_cstr_len(s: &i8) -> i64 {
     let n = 0
     loop n < 256 {
@@ -42,13 +42,13 @@ fn _sv_cstr_len(s: &i8) -> i64 {
     ret 256
 }
 
-;; Internal: print integer to stdout using print builtin.
+// Internal: print integer to stdout using print builtin.
 fn _sv_print_int(val: i64) {
     print("{val}")
 }
 
-;; Internal: parse integer from string starting at position, returns value.
-;; Updates pos_ptr[0] to point past the parsed digits.
+// Internal: parse integer from string starting at position, returns value.
+// Updates pos_ptr[0] to point past the parsed digits.
 fn _sv_parse_int(s: &i8, pos_ptr: &i64, max: i64) -> i64 {
     let p = pos_ptr[0]
     let n = 0
@@ -70,7 +70,7 @@ fn _sv_parse_int(s: &i8, pos_ptr: &i64, max: i64) -> i64 {
     ret n
 }
 
-;; Create a version from components.
+// Create a version from components.
 fn semver_new(maj: i64, min: i64, pat: i64) -> &i64 {
     let v: &i64 = alloc_pages(1)
     v[0] = maj
@@ -79,15 +79,15 @@ fn semver_new(maj: i64, min: i64, pat: i64) -> &i64 {
     ret v
 }
 
-;; Parse a "MAJOR.MINOR.PATCH" string.
-;; Returns version with 0.0.0 on parse failure.
+// Parse a "MAJOR.MINOR.PATCH" string.
+// Returns version with 0.0.0 on parse failure.
 fn semver_parse(s: &i8) -> &i64 {
     let v: &i64 = alloc_pages(1)
     let len = _sv_cstr_len(s)
     let pos: &i64 = alloc_pages(1)
     pos[0] = 0
 
-    ; Parse major
+    // Parse major
     let maj = _sv_parse_int(s, pos, len)
     v[0] = maj
     let p1 = pos[0]
@@ -95,7 +95,7 @@ fn semver_parse(s: &i8) -> &i64 {
     if s[p1] != 46 { ret v }
     pos[0] = p1 + 1
 
-    ; Parse minor
+    // Parse minor
     let min = _sv_parse_int(s, pos, len)
     v[1] = min
     let p2 = pos[0]
@@ -103,22 +103,22 @@ fn semver_parse(s: &i8) -> &i64 {
     if s[p2] != 46 { ret v }
     pos[0] = p2 + 1
 
-    ; Parse patch
+    // Parse patch
     let pat = _sv_parse_int(s, pos, len)
     v[2] = pat
     ret v
 }
 
-;; Get major version.
+// Get major version.
 fn semver_major(v: &i64) -> i64 { ret v[0] }
 
-;; Get minor version.
+// Get minor version.
 fn semver_minor(v: &i64) -> i64 { ret v[1] }
 
-;; Get patch version.
+// Get patch version.
 fn semver_patch(v: &i64) -> i64 { ret v[2] }
 
-;; Check equality.
+// Check equality.
 fn semver_eq(a: &i64, b: &i64) -> i64 {
     if a[0] != b[0] { ret 0 }
     if a[1] != b[1] { ret 0 }
@@ -126,7 +126,7 @@ fn semver_eq(a: &i64, b: &i64) -> i64 {
     ret 1
 }
 
-;; Check a < b.
+// Check a < b.
 fn semver_lt(a: &i64, b: &i64) -> i64 {
     if a[0] < b[0] { ret 1 }
     if a[0] > b[0] { ret 0 }
@@ -136,40 +136,40 @@ fn semver_lt(a: &i64, b: &i64) -> i64 {
     ret 0
 }
 
-;; Check a > b (= b < a).
+// Check a > b (= b < a).
 fn semver_gt(a: &i64, b: &i64) -> i64 {
     ret semver_lt(b, a)
 }
 
-;; Compare two versions. Returns 0=equal, 1=a>b, 2=a<b.
+// Compare two versions. Returns 0=equal, 1=a>b, 2=a<b.
 fn semver_cmp(a: &i64, b: &i64) -> i64 {
     if semver_lt(a, b) == 1 { ret 2 }
     if semver_gt(a, b) == 1 { ret 1 }
     ret 0
 }
 
-;; Caret compatibility: same major version (^1.x.x).
+// Caret compatibility: same major version (^1.x.x).
 fn semver_compatible(a: &i64, b: &i64) -> i64 {
     if a[0] == b[0] { ret 1 }
     ret 0
 }
 
-;; Bump major, reset minor and patch.
+// Bump major, reset minor and patch.
 fn semver_bump_major(v: &i64) -> &i64 {
     ret semver_new(v[0] + 1, 0, 0)
 }
 
-;; Bump minor, reset patch.
+// Bump minor, reset patch.
 fn semver_bump_minor(v: &i64) -> &i64 {
     ret semver_new(v[0], v[1] + 1, 0)
 }
 
-;; Bump patch.
+// Bump patch.
 fn semver_bump_patch(v: &i64) -> &i64 {
     ret semver_new(v[0], v[1], v[2] + 1)
 }
 
-;; Print version as "MAJOR.MINOR.PATCH".
+// Print version as "MAJOR.MINOR.PATCH".
 fn semver_print(v: &i64) {
     let maj = v[0]
     let min = v[1]
@@ -181,7 +181,7 @@ fn semver_print(v: &i64) {
     print("{pat}")
 }
 
-;; Print + newline.
+// Print + newline.
 fn semver_println(v: &i64) {
     semver_print(v)
     print("\n")

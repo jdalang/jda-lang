@@ -1,32 +1,32 @@
-; =============================================================================
-; jda::bignum -- Arbitrary Precision Integers
-; =============================================================================
-; Stores large integers as arrays of base-10^9 limbs with a sign flag.
-; Each limb holds a value 0..999999999 in an i64.
-;
-; Memory layout per BigNum (&i64):
-;   [0] sign       (0=positive, 1=negative)
-;   [1] len        (number of limbs)
-;   [2] cap        (limb capacity)
-;   [3] digits_ptr (&i64 — array of limbs, least significant first)
-;
-; Functions:
-;   bn_new(val)                -> &i64  create from i64
-;   bn_from_str(s, slen)      -> &i64  parse decimal string
-;   bn_add(a, b)               -> &i64  addition
-;   bn_sub(a, b)               -> &i64  subtraction
-;   bn_mul(a, b)               -> &i64  multiplication
-;   bn_cmp(a, b)               -> i64   -1, 0, 1
-;   bn_abs_cmp(a, b)           -> i64   compare magnitudes
-;   bn_to_str(a, out)          -> i64   write decimal string
-;   bn_to_i64(a)               -> i64   convert to i64 (truncate)
-;   bn_is_zero(a)              -> i64   1 if zero
-;   bn_negate(a)               -> &i64  flip sign
-; =============================================================================
+// =============================================================================
+// jda::bignum -- Arbitrary Precision Integers
+// =============================================================================
+// Stores large integers as arrays of base-10^9 limbs with a sign flag.
+// Each limb holds a value 0..999999999 in an i64.
+
+// Memory layout per BigNum (&i64):
+//   [0] sign       (0=positive, 1=negative)
+//   [1] len        (number of limbs)
+//   [2] cap        (limb capacity)
+//   [3] digits_ptr (&i64 — array of limbs, least significant first)
+
+// Functions:
+//   bn_new(val)                -> &i64  create from i64
+//   bn_from_str(s, slen)      -> &i64  parse decimal string
+//   bn_add(a, b)               -> &i64  addition
+//   bn_sub(a, b)               -> &i64  subtraction
+//   bn_mul(a, b)               -> &i64  multiplication
+//   bn_cmp(a, b)               -> i64   -1, 0, 1
+//   bn_abs_cmp(a, b)           -> i64   compare magnitudes
+//   bn_to_str(a, out)          -> i64   write decimal string
+//   bn_to_i64(a)               -> i64   convert to i64 (truncate)
+//   bn_is_zero(a)              -> i64   1 if zero
+//   bn_negate(a)               -> &i64  flip sign
+// =============================================================================
 
 const BN_BASE = 1000000000
 
-;; Internal: allocate BigNum with given limb capacity.
+// Internal: allocate BigNum with given limb capacity.
 fn _bn_alloc(cap: i64) -> &i64 {
     let bn: &i64 = alloc_pages(1)
     let pages = cap * 8 / 4096 + 1
@@ -38,7 +38,7 @@ fn _bn_alloc(cap: i64) -> &i64 {
     ret bn
 }
 
-;; Create BigNum from i64 value.
+// Create BigNum from i64 value.
 fn bn_new(val: i64) -> &i64 {
     let bn = _bn_alloc(16)
     let sign = 0
@@ -63,7 +63,7 @@ fn bn_new(val: i64) -> &i64 {
     ret bn
 }
 
-;; Parse decimal string to BigNum. Handles optional leading '-'.
+// Parse decimal string to BigNum. Handles optional leading '-'.
 fn bn_from_str(s: &i8, slen: i64) -> &i64 {
     let bn = _bn_alloc(slen / 9 + 2)
     let digits: &i64 = bn[3]
@@ -74,7 +74,7 @@ fn bn_from_str(s: &i8, slen: i64) -> &i64 {
     }
     bn[0] = sign
 
-    ; Process digits in groups of 9 from the right
+    // Process digits in groups of 9 from the right
     let ndigits = 0
     let pos = slen
     loop pos > start {
@@ -101,7 +101,7 @@ fn bn_from_str(s: &i8, slen: i64) -> &i64 {
     ret bn
 }
 
-;; Compare magnitudes (ignoring sign). Returns -1, 0, or 1.
+// Compare magnitudes (ignoring sign). Returns -1, 0, or 1.
 fn bn_abs_cmp(a: &i64, b: &i64) -> i64 {
     let alen = a[1]
     let blen = b[1]
@@ -118,7 +118,7 @@ fn bn_abs_cmp(a: &i64, b: &i64) -> i64 {
     ret 0
 }
 
-;; Compare two BigNums. Returns -1, 0, or 1.
+// Compare two BigNums. Returns -1, 0, or 1.
 fn bn_cmp(a: &i64, b: &i64) -> i64 {
     let as_val = a[0]
     let bs = b[0]
@@ -129,7 +129,7 @@ fn bn_cmp(a: &i64, b: &i64) -> i64 {
     ret mc
 }
 
-;; Internal: add magnitudes. Both must be non-negative limb arrays.
+// Internal: add magnitudes. Both must be non-negative limb arrays.
 fn _bn_add_mag(a: &i64, b: &i64) -> &i64 {
     let alen = a[1]
     let blen = b[1]
@@ -165,7 +165,7 @@ fn _bn_add_mag(a: &i64, b: &i64) -> &i64 {
     ret result
 }
 
-;; Internal: subtract magnitudes. |a| must be >= |b|.
+// Internal: subtract magnitudes. |a| must be >= |b|.
 fn _bn_sub_mag(a: &i64, b: &i64) -> &i64 {
     let alen = a[1]
     let blen = b[1]
@@ -189,24 +189,24 @@ fn _bn_sub_mag(a: &i64, b: &i64) -> &i64 {
         rd[i] = diff
         i = i + 1
     }
-    ; Trim leading zeros
+    // Trim leading zeros
     let rlen = alen
     loop rlen > 1 and rd[rlen - 1] == 0 { rlen = rlen - 1 }
     result[1] = rlen
     ret result
 }
 
-;; Add two BigNums.
+// Add two BigNums.
 fn bn_add(a: &i64, b: &i64) -> &i64 {
     let as_val = a[0]
     let bs = b[0]
     if as_val == bs {
-        ; Same sign: add magnitudes, keep sign
+        // Same sign: add magnitudes, keep sign
         let r = _bn_add_mag(a, b)
         r[0] = as_val
         ret r
     }
-    ; Different signs: subtract smaller from larger
+    // Different signs: subtract smaller from larger
     let cmp = bn_abs_cmp(a, b)
     if cmp == 0 { ret bn_new(0) }
     if cmp > 0 {
@@ -219,9 +219,9 @@ fn bn_add(a: &i64, b: &i64) -> &i64 {
     ret r
 }
 
-;; Subtract: a - b.
+// Subtract: a - b.
 fn bn_sub(a: &i64, b: &i64) -> &i64 {
-    ; Negate b and add
+    // Negate b and add
     let neg_b = _bn_alloc(b[1] + 1)
     let nd: &i64 = neg_b[3]
     let bd: &i64 = b[3]
@@ -235,7 +235,7 @@ fn bn_sub(a: &i64, b: &i64) -> &i64 {
     ret bn_add(a, neg_b)
 }
 
-;; Multiply two BigNums. Grade-school algorithm.
+// Multiply two BigNums. Grade-school algorithm.
 fn bn_mul(a: &i64, b: &i64) -> &i64 {
     let alen = a[1]
     let blen = b[1]
@@ -259,16 +259,16 @@ fn bn_mul(a: &i64, b: &i64) -> &i64 {
         i = i + 1
     }
 
-    ; Find actual length
+    // Find actual length
     let actual = rlen
     loop actual > 1 and rd[actual - 1] == 0 { actual = actual - 1 }
     result[1] = actual
-    ; Sign: different signs = negative
+    // Sign: different signs = negative
     if a[0] != b[0] { result[0] = 1 }
     ret result
 }
 
-;; Check if BigNum is zero.
+// Check if BigNum is zero.
 fn bn_is_zero(a: &i64) -> i64 {
     if a[1] == 1 {
         let d: &i64 = a[3]
@@ -277,7 +277,7 @@ fn bn_is_zero(a: &i64) -> i64 {
     ret 0
 }
 
-;; Negate: return new BigNum with flipped sign.
+// Negate: return new BigNum with flipped sign.
 fn bn_negate(a: &i64) -> &i64 {
     let r = _bn_alloc(a[1] + 1)
     let rd: &i64 = r[3]
@@ -293,19 +293,19 @@ fn bn_negate(a: &i64) -> &i64 {
     ret r
 }
 
-;; Convert BigNum to decimal string. Returns length written.
+// Convert BigNum to decimal string. Returns length written.
 fn bn_to_str(a: &i64, out: &i8) -> i64 {
     let pos = 0
     if a[0] == 1 {
         if bn_is_zero(a) == 0 {
-            poke_byte(out, 0, 45)  ; '-'
+            poke_byte(out, 0, 45)  // '-'
             pos = 1
         }
     }
     let digits: &i64 = a[3]
     let nlen = a[1]
 
-    ; Write most significant limb without leading zeros
+    // Write most significant limb without leading zeros
     let top = digits[nlen - 1]
     let tmp: &i8 = alloc_pages(1)
     let tpos = 0
@@ -313,14 +313,14 @@ fn bn_to_str(a: &i64, out: &i8) -> i64 {
         poke_byte(out, pos, 48)
         ret pos + 1
     }
-    ; Convert top limb
+    // Convert top limb
     let t = top
     loop t > 0 {
         poke_byte(tmp, tpos, 48 + (t - (t / 10) * 10))
         t = t / 10
         tpos = tpos + 1
     }
-    ; Reverse
+    // Reverse
     let ri = tpos - 1
     loop ri >= 0 {
         poke_byte(out, pos, tmp[ri])
@@ -328,11 +328,11 @@ fn bn_to_str(a: &i64, out: &i8) -> i64 {
         ri = ri - 1
     }
 
-    ; Write remaining limbs with zero padding (9 digits each)
+    // Write remaining limbs with zero padding (9 digits each)
     let li = nlen - 2
     loop li >= 0 {
         let limb = digits[li]
-        ; Write 9 digits, zero-padded
+        // Write 9 digits, zero-padded
         let di = 8
         loop di >= 0 {
             poke_byte(out, pos + di, 48 + (limb - (limb / 10) * 10))
@@ -345,7 +345,7 @@ fn bn_to_str(a: &i64, out: &i8) -> i64 {
     ret pos
 }
 
-;; Convert BigNum to i64 (truncates if too large).
+// Convert BigNum to i64 (truncates if too large).
 fn bn_to_i64(a: &i64) -> i64 {
     let digits: &i64 = a[3]
     let nlen = a[1]

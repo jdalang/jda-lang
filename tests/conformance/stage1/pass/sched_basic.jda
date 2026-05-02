@@ -1,11 +1,11 @@
 fn main() -> i64 {
     let h = sched_new()
 
-    ; Check empty
+    // Check empty
     let emp = sched_empty(h)
     print("empty: {emp}\n")
 
-    ; Add tasks: id=10 at time=100, id=20 at time=50, id=30 at time=75
+    // Add tasks: id=10 at time=100, id=20 at time=50, id=30 at time=75
     let dummy = sched_enter(h, 100, 10)
     let dummy2 = sched_enter(h, 50, 20)
     let dummy3 = sched_enter(h, 75, 30)
@@ -13,36 +13,36 @@ fn main() -> i64 {
     let cnt = sched_count(h)
     print("count: {cnt}\n")
 
-    ; Next should be id=20 (time=50, earliest)
+    // Next should be id=20 (time=50, earliest)
     let nxt = sched_next(h)
     print("next id: {nxt}\n")
 
     let nt = sched_next_time(h)
     print("next time: {nt}\n")
 
-    ; Run at now=40 -> nothing ready
+    // Run at now=40 -> nothing ready
     let r1 = sched_run(h, 40)
     print("run at 40: {r1}\n")
 
-    ; Run at now=50 -> id=20
+    // Run at now=50 -> id=20
     let r2 = sched_run(h, 50)
     print("run at 50: {r2}\n")
 
     let cnt2 = sched_count(h)
     print("count after run: {cnt2}\n")
 
-    ; Cancel id=10
+    // Cancel id=10
     let canc = sched_cancel(h, 10)
     print("cancel 10: {canc}\n")
 
     let cnt3 = sched_count(h)
     print("count after cancel: {cnt3}\n")
 
-    ; Only id=30 remains
+    // Only id=30 remains
     let nxt2 = sched_next(h)
     print("next id: {nxt2}\n")
 
-    ; Run at now=75 -> id=30
+    // Run at now=75 -> id=30
     let r3 = sched_run(h, 75)
     print("run at 75: {r3}\n")
 

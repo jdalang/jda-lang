@@ -1,21 +1,21 @@
 fn main() -> i64 {
     let doc = yaml_parse("name: Jda\nversion: 42\n# comment\nlang: systems\n", 44)
 
-    ; Count
+    // Count
     let cnt = yaml_count(doc)
     print("{cnt}\n")
 
-    ; Get string value
+    // Get string value
     let out: &i8 = alloc_pages(1)
     let n = yaml_get(doc, "name", 4, out)
     syscall(1, 1, out, n)
     print("\n")
 
-    ; Get integer value
+    // Get integer value
     let ver = yaml_get_i64(doc, "version", 7)
     print("{ver}\n")
 
-    ; Get another value
+    // Get another value
     n = yaml_get(doc, "lang", 4, out)
     syscall(1, 1, out, n)
     print("\n")

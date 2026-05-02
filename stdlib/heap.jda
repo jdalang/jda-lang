@@ -1,26 +1,26 @@
-; =============================================================================
-; jda::heap -- Binary Heap (generic min/max)
-; =============================================================================
-; Standalone binary heap implementation. Unlike queue.jda's priority queue,
-; this supports both min-heap and max-heap via a mode flag.
-;
-; Memory layout (&i64):
-;   [0] length
-;   [1] capacity
-;   [2] data_ptr (&i64)
-;   [3] mode     (0 = min-heap, 1 = max-heap)
-;
-; Functions:
-;   heap_min(cap)          -> &i64  create min-heap
-;   heap_max(cap)          -> &i64  create max-heap
-;   heap_push(h, val)               insert element
-;   heap_pop(h)            -> i64   extract root (min or max)
-;   heap_peek(h)           -> i64   peek at root
-;   heap_len(h)            -> i64   number of elements
-;   heap_empty(h)          -> i64   1 if empty
-;   heap_from_vec(v, mode) -> &i64  build heap from vec (0=min, 1=max)
-;   heap_sort(v)                    heap sort vec ascending (in-place)
-; =============================================================================
+// =============================================================================
+// jda::heap -- Binary Heap (generic min/max)
+// =============================================================================
+// Standalone binary heap implementation. Unlike queue.jda's priority queue,
+// this supports both min-heap and max-heap via a mode flag.
+
+// Memory layout (&i64):
+//   [0] length
+//   [1] capacity
+//   [2] data_ptr (&i64)
+//   [3] mode     (0 = min-heap, 1 = max-heap)
+
+// Functions:
+//   heap_min(cap)          -> &i64  create min-heap
+//   heap_max(cap)          -> &i64  create max-heap
+//   heap_push(h, val)               insert element
+//   heap_pop(h)            -> i64   extract root (min or max)
+//   heap_peek(h)           -> i64   peek at root
+//   heap_len(h)            -> i64   number of elements
+//   heap_empty(h)          -> i64   1 if empty
+//   heap_from_vec(v, mode) -> &i64  build heap from vec (0=min, 1=max)
+//   heap_sort(v)                    heap sort vec ascending (in-place)
+// =============================================================================
 
 fn heap_pages_for(n: i64) -> i64 {
     let bytes = n * 8
@@ -46,7 +46,7 @@ fn heap_new(cap: i64, mode: i64) -> &i64 {
 fn heap_min(cap: i64) -> &i64 { ret heap_new(cap, 0) }
 fn heap_max(cap: i64) -> &i64 { ret heap_new(cap, 1) }
 
-;; Internal: should a come before b based on heap mode?
+// Internal: should a come before b based on heap mode?
 fn heap_cmp(a: i64, b: i64, mode: i64) -> i64 {
     if mode == 0 { if a < b { ret 1 } ret 0 }
     if a > b { ret 1 }
@@ -80,7 +80,7 @@ fn heap_sift_up(h: &i64, idx: i64) {
             data[p] = tmp
             i = p
         } else {
-            i = 0  ; break
+            i = 0  // break
         }
     }
 }
@@ -138,7 +138,7 @@ fn heap_peek(h: &i64) -> i64 {
 fn heap_len(h: &i64) -> i64 { ret h[0] }
 fn heap_empty(h: &i64) -> i64 { if h[0] == 0 { ret 1 } ret 0 }
 
-;; Build heap from existing vec.
+// Build heap from existing vec.
 fn heap_from_vec(v: &i64, mode: i64) -> &i64 {
     let len = v[0]
     let h = heap_new(len, mode)
@@ -151,11 +151,11 @@ fn heap_from_vec(v: &i64, mode: i64) -> &i64 {
     ret h
 }
 
-;; Heap sort a vec ascending in-place.
+// Heap sort a vec ascending in-place.
 fn heap_sort(v: &i64) {
     let len = v[0]
     if len < 2 { ret }
-    let h = heap_from_vec(v, 0)  ; min-heap
+    let h = heap_from_vec(v, 0)  // min-heap
     let data: &i64 = v[2]
     let i = 0
     loop i < len {

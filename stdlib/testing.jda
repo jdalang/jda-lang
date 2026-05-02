@@ -1,37 +1,37 @@
-; =============================================================================
-; jda::testing -- Test Framework and Assertions
-; =============================================================================
-; Lightweight test runner with assertion functions. Tests are functions
-; prefixed with "test_". Call test_run_all() from main to execute.
-;
-; Globals track pass/fail counts. Assertion failures print details to stderr
-; and increment failure count but do NOT abort (run all tests).
-;
-; Functions:
-;   test_begin(name, len)          start a named test
-;   test_end()                     finish current test
-;   assert_eq(a, b)                assert a == b
-;   assert_ne(a, b)                assert a != b
-;   assert_true(val)               assert val != 0
-;   assert_false(val)              assert val == 0
-;   assert_gt(a, b)                assert a > b
-;   assert_lt(a, b)                assert a < b
-;   assert_ge(a, b)                assert a >= b
-;   assert_le(a, b)                assert a <= b
-;   test_summary()         -> i64  print results, return failure count
-; =============================================================================
+// =============================================================================
+// jda::testing -- Test Framework and Assertions
+// =============================================================================
+// Lightweight test runner with assertion functions. Tests are functions
+// prefixed with "test_". Call test_run_all() from main to execute.
+
+// Globals track pass/fail counts. Assertion failures print details to stderr
+// and increment failure count but do NOT abort (run all tests).
+
+// Functions:
+//   test_begin(name, len)          start a named test
+//   test_end()                     finish current test
+//   assert_eq(a, b)                assert a == b
+//   assert_ne(a, b)                assert a != b
+//   assert_true(val)               assert val != 0
+//   assert_false(val)              assert val == 0
+//   assert_gt(a, b)                assert a > b
+//   assert_lt(a, b)                assert a < b
+//   assert_ge(a, b)                assert a >= b
+//   assert_le(a, b)                assert a <= b
+//   test_summary()         -> i64  print results, return failure count
+// =============================================================================
 
 let g_test_pass = 0
 let g_test_fail = 0
 let g_test_assertions = 0
 let g_test_cur_fail = 0
 
-;; Internal: write to stderr.
+// Internal: write to stderr.
 fn test_stderr(msg: &i8, len: i64) {
     syscall(1, 2, msg, len)
 }
 
-;; Internal: write integer to stderr.
+// Internal: write integer to stderr.
 fn test_stderr_int(val: i64) {
     let buf: &i8 = alloc_pages(1)
     let v = val
@@ -66,7 +66,7 @@ fn test_stderr_int(val: i64) {
     test_stderr(buf, pos)
 }
 
-;; Begin a named test.
+// Begin a named test.
 fn test_begin(name: &i8, len: i64) {
     g_test_cur_fail = 0
     test_stderr("  test ", 7)
@@ -74,7 +74,7 @@ fn test_begin(name: &i8, len: i64) {
     test_stderr(" ... ", 5)
 }
 
-;; End current test.
+// End current test.
 fn test_end() {
     if g_test_cur_fail == 0 {
         test_stderr("ok\n", 3)
@@ -85,7 +85,7 @@ fn test_end() {
     }
 }
 
-;; Internal: report assertion failure.
+// Internal: report assertion failure.
 fn test_assert_fail(op: &i8, oplen: i64, a: i64, b: i64) {
     g_test_cur_fail = g_test_cur_fail + 1
     test_stderr("\n    ASSERTION FAILED: ", 22)
@@ -97,55 +97,55 @@ fn test_assert_fail(op: &i8, oplen: i64, a: i64, b: i64) {
     test_stderr("\n", 1)
 }
 
-;; Assert a == b.
+// Assert a == b.
 fn assert_eq(a: i64, b: i64) {
     g_test_assertions = g_test_assertions + 1
     if a != b { test_assert_fail("==", 2, a, b) }
 }
 
-;; Assert a != b.
+// Assert a != b.
 fn assert_ne(a: i64, b: i64) {
     g_test_assertions = g_test_assertions + 1
     if a == b { test_assert_fail("!=", 2, a, b) }
 }
 
-;; Assert val is truthy (non-zero).
+// Assert val is truthy (non-zero).
 fn assert_true(val: i64) {
     g_test_assertions = g_test_assertions + 1
     if val == 0 { test_assert_fail("!= 0", 4, val, 0) }
 }
 
-;; Assert val is falsy (zero).
+// Assert val is falsy (zero).
 fn assert_false(val: i64) {
     g_test_assertions = g_test_assertions + 1
     if val != 0 { test_assert_fail("== 0", 4, val, 0) }
 }
 
-;; Assert a > b.
+// Assert a > b.
 fn assert_gt(a: i64, b: i64) {
     g_test_assertions = g_test_assertions + 1
     if a <= b { test_assert_fail(">", 1, a, b) }
 }
 
-;; Assert a < b.
+// Assert a < b.
 fn assert_lt(a: i64, b: i64) {
     g_test_assertions = g_test_assertions + 1
     if a >= b { test_assert_fail("<", 1, a, b) }
 }
 
-;; Assert a >= b.
+// Assert a >= b.
 fn assert_ge(a: i64, b: i64) {
     g_test_assertions = g_test_assertions + 1
     if a < b { test_assert_fail(">=", 2, a, b) }
 }
 
-;; Assert a <= b.
+// Assert a <= b.
 fn assert_le(a: i64, b: i64) {
     g_test_assertions = g_test_assertions + 1
     if a > b { test_assert_fail("<=", 2, a, b) }
 }
 
-;; Print test summary. Returns number of failures.
+// Print test summary. Returns number of failures.
 fn test_summary() -> i64 {
     test_stderr("\n", 1)
     let total = g_test_pass + g_test_fail

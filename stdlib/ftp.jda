@@ -1,22 +1,22 @@
-; =============================================================================
-; jda::ftp -- FTP Protocol Helpers
-; =============================================================================
-; Format FTP commands and parse reply codes. No actual network I/O.
-;
-; Functions:
-;   ftp_format_user(user, ulen, out)      -> i64  "USER user\r\n"
-;   ftp_format_pass(pass, plen, out)      -> i64  "PASS pass\r\n"
-;   ftp_format_cwd(path, plen, out)       -> i64  "CWD path\r\n"
-;   ftp_format_list(out)                  -> i64  "LIST\r\n"
-;   ftp_format_retr(name, nlen, out)      -> i64  "RETR name\r\n"
-;   ftp_parse_reply(buf, len)             -> i64  status code (e.g. 230)
-;   ftp_parse_pasv(buf, len, out_port)    -> i64  1 if ok, port in out_port[0]
-; =============================================================================
+// =============================================================================
+// jda::ftp -- FTP Protocol Helpers
+// =============================================================================
+// Format FTP commands and parse reply codes. No actual network I/O.
 
-;; Internal byte reader.
+// Functions:
+//   ftp_format_user(user, ulen, out)      -> i64  "USER user\r\n"
+//   ftp_format_pass(pass, plen, out)      -> i64  "PASS pass\r\n"
+//   ftp_format_cwd(path, plen, out)       -> i64  "CWD path\r\n"
+//   ftp_format_list(out)                  -> i64  "LIST\r\n"
+//   ftp_format_retr(name, nlen, out)      -> i64  "RETR name\r\n"
+//   ftp_parse_reply(buf, len)             -> i64  status code (e.g. 230)
+//   ftp_parse_pasv(buf, len, out_port)    -> i64  1 if ok, port in out_port[0]
+// =============================================================================
+
+// Internal byte reader.
 fn _ftp_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-;; Internal: copy bytes.
+// Internal: copy bytes.
 fn _ftp_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) -> i64 {
     let i = 0
     loop i < n {
@@ -27,76 +27,76 @@ fn _ftp_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) -> i64 {
     ret n
 }
 
-;; Internal: write CRLF.
+// Internal: write CRLF.
 fn _ftp_crlf(out: &i8, pos: i64) -> i64 {
     poke_byte(out, pos, 13)
     poke_byte(out, pos + 1, 10)
     ret pos + 2
 }
 
-;; Format USER command: "USER user\r\n"
+// Format USER command: "USER user\r\n"
 fn ftp_format_user(user: &i8, ulen: i64, out: &i8) -> i64 {
-    poke_byte(out, 0, 85)  ; U
-    poke_byte(out, 1, 83)  ; S
-    poke_byte(out, 2, 69)  ; E
-    poke_byte(out, 3, 82)  ; R
-    poke_byte(out, 4, 32)  ; space
+    poke_byte(out, 0, 85)  // U
+    poke_byte(out, 1, 83)  // S
+    poke_byte(out, 2, 69)  // E
+    poke_byte(out, 3, 82)  // R
+    poke_byte(out, 4, 32)  // space
     _ftp_copy(out, 5, user, 0, ulen)
     let pos = 5 + ulen
     pos = _ftp_crlf(out, pos)
     ret pos
 }
 
-;; Format PASS command: "PASS pass\r\n"
+// Format PASS command: "PASS pass\r\n"
 fn ftp_format_pass(pass: &i8, plen: i64, out: &i8) -> i64 {
-    poke_byte(out, 0, 80)  ; P
-    poke_byte(out, 1, 65)  ; A
-    poke_byte(out, 2, 83)  ; S
-    poke_byte(out, 3, 83)  ; S
-    poke_byte(out, 4, 32)  ; space
+    poke_byte(out, 0, 80)  // P
+    poke_byte(out, 1, 65)  // A
+    poke_byte(out, 2, 83)  // S
+    poke_byte(out, 3, 83)  // S
+    poke_byte(out, 4, 32)  // space
     _ftp_copy(out, 5, pass, 0, plen)
     let pos = 5 + plen
     pos = _ftp_crlf(out, pos)
     ret pos
 }
 
-;; Format RETR command: "RETR name\r\n"
+// Format RETR command: "RETR name\r\n"
 fn ftp_format_retr(name: &i8, nlen: i64, out: &i8) -> i64 {
-    poke_byte(out, 0, 82)  ; R
-    poke_byte(out, 1, 69)  ; E
-    poke_byte(out, 2, 84)  ; T
-    poke_byte(out, 3, 82)  ; R
-    poke_byte(out, 4, 32)  ; space
+    poke_byte(out, 0, 82)  // R
+    poke_byte(out, 1, 69)  // E
+    poke_byte(out, 2, 84)  // T
+    poke_byte(out, 3, 82)  // R
+    poke_byte(out, 4, 32)  // space
     _ftp_copy(out, 5, name, 0, nlen)
     let pos = 5 + nlen
     pos = _ftp_crlf(out, pos)
     ret pos
 }
 
-;; Format CWD command: "CWD path\r\n"
+// Format CWD command: "CWD path\r\n"
 fn ftp_format_cwd(path: &i8, plen: i64, out: &i8) -> i64 {
-    ; "CWD " = 67 87 68 32
-    poke_byte(out, 0, 67)  ; C
-    poke_byte(out, 1, 87)  ; W
-    poke_byte(out, 2, 68)  ; D
-    poke_byte(out, 3, 32)  ; space
+    // "CWD " = 67 87 68 32
+    poke_byte(out, 0, 67)  // C
+    poke_byte(out, 1, 87)  // W
+    poke_byte(out, 2, 68)  // D
+    poke_byte(out, 3, 32)  // space
     _ftp_copy(out, 4, path, 0, plen)
     let pos = 4 + plen
     pos = _ftp_crlf(out, pos)
     ret pos
 }
 
-;; Format LIST command: "LIST\r\n"
+// Format LIST command: "LIST\r\n"
 fn ftp_format_list(out: &i8) -> i64 {
-    poke_byte(out, 0, 76)  ; L
-    poke_byte(out, 1, 73)  ; I
-    poke_byte(out, 2, 83)  ; S
-    poke_byte(out, 3, 84)  ; T
+    poke_byte(out, 0, 76)  // L
+    poke_byte(out, 1, 73)  // I
+    poke_byte(out, 2, 83)  // S
+    poke_byte(out, 3, 84)  // T
     let pos = _ftp_crlf(out, 4)
     ret pos
 }
 
-;; Parse FTP reply code from buffer (first 3 digits).
+// Parse FTP reply code from buffer (first 3 digits).
 fn ftp_parse_reply(buf: &i8, len: i64) -> i64 {
     if len < 3 { ret 0 - 1 }
     let d0 = _ftp_byte_at(buf, 0) - 48
@@ -112,7 +112,7 @@ fn ftp_parse_reply(buf: &i8, len: i64) -> i64 {
     ret code
 }
 
-;; Internal: parse a decimal number from buf starting at pos, until comma or ')'.
+// Internal: parse a decimal number from buf starting at pos, until comma or ')'.
 fn _ftp_parse_num(buf: &i8, pos: i64, len: i64) -> i64 {
     let val = 0
     let p = pos
@@ -129,22 +129,22 @@ fn _ftp_parse_num(buf: &i8, pos: i64, len: i64) -> i64 {
     ret val
 }
 
-;; Internal: find next comma or ')' position from pos.
+// Internal: find next comma or ')' position from pos.
 fn _ftp_skip_num(buf: &i8, pos: i64, len: i64) -> i64 {
     let p = pos
     loop p < len {
         let ch = _ftp_byte_at(buf, p)
-        if ch == 44 { ret p + 1 }  ; comma, skip it
-        if ch == 41 { ret p }       ; )
+        if ch == 44 { ret p + 1 }  // comma, skip it
+        if ch == 41 { ret p }       // )
         p = p + 1
     }
     ret len
 }
 
-;; Parse PASV response: "227 Entering Passive Mode (h1,h2,h3,h4,p1,p2)."
-;; Extracts port = p1*256 + p2 into out_port[0]. Returns 1 if ok.
+// Parse PASV response: "227 Entering Passive Mode (h1,h2,h3,h4,p1,p2)."
+// Extracts port = p1*256 + p2 into out_port[0]. Returns 1 if ok.
 fn ftp_parse_pasv(buf: &i8, len: i64, out_port: &i64) -> i64 {
-    ; Find '('
+    // Find '('
     let pos = 0
     let found = 0
     loop pos < len and found == 0 {
@@ -157,16 +157,16 @@ fn ftp_parse_pasv(buf: &i8, len: i64, out_port: &i64) -> i64 {
         }
     }
     if found == 0 { ret 0 }
-    ; Skip h1,h2,h3,h4 (4 numbers)
+    // Skip h1,h2,h3,h4 (4 numbers)
     let skip = 0
     loop skip < 4 {
         pos = _ftp_skip_num(buf, pos, len)
         skip = skip + 1
     }
-    ; Parse p1
+    // Parse p1
     let p1 = _ftp_parse_num(buf, pos, len)
     pos = _ftp_skip_num(buf, pos, len)
-    ; Parse p2
+    // Parse p2
     let p2 = _ftp_parse_num(buf, pos, len)
     let port = p1 * 256 + p2
     out_port[0] = port

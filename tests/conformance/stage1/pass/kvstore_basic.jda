@@ -1,75 +1,75 @@
 fn main() -> i64 {
     let h = kv_new()
 
-    ; Put key "name" = "alice"
+    // Put key "name" = "alice"
     let k1: &i8 = alloc_pages(1)
-    poke_byte(k1, 0, 110) ; n
-    poke_byte(k1, 1, 97)  ; a
-    poke_byte(k1, 2, 109) ; m
-    poke_byte(k1, 3, 101) ; e
+    poke_byte(k1, 0, 110) // n
+    poke_byte(k1, 1, 97)  // a
+    poke_byte(k1, 2, 109) // m
+    poke_byte(k1, 3, 101) // e
     let v1: &i8 = alloc_pages(1)
-    poke_byte(v1, 0, 97)  ; a
-    poke_byte(v1, 1, 108) ; l
-    poke_byte(v1, 2, 105) ; i
-    poke_byte(v1, 3, 99)  ; c
-    poke_byte(v1, 4, 101) ; e
+    poke_byte(v1, 0, 97)  // a
+    poke_byte(v1, 1, 108) // l
+    poke_byte(v1, 2, 105) // i
+    poke_byte(v1, 3, 99)  // c
+    poke_byte(v1, 4, 101) // e
     let r1 = kv_put(h, k1, 4, v1, 5)
     print("put name: {r1}\n")
 
-    ; Put key "age" = "30"
+    // Put key "age" = "30"
     let k2: &i8 = alloc_pages(1)
-    poke_byte(k2, 0, 97)  ; a
-    poke_byte(k2, 1, 103) ; g
-    poke_byte(k2, 2, 101) ; e
+    poke_byte(k2, 0, 97)  // a
+    poke_byte(k2, 1, 103) // g
+    poke_byte(k2, 2, 101) // e
     let v2: &i8 = alloc_pages(1)
-    poke_byte(v2, 0, 51)  ; 3
-    poke_byte(v2, 1, 48)  ; 0
+    poke_byte(v2, 0, 51)  // 3
+    poke_byte(v2, 1, 48)  // 0
     let r2 = kv_put(h, k2, 3, v2, 2)
     print("put age: {r2}\n")
 
-    ; Count
+    // Count
     let cnt = kv_count(h)
     print("count: {cnt}\n")
 
-    ; Has name
+    // Has name
     let has_name = kv_has(h, k1, 4)
     print("has name: {has_name}\n")
 
-    ; Get name
+    // Get name
     let out: &i8 = alloc_pages(1)
     let glen = kv_get(h, k1, 4, out)
     print("name len: {glen}\n")
     syscall(1, 1, out, glen)
     print("\n")
 
-    ; Update name to "bob"
-    poke_byte(v1, 0, 98)  ; b
-    poke_byte(v1, 1, 111) ; o
-    poke_byte(v1, 2, 98)  ; b
+    // Update name to "bob"
+    poke_byte(v1, 0, 98)  // b
+    poke_byte(v1, 1, 111) // o
+    poke_byte(v1, 2, 98)  // b
     let r3 = kv_put(h, k1, 4, v1, 3)
     print("update name: {r3}\n")
 
-    ; Get updated name
+    // Get updated name
     let glen2 = kv_get(h, k1, 4, out)
     print("new name len: {glen2}\n")
     syscall(1, 1, out, glen2)
     print("\n")
 
-    ; Delete age
+    // Delete age
     let del_r = kv_del(h, k2, 3)
     print("del age: {del_r}\n")
 
-    ; Count after delete
+    // Count after delete
     let cnt2 = kv_count(h)
     print("count after del: {cnt2}\n")
 
-    ; Has age after delete
+    // Has age after delete
     let has_age = kv_has(h, k2, 3)
     print("has age: {has_age}\n")
 
-    ; Has nonexistent key
+    // Has nonexistent key
     let k3: &i8 = alloc_pages(1)
-    poke_byte(k3, 0, 120) ; x
+    poke_byte(k3, 0, 120) // x
     let has_x = kv_has(h, k3, 1)
     print("has x: {has_x}\n")
 

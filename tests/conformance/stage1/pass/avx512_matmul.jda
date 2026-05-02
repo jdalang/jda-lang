@@ -18,7 +18,7 @@ fn vec_dot_row(a: i64, b: i64) -> i64 {
 }
 
 fn vec_matmul(a: i64, b: i64, out: i64) -> i64 {
-    ; Standard matmul with scalar ops (vec_dot needs contiguous rows)
+    // Standard matmul with scalar ops (vec_dot needs contiguous rows)
     let M = tensor_shape(a, 0)
     let K = tensor_shape(a, 1)
     let N = tensor_shape(b, 1)
@@ -47,9 +47,9 @@ fn vec_matmul(a: i64, b: i64, out: i64) -> i64 {
 }
 
 fn main() -> i64 {
-    ; Test CPUID detection compiles and works alongside tensor ops
+    // Test CPUID detection compiles and works alongside tensor ops
     let has = avx512_check()
-    ; 2x2 matmul: [[1,2],[3,4]] x [[5,6],[7,8]] = [[19,22],[43,50]]
+    // 2x2 matmul: [[1,2],[3,4]] x [[5,6],[7,8]] = [[19,22],[43,50]]
     let a = tensor_new2(2, 2)
     let b = tensor_new2(2, 2)
     let c = tensor_new2(2, 2)
@@ -77,7 +77,7 @@ fn main() -> i64 {
     if c00 == 19 and c01 == 22 and c10 == 43 and c11 == 50 {
         print "vec matmul ok"
     }
-    ; Test dot product on a row vector
+    // Test dot product on a row vector
     let row = tensor_new1(4)
     let col = tensor_new1(4)
     let r1 = f64_from_int(1)
@@ -96,7 +96,7 @@ fn main() -> i64 {
     tensor_set(col, 2, c3)
     let c4 = f64_from_int(8)
     tensor_set(col, 3, c4)
-    ; dot = 1*5+2*6+3*7+4*8 = 5+12+21+32 = 70
+    // dot = 1*5+2*6+3*7+4*8 = 5+12+21+32 = 70
     let d = vec_dot_row(row, col)
     let di = f64_to_int(d)
     if di == 70 {

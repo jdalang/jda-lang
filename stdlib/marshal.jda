@@ -1,29 +1,29 @@
-; =============================================================================
-; jda::marshal -- Binary Serialization
-; =============================================================================
-; Serialize/deserialize Jda values to/from byte buffers.
-; TLV (type-length-value) encoding for self-describing format.
-;
-; Type tags:
-;   0 = nil
-;   1 = i64
-;   2 = string (length-prefixed)
-;   3 = array  (count + elements)
-;   4 = map    (count + key-value pairs)
-;
-; Functions:
-;   marshal_nil(buf, off)                    -> i64  write nil
-;   marshal_i64(buf, off, val)               -> i64  write i64
-;   marshal_str(buf, off, s, slen)           -> i64  write string
-;   marshal_array_begin(buf, off, count)     -> i64  write array header
-;   marshal_map_begin(buf, off, count)       -> i64  write map header
-;   unmarshal_type(buf, off)                 -> i64  peek type tag at offset
-;   unmarshal_i64(buf, off)                  -> i64  read i64 value
-;   unmarshal_str(buf, off, out)             -> i64  read string, return new offset
-;   unmarshal_str_len(buf, off)              -> i64  get string length
-;   unmarshal_array_count(buf, off)          -> i64  get array element count
-;   unmarshal_skip(buf, off)                 -> i64  skip one value, return new offset
-; =============================================================================
+// =============================================================================
+// jda::marshal -- Binary Serialization
+// =============================================================================
+// Serialize/deserialize Jda values to/from byte buffers.
+// TLV (type-length-value) encoding for self-describing format.
+
+// Type tags:
+//   0 = nil
+//   1 = i64
+//   2 = string (length-prefixed)
+//   3 = array  (count + elements)
+//   4 = map    (count + key-value pairs)
+
+// Functions:
+//   marshal_nil(buf, off)                    -> i64  write nil
+//   marshal_i64(buf, off, val)               -> i64  write i64
+//   marshal_str(buf, off, s, slen)           -> i64  write string
+//   marshal_array_begin(buf, off, count)     -> i64  write array header
+//   marshal_map_begin(buf, off, count)       -> i64  write map header
+//   unmarshal_type(buf, off)                 -> i64  peek type tag at offset
+//   unmarshal_i64(buf, off)                  -> i64  read i64 value
+//   unmarshal_str(buf, off, out)             -> i64  read string, return new offset
+//   unmarshal_str_len(buf, off)              -> i64  get string length
+//   unmarshal_array_count(buf, off)          -> i64  get array element count
+//   unmarshal_skip(buf, off)                 -> i64  skip one value, return new offset
+// =============================================================================
 
 const MARSHAL_NIL    = 0
 const MARSHAL_I64    = 1
@@ -39,7 +39,7 @@ fn _msh_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
     }
 }
 
-;; Internal: write 4-byte LE integer.
+// Internal: write 4-byte LE integer.
 fn _msh_write32(buf: &i8, off: i64, val: i64) -> i64 {
     poke_byte(buf, off, val - (val / 256) * 256)
     let v1 = val / 256
@@ -51,7 +51,7 @@ fn _msh_write32(buf: &i8, off: i64, val: i64) -> i64 {
     ret off + 4
 }
 
-;; Internal: read 4-byte LE integer.
+// Internal: read 4-byte LE integer.
 fn _msh_read32(buf: &i8, off: i64) -> i64 {
     let b0 = buf[off]
     let b1 = buf[off + 1]
@@ -64,7 +64,7 @@ fn _msh_read32(buf: &i8, off: i64) -> i64 {
     ret b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
 }
 
-;; Internal: write 8-byte LE integer.
+// Internal: write 8-byte LE integer.
 fn _msh_write64(buf: &i8, off: i64, val: i64) -> i64 {
     let v = val
     let i = 0
@@ -76,7 +76,7 @@ fn _msh_write64(buf: &i8, off: i64, val: i64) -> i64 {
     ret off + 8
 }
 
-;; Internal: read 8-byte LE integer.
+// Internal: read 8-byte LE integer.
 fn _msh_read64(buf: &i8, off: i64) -> i64 {
     let result = 0
     let i = 7
@@ -89,19 +89,19 @@ fn _msh_read64(buf: &i8, off: i64) -> i64 {
     ret result
 }
 
-;; Write nil. Returns new offset.
+// Write nil. Returns new offset.
 fn marshal_nil(buf: &i8, off: i64) -> i64 {
     poke_byte(buf, off, MARSHAL_NIL)
     ret off + 1
 }
 
-;; Write i64 value. Returns new offset.
+// Write i64 value. Returns new offset.
 fn marshal_i64(buf: &i8, off: i64, val: i64) -> i64 {
     poke_byte(buf, off, MARSHAL_I64)
     ret _msh_write64(buf, off + 1, val)
 }
 
-;; Write string. Returns new offset.
+// Write string. Returns new offset.
 fn marshal_str(buf: &i8, off: i64, s: &i8, slen: i64) -> i64 {
     poke_byte(buf, off, MARSHAL_STR)
     let noff = _msh_write32(buf, off + 1, slen)
@@ -109,50 +109,50 @@ fn marshal_str(buf: &i8, off: i64, s: &i8, slen: i64) -> i64 {
     ret noff + slen
 }
 
-;; Write array header (type tag + count). Returns new offset.
-;; Caller must then write `count` elements.
+// Write array header (type tag + count). Returns new offset.
+// Caller must then write `count` elements.
 fn marshal_array_begin(buf: &i8, off: i64, count: i64) -> i64 {
     poke_byte(buf, off, MARSHAL_ARRAY)
     ret _msh_write32(buf, off + 1, count)
 }
 
-;; Write map header (type tag + pair count). Returns new offset.
-;; Caller must then write `count` key-value pairs.
+// Write map header (type tag + pair count). Returns new offset.
+// Caller must then write `count` key-value pairs.
 fn marshal_map_begin(buf: &i8, off: i64, count: i64) -> i64 {
     poke_byte(buf, off, MARSHAL_MAP)
     ret _msh_write32(buf, off + 1, count)
 }
 
-;; Peek type tag at offset.
+// Peek type tag at offset.
 fn unmarshal_type(buf: &i8, off: i64) -> i64 {
     let t = buf[off]
     if t < 0 { t = t + 256 }
     ret t
 }
 
-;; Read i64 value (skips type tag). Returns the value.
+// Read i64 value (skips type tag). Returns the value.
 fn unmarshal_i64(buf: &i8, off: i64) -> i64 {
     ret _msh_read64(buf, off + 1)
 }
 
-;; Read string length at offset.
+// Read string length at offset.
 fn unmarshal_str_len(buf: &i8, off: i64) -> i64 {
     ret _msh_read32(buf, off + 1)
 }
 
-;; Read string. Copies to out. Returns new offset (past string).
+// Read string. Copies to out. Returns new offset (past string).
 fn unmarshal_str(buf: &i8, off: i64, out: &i8) -> i64 {
     let slen = _msh_read32(buf, off + 1)
     _msh_copy(out, 0, buf, off + 5, slen)
     ret off + 5 + slen
 }
 
-;; Get array count at offset.
+// Get array count at offset.
 fn unmarshal_array_count(buf: &i8, off: i64) -> i64 {
     ret _msh_read32(buf, off + 1)
 }
 
-;; Skip one marshaled value. Returns new offset.
+// Skip one marshaled value. Returns new offset.
 fn unmarshal_skip(buf: &i8, off: i64) -> i64 {
     let t = unmarshal_type(buf, off)
     if t == MARSHAL_NIL { ret off + 1 }
@@ -176,8 +176,8 @@ fn unmarshal_skip(buf: &i8, off: i64) -> i64 {
         let pos = off + 5
         let i = 0
         loop i < count {
-            pos = unmarshal_skip(buf, pos)  ; key
-            pos = unmarshal_skip(buf, pos)  ; value
+            pos = unmarshal_skip(buf, pos)  // key
+            pos = unmarshal_skip(buf, pos)  // value
             i = i + 1
         }
         ret pos

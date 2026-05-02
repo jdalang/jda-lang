@@ -1,28 +1,28 @@
-; =============================================================================
-; jda::range -- Range Type
-; =============================================================================
-; Integer ranges with iteration support. Inclusive or exclusive end.
-;
-; Memory layout per Range (&i64):
-;   [0] start
-;   [1] end_val     (exclusive by default)
-;   [2] step        (default 1)
-;   [3] inclusive    (0=exclusive, 1=inclusive)
-;
-; Functions:
-;   range_new(start, end_val)        -> &i64  create exclusive range [start, end)
-;   range_inclusive(start, end_val)   -> &i64  create inclusive range [start, end]
-;   range_step(start, end_val, step) -> &i64  range with custom step
-;   range_contains(r, val)           -> i64   1 if val in range
-;   range_size(r)                    -> i64   number of elements
-;   range_each(r, buf)               -> i64   fill buffer, return count
-;   range_to_vec(r)                  -> &i64  return vec of values
-;   range_sum(r)                     -> i64   sum of all elements
-;   range_first(r)                   -> i64   first element
-;   range_last(r)                    -> i64   last element
-; =============================================================================
+// =============================================================================
+// jda::range -- Range Type
+// =============================================================================
+// Integer ranges with iteration support. Inclusive or exclusive end.
 
-;; Create exclusive range [start, end).
+// Memory layout per Range (&i64):
+//   [0] start
+//   [1] end_val     (exclusive by default)
+//   [2] step        (default 1)
+//   [3] inclusive    (0=exclusive, 1=inclusive)
+
+// Functions:
+//   range_new(start, end_val)        -> &i64  create exclusive range [start, end)
+//   range_inclusive(start, end_val)   -> &i64  create inclusive range [start, end]
+//   range_step(start, end_val, step) -> &i64  range with custom step
+//   range_contains(r, val)           -> i64   1 if val in range
+//   range_size(r)                    -> i64   number of elements
+//   range_each(r, buf)               -> i64   fill buffer, return count
+//   range_to_vec(r)                  -> &i64  return vec of values
+//   range_sum(r)                     -> i64   sum of all elements
+//   range_first(r)                   -> i64   first element
+//   range_last(r)                    -> i64   last element
+// =============================================================================
+
+// Create exclusive range [start, end).
 fn range_new(start: i64, end_val: i64) -> &i64 {
     let r: &i64 = alloc_pages(1)
     r[0] = start
@@ -32,7 +32,7 @@ fn range_new(start: i64, end_val: i64) -> &i64 {
     ret r
 }
 
-;; Create inclusive range [start, end].
+// Create inclusive range [start, end].
 fn range_inclusive(start: i64, end_val: i64) -> &i64 {
     let r: &i64 = alloc_pages(1)
     r[0] = start
@@ -42,7 +42,7 @@ fn range_inclusive(start: i64, end_val: i64) -> &i64 {
     ret r
 }
 
-;; Create range with custom step.
+// Create range with custom step.
 fn range_step(start: i64, end_val: i64, step: i64) -> &i64 {
     let r: &i64 = alloc_pages(1)
     r[0] = start
@@ -52,7 +52,7 @@ fn range_step(start: i64, end_val: i64, step: i64) -> &i64 {
     ret r
 }
 
-;; Check if value is in range.
+// Check if value is in range.
 fn range_contains(r: &i64, val: i64) -> i64 {
     let start = r[0]
     let end_val = r[1]
@@ -75,7 +75,7 @@ fn range_contains(r: &i64, val: i64) -> i64 {
         }
     }
 
-    ; Check if val is on a step boundary
+    // Check if val is on a step boundary
     let diff = val - start
     if diff < 0 { diff = 0 - diff }
     let abs_step = step
@@ -85,7 +85,7 @@ fn range_contains(r: &i64, val: i64) -> i64 {
     ret 1
 }
 
-;; Number of elements in range.
+// Number of elements in range.
 fn range_size(r: &i64) -> i64 {
     let start = r[0]
     let end_val = r[1]
@@ -103,7 +103,7 @@ fn range_size(r: &i64) -> i64 {
     ret count
 }
 
-;; Fill buffer with range values. Returns count.
+// Fill buffer with range values. Returns count.
 fn range_each(r: &i64, buf: &i64) -> i64 {
     let start = r[0]
     let end_val = r[1]
@@ -128,12 +128,12 @@ fn range_each(r: &i64, buf: &i64) -> i64 {
     ret i
 }
 
-;; Create vec from range values. Returns vec pointer (&i64).
+// Create vec from range values. Returns vec pointer (&i64).
 fn range_to_vec(r: &i64) -> &i64 {
     let n = range_size(r)
     let pages = n * 8 / 4096 + 1
     let v: &i64 = alloc_pages(pages + 1)
-    ; vec header: [0]=len, [1]=cap, [2]=data_ptr
+    // vec header: [0]=len, [1]=cap, [2]=data_ptr
     let data: &i64 = alloc_pages(pages)
     v[0] = n
     v[1] = pages * 512
@@ -142,7 +142,7 @@ fn range_to_vec(r: &i64) -> &i64 {
     ret v
 }
 
-;; Sum all elements in range.
+// Sum all elements in range.
 fn range_sum(r: &i64) -> i64 {
     let start = r[0]
     let end_val = r[1]
@@ -165,12 +165,12 @@ fn range_sum(r: &i64) -> i64 {
     ret sum
 }
 
-;; First element of range.
+// First element of range.
 fn range_first(r: &i64) -> i64 {
     ret r[0]
 }
 
-;; Last element of range.
+// Last element of range.
 fn range_last(r: &i64) -> i64 {
     let n = range_size(r)
     if n == 0 { ret r[0] }

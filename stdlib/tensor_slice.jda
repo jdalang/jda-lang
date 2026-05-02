@@ -1,23 +1,23 @@
-; Jda Tensor Slicing & Broadcasting Library (Phase 9 M12)
-;
-; Provides slicing, broadcasting, and reshape for tensors.
-; All functions are pure Jda using tensor builtins — zero compiler changes.
-;
-; Uses only: tensor_new1, tensor_new2, tensor_get, tensor_set, tensor_len,
-;            tensor_shape, tensor_fill, tensor_free, f64_*
-;
-; Slicing convention (per dimension):
-;   start, stop, step  — half-open range [start, stop)
-;   Use -1 for "all" (e.g., stop=-1 means dimension length)
-;
-; Broadcasting rules:
-;   1. Shapes are right-aligned
-;   2. Dimensions must be equal or one of them must be 1
-;   3. Size-1 dimensions are stretched to match
+// Jda Tensor Slicing & Broadcasting Library (Phase 9 M12)
 
-; --- Reshape ---
-; Returns a new tensor with the same data but different shape.
-; Total element count must match.
+// Provides slicing, broadcasting, and reshape for tensors.
+// All functions are pure Jda using tensor builtins — zero compiler changes.
+
+// Uses only: tensor_new1, tensor_new2, tensor_get, tensor_set, tensor_len,
+//            tensor_shape, tensor_fill, tensor_free, f64_*
+
+// Slicing convention (per dimension):
+//   start, stop, step  — half-open range [start, stop)
+//   Use -1 for "all" (e.g., stop=-1 means dimension length)
+
+// Broadcasting rules:
+//   1. Shapes are right-aligned
+//   2. Dimensions must be equal or one of them must be 1
+//   3. Size-1 dimensions are stretched to match
+
+// --- Reshape ---
+// Returns a new tensor with the same data but different shape.
+// Total element count must match.
 
 fn tensor_reshape_1d(t: i64, d0: i64) -> i64 {
     let out = tensor_new1(d0)
@@ -43,9 +43,9 @@ fn tensor_reshape_2d(t: i64, d0: i64, d1: i64) -> i64 {
     ret out
 }
 
-; --- 1D Slicing ---
-; tensor_slice1d(t, start, stop, step) -> new tensor
-; stop=-1 means "to end", start=-1 means 0
+// --- 1D Slicing ---
+// tensor_slice1d(t, start, stop, step) -> new tensor
+// stop=-1 means "to end", start=-1 means 0
 
 fn tensor_slice1d(t: i64, start: i64, stop: i64, step: i64) -> i64 {
     let dim0 = tensor_shape(t, 0)
@@ -53,7 +53,7 @@ fn tensor_slice1d(t: i64, start: i64, stop: i64, step: i64) -> i64 {
     if stop < 0 { stop = dim0 }
     if step < 1 { step = 1 }
 
-    ; Calculate output length
+    // Calculate output length
     let len = 0
     let idx = start
     loop idx < stop {
@@ -73,9 +73,9 @@ fn tensor_slice1d(t: i64, start: i64, stop: i64, step: i64) -> i64 {
     ret out
 }
 
-; --- 2D Slicing ---
-; tensor_slice2d(t, row_start, row_stop, col_start, col_stop) -> new 2D tensor
-; Use -1 for "all" on stop
+// --- 2D Slicing ---
+// tensor_slice2d(t, row_start, row_stop, col_start, col_stop) -> new 2D tensor
+// Use -1 for "all" on stop
 
 fn tensor_slice2d(t: i64, row_start: i64, row_stop: i64, col_start: i64, col_stop: i64) -> i64 {
     let rows = tensor_shape(t, 0)
@@ -104,7 +104,7 @@ fn tensor_slice2d(t: i64, row_start: i64, row_stop: i64, col_start: i64, col_sto
     ret out
 }
 
-; --- Row/Column extraction ---
+// --- Row/Column extraction ---
 
 fn tensor_row(t: i64, row: i64) -> i64 {
     let cols = tensor_shape(t, 1)
@@ -133,11 +133,11 @@ fn tensor_col(t: i64, col: i64) -> i64 {
     ret out
 }
 
-; --- Broadcasting: elementwise ops with broadcast ---
-;
-; broadcast_add_2d1d(a, b, out) — [M,N] + [N] row broadcast
-; broadcast_add_2d_col(a, b, out) — [M,N] + [M,1] column broadcast
-; broadcast_add_2d_row(a, b, out) — [M,N] + [1,N] row broadcast (2D+2D)
+// --- Broadcasting: elementwise ops with broadcast ---
+
+// broadcast_add_2d1d(a, b, out) — [M,N] + [N] row broadcast
+// broadcast_add_2d_col(a, b, out) — [M,N] + [M,1] column broadcast
+// broadcast_add_2d_row(a, b, out) — [M,N] + [1,N] row broadcast (2D+2D)
 
 fn broadcast_add_1d(a: i64, b: i64, out: i64) {
     let n = tensor_len(a)
@@ -235,7 +235,7 @@ fn broadcast_mul_2d_col(a: i64, b: i64, out: i64) {
     }
 }
 
-; --- Scalar broadcast ops ---
+// --- Scalar broadcast ops ---
 
 fn broadcast_scalar_add(t: i64, s: i64, out: i64) {
     let n = tensor_len(t)
@@ -281,10 +281,10 @@ fn broadcast_scalar_div(t: i64, s: i64, out: i64) {
     }
 }
 
-; --- Reduce along axis ---
+// --- Reduce along axis ---
 
-; tensor_sum_axis0(t, rows, cols) -> 1D tensor of shape [cols]
-; Sums across rows: out[c] = sum over r of t[r,c]
+// tensor_sum_axis0(t, rows, cols) -> 1D tensor of shape [cols]
+// Sums across rows: out[c] = sum over r of t[r,c]
 fn tensor_sum_axis0(t: i64, rows: i64, cols: i64) -> i64 {
     let out = tensor_new1(cols)
     let zero = f64_from_int(0)
@@ -305,8 +305,8 @@ fn tensor_sum_axis0(t: i64, rows: i64, cols: i64) -> i64 {
     ret out
 }
 
-; tensor_sum_axis1(t, rows, cols) -> 1D tensor of shape [rows]
-; Sums across columns: out[r] = sum over c of t[r,c]
+// tensor_sum_axis1(t, rows, cols) -> 1D tensor of shape [rows]
+// Sums across columns: out[r] = sum over c of t[r,c]
 fn tensor_sum_axis1(t: i64, rows: i64, cols: i64) -> i64 {
     let out = tensor_new1(rows)
     let r = 0
@@ -325,7 +325,7 @@ fn tensor_sum_axis1(t: i64, rows: i64, cols: i64) -> i64 {
     ret out
 }
 
-; tensor_mean_axis0(t, rows, cols) -> 1D tensor, mean across rows
+// tensor_mean_axis0(t, rows, cols) -> 1D tensor, mean across rows
 fn tensor_mean_axis0(t: i64, rows: i64, cols: i64) -> i64 {
     let sums = tensor_sum_axis0(t, rows, cols)
     let divisor = f64_from_int(rows)
@@ -341,7 +341,7 @@ fn tensor_mean_axis0(t: i64, rows: i64, cols: i64) -> i64 {
     ret out
 }
 
-; tensor_mean_axis1(t, rows, cols) -> 1D tensor, mean across columns
+// tensor_mean_axis1(t, rows, cols) -> 1D tensor, mean across columns
 fn tensor_mean_axis1(t: i64, rows: i64, cols: i64) -> i64 {
     let sums = tensor_sum_axis1(t, rows, cols)
     let divisor = f64_from_int(cols)
@@ -357,7 +357,7 @@ fn tensor_mean_axis1(t: i64, rows: i64, cols: i64) -> i64 {
     ret out
 }
 
-; --- Max along axis ---
+// --- Max along axis ---
 
 fn tensor_max_axis0(t: i64, rows: i64, cols: i64) -> i64 {
     let out = tensor_new1(cols)
@@ -399,9 +399,9 @@ fn tensor_max_axis1(t: i64, rows: i64, cols: i64) -> i64 {
     ret out
 }
 
-; --- Concatenation ---
+// --- Concatenation ---
 
-; tensor_concat1d(a, b) -> new 1D tensor with a's elements then b's
+// tensor_concat1d(a, b) -> new 1D tensor with a's elements then b's
 fn tensor_concat1d(a: i64, b: i64) -> i64 {
     let a_len = tensor_len(a)
     let b_len = tensor_len(b)
@@ -422,7 +422,7 @@ fn tensor_concat1d(a: i64, b: i64) -> i64 {
     ret out
 }
 
-; tensor_vstack(a, b, cols) -> vertically stack two 2D tensors (same cols)
+// tensor_vstack(a, b, cols) -> vertically stack two 2D tensors (same cols)
 fn tensor_vstack(a: i64, b: i64, cols: i64) -> i64 {
     let a_rows = tensor_shape(a, 0)
     let b_rows = tensor_shape(b, 0)
@@ -445,7 +445,7 @@ fn tensor_vstack(a: i64, b: i64, cols: i64) -> i64 {
     ret out
 }
 
-; tensor_hstack(a, b) -> horizontally stack two 2D tensors (same rows)
+// tensor_hstack(a, b) -> horizontally stack two 2D tensors (same rows)
 fn tensor_hstack(a: i64, b: i64) -> i64 {
     let rows = tensor_shape(a, 0)
     let a_cols = tensor_shape(a, 1)
@@ -475,9 +475,9 @@ fn tensor_hstack(a: i64, b: i64) -> i64 {
     ret out
 }
 
-; --- Where (conditional select) ---
-; tensor_where(cond, a, b, out)
-; out[i] = a[i] if cond[i] > 0, else b[i]
+// --- Where (conditional select) ---
+// tensor_where(cond, a, b, out)
+// out[i] = a[i] if cond[i] > 0, else b[i]
 
 fn tensor_where(cond: i64, a: i64, b: i64, out: i64) {
     let n = tensor_len(a)
@@ -496,8 +496,8 @@ fn tensor_where(cond: i64, a: i64, b: i64, out: i64) {
     }
 }
 
-; --- Clamp ---
-; tensor_clamp(t, lo, hi, out) — clamp all elements to [lo, hi]
+// --- Clamp ---
+// tensor_clamp(t, lo, hi, out) — clamp all elements to [lo, hi]
 
 fn tensor_clamp(t: i64, lo: i64, hi: i64, out: i64) {
     let n = tensor_len(t)
@@ -517,11 +517,11 @@ fn tensor_clamp(t: i64, lo: i64, hi: i64, out: i64) {
     }
 }
 
-; --- Arange ---
-; tensor_arange(start, stop, step) -> 1D tensor with [start, start+step, ...]
+// --- Arange ---
+// tensor_arange(start, stop, step) -> 1D tensor with [start, start+step, ...]
 
 fn tensor_arange(start: i64, stop: i64, step: i64) -> i64 {
-    ; Count elements
+    // Count elements
     let count = 0
     let cur = start
     loop f64_lt(cur, stop) == 1 {
@@ -539,8 +539,8 @@ fn tensor_arange(start: i64, stop: i64, step: i64) -> i64 {
     ret out
 }
 
-; --- Linspace ---
-; tensor_linspace(start, stop, n) -> 1D tensor with n evenly spaced values
+// --- Linspace ---
+// tensor_linspace(start, stop, n) -> 1D tensor with n evenly spaced values
 
 fn tensor_linspace(start: i64, stop: i64, n: i64) -> i64 {
     let out = tensor_new1(n)
@@ -561,7 +561,7 @@ fn tensor_linspace(start: i64, stop: i64, n: i64) -> i64 {
     ret out
 }
 
-; --- Copy ---
+// --- Copy ---
 
 fn tensor_copy_1d(t: i64) -> i64 {
     let len = tensor_len(t)

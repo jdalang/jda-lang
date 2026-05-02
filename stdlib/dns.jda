@@ -1,14 +1,14 @@
-; =============================================================================
-; jda::dns -- DNS Resolver
-; =============================================================================
-; Resolve hostnames to IPv4 addresses. Reads /etc/resolv.conf for nameserver,
-; builds DNS query packet, sends via UDP socket, parses response.
-;
-; Functions:
-;   dns_resolve(hostname, hlen, out)         -> i64  resolve to 4-byte IPv4
-;   dns_resolve_str(hostname, hlen, out)     -> i64  resolve to "x.x.x.x" string
-;   dns_nameserver(out)                      -> i64  get configured nameserver IP
-; =============================================================================
+// =============================================================================
+// jda::dns -- DNS Resolver
+// =============================================================================
+// Resolve hostnames to IPv4 addresses. Reads /etc/resolv.conf for nameserver,
+// builds DNS query packet, sends via UDP socket, parses response.
+
+// Functions:
+//   dns_resolve(hostname, hlen, out)         -> i64  resolve to 4-byte IPv4
+//   dns_resolve_str(hostname, hlen, out)     -> i64  resolve to "x.x.x.x" string
+//   dns_nameserver(out)                      -> i64  get configured nameserver IP
+// =============================================================================
 
 fn _dns_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
     let i = 0
@@ -31,17 +31,17 @@ fn _dns_close(fd: i64) -> i64 {
 }
 
 fn _dns_socket_udp() -> i64 {
-    ; socket(AF_INET=2, SOCK_DGRAM=2, IPPROTO_UDP=17)
+    // socket(AF_INET=2, SOCK_DGRAM=2, IPPROTO_UDP=17)
     ret syscall(41, 2, 2, 17)
 }
 
 fn _dns_sendto(fd: i64, buf: &i8, len: i64, addr: &i8) -> i64 {
-    ; sendto(fd, buf, len, 0, addr, 16)
-    ; Using syscall 44 (sendto) with flags=0
-    ; Need to pack: fd, buf, len, flags=0, addr, addrlen=16
-    ; Jda syscall only takes 4 args, so we use socketcall or direct
-    ; On x86-64 Linux, sendto is syscall 44 with 6 args
-    ; We'll use connect + send pattern instead (2 syscalls)
+    // sendto(fd, buf, len, 0, addr, 16)
+    // Using syscall 44 (sendto) with flags=0
+    // Need to pack: fd, buf, len, flags=0, addr, addrlen=16
+    // Jda syscall only takes 4 args, so we use socketcall or direct
+    // On x86-64 Linux, sendto is syscall 44 with 6 args
+    // We'll use connect + send pattern instead (2 syscalls)
     ret syscall(44, fd, buf, len)
 }
 
@@ -61,13 +61,13 @@ fn _dns_close_sock(fd: i64) -> i64 {
     ret syscall(3, fd, 0, 0)
 }
 
-;; Internal: parse /etc/resolv.conf to find first nameserver IP.
-;; Writes 4 bytes to out. Returns 1 if found, 0 if not.
+// Internal: parse /etc/resolv.conf to find first nameserver IP.
+// Writes 4 bytes to out. Returns 1 if found, 0 if not.
 fn dns_nameserver(out: &i8) -> i64 {
     let buf: &i8 = alloc_pages(2)
     let fd = _dns_open_read("/etc/resolv.conf")
     if fd < 0 {
-        ; Default: 8.8.8.8
+        // Default: 8.8.8.8
         poke_byte(out, 0, 8)
         poke_byte(out, 1, 8)
         poke_byte(out, 2, 8)
@@ -84,7 +84,7 @@ fn dns_nameserver(out: &i8) -> i64 {
         ret 1
     }
 
-    ; Scan for "nameserver " followed by IP
+    // Scan for "nameserver " followed by IP
     let i = 0
     loop i < n - 11 {
         let match = 1
@@ -96,7 +96,7 @@ fn dns_nameserver(out: &i8) -> i64 {
             if match == 1 { ci = ci + 1 }
         }
         if match == 1 {
-            ; Parse IP starting at i+11
+            // Parse IP starting at i+11
             let ip_start = i + 11
             let octets = 0
             let val = 0
@@ -122,7 +122,7 @@ fn dns_nameserver(out: &i8) -> i64 {
         }
         i = i + 1
     }
-    ; Fallback
+    // Fallback
     poke_byte(out, 0, 8)
     poke_byte(out, 1, 8)
     poke_byte(out, 2, 8)
@@ -130,24 +130,24 @@ fn dns_nameserver(out: &i8) -> i64 {
     ret 1
 }
 
-;; Internal: build DNS query packet for A record.
-;; Returns packet length.
+// Internal: build DNS query packet for A record.
+// Returns packet length.
 fn _dns_build_query(hostname: &i8, hlen: i64, pkt: &i8) -> i64 {
-    ; DNS header (12 bytes)
-    ; ID = 0x1234
-    poke_byte(pkt, 0, 18)   ; 0x12
-    poke_byte(pkt, 1, 52)   ; 0x34
-    ; Flags: standard query, recursion desired
-    poke_byte(pkt, 2, 1)    ; RD=1
+    // DNS header (12 bytes)
+    // ID = 0x1234
+    poke_byte(pkt, 0, 18)   // 0x12
+    poke_byte(pkt, 1, 52)   // 0x34
+    // Flags: standard query, recursion desired
+    poke_byte(pkt, 2, 1)    // RD=1
     poke_byte(pkt, 3, 0)
-    ; QDCOUNT = 1
+    // QDCOUNT = 1
     poke_byte(pkt, 4, 0)
     poke_byte(pkt, 5, 1)
-    ; ANCOUNT, NSCOUNT, ARCOUNT = 0
+    // ANCOUNT, NSCOUNT, ARCOUNT = 0
     let hi = 6
     loop hi < 12 { poke_byte(pkt, hi, 0)   hi = hi + 1 }
 
-    ; Question: encode hostname as labels
+    // Question: encode hostname as labels
     let pos = 12
     let label_start = 0
     let i = 0
@@ -167,37 +167,37 @@ fn _dns_build_query(hostname: &i8, hlen: i64, pkt: &i8) -> i64 {
         }
         i = i + 1
     }
-    poke_byte(pkt, pos, 0)  ; root label
+    poke_byte(pkt, pos, 0)  // root label
     pos = pos + 1
 
-    ; QTYPE = A (1)
+    // QTYPE = A (1)
     poke_byte(pkt, pos, 0)
     poke_byte(pkt, pos + 1, 1)
-    ; QCLASS = IN (1)
+    // QCLASS = IN (1)
     poke_byte(pkt, pos + 2, 0)
     poke_byte(pkt, pos + 3, 1)
     ret pos + 4
 }
 
-;; Resolve hostname to IPv4. Writes 4 bytes to out. Returns 1 on success.
+// Resolve hostname to IPv4. Writes 4 bytes to out. Returns 1 on success.
 fn dns_resolve(hostname: &i8, hlen: i64, out: &i8) -> i64 {
-    ; Get nameserver
+    // Get nameserver
     let ns_ip: &i8 = alloc_pages(1)
     dns_nameserver(ns_ip)
 
-    ; Build query packet
+    // Build query packet
     let pkt: &i8 = alloc_pages(1)
     let pkt_len = _dns_build_query(hostname, hlen, pkt)
 
-    ; Create UDP socket and connect to nameserver
+    // Create UDP socket and connect to nameserver
     let sock = _dns_socket_udp()
     if sock < 0 { ret 0 }
 
-    ; Build sockaddr_in (16 bytes)
+    // Build sockaddr_in (16 bytes)
     let addr: &i8 = alloc_pages(1)
-    poke_byte(addr, 0, 2)   ; AF_INET (low byte)
+    poke_byte(addr, 0, 2)   // AF_INET (low byte)
     poke_byte(addr, 1, 0)
-    poke_byte(addr, 2, 0)   ; port 53 (big-endian)
+    poke_byte(addr, 2, 0)   // port 53 (big-endian)
     poke_byte(addr, 3, 53)
     poke_byte(addr, 4, ns_ip[0])
     poke_byte(addr, 5, ns_ip[1])
@@ -207,17 +207,17 @@ fn dns_resolve(hostname: &i8, hlen: i64, out: &i8) -> i64 {
     _dns_connect(sock, addr, 16)
     _dns_send(sock, pkt, pkt_len)
 
-    ; Receive response
+    // Receive response
     let resp: &i8 = alloc_pages(1)
     let rlen = _dns_recv(sock, resp, 4096)
     _dns_close_sock(sock)
 
     if rlen < 16 { ret 0 }
 
-    ; Parse response: find first A record
-    ; Skip header (12 bytes) + question section
+    // Parse response: find first A record
+    // Skip header (12 bytes) + question section
     let rpos = 12
-    ; Skip question: labels + null + QTYPE(2) + QCLASS(2)
+    // Skip question: labels + null + QTYPE(2) + QCLASS(2)
     loop rpos < rlen {
         let lb = resp[rpos]
         if lb < 0 { lb = lb + 256 }
@@ -227,7 +227,7 @@ fn dns_resolve(hostname: &i8, hlen: i64, out: &i8) -> i64 {
         if lb >= 192 { rpos = rpos + 2   rpos = rpos + 4   rpos = rlen }
     }
 
-    ; ANCOUNT
+    // ANCOUNT
     let ancount_hi = resp[6]
     let ancount_lo = resp[7]
     if ancount_hi < 0 { ancount_hi = ancount_hi + 256 }
@@ -235,22 +235,22 @@ fn dns_resolve(hostname: &i8, hlen: i64, out: &i8) -> i64 {
     let ancount = ancount_hi * 256 + ancount_lo
     if ancount == 0 { ret 0 }
 
-    ; Parse answer records — find first type A (1) with rdlength 4
-    ; Simplified: scan for 4-byte RDATA of type A
+    // Parse answer records — find first type A (1) with rdlength 4
+    // Simplified: scan for 4-byte RDATA of type A
     let ai = 12
     loop ai < rlen - 14 {
-        ; Check for pointer (0xC0xx) or label
+        // Check for pointer (0xC0xx) or label
         let fb = resp[ai]
         if fb < 0 { fb = fb + 256 }
         if fb >= 192 {
-            ; Pointer: 2 bytes for name
+            // Pointer: 2 bytes for name
             let type_off = ai + 2
             let t_hi = resp[type_off]
             let t_lo = resp[type_off + 1]
             if t_hi < 0 { t_hi = t_hi + 256 }
             if t_lo < 0 { t_lo = t_lo + 256 }
             let rtype = t_hi * 256 + t_lo
-            ; RDLENGTH at offset +8
+            // RDLENGTH at offset +8
             let rdl_hi = resp[type_off + 8]
             let rdl_lo = resp[type_off + 9]
             if rdl_hi < 0 { rdl_hi = rdl_hi + 256 }
@@ -258,7 +258,7 @@ fn dns_resolve(hostname: &i8, hlen: i64, out: &i8) -> i64 {
             let rdlen = rdl_hi * 256 + rdl_lo
 
             if rtype == 1 and rdlen == 4 {
-                ; A record! Copy 4 bytes of RDATA
+                // A record! Copy 4 bytes of RDATA
                 let rd_off = type_off + 10
                 poke_byte(out, 0, resp[rd_off])
                 poke_byte(out, 1, resp[rd_off + 1])
@@ -274,7 +274,7 @@ fn dns_resolve(hostname: &i8, hlen: i64, out: &i8) -> i64 {
     ret 0
 }
 
-;; Resolve hostname to "x.x.x.x" string. Returns string length.
+// Resolve hostname to "x.x.x.x" string. Returns string length.
 fn dns_resolve_str(hostname: &i8, hlen: i64, out: &i8) -> i64 {
     let ip: &i8 = alloc_pages(1)
     let ok = dns_resolve(hostname, hlen, ip)
@@ -285,7 +285,7 @@ fn dns_resolve_str(hostname: &i8, hlen: i64, out: &i8) -> i64 {
     loop oi < 4 {
         let b = ip[oi]
         if b < 0 { b = b + 256 }
-        ; Write decimal value
+        // Write decimal value
         if b >= 100 {
             poke_byte(out, pos, 48 + b / 100)
             pos = pos + 1
@@ -299,7 +299,7 @@ fn dns_resolve_str(hostname: &i8, hlen: i64, out: &i8) -> i64 {
         poke_byte(out, pos, 48 + ones)
         pos = pos + 1
         if oi < 3 {
-            poke_byte(out, pos, 46)  ; '.'
+            poke_byte(out, pos, 46)  // '.'
             pos = pos + 1
         }
         oi = oi + 1

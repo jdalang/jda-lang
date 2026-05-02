@@ -1,46 +1,46 @@
-; =============================================================================
-; jda::vtable -- Dynamic Dispatch / Virtual Method Tables
-; =============================================================================
-; Convention-based dynamic dispatch for Jda. Provides manual vtable
-; construction for polymorphism without compiler-level traits or interfaces.
-;
-; A vtable is an &i64 array of function pointers. An "object" pairs
-; data with a vtable pointer:
-;   [0] = data pointer (the concrete struct/value)
-;   [1] = vtable pointer (&i64 array of fn pointers)
-;   [2] = type tag (integer identifying the concrete type)
-;
-; Example: Shape interface with area() and perimeter()
-;   ; Define vtable slots
-;   const SHAPE_AREA = 0
-;   const SHAPE_PERIM = 1
-;
-;   ; Create a circle vtable
-;   let circle_vt = vt_new(2)
-;   vt_set(circle_vt, SHAPE_AREA, circle_area)
-;   vt_set(circle_vt, SHAPE_PERIM, circle_perim)
-;
-;   ; Create a dyn object
-;   let obj = dyn_new(my_circle_data, circle_vt, 1)
-;   let area_fn = dyn_method(obj, SHAPE_AREA)
-;   ; call area_fn with dyn_data(obj) as argument
-;
-; Functions:
-;   vt_new(size)                  -> &i64   create vtable with N slots
-;   vt_set(vt, slot, fn_ptr)               set function pointer at slot
-;   vt_get(vt, slot)              -> i64    get function pointer at slot
-;   vt_size(vt)                   -> i64    number of slots
-;   dyn_new(data, vt, tag)        -> &i64   create dynamic object
-;   dyn_data(obj)                 -> i64    get data pointer
-;   dyn_vtable(obj)               -> &i64   get vtable
-;   dyn_tag(obj)                  -> i64    get type tag
-;   dyn_method(obj, slot)         -> i64    get method fn pointer from vtable
-;   dyn_is(obj, tag)              -> i64    1 if object has given type tag
-;   dyn_print(obj)                          print object info
-; =============================================================================
+// =============================================================================
+// jda::vtable -- Dynamic Dispatch / Virtual Method Tables
+// =============================================================================
+// Convention-based dynamic dispatch for Jda. Provides manual vtable
+// construction for polymorphism without compiler-level traits or interfaces.
 
-;; Create a vtable with the given number of slots.
-;; Slot 0 of the allocated array stores the size; slots 1..size store fn ptrs.
+// A vtable is an &i64 array of function pointers. An "object" pairs
+// data with a vtable pointer:
+//   [0] = data pointer (the concrete struct/value)
+//   [1] = vtable pointer (&i64 array of fn pointers)
+//   [2] = type tag (integer identifying the concrete type)
+
+// Example: Shape interface with area() and perimeter()
+//   ; Define vtable slots
+//   const SHAPE_AREA = 0
+//   const SHAPE_PERIM = 1
+
+//   ; Create a circle vtable
+//   let circle_vt = vt_new(2)
+//   vt_set(circle_vt, SHAPE_AREA, circle_area)
+//   vt_set(circle_vt, SHAPE_PERIM, circle_perim)
+
+//   ; Create a dyn object
+//   let obj = dyn_new(my_circle_data, circle_vt, 1)
+//   let area_fn = dyn_method(obj, SHAPE_AREA)
+//   ; call area_fn with dyn_data(obj) as argument
+
+// Functions:
+//   vt_new(size)                  -> &i64   create vtable with N slots
+//   vt_set(vt, slot, fn_ptr)               set function pointer at slot
+//   vt_get(vt, slot)              -> i64    get function pointer at slot
+//   vt_size(vt)                   -> i64    number of slots
+//   dyn_new(data, vt, tag)        -> &i64   create dynamic object
+//   dyn_data(obj)                 -> i64    get data pointer
+//   dyn_vtable(obj)               -> &i64   get vtable
+//   dyn_tag(obj)                  -> i64    get type tag
+//   dyn_method(obj, slot)         -> i64    get method fn pointer from vtable
+//   dyn_is(obj, tag)              -> i64    1 if object has given type tag
+//   dyn_print(obj)                          print object info
+// =============================================================================
+
+// Create a vtable with the given number of slots.
+// Slot 0 of the allocated array stores the size; slots 1..size store fn ptrs.
 fn vt_new(size: i64) -> &i64 {
     let vt: &i64 = alloc_pages(1)
     vt[0] = size
@@ -53,24 +53,24 @@ fn vt_new(size: i64) -> &i64 {
     ret vt
 }
 
-;; Set a function pointer at the given slot index.
+// Set a function pointer at the given slot index.
 fn vt_set(vt: &i64, slot: i64, fn_ptr: i64) {
     let idx = slot + 1
     vt[idx] = fn_ptr
 }
 
-;; Get the function pointer at the given slot index.
+// Get the function pointer at the given slot index.
 fn vt_get(vt: &i64, slot: i64) -> i64 {
     let idx = slot + 1
     ret vt[idx]
 }
 
-;; Get the number of slots in the vtable.
+// Get the number of slots in the vtable.
 fn vt_size(vt: &i64) -> i64 {
     ret vt[0]
 }
 
-;; Create a dynamic (trait) object: data + vtable + type tag.
+// Create a dynamic (trait) object: data + vtable + type tag.
 fn dyn_new(data: i64, vt: &i64, tag: i64) -> &i64 {
     let obj: &i64 = alloc_pages(1)
     obj[0] = data
@@ -79,35 +79,35 @@ fn dyn_new(data: i64, vt: &i64, tag: i64) -> &i64 {
     ret obj
 }
 
-;; Get the data pointer from a dynamic object.
+// Get the data pointer from a dynamic object.
 fn dyn_data(obj: &i64) -> i64 {
     ret obj[0]
 }
 
-;; Get the vtable from a dynamic object.
+// Get the vtable from a dynamic object.
 fn dyn_vtable(obj: &i64) -> &i64 {
     ret obj[1]
 }
 
-;; Get the type tag from a dynamic object.
+// Get the type tag from a dynamic object.
 fn dyn_tag(obj: &i64) -> i64 {
     ret obj[2]
 }
 
-;; Get a method function pointer from the object's vtable.
+// Get a method function pointer from the object's vtable.
 fn dyn_method(obj: &i64, slot: i64) -> i64 {
     let vt: &i64 = obj[1]
     let idx = slot + 1
     ret vt[idx]
 }
 
-;; Check if the object has the given type tag.
+// Check if the object has the given type tag.
 fn dyn_is(obj: &i64, tag: i64) -> i64 {
     if obj[2] == tag { ret 1 }
     ret 0
 }
 
-;; Print object info.
+// Print object info.
 fn dyn_print(obj: &i64) {
     let tag = obj[2]
     let data = obj[0]
