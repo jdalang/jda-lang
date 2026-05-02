@@ -68,22 +68,38 @@ def extract_structs(jda1_path):
 
             # Estimate size based on type
             size = 8  # Default: 8 bytes for pointers and i64
+            
+            # Helper to get base type size
+            def get_base_size(t):
+                if 'i32' in t: return 4
+                if 'i8' in t: return 1
+                if 'Token' in t: return 28
+                if 'Node' in t: return 88
+                if 'Instr' in t: return 96 # Increased to 96 for padding/alignment in some versions
+                if 'Fixup' in t: return 32
+                if 'BasicBlock' in t: return 24600 # Estimate for 256 instrs
+                if 'VarEntry' in t: return 32
+                if 'RegAlloc' in t: return 49256
+                if 'LowerCtx' in t: return 100000 # Estimate
+                return 8
+
             if '[' in field_type:
                 # Array type: count elements
                 array_match = re.search(r'\[(\d+)\]', field_type)
                 if array_match:
                     count = int(array_match.group(1))
                     elem_type = field_type.split('[')[0]
-                    if 'i32' in elem_type:
-                        size = count * 4
-                    elif 'i8' in elem_type:
-                        size = count * 1
-                    else:
-                        size = count * 8
+                    elem_size = get_base_size(elem_type)
+                    size = count * elem_size
             elif 'i32' in field_type:
                 size = 4
             elif 'i8' in field_type:
                 size = 1
+            elif '&' in field_type:
+                size = 8
+            else:
+                # Custom struct type (not array, not pointer)
+                size = get_base_size(field_type)
 
             fields.append({
                 'name': field_name,

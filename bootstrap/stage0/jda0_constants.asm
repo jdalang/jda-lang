@@ -68,12 +68,16 @@ TOK_GTE              equ 35
 TOK_LTE              equ 36
 TOK_AND              equ 37
 TOK_OR               equ 38
-TOK_CONST            equ 39
-TOK_EOF              equ 40
-TOK_I64              equ 41
-TOK_I32              equ 42
-TOK_I8               equ 43
-TOK_F64              equ 44
+TOK_PIPE             equ 39
+TOK_TILDE            equ 40
+TOK_SHR              equ 41
+TOK_SHL              equ 42
+TOK_CONST            equ 43
+TOK_EOF              equ 44
+TOK_I64              equ 45
+TOK_I32              equ 46
+TOK_I8               equ 47
+TOK_F64              equ 48
 
 ; Type constants
 TYPE_VOID            equ 0
@@ -116,18 +120,22 @@ OP_LOAD_MEM          equ 24
 OP_STORE_MEM         equ 25
 OP_ALLOC             equ 26
 OP_PRINT_INT         equ 27
+OP_SHR               equ 28
+OP_SHL               equ 29
+OP_GADDR             equ 30
+OP_ARGV_BASE         equ 31
 
 ; Structure sizes
-BB_SZ                equ 536
+BB_SZ                equ 24600
 CST_SZ               equ 12
 FIXUP_SZ             equ 32
-FLD_SZ               equ 92
-FN_SZ                equ 1345
-LOWER_SZ             equ 26640
+FLD_SZ               equ 96
+FN_SZ                equ 791873
+LOWER_SZ             equ 100464
 NODE_SZ              equ 88
 REGALLOC_SZ          equ 49256
-STRUCTTABLE_SZ       equ 133648
-TOK_SZ               equ 28
+STRUCTTABLE_SZ       equ 199184
+TOK_SZ               equ 40
 PRM_SZ               equ 32
 
 ; AST Node type constants
