@@ -1877,7 +1877,14 @@ add_local:
     mov     rax, [loc_rbp]
     add     rax, 7
     and     rax, -8         ; align to 8
-    add     rax, r12        ; r12 = esz
+    ; alloc_size = max(r12, 8) — each slot must hold a full 8-byte register store
+    cmp     r12, 8
+    jge     .al_big
+    add     rax, 8
+    jmp     .al_cont
+.al_big:
+    add     rax, r12
+.al_cont:
     mov     [loc_rbp], rax
     mov     rax, [loc_rbp]      ; rbp_offset = loc_rbp (positive, use [rbp-rax])
     cmp     rax, [loc_max_rbp]
@@ -2570,12 +2577,14 @@ gen_expr_base:
     call    emit1
     mov     rdi, 0x22       ; mov r10d, 0x22
     call    emit4
-    mov     rdi, 0x41
+    mov     rdi, 0x49
     call    emit1
-    mov     rdi, 0xB8
+    mov     rdi, 0xC7
     call    emit1
-    mov     rdi, -1         ; mov r8d, -1
-    call    emit4
+    mov     rdi, 0xC0
+    call    emit1
+    mov     rdi, -1
+    call    emit4           ; mov r8, -1 (sign-extended imm32 to 64-bit)
     mov     rdi, 0x45
     call    emit1
     mov     rdi, 0x31
@@ -3378,6 +3387,7 @@ gen_addr:
     call    emit1
     mov     rdi, 0x00
     call    emit1           ; mov rax, [rax]
+    mov     qword [lv_isptr], 0
     jmp     .ga_index
 
 .ga_dot:
@@ -4067,7 +4077,9 @@ gen_stmt:
     pop     r15
     jmp     .gs_if_no_else
 .gs_else_if:
+    push    r15             ; save outer "after" jump offset
     call    gen_stmt        ; recursively handle 'if ...'
+    pop     r15             ; restore outer "after" jump offset
 .gs_if_no_else:
     ; patch after offset
     mov     rax, [cod_len]
