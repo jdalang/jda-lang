@@ -1,0 +1,34 @@
+fn sieve(limit: i64) -> i64 {
+    let buf = alloc_pages(1)
+    let i = 2
+    loop i < limit {
+        let ptr = buf as &i8
+        if ptr[i] == 0 {
+            let j = i + i
+            loop j < limit {
+                let p2 = buf as &i8
+                p2[j] = 1
+                j = j + i
+            }
+        }
+        i = i + 1
+    }
+    let count = 0
+    let k = 2
+    loop k < limit {
+        let ptr = buf as &i8
+        if ptr[k] == 0 {
+            count = count + 1
+        }
+        k = k + 1
+    }
+    ret count
+}
+
+fn bench_sieve(n: i64) {
+    let i = 0
+    loop i < n {
+        sieve(1000)
+        i = i + 1
+    }
+}
