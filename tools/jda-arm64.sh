@@ -177,7 +177,12 @@ def parse(tokens):
 
     def parse_print():
         advance()  # print
+        has_paren = peek().kind == '('
+        if has_paren:
+            advance()
         s = expect('STR').value
+        if has_paren:
+            expect(')')
         label = f".str{len(prog.strings)}"
         prog.strings[label] = s
         return ('print', label, len(s))
