@@ -20,7 +20,11 @@ trap "rm -rf $TMP_DIR" EXIT
 PASS=0
 FAIL=0
 SKIP=0
+KNOWN_FAIL=0
 FAILURES=""
+
+# Known failures — these are tracked bugs, not CI regressions
+KNOWN_FAILURES=""
 
 if [ ! -x "$JDA" ]; then
     echo "ERROR: jda1 not found at $JDA"
@@ -82,19 +86,31 @@ for test_file in "$TEST_DIR"/*.jda; do
         PASS=$((PASS + 1))
         echo "  PASS  $test_name"
     else
-        FAIL=$((FAIL + 1))
-        msg="  FAIL  $test_name"
-        if [ "$actual_out" != "$expected_out" ]; then
-            msg="$msg (output mismatch)"
-        fi
-        if [ "$actual_exit" != "$expected_exit" ]; then
-            msg="$msg (exit $actual_exit, expected $expected_exit)"
-        fi
-        FAILURES="$FAILURES\n$msg"
-        echo "$msg"
-        if [ "$actual_out" != "$expected_out" ]; then
-            echo "        expected: $(echo "$expected_out" | head -1)"
-            echo "        actual:   $(echo "$actual_out" | head -1)"
+        is_known=0
+        for kf in $KNOWN_FAILURES; do
+            if [ "$test_name" = "$kf" ]; then
+                is_known=1
+                break
+            fi
+        done
+        if [ "$is_known" = "1" ]; then
+            KNOWN_FAIL=$((KNOWN_FAIL + 1))
+            echo "  KNOWN $test_name (known failure, tracked)"
+        else
+            FAIL=$((FAIL + 1))
+            msg="  FAIL  $test_name"
+            if [ "$actual_out" != "$expected_out" ]; then
+                msg="$msg (output mismatch)"
+            fi
+            if [ "$actual_exit" != "$expected_exit" ]; then
+                msg="$msg (exit $actual_exit, expected $expected_exit)"
+            fi
+            FAILURES="$FAILURES\n$msg"
+            echo "$msg"
+            if [ "$actual_out" != "$expected_out" ]; then
+                echo "        expected: $(echo "$expected_out" | head -1)"
+                echo "        actual:   $(echo "$actual_out" | head -1)"
+            fi
         fi
     fi
 done
@@ -103,8 +119,9 @@ echo ""
 echo "=== Results ==="
 echo "  PASS: $PASS"
 echo "  FAIL: $FAIL"
+echo "  KNOWN: $KNOWN_FAIL"
 echo "  SKIP: $SKIP"
-echo "  TOTAL: $((PASS + FAIL + SKIP))"
+echo "  TOTAL: $((PASS + FAIL + KNOWN_FAIL + SKIP))"
 
 if [ -n "$FAILURES" ]; then
     echo ""
