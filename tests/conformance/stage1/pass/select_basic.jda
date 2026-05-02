@@ -1,0 +1,13 @@
+; Select from 2 channels — only ch_b has data
+fn main() {
+    let ch_a = chan_new(4)
+    let ch_b = chan_new(4)
+    chan_send(ch_b, 42)
+
+    let chs = alloc_pages(1)
+    chs[0] = ch_a
+    chs[1] = ch_b
+
+    let val = chan_select(chs, 2)
+    print_int(val)
+}
