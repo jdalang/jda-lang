@@ -4912,6 +4912,34 @@ fn emit_spawn_jir(jfn: &JirFunction, bb: i64, fn_name_start: i64, fn_name_len: i
     st2.operand1 = jt16
     st2.itype = TYPE_I64
     emit(jfn, bb, &st2)
+    ; 8. Store return address at stack_top = fn_addr("__thread_done")
+    ;    Append "__thread_done" to src buffer so fixup resolver can match it.
+    let td_off = g_runtime_src_len
+    poke_byte(g_src_buf_ptr, td_off, 95)
+    poke_byte(g_src_buf_ptr, td_off + 1, 95)
+    poke_byte(g_src_buf_ptr, td_off + 2, 116)
+    poke_byte(g_src_buf_ptr, td_off + 3, 104)
+    poke_byte(g_src_buf_ptr, td_off + 4, 114)
+    poke_byte(g_src_buf_ptr, td_off + 5, 101)
+    poke_byte(g_src_buf_ptr, td_off + 6, 97)
+    poke_byte(g_src_buf_ptr, td_off + 7, 100)
+    poke_byte(g_src_buf_ptr, td_off + 8, 95)
+    poke_byte(g_src_buf_ptr, td_off + 9, 100)
+    poke_byte(g_src_buf_ptr, td_off + 10, 111)
+    poke_byte(g_src_buf_ptr, td_off + 11, 110)
+    poke_byte(g_src_buf_ptr, td_off + 12, 101)
+    g_runtime_src_len = td_off + 13
+    let ei = Instr{}
+    ei.op = OP_FN_ADDR
+    ei.str_start = td_off
+    ei.str_len = 13
+    let exit_addr = emit(jfn, bb, &ei)
+    let st3 = Instr{}
+    st3.op = OP_STORE_MEM
+    st3.operand0 = exit_addr
+    st3.operand1 = stack_top
+    st3.itype = TYPE_I64
+    emit(jfn, bb, &st3)
     ; Fields [24]-[56] already 0 from mmap (rbx, r12-r15)
     ret jthread
 }
@@ -6517,6 +6545,18 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     let name_start = tok_str_start_at(toks, pos[0] - 1)
     let name_len = tok_str_len_at(toks, pos[0] - 1)
     expect(TOK_LPAREN)
+    ; fn_addr(name) — argument is function name identifier, not expression
+    if name_len == 7 and streq(src, name_start, 7, "fn_addr") == 1 {
+        let fa_start = tok_str_start_at(toks, pos[0])
+        let fa_len = tok_str_len_at(toks, pos[0])
+        pos[0] = pos[0] + 1
+        expect(TOK_RPAREN)
+        let fins = Instr{}
+        fins.op = OP_FN_ADDR
+        fins.str_start = fa_start
+        fins.str_len = fa_len
+        ret emit(jfn, bb, &fins)
+    }
     let arg_cnt = 0
     let arg0 = -1
     let arg1 = -1
@@ -7858,6 +7898,18 @@ fn live_codegen_method_call(name: &Token, bb: i64, self_id: i64) -> i64 {
 
 fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     expect(TOK_LPAREN)
+    ; fn_addr(name) — argument is function name identifier, not expression
+    if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "fn_addr") == 1 {
+        let fa_start = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos)
+        let fa_len = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos)
+        g_main_pos = g_main_pos + 1
+        expect(TOK_RPAREN)
+        let fins = Instr{}
+        fins.op = OP_FN_ADDR
+        fins.str_start = fa_start
+        fins.str_len = fa_len
+        ret emit(g_jfn, bb, &fins)
+    }
     let is_alloc_pages = 0
     if name.str_len == 11 and streq(g_src_buf_ptr, name.str_start, 11, "alloc_pages") == 1 { is_alloc_pages = 1 }
     if is_alloc_pages == 1 {
