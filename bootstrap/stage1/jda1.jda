@@ -14243,12 +14243,8 @@ fn inline_splice_block(jfn: &JirFunction, bi: i64) {
                 if slot >= 0 {
                     let call_ac = g_inline_tbl[k + 7]
                     let callee_pc = g_inline_tbl[16 + slot * 256 + 1]
-                    let is_mul_setter = g_inline_tbl[16 + slot * 256 + 12]
                     let is_div = g_inline_tbl[16 + slot * 256 + 13]
                     let do_inline = 1
-                    if is_mul_setter == 1 {
-                        if inline_block_has_non_mul_setter(orig_cnt) == 1 { do_inline = 0 }
-                    }
                     if is_div == 1 {
                         if inline_block_has_non_inline_call(orig_cnt) == 1 { do_inline = 0 }
                     }
