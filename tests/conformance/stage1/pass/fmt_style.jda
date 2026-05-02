@@ -1,0 +1,30 @@
+; Test: formatted code with multiple functions and clean style
+
+fn min_val(a: i64, b: i64) -> i64 {
+  if a < b {
+    ret a
+  }
+  ret b
+}
+
+fn max_val(a: i64, b: i64) -> i64 {
+  if a > b {
+    ret a
+  }
+  ret b
+}
+
+fn clamp(val: i64, lo: i64, hi: i64) -> i64 {
+  ret max_val(lo, min_val(val, hi))
+}
+
+fn main() -> i64 {
+  let a = clamp(50, 0, 100)
+  if a != 50 { syscall(60, 1, 0, 0) }
+  let b = clamp(200, 0, 100)
+  if b != 100 { syscall(60, 1, 0, 0) }
+  let c = clamp(0 - 5, 0, 100)
+  if c != 0 { syscall(60, 1, 0, 0) }
+  print "fmt_style ok"
+  ret 0
+}
