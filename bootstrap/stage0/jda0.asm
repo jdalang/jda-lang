@@ -81,6 +81,7 @@ TOK_GTEQ         equ 47
 TOK_PIPE         equ 48  ; | bitwise or
 TOK_SHL          equ 49  ; << left shift
 TOK_SHR          equ 50  ; >> right shift
+TOK_ALLOC_PAGES  equ 51
 
 ; Type kind
 TK_SCALAR        equ 0
@@ -1039,6 +1040,7 @@ classify_kw:
     try_kw break,   TOK_BREAK
     try_kw or,      TOK_OR
     try_kw and,     TOK_AND
+    try_kw alloc_pages, TOK_ALLOC_PAGES
     try_kw ok,      TOK_IDENT
     mov     eax, TOK_IDENT
 .ck_done:
@@ -2490,7 +2492,69 @@ gen_expr_base:
     je      .do_ident
     cmp     rax, TOK_SYSCALL
     je      .do_syscall_expr
+    cmp     rax, TOK_ALLOC_PAGES
+    je      .do_alloc_pages
     jmp     .literal_done
+
+.do_alloc_pages:
+    call    adv_tok         ; skip 'alloc_pages'
+    call    adv_tok         ; skip '('
+    call    gen_expr        ; n -> rax
+    call    adv_tok         ; skip ')'
+    ; emit: size = n * 4096 (shl rax, 12)
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0xC1
+    call    emit1
+    mov     rdi, 0xE0
+    call    emit1
+    mov     rdi, 0x0C
+    call    emit1
+    ; mmap(0, size, PROT_READ|PROT_WRITE=3, MAP_PRIVATE|MAP_ANON=0x22, -1, 0)
+    ; nr=9, rdi=0, rsi=size, rdx=3, r10=0x22, r8=-1, r9=0
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x89
+    call    emit1
+    mov     rdi, 0xC6       ; mov rsi, rax
+    call    emit1
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x31
+    call    emit1
+    mov     rdi, 0xFF       ; xor rdi, rdi
+    call    emit1
+    mov     rdi, 0xBA
+    call    emit1
+    mov     rdi, 3          ; mov edx, 3
+    call    emit4
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0xBA
+    call    emit1
+    mov     rdi, 0x22       ; mov r10d, 0x22
+    call    emit4
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0xB8
+    call    emit1
+    mov     rdi, -1         ; mov r8d, -1
+    call    emit4
+    mov     rdi, 0x45
+    call    emit1
+    mov     rdi, 0x31
+    call    emit1
+    mov     rdi, 0xC9       ; xor r9d, r9d
+    call    emit1
+    mov     rdi, 0xB8
+    call    emit1
+    mov     rdi, 9          ; mov eax, 9
+    call    emit4
+    mov     rdi, 0x0F
+    call    emit1
+    mov     rdi, 0x05       ; syscall
+    call    emit1
+    jmp     .maybe_binary
 
 .do_ident:
     call    get_cur_tok_ptr
@@ -3342,6 +3406,20 @@ gen_addr:
     call    emit4
 
 .ga_post:
+    ; if it was a pointer local/global, we need to load the pointer value from the address in rax
+    cmp     qword [lv_isptr], 0
+    jne     .ga_post_do_deref
+    cmp     qword [lv_sid], -1
+    jne     .ga_post_loop       ; struct local (stored as ptr but lv_sid is set)
+.ga_post_do_deref:
+    ; emit: mov rax, [rax]
+    mov     rdi, 0x48
+    call    emit1
+    mov     rdi, 0x8B
+    call    emit1
+    mov     rdi, 0x00
+    call    emit1
+    mov     qword [lv_isptr], 0
 .ga_post_loop:
     call    cur_tok_type
     cmp     rax, TOK_DOT
@@ -3351,18 +3429,6 @@ gen_addr:
     jmp     .ga_done
 
 .ga_dot:
-    ; if current value is a pointer, deref to base
-    cmp     qword [lv_isptr], 0
-    je      .ga_dot_base
-    ; emit: mov rax, [rax]  (48 8B 00) — inlined to avoid call stack issues
-    mov     rax, [cod_len]
-    lea     rbx, [cod_buf]
-    mov     byte [rbx+rax],   0x48
-    mov     byte [rbx+rax+1], 0x8B
-    mov     byte [rbx+rax+2], 0x00
-    add     qword [cod_len], 3
-    mov     qword [lv_isptr], 0
-.ga_dot_base:
     call    adv_tok         ; skip '.'
     call    get_cur_tok_ptr
     mov     r12, [rax+8]
@@ -3448,22 +3514,6 @@ gen_addr:
     jmp     .ga_post_loop
 
 .ga_index:
-    ; deref if: explicit pointer (lv_isptr=1) OR scalar-as-pointer (lv_isptr=0, lv_sid=-1)
-    ; Do NOT deref if: struct array base after .ga_dot (lv_isptr=0, lv_sid!=-1)
-    cmp     qword [lv_isptr], 0
-    jne     .ga_idx_do_deref    ; explicit ptr → deref
-    cmp     qword [lv_sid], -1
-    jne     .ga_idx_base        ; struct array type → skip deref (rax already IS the base)
-.ga_idx_do_deref:
-    ; emit: mov rax, [rax]  — load pointer value from current address
-    mov     rdi, 0x48
-    call    emit1
-    mov     rdi, 0x8B
-    call    emit1
-    mov     rdi, 0x00
-    call    emit1
-    mov     qword [lv_isptr], 0
-.ga_idx_base:
     call    adv_tok         ; skip '['
     ; --- Save state because gen_expr might call gen_addr recursively ---
     push    qword [lv_sid]
@@ -3515,7 +3565,11 @@ gen_addr:
     mov     rdi, 0xD8
     call    emit1
     call    adv_tok         ; skip ']'
-    mov     qword [lv_isptr], 0
+    ; If we indexed into a scalar pointer, the result address should be treated as a pointer lvalue
+    cmp     qword [lv_sid], -1
+    jne     .ga_idx_done
+    mov     qword [lv_isptr], 1
+.ga_idx_done:
     jmp     .ga_post_loop
 
 .ga_done:
@@ -4329,6 +4383,13 @@ gen_expr_stmt:
     cmp     rax, TOK_LPAREN
     jne     .ges_done
     ; It's a function call: emit call
+    ; Retrieve name from previous token (at r14)
+    mov     rax, r14
+    imul    rax, rax, TOK_SZ
+    lea     rbx, [tok_buf]
+    add     rax, rbx
+    mov     r12, [rax+8]    ; name_start
+    mov     r13, [rax+16]   ; name_len
     call    adv_tok         ; skip '('
     xor     r14, r14
 .ges_arg_loop:
@@ -4348,34 +4409,39 @@ gen_expr_stmt:
     jmp     .ges_arg_loop
 .ges_args_done:
     call    adv_tok
-    ; pop into arg regs
+    ; pop into arg regs (descending: rcx/rdx/rsi/rdi so arg0→rdi, arg1→rsi, ...)
+    cmp     r14, 6
+    jl      .ges_pop5
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x59           ; pop r9
+    call    emit1
+.ges_pop5:
+    cmp     r14, 5
+    jl      .ges_pop4
+    mov     rdi, 0x41
+    call    emit1
+    mov     rdi, 0x58           ; pop r8
+    call    emit1
+.ges_pop4:
+    cmp     r14, 4
+    jl      .ges_pop3
+    mov     rdi, 0x59           ; pop rcx
+    call    emit1
+.ges_pop3:
+    cmp     r14, 3
+    jl      .ges_pop2
+    mov     rdi, 0x5A           ; pop rdx
+    call    emit1
+.ges_pop2:
+    cmp     r14, 2
+    jl      .ges_pop1
+    mov     rdi, 0x5E           ; pop rsi
+    call    emit1
+.ges_pop1:
     cmp     r14, 1
     jl      .ges_call
-    mov     rdi, 0x5F
-    call    emit1
-    cmp     r14, 2
-    jl      .ges_call
-    mov     rdi, 0x5E
-    call    emit1
-    cmp     r14, 3
-    jl      .ges_call
-    mov     rdi, 0x5A
-    call    emit1
-    cmp     r14, 4
-    jl      .ges_call
-    mov     rdi, 0x59
-    call    emit1
-    cmp     r14, 5
-    jl      .ges_call
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x58
-    call    emit1
-    cmp     r14, 6
-    jl      .ges_call
-    mov     rdi, 0x41
-    call    emit1
-    mov     rdi, 0x59
+    mov     rdi, 0x5F           ; pop rdi
     call    emit1
 .ges_call:
     ; emit call with fixup
