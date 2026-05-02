@@ -1,16 +1,6 @@
-; =============================================================================
 ; jda-ml-demo — Neural Network Training from Scratch in Pure Jda
-; =============================================================================
-; Trains MLPs on 3 tasks with no external dependencies:
-;   1. XOR Classification   (2→8→1, 5000 epochs)
-;   2. Sine Approximation   (1→16→1, 10000 epochs, 32 samples)
-;   3. Matrix Multiply Perf (64×64 matmul benchmark)
-;
-; All math compiled directly to x86-64 machine code by jda1.
+; Trains MLPs on 3 tasks: XOR, Sine, Matmul. No external dependencies.
 ; Compare with: python3 apps/ml-demo-python.py
-; =============================================================================
-
-; --- Timing (inline clock_gettime to avoid syscall-per-fn limit) ---
 
 struct Timespec {
     tv_sec: i64
@@ -26,7 +16,7 @@ fn time_now_ms() -> i64 {
 
 ; --- Neural network primitives ---
 
-fn linear_forward(x: i64, w: i64, bias: i64, out: i64) -> i64 {
+fn linear_forward(x: i64, w: i64, bias: i64, out: i64) {
     let batch = tensor_shape(x, 0)
     let in_f = tensor_shape(x, 1)
     let out_f = tensor_shape(w, 0)
@@ -47,10 +37,9 @@ fn linear_forward(x: i64, w: i64, bias: i64, out: i64) -> i64 {
         }
         i = i + 1
     }
-    ret 0
 }
 
-fn relu_forward(a: i64, out: i64) -> i64 {
+fn relu_forward(a: i64, out: i64) {
     let n = tensor_len(a)
     let zero: f64 = f64_from_int(0)
     let i = 0
@@ -63,10 +52,9 @@ fn relu_forward(a: i64, out: i64) -> i64 {
         }
         i = i + 1
     }
-    ret 0
 }
 
-fn relu_backward(pre_relu: i64, grad_out: i64, grad_in: i64) -> i64 {
+fn relu_backward(pre_relu: i64, grad_out: i64, grad_in: i64) {
     let n = tensor_len(pre_relu)
     let zero: f64 = f64_from_int(0)
     let i = 0
@@ -80,10 +68,9 @@ fn relu_backward(pre_relu: i64, grad_out: i64, grad_in: i64) -> i64 {
         }
         i = i + 1
     }
-    ret 0
 }
 
-fn backward_weights(x: i64, w: i64, grad_out: i64, grad_w: i64) -> i64 {
+fn backward_weights(x: i64, w: i64, grad_out: i64, grad_w: i64) {
     let batch = tensor_shape(x, 0)
     let in_f = tensor_shape(x, 1)
     let out_f = tensor_shape(w, 0)
@@ -106,10 +93,9 @@ fn backward_weights(x: i64, w: i64, grad_out: i64, grad_w: i64) -> i64 {
         }
         j = j + 1
     }
-    ret 0
 }
 
-fn backward_bias(grad_out: i64, grad_b: i64, batch: i64, out_f: i64) -> i64 {
+fn backward_bias(grad_out: i64, grad_b: i64, batch: i64, out_f: i64) {
     let j = 0
     loop j < out_f {
         let acc: f64 = f64_from_int(0)
@@ -123,10 +109,9 @@ fn backward_bias(grad_out: i64, grad_b: i64, batch: i64, out_f: i64) -> i64 {
         tensor_set(grad_b, j, old + acc)
         j = j + 1
     }
-    ret 0
 }
 
-fn backward_input(w: i64, grad_out: i64, grad_in: i64) -> i64 {
+fn backward_input(w: i64, grad_out: i64, grad_in: i64) {
     let batch = tensor_shape(grad_in, 0)
     let in_f = tensor_shape(grad_in, 1)
     let out_f = tensor_shape(w, 0)
@@ -149,7 +134,6 @@ fn backward_input(w: i64, grad_out: i64, grad_in: i64) -> i64 {
         }
         i = i + 1
     }
-    ret 0
 }
 
 fn mse_loss(pred: i64, target: i64) -> i64 {
@@ -167,7 +151,7 @@ fn mse_loss(pred: i64, target: i64) -> i64 {
     ret sum / fn_val
 }
 
-fn mse_backward(pred: i64, target: i64, grad_out: i64) -> i64 {
+fn mse_backward(pred: i64, target: i64, grad_out: i64) {
     let n = tensor_len(pred)
     let fn_val: f64 = f64_from_int(n)
     let two: f64 = f64_from_int(2)
@@ -180,10 +164,9 @@ fn mse_backward(pred: i64, target: i64, grad_out: i64) -> i64 {
         tensor_set(grad_out, i, scale * d)
         i = i + 1
     }
-    ret 0
 }
 
-fn sgd_step(params: i64, grads: i64, lr: i64) -> i64 {
+fn sgd_step(params: i64, grads: i64, lr: i64) {
     let n = tensor_len(params)
     let zero: f64 = f64_from_int(0)
     let lr_f: f64 = lr
@@ -195,16 +178,14 @@ fn sgd_step(params: i64, grads: i64, lr: i64) -> i64 {
         tensor_set(grads, i, zero)
         i = i + 1
     }
-    ret 0
 }
 
-fn zero_tensor(t: i64) -> i64 {
+fn zero_tensor(t: i64) {
     let zero: f64 = f64_from_int(0)
     tensor_fill(t, zero)
-    ret 0
 }
 
-; --- Simple PRNG (xorshift64) for weight initialization ---
+; --- PRNG (xorshift64) for weight init ---
 
 fn rng_next(state: &i64) -> i64 {
     let s = state[0]
@@ -224,7 +205,7 @@ fn rng_f64(state: &i64) -> i64 {
     ret rf / big
 }
 
-fn init_weights_uniform(t: i64, state: &i64, scale: i64) -> i64 {
+fn init_weights_uniform(t: i64, state: &i64, scale: i64) {
     let n = tensor_len(t)
     let scale_f: f64 = scale
     let half: f64 = scale_f / f64_from_int(2)
@@ -234,12 +215,9 @@ fn init_weights_uniform(t: i64, state: &i64, scale: i64) -> i64 {
         tensor_set(t, i, r * scale_f - half)
         i = i + 1
     }
-    ret 0
 }
 
-; --- Matmul benchmark ---
-
-fn matmul_bench(a: i64, b: i64, c: i64, M: i64, K: i64, N: i64) -> i64 {
+fn matmul_bench(a: i64, b: i64, c: i64, M: i64, K: i64, N: i64) {
     let i = 0
     loop i < M {
         let j = 0
@@ -257,10 +235,7 @@ fn matmul_bench(a: i64, b: i64, c: i64, M: i64, K: i64, N: i64) -> i64 {
         }
         i = i + 1
     }
-    ret 0
 }
-
-; --- Print f64 as integer * 10000 (4 decimal places) ---
 
 fn print_f64_scaled(val: i64) {
     let ten_k: f64 = f64_from_int(10000)
@@ -282,22 +257,17 @@ fn print_f64_scaled(val: i64) {
     print "{frac}"
 }
 
-; =============================================================================
-; Task 1: XOR Classification (2→8→1 MLP)
-; =============================================================================
+; === Task 1: XOR Classification (2->8->1 MLP) ===
 
 fn task_xor() {
     print "=== Task 1: XOR Classification ===\n"
     print "Architecture: 2 -> 8 -> 1 MLP\n"
     print "Dataset: 4 XOR samples\n"
     print "Epochs: 5000, LR: 0.1\n\n"
-
     let batch = 4
     let hidden = 8
     let zero_f: f64 = f64_from_int(0)
     let one_f: f64 = f64_from_int(1)
-
-    ; XOR inputs [4,2]
     let x = tensor_new2(4, 2)
     tensor_set(x, 0, zero_f)
     tensor_set(x, 1, zero_f)
@@ -307,15 +277,11 @@ fn task_xor() {
     tensor_set(x, 5, zero_f)
     tensor_set(x, 6, one_f)
     tensor_set(x, 7, one_f)
-
-    ; XOR targets [4,1]
     let y = tensor_new2(4, 1)
     tensor_set(y, 0, zero_f)
     tensor_set(y, 1, one_f)
     tensor_set(y, 2, one_f)
     tensor_set(y, 3, zero_f)
-
-    ; Layers + gradients
     let w1 = tensor_new2(hidden, 2)
     let b1 = tensor_new1(hidden)
     let gw1 = tensor_new2(hidden, 2)
@@ -324,8 +290,6 @@ fn task_xor() {
     let b2 = tensor_new1(1)
     let gw2 = tensor_new2(1, hidden)
     let gb2 = tensor_new1(1)
-
-    ; Init weights
     let rng_state: i64[1]
     rng_state[0] = 42
     let two_f: f64 = f64_from_int(2)
@@ -334,8 +298,6 @@ fn task_xor() {
     init_weights_uniform(w2, &rng_state, scale)
     tensor_fill(b1, zero_f)
     tensor_fill(b2, zero_f)
-
-    ; Buffers
     let h1 = tensor_new2(4, hidden)
     let h1r = tensor_new2(4, hidden)
     let out = tensor_new2(4, 1)
@@ -343,19 +305,14 @@ fn task_xor() {
     let g_h1r = tensor_new2(4, hidden)
     let g_h1 = tensor_new2(4, hidden)
     let g_x = tensor_new2(4, 2)
-
-    ; Learning rate
     let ten_f: f64 = f64_from_int(10)
     let lr: f64 = one_f / ten_f
-
-    ; Training
     let t0 = time_now_ms()
     let epoch = 0
     loop epoch < 5000 {
         linear_forward(x, w1, b1, h1)
         relu_forward(h1, h1r)
         linear_forward(h1r, w2, b2, out)
-
         let print_flag = epoch - (epoch / 1000) * 1000
         if print_flag == 0 {
             let loss = mse_loss(out, y)
@@ -365,7 +322,6 @@ fn task_xor() {
             print_f64_scaled(loss)
             print "\n"
         }
-
         mse_backward(out, y, g_out)
         zero_tensor(gw2)
         zero_tensor(gb2)
@@ -380,23 +336,17 @@ fn task_xor() {
         backward_weights(x, w1, g_h1, gw1)
         backward_bias(g_h1, gb1, batch, hidden)
         backward_input(w1, g_h1, g_x)
-
         sgd_step(w1, gw1, lr)
         sgd_step(b1, gb1, lr)
         sgd_step(w2, gw2, lr)
         sgd_step(b2, gb2, lr)
-
         epoch = epoch + 1
     }
     let t1 = time_now_ms()
     let xor_ms = t1 - t0
-
-    ; Final forward pass
     linear_forward(x, w1, b1, h1)
     relu_forward(h1, h1r)
     linear_forward(h1r, w2, b2, out)
-
-    ; Print predictions
     print "\nPredictions:\n"
     let half: f64 = one_f / two_f
     let p0: f64 = tensor_get(out, 0)
@@ -415,56 +365,30 @@ fn task_xor() {
     print "  [1,1] -> "
     print_f64_scaled(p3)
     print "  (expected ~0)\n"
-
-    ; Check correctness
     if half > p0 and p1 > half and p2 > half and half > p3 {
         print "  Result: PASS (4/4 correct)\n"
     } else {
         print "  Result: FAIL\n"
     }
-
     let final_loss = mse_loss(out, y)
     print "  Final loss: "
     print_f64_scaled(final_loss)
     print "\n  Time: "
     print "{xor_ms}"
     print " ms\n\n"
-
-    tensor_free(x)
-    tensor_free(y)
-    tensor_free(w1)
-    tensor_free(b1)
-    tensor_free(gw1)
-    tensor_free(gb1)
-    tensor_free(w2)
-    tensor_free(b2)
-    tensor_free(gw2)
-    tensor_free(gb2)
-    tensor_free(h1)
-    tensor_free(h1r)
-    tensor_free(out)
-    tensor_free(g_out)
-    tensor_free(g_h1r)
-    tensor_free(g_h1)
-    tensor_free(g_x)
 }
 
-; =============================================================================
-; Task 2: Sine Approximation (1→16→1 MLP learns sin(x))
-; =============================================================================
+; === Task 2: Sine Approximation (1->16->1 MLP) ===
 
 fn task_sine() {
     print "=== Task 2: Sine Approximation ===\n"
     print "Architecture: 1 -> 16 -> 1 MLP\n"
     print "Dataset: 32 samples of sin(x), x in [0, 6.28]\n"
     print "Epochs: 10000, LR: 0.01\n\n"
-
     let n_samples = 32
     let hidden = 16
     let zero_f: f64 = f64_from_int(0)
     let one_f: f64 = f64_from_int(1)
-
-    ; Generate sin(x) dataset
     let x = tensor_new2(n_samples, 1)
     let y = tensor_new2(n_samples, 1)
     let pi2: f64 = f64_from_int(6283185)
@@ -472,7 +396,6 @@ fn task_sine() {
     let two_pi: f64 = pi2 / million
     let n_f: f64 = f64_from_int(n_samples)
     let step: f64 = two_pi / n_f
-
     let si = 0
     loop si < n_samples {
         let si_f: f64 = f64_from_int(si)
@@ -481,8 +404,6 @@ fn task_sine() {
         tensor_set(y, si, f64_sin(xv))
         si = si + 1
     }
-
-    ; Layers + gradients
     let w1 = tensor_new2(hidden, 1)
     let b1 = tensor_new1(hidden)
     let gw1 = tensor_new2(hidden, 1)
@@ -491,8 +412,6 @@ fn task_sine() {
     let b2 = tensor_new1(1)
     let gw2 = tensor_new2(1, hidden)
     let gb2 = tensor_new1(1)
-
-    ; Init weights
     let rng_state: i64[1]
     rng_state[0] = 12345
     let two_f: f64 = f64_from_int(2)
@@ -501,8 +420,6 @@ fn task_sine() {
     init_weights_uniform(w2, &rng_state, scale)
     tensor_fill(b1, zero_f)
     tensor_fill(b2, zero_f)
-
-    ; Buffers
     let h1 = tensor_new2(n_samples, hidden)
     let h1r = tensor_new2(n_samples, hidden)
     let out = tensor_new2(n_samples, 1)
@@ -510,19 +427,14 @@ fn task_sine() {
     let g_h1r = tensor_new2(n_samples, hidden)
     let g_h1 = tensor_new2(n_samples, hidden)
     let g_x = tensor_new2(n_samples, 1)
-
-    ; Learning rate = 0.01
     let hundred: f64 = f64_from_int(100)
     let lr: f64 = one_f / hundred
-
-    ; Training
     let t0 = time_now_ms()
     let epoch = 0
     loop epoch < 10000 {
         linear_forward(x, w1, b1, h1)
         relu_forward(h1, h1r)
         linear_forward(h1r, w2, b2, out)
-
         let print_flag = epoch - (epoch / 2000) * 2000
         if print_flag == 0 {
             let loss = mse_loss(out, y)
@@ -532,7 +444,6 @@ fn task_sine() {
             print_f64_scaled(loss)
             print "\n"
         }
-
         mse_backward(out, y, g_out)
         zero_tensor(gw2)
         zero_tensor(gb2)
@@ -547,23 +458,17 @@ fn task_sine() {
         backward_weights(x, w1, g_h1, gw1)
         backward_bias(g_h1, gb1, n_samples, hidden)
         backward_input(w1, g_h1, g_x)
-
         sgd_step(w1, gw1, lr)
         sgd_step(b1, gb1, lr)
         sgd_step(w2, gw2, lr)
         sgd_step(b2, gb2, lr)
-
         epoch = epoch + 1
     }
     let t1 = time_now_ms()
     let sine_ms = t1 - t0
-
-    ; Final forward
     linear_forward(x, w1, b1, h1)
     relu_forward(h1, h1r)
     linear_forward(h1r, w2, b2, out)
-
-    ; Sample predictions
     print "\nSample predictions (x -> predicted vs actual):\n"
     let pi = 0
     loop pi < 8 {
@@ -577,61 +482,32 @@ fn task_sine() {
         print "\n"
         pi = pi + 1
     }
-
     let final_loss = mse_loss(out, y)
     print "  Final loss: "
     print_f64_scaled(final_loss)
     print "\n  Time: "
     print "{sine_ms}"
     print " ms\n\n"
-
-    tensor_free(x)
-    tensor_free(y)
-    tensor_free(w1)
-    tensor_free(b1)
-    tensor_free(gw1)
-    tensor_free(gb1)
-    tensor_free(w2)
-    tensor_free(b2)
-    tensor_free(gw2)
-    tensor_free(gb2)
-    tensor_free(h1)
-    tensor_free(h1r)
-    tensor_free(out)
-    tensor_free(g_out)
-    tensor_free(g_h1r)
-    tensor_free(g_h1)
-    tensor_free(g_x)
 }
 
-; =============================================================================
-; Task 3: Matrix Multiply Benchmark (64×64)
-; =============================================================================
+; === Task 3: Matrix Multiply Benchmark (64x64) ===
 
 fn task_matmul() {
     print "=== Task 3: Matrix Multiply Benchmark ===\n"
     print "Size: 64x64 @ 64x64 (10 iterations)\n\n"
-
     let M = 64
     let N = 64
     let K = 64
     let zero_f: f64 = f64_from_int(0)
-
     let a = tensor_new2(M, K)
     let b = tensor_new2(K, N)
     let c = tensor_new2(M, N)
-
-    ; Fill with small values
     let rng_state: i64[1]
     rng_state[0] = 999
     let scale: f64 = f64_from_int(1)
     init_weights_uniform(a, &rng_state, scale)
     init_weights_uniform(b, &rng_state, scale)
-
-    ; Warm up
     matmul_bench(a, b, c, M, K, N)
-
-    ; Timed: 10 iterations
     let t0 = time_now_ms()
     let iter = 0
     loop iter < 10 {
@@ -641,8 +517,6 @@ fn task_matmul() {
     let t1 = time_now_ms()
     let total_ms = t1 - t0
     let avg_ms = total_ms / 10
-
-    ; Verify non-zero
     let sum: f64 = f64_from_int(0)
     let vi = 0
     loop vi < 16 {
@@ -650,7 +524,6 @@ fn task_matmul() {
         sum = sum + f64_abs(v)
         vi = vi + 1
     }
-
     print "  Total (10 iters): "
     print "{total_ms}"
     print " ms\n"
@@ -661,15 +534,9 @@ fn task_matmul() {
         print "  Verification: PASS\n"
     }
     print "  FLOP/matmul: 524288\n\n"
-
-    tensor_free(a)
-    tensor_free(b)
-    tensor_free(c)
 }
 
-; =============================================================================
-; Main
-; =============================================================================
+; === Main ===
 
 fn main() -> i64 {
     print "================================================================\n"
@@ -677,11 +544,9 @@ fn main() -> i64 {
     print "  Compiler: jda1 (self-hosted, x86-64 native code)\n"
     print "  No LLVM, no C, no external dependencies\n"
     print "================================================================\n\n"
-
     task_xor()
     task_sine()
     task_matmul()
-
     print "================================================================\n"
     print "  All tasks complete. Compare with:\n"
     print "    python3 apps/ml-demo-python.py\n"
