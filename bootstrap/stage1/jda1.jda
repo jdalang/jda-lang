@@ -732,11 +732,6 @@ fn ok(x: i64) {
 }
 
 fn lookup_const(src: &i8, name_start: i64, name_len: i64) {
-    print("LC cnt=")
-    print(g_const_cnt)
-    print(" nlen=")
-    print(name_len)
-    print("\n")
     let i = 0
     loop i < g_const_cnt {
         let cur_len = g_const_name_len_tbl[i]
@@ -744,21 +739,12 @@ fn lookup_const(src: &i8, name_start: i64, name_len: i64) {
         if cur_len == name_len {
             let cur_off = g_const_name_off_tbl[i]
             let sm = str_match(src, cur_off, name_start, name_len)
-            print("LC sm=")
-            print(sm)
-            print(" i=")
-            print(i)
-            print("\n")
             if sm == 1 {
-                print("LC HIT val=")
-                print(cur_val)
-                print("\n")
                 ret cur_val
             }
         }
         i = i + 1
     }
-    print("LC MISS ALL\n")
     ret -1
 }
 
@@ -1390,31 +1376,11 @@ fn lookup_global(name_start: i64, name_len: i64, src: &i8) -> i64 {
 }
 
 fn dump_globals(src: &i8) {
-    print("GLOB DUMP cnt=")
-    print(g_glob_cnt)
-    print("\n")
-    let di = 0
-    loop di < g_glob_cnt {
-        let dn = g_glob_name_off[di]
-        let dl = g_glob_name_len[di]
-        print("G")
-        print(di)
-        print(" len=")
-        print(dl)
-        print(" [")
-        syscall(1, 1, src + dn, dl)
-        print("]\n")
-        di = di + 1
-    }
+    print("GLOB DUMP\n")
 }
 
 fn lookup_global2(name_start: i64, name_len: i64, src: &i8) -> i64 {
-    if g_glob_name_off == 0 { print("LG2: no table\n") ret -1 }
-    print("LG2cnt=")
-    print(g_glob_cnt)
-    print("nlen=")
-    print(name_len)
-    print("\n")
+    if g_glob_name_off == 0 { ret -1 }
     let i = 0
     loop i < g_glob_cnt {
         let glen = g_glob_name_len[i]
@@ -3196,6 +3162,14 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
             ret emit_const(jfn, bb, TYPE_I64, cval)
         }
         if tok_type_at(toks, pos[0] + 1) == TOK_LBRACE {
+            ; Determine if it's a known large struct — emit OP_ALLOC for those
+            let struct_alloc_sz = 0
+            if t_len == 11 and streq(src, t_start, 11, "JirFunction") == 1 {
+                struct_alloc_sz = 6297032
+            }
+            if t_len == 8 and streq(src, t_start, 8, "LowerCtx") == 1 {
+                struct_alloc_sz = 100464
+            }
             pos[0] = pos[0] + 2
             let sdepth = 1
             loop sdepth > 0 and pos[0] < g_dbg_tok_cnt {
@@ -3203,6 +3177,13 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
                 if slbt == TOK_LBRACE { sdepth = sdepth + 1 }
                 if slbt == TOK_RBRACE { sdepth = sdepth - 1 }
                 pos[0] = pos[0] + 1
+            }
+            if struct_alloc_sz > 0 {
+                let sz_id = emit_const(jfn, bb, TYPE_I64, struct_alloc_sz)
+                let ai = Instr{}
+                ai.op = OP_ALLOC
+                ai.operand0 = sz_id
+                ret emit(jfn, bb, &ai)
             }
             ret emit_const(jfn, bb, TYPE_I64, 0)
         }
@@ -3224,17 +3205,10 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         ret emit_const(jfn, bb, TYPE_I64, 0)
     }
     let t_type = tok_type_at(toks, pos[0])
-    print("X1 t_type=")
-    print(t_type)
-    print("\n")
     if t_type == TOK_INT {
-        print("X1a\n")
         let t_imm = tok_imm_at(toks, pos[0])
-        print("X1b\n")
         pos[0] = pos[0] + 1
-        let iid = emit_const(jfn, bb, TYPE_I64, t_imm)
-        print("X1c\n")
-        ret iid
+        ret emit_const(jfn, bb, TYPE_I64, t_imm)
     }
     if t_type == TOK_IDENT {
         ret codegen_primary_ident_inline(toks, pos, stab, src, jfn, bb)
@@ -4570,6 +4544,8 @@ fn regalloc_init(ra: &RegAlloc) {
         ra.spill_off[j] = -1
         j = j + 1
     }
+    ; Spill slots start at 8 (growing up). Local variable slots now start at
+    ; jfn.next_slot_off = 65536 (set in function reset), so no collision.
     ra.sp_top = 8
 }
 
@@ -5484,6 +5460,13 @@ fn live_compile_let_stmt(toks0: &Token, pos: &i64, stab: &StructTable, src: &i8,
     let name_start = tok_str_start_at(toks0, pos[0])
     let name_len = tok_str_len_at(toks0, pos[0])
     pos[0] = pos[0] + 1
+    if tok_type_at0(toks0, pos) == TOK_COLON {
+        pos[0] = pos[0] + 1
+        if tok_type_at0(toks0, pos) == TOK_AMP {
+            pos[0] = pos[0] + 1
+        }
+        pos[0] = pos[0] + 1
+    }
     pos[0] = pos[0] + 1
     let skip_store = 0
     let bind_stype = TYPE_I64
@@ -5536,9 +5519,6 @@ fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         let toks0 = g_dbg_toks
         g_panic_pos = pos[0]
         let t = tok_type_at0(toks0, pos)
-        print("B3 t=")
-        print(t)
-        print("\n")
         if t == TOK_RBRACE or t == TOK_EOF {
             keep_going = 0
         } else {
@@ -5914,6 +5894,7 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
 ; ============================================================
 
 let g_stab_ptr: &StructTable = 0
+let g_loop_ctrl: i64 = 0
 let g_argv_base: &i64 = 0
 let g_src_path: &i8 = 0
 let g_out_path: &i8 = 0
@@ -5962,25 +5943,38 @@ fn main() {
 
     g_dbg_toks = toks
     g_dbg_tok_cnt = tok_cnt
+    if g_dbg_tok_cnt > 0 { print("GDTC_OK\n") } else { print("GDTC_ZERO\n") }
     g_glob_cnt = 0
+    if g_dbg_tok_cnt > 0 { print("A1_OK\n") } else { print("A1_ZERO\n") }
     g_glob_total_sz = 0
+    if g_dbg_tok_cnt > 0 { print("A2_OK\n") } else { print("A2_ZERO\n") }
     g_emit_glob_buf = 0
+    if g_dbg_tok_cnt > 0 { print("A3_OK\n") } else { print("A3_ZERO\n") }
     g_emit_glob_len = 0
+    if g_dbg_tok_cnt > 0 { print("A4_OK\n") } else { print("A4_ZERO\n") }
 
 
 
     let stab = alloc_pages(50)
+    if g_dbg_tok_cnt > 0 { print("B1_OK\n") } else { print("B1_ZERO\n") }
     g_stab_ptr = stab
+    if g_dbg_tok_cnt > 0 { print("B2_OK\n") } else { print("B2_ZERO\n") }
     g_stab_ptr.cnt = 0
+    if g_dbg_tok_cnt > 0 { print("B3_OK\n") } else { print("B3_ZERO\n") }
     g_stab_ptr.field_cnt = 0
+    if g_dbg_tok_cnt > 0 { print("B4_OK\n") } else { print("B4_ZERO\n") }
 
     let pos = 0
+    if g_dbg_tok_cnt > 0 { print("B5_OK\n") } else { print("B5_ZERO\n") }
     print("PRE-CONST\n")
+    if g_dbg_tok_cnt > 0 { print("TKCNT_OK\n") } else { print("TKCNT_ZERO\n") }
     ; Parse const declarations first (jda1.jda starts with 40+ consts)
-    let more_consts = 1
-    loop more_consts == 1 {
+    ; Use global g_loop_ctrl to avoid local variable slot/spill issues
+    g_loop_ctrl = 1
+    loop g_loop_ctrl == 1 {
         print("CI\n")
-        if pos < tok_cnt {
+        if pos < g_dbg_tok_cnt {
+            print("CI_IN\n")
             let top_start = tok_str_start_at(toks, pos)
             let top_len = tok_str_len_at(toks, pos)
             let top_t = tok_type_at(toks, pos)
@@ -5989,12 +5983,17 @@ fn main() {
                 if streq(src_buf, top_start, 5, "const") == 1 { top_is_const_kw = 1 }
             }
             if top_t == TOK_CONST or top_is_const_kw == 1 {
+                print("CI_CONST\n")
                 parse_const_decl(toks, &pos)
+                print("CI_CONST_DONE\n")
             } else {
-                more_consts = 0
+                print("CI_NONCONST\n")
+                g_loop_ctrl = 0
             }
         } else {
-            more_consts = 0
+            print("CI_OUT\n")
+            g_loop_ctrl = 0
+            print("CI_OUT_AFTER\n")
         }
     }
 
@@ -6021,11 +6020,15 @@ fn main() {
     }
 
     print("STRDONE\n")
+    print("SD1\n")
     ; Pass 1: Scan for global functions and record names/offsets
     let fn_name_off = alloc_pages(1) ; 512 entries
+    print("SD2\n")
     let fn_name_len = alloc_pages(1)
+    print("SD3\n")
     let fn_cnt = 0
     let scan_pos = 0
+    print("SD4\n")
     loop scan_pos < tok_cnt {
         let t = tok_type_at(toks, scan_pos)
         let t_start = tok_str_start_at(toks, scan_pos)
@@ -6044,6 +6047,7 @@ fn main() {
         }
         scan_pos = scan_pos + 1
     }
+    print("SCAN_DONE\n")
 
     ; ---- Prepare output buffers ----
     let code_buf = alloc_pages(256) ; 1MB
@@ -6159,7 +6163,7 @@ fn main() {
                 print("F6\n")
                 jfn.param_cnt = 0
                 jfn.strtab_pos = 0
-                jfn.next_slot_off = 0
+                jfn.next_slot_off = 65536
                 jfn.next_id = 0
                 print("F7\n")
 
