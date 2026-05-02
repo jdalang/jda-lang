@@ -492,6 +492,19 @@ let g_lex_pos_i = 0
 let g_lex_cur_char: i64 = 0
 let g_lex_handled: i64 = 0
 let g_lower_is_main = 0
+; Loop register promotion state
+let g_promo_cnt = 0
+let g_promo_slot0 = -1
+let g_promo_slot1 = -1
+let g_promo_slot2 = -1
+let g_promo_header = -1
+let g_promo_body_end = -1
+let g_promo_exit = -1
+let g_cur_block_idx = -1
+let g_cand_slots: &i64 = 0
+let g_cand_load: &i64 = 0
+let g_cand_store: &i64 = 0
+let g_cand_cnt = 0
 let g_save_mask: i64 = 0
 ; Token write cursor (avoids 5-arg calls and local-ptr bugs)
 let g_ltw_base: &i64 = 0
@@ -12205,6 +12218,136 @@ fn peephole(jfn: &JirFunction) {
     }
 }
 
+fn loop_promote_scan(jfn: &JirFunction) {
+    ; Reset promotion state
+    g_promo_cnt = 0
+    g_promo_slot0 = -1
+    g_promo_slot1 = -1
+    g_promo_slot2 = -1
+    g_promo_header = -1
+    g_promo_exit = -1
+    g_cand_cnt = 0
+    ; Find innermost loop: a JMP whose target is an earlier block (back-edge)
+    let best_header = -1
+    let best_body_end = -1
+    let best_exit = -1
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let ic = jfn.blocks[bi].instr_cnt
+        if ic > 0 {
+            let last_op = jfn.blocks[bi].instrs[ic - 1].op
+            if last_op == OP_JMP {
+                let tgt = jfn.blocks[bi].instrs[ic - 1].bb_target0
+                if tgt >= 0 and tgt < bi {
+                    if tgt > best_header {
+                        best_header = tgt
+                        best_body_end = bi
+                    }
+                }
+            }
+        }
+        bi = bi + 1
+    }
+    if best_header == -1 { ret ok(0) }
+    ; Find exit block from header's BR instruction
+    let hic = jfn.blocks[best_header].instr_cnt
+    let hi = 0
+    loop hi < hic {
+        let hop = jfn.blocks[best_header].instrs[hi].op
+        if hop == OP_BR {
+            best_exit = jfn.blocks[best_header].instrs[hi].bb_target1
+        }
+        hi = hi + 1
+    }
+    if best_exit == -1 { ret ok(0) }
+    ; Collect slots that are LOADed and STOREd in the loop (header..body_end)
+    ; Use global arrays to avoid local array indexing issues
+    let lb = best_header
+    loop lb <= best_body_end {
+        let li = 0
+        loop li < jfn.blocks[lb].instr_cnt {
+            let lop = jfn.blocks[lb].instrs[li].op
+            let lslot = -1
+            let is_ld = 0
+            let is_st = 0
+            if lop == OP_LOAD {
+                lslot = jfn.blocks[lb].instrs[li].operand0
+                is_ld = 1
+            }
+            if lop == OP_STORE {
+                lslot = jfn.blocks[lb].instrs[li].operand1
+                is_st = 1
+            }
+            if lslot > 0 {
+                if is_ld == 1 or is_st == 1 {
+                    ; Find or add slot to candidates using global arrays
+                    let ci = 0
+                    let found = 0
+                    loop ci < g_cand_cnt {
+                        if g_cand_slots[ci] == lslot {
+                            if is_ld == 1 { g_cand_load[ci] = 1 }
+                            if is_st == 1 { g_cand_store[ci] = 1 }
+                            found = 1
+                        }
+                        ci = ci + 1
+                    }
+                    if found == 0 and g_cand_cnt < 8 {
+                        let cc = g_cand_cnt
+                        g_cand_slots[cc] = lslot
+                        g_cand_load[cc] = is_ld
+                        g_cand_store[cc] = is_st
+                        g_cand_cnt = cc + 1
+                    }
+                }
+            }
+            li = li + 1
+        }
+        lb = lb + 1
+    }
+    ; Check for CALL instructions in loop (disqualifies promotion)
+    let has_call = 0
+    lb = best_header
+    loop lb <= best_body_end {
+        let li = 0
+        loop li < jfn.blocks[lb].instr_cnt {
+            let lop = jfn.blocks[lb].instrs[li].op
+            if lop == OP_CALL or lop == OP_CALL_IND { has_call = 1 }
+            if lop == OP_SYSCALL { has_call = 1 }
+            if lop == OP_PRINT_INT or lop == OP_PRINT_FLOAT { has_call = 1 }
+            if lop == OP_ALLOC { has_call = 1 }
+            li = li + 1
+        }
+        lb = lb + 1
+    }
+    if has_call == 1 { ret ok(0) }
+    ; Only promote simple loops (header + 1 body block)
+    let loop_span = best_body_end - best_header
+    if loop_span != 1 { ret ok(0) }
+    ; Select slots that are both loaded AND stored (up to 3, for R13/R14/R15)
+    let pi = 0
+    let ci = 0
+    loop ci < g_cand_cnt {
+        if g_cand_load[ci] == 1 and g_cand_store[ci] == 1 {
+            if pi == 0 { g_promo_slot0 = g_cand_slots[ci] }
+            if pi == 1 { g_promo_slot1 = g_cand_slots[ci] }
+            if pi == 2 { g_promo_slot2 = g_cand_slots[ci] }
+            pi = pi + 1
+        }
+        ci = ci + 1
+    }
+    g_promo_cnt = pi
+    g_promo_header = best_header
+    g_promo_body_end = best_body_end
+    g_promo_exit = best_exit
+}
+
+fn promo_reg_for_slot(slot: i64) -> i32 {
+    if slot == g_promo_slot0 { ret PHYS_R13 }
+    if slot == g_promo_slot1 { ret PHYS_R14 }
+    if slot == g_promo_slot2 { ret PHYS_R15 }
+    ret -1
+}
+
 ; ============================================================
 ; 8. GREEDY REGISTER ALLOCATOR
 ; ============================================================
@@ -13312,6 +13455,23 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_load = 0
     if ins.op == OP_LOAD { is_load = 1 }
     if is_load == 1 {
+        ; Check if this slot is promoted (loop register optimization)
+        let promo_r = -1
+        if g_promo_cnt > 0 and g_cur_block_idx >= g_promo_header and g_cur_block_idx <= g_promo_body_end {
+            promo_r = promo_reg_for_slot(ins.operand0)
+        }
+        if promo_r != -1 {
+            ; Promoted: read from pinned register instead of memory
+            let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+            emit_mov_rr(out, pos, dst, promo_r)
+            if ctx.use_cnt[ins.id] > 1 {
+                let lsp = ctx.ra.sp_top + 8
+                ra_set_sp_top(&ctx.ra, lsp)
+                ra_set_spill(&ctx.ra, ins.id, lsp)
+                emit_store_spill(out, pos, lsp, dst)
+            }
+            ret 1
+        }
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_load_spill(out, pos, dst, ins.operand0)
         if ctx.use_cnt[ins.id] > 1 {
@@ -13346,7 +13506,18 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if ins.op == OP_STORE { is_store = 1 }
     if is_store == 1 {
         let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-        emit_store_spill(out, pos, ins.operand1, src_r)
+        ; Check if this slot is promoted (all stores update the pinned register)
+        let st_promo_r = -1
+        if g_promo_cnt > 0 {
+            st_promo_r = promo_reg_for_slot(ins.operand1)
+        }
+        if st_promo_r != -1 {
+            ; Promoted: update pinned register AND store to memory
+            emit_mov_rr(out, pos, st_promo_r, src_r)
+            emit_store_spill(out, pos, ins.operand1, src_r)
+        } else {
+            emit_store_spill(out, pos, ins.operand1, src_r)
+        }
         consume_use(ctx, ins.operand0)
         ret 1
     }
@@ -19446,9 +19617,11 @@ fn lower_fn_emit_blocks(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) 
     let i = 0
     loop i < jfn.block_cnt {
         ctx.bb_offsets[i] = pos[0]
+        g_cur_block_idx = i
         lower_block(jfn.blocks[i], ctx, jfn, out, pos)
         i = i + 1
     }
+    g_cur_block_idx = -1
 }
 
 fn lower_fn_emit_epilogue(out: &i8, pos: &i64, is_main: i64) {
@@ -19503,6 +19676,7 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     lower_fn_emit_prologue(jfn, out, pos, is_main)
     lower_fn_store_params(jfn, out, pos)
     lower_fn_collect_uses(jfn, ctx)
+    loop_promote_scan(jfn)
     lower_fn_emit_blocks(jfn, ctx, out, pos)
     ; Patch frame size to actual usage (P1: right-sized stack frames)
     if is_main != 1 {
@@ -20344,6 +20518,10 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_lambda_name_offs = alloc_pages(1) as &i64
     g_lambda_name_lens = alloc_pages(1) as &i64
     g_lambda_cnt = 0
+    ; Loop promotion candidate arrays
+    g_cand_slots = alloc_pages(1) as &i64
+    g_cand_load = alloc_pages(1) as &i64
+    g_cand_store = alloc_pages(1) as &i64
     ; Bootstrap: alloc_pages gives zero-initialized memory so entry 0 is already zero.
     ; Just set the count and total size to skip slot 0 (dummy entry).
     g_glob_cnt      = 1
