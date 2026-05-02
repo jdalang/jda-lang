@@ -188,10 +188,58 @@ with no slot → `OP_LOAD(-1)` → reads nonsense → all constant comparisons b
 - ✅ `compile_stmts_inline` replaces the old parse_fn inner loop
 - ✅ `NODE_LET` stores str_start/str_len integers instead of dangling Token pointer
 
-### Current pipeline status
+### Current pipeline status (March 10, 2026)
 - jda0 → jda1_new ✅
-- jda1_new → jda1_sh2 ✅ (exits 0)
+- jda1_new → jda1_sh2 ✅ (exits 0, 264583 bytes)
 - jda1_sh2 → hello binary: needs testing after both bug fixes applied
+
+---
+
+## March 15, 2026 — Stack Overflow + argv Clobber Fixes
+
+### Fix: Stack Overflow in Main Compilation Loop ✅
+
+**Root cause**: `let jfn_tmp = JirFunction{}` and `let ctx_tmp = LowerCtx{}` were declared
+INSIDE the `loop more_top == 1` loop body. In jda0's ABI, a struct literal `S{}` allocates
+`sizeof(S)` bytes on the STACK FRAME at the point of declaration.
+
+- `sizeof(JirFunction)` = 6,297,032 bytes ≈ 6.3 MB
+- `sizeof(LowerCtx)` = 100,464 bytes ≈ 100 KB
+
+Each iteration of the loop (one per function compiled) grew the virtual stack frame by ~6.4 MB.
+After ~46 functions, the 524 MB ulimit was exceeded → SIGSEGV on the next `push rbx` in a
+function prologue.
+
+**Fix**: Moved both allocations to BEFORE `loop more_top == 1`. Main's stack frame now uses
+a fixed ~6.4 MB regardless of how many functions are compiled. jda0's `lookup_local` returns
+the FIRST slot with a given name, so re-assigning `jfn` / `ctx` inside the loop still works.
+
+**Result**: `jda1_new → jda1_sh2` exits 0, produces 264,583-byte binary ✅
+
+### Fix: argv Capture Clobbered by Diagnostic print() ✅
+
+**Root cause**: A diagnostic `print("M0\n")` was placed BEFORE the `asm { out argv_ptr = rsi }`
+block that captures the argv pointer passed by `_start`. The `print` built-in emits a `write`
+syscall that uses `rsi` as the buffer pointer. After the syscall, `rsi` contains the address of
+the string literal `"M0\n"` rather than the argv base pointer.
+
+**Symptom**: `g_src_path` received a non-canonical address (0x000A634C...) → `syscall(2, g_src_path, ...)` faulted.
+
+**Fix**: Moved the argv capture block (`asm { out argv_ptr = rsi }` and subsequent assignments)
+to be the FIRST statements in `main()`, before any `print()` call.
+
+### Current Pipeline Status (March 15, 2026)
+
+```
+jda0 → jda1_new    ✅  (all phases, fully working)
+jda1_new → jda1_sh2  ✅  (exits 0, 264,583 bytes)
+jda1_sh2 → jda1_sh3  ❌  PANIC: "Too many functions" after parsing 256 functions (pos=41889)
+```
+
+**Next blocker**: jda1_sh2 processes 256 top-level functions then panics with "Too many functions".
+The function table limit in compile_stmts_inline / the main compile loop needs investigation.
+Likely related to BUG 2 (constants unresolved) causing the parser to miscount tokens and
+produce phantom function entries.
 
 ## Fifth Fix: Struct Pointer Type Support (March 8, 2026 - Final Session)
 **Commit**: `0f0021e` - add pointer type support to struct field parsing
