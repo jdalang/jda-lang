@@ -278,7 +278,7 @@ _start:
     mov     eax, SYS_READ
     mov     rdi, r13
     lea     rsi, [src_buf]
-    mov     edx, 65534
+    mov     edx, 1048574
     syscall
     cmp     rax, 0
     jl      .bad_read
@@ -1254,6 +1254,7 @@ get_elem_sz:
 p1_scan:
     push    rbp
     mov     rbp, rsp
+    sub     rsp, 8
     push    rbx
     push    r12
     push    r13
@@ -1263,6 +1264,7 @@ p1_scan:
     mov     qword [cst_cnt], 0
     mov     qword [stt_cnt], 0
     mov     qword [fn_cnt],  0
+    mov     qword [rbp-8],   0
 
 .p1_loop:
     call    cur_tok_type
@@ -1566,7 +1568,7 @@ p1_scan:
     mov     r13, [rax+16]   ; fn name_len
     call    adv_tok         ; skip NAME
     ; allocate fn entry
-    mov     rax, [fn_cnt]
+    mov     rax, [rbp-8]
     imul    rax, rax, FN_SZ
     lea     r14, [fn_tbl]
     add     r14, rax
@@ -1783,10 +1785,12 @@ p1_scan:
     jmp     .p1_skip
 .p1_skip_done:
     call    adv_tok         ; skip final '}'
-    inc     qword [fn_cnt]
+    inc     qword [rbp-8]
     jmp     .p1_loop
 
 .p1_done:
+    mov     rax, [rbp-8]
+    mov     [fn_cnt], rax
     pop     r15
     pop     r14
     pop     r13
@@ -4881,11 +4885,17 @@ gen_fn:
 p2_gen:
     push    rbp
     mov     rbp, rsp
+    sub     rsp, 16
     push    rbx
     push    r12
     push    r13
     push    r14
     push    r15
+    ; Keep a stable function count and loop index on stack so pass-2
+    ; iteration isn't truncated if a callee returns with clobbered regs.
+    mov     rax, [fn_cnt]
+    mov     [rbp-16], rax   ; fn_cnt snapshot
+    mov     qword [rbp-8], 0 ; function index
     ; First emit a _start stub for the generated binary
     ; _start: call main, then exit(0)
     ; _start code at beginning of cod_buf
@@ -4994,9 +5004,9 @@ p2_gen:
     call    emit1
 
     ; now compile each function
-    xor     r12, r12
 .p2_loop:
-    cmp     r12, [fn_cnt]
+    mov     r12, [rbp-8]
+    cmp     r12, [rbp-16]
     jge     .p2_done
     ; debug: print function index as '0'-'9' then '+'
     mov     rax, r12
@@ -5020,7 +5030,9 @@ p2_gen:
     add     rbx, rax
     mov     rdi, rbx
     call    gen_fn
+    mov     r12, [rbp-8]
     inc     r12
+    mov     [rbp-8], r12
     jmp     .p2_loop
 .p2_done:
     ; Patch call fixups
