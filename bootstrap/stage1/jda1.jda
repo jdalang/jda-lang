@@ -1081,8 +1081,45 @@ fn fold_constants(jfn: &JirFunction) {
 }
 
 fn dce(jfn: &JirFunction) {
-    ; DCE disabled: jda0 cannot handle let x = i32[4096] array allocation
-    ; All instructions stay alive (dead=0 from emit)
+    let used = i32[4096]
+    let bi = 0
+    ; Mark all consumed operands and side-effecting ops
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            ; Access fields directly — do NOT copy Instr by value
+            let o0 = jfn.blocks[bi].instrs[ii].operand0
+            let o1 = jfn.blocks[bi].instrs[ii].operand1
+            let o2 = jfn.blocks[bi].instrs[ii].operand2
+            let o3 = jfn.blocks[bi].instrs[ii].operand3
+            let op = jfn.blocks[bi].instrs[ii].op
+            let id = jfn.blocks[bi].instrs[ii].id
+            if o0 >= 0 { used[o0] = 1 }
+            if o1 >= 0 { used[o1] = 1 }
+            if o2 >= 0 { used[o2] = 1 }
+            if o3 >= 0 { used[o3] = 1 }
+            if op == OP_RET     { used[id] = 1 }
+            if op == OP_BR      { used[id] = 1 }
+            if op == OP_JMP     { used[id] = 1 }
+            if op == OP_SYSCALL { used[id] = 1 }
+            if op == OP_CALL    { used[id] = 1 }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+    ; Mark unused instructions dead
+    bi = 0
+    loop bi < jfn.block_cnt {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let id2 = jfn.blocks[bi].instrs[ii].id
+            if used[id2] == 0 {
+                jfn.blocks[bi].instrs[ii].dead = 1
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
 }
 
 ; ============================================================
