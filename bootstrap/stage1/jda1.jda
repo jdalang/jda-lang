@@ -226,11 +226,8 @@ struct LowerCtx {
 ; ============================================================
 
 fn streq(src: &i8, start: i64, len: i64, kw: &i8) -> i32 {
-    print(111)
     let i = 0
-    print(222)
     loop i < len {
-        print(333)
         if src[start + i] != kw[i] { ret 0 }
         i = i + 1
     }
@@ -239,7 +236,6 @@ fn streq(src: &i8, start: i64, len: i64, kw: &i8) -> i32 {
 }
 
 fn is_alpha(c: i8) -> i32 {
-    print("A")
     ret (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')
 }
 
@@ -269,12 +265,6 @@ fn char_to_tok(c: i8) -> i32 {
 }
 
 fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
-    print("CK len=")
-    print(len)
-    print(" start=")
-    print(start)
-    print("\n")
-    ret TOK_IDENT
     if streq(src, start, len, "fn")      { ret TOK_FN }
     if streq(src, start, len, "let")     { ret TOK_LET }
     if streq(src, start, len, "if")      { ret TOK_IF }
@@ -302,13 +292,6 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
     loop pos < src_len {
         let c = src[pos]
         let next_ok = pos + 1 < src_len
-        if pos < 3 {
-            print("lex: pos=")
-            print(pos)
-            print(" c=")
-            print(c)
-            print("\n")
-        }
 
         ; Skip whitespace
         if c == ' ' or c == '\t' or c == '\n' or c == '\r' {
@@ -351,21 +334,22 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
         ; Identifier or keyword
         else if is_alpha(c) or c == '_' {
             let start = pos
-            print("B")
             loop pos < src_len and (is_alpha(src[pos]) or is_digit(src[pos]) or src[pos] == '_') {
                 pos = pos + 1
             }
-            print("C")
             let len = pos - start
-            print("D")
-            out_toks[count].type      = classify_keyword(src, start, len)
-            print("E")
+            let kw = classify_keyword(src, start, len)
+            out_toks[count].type      = kw
             out_toks[count].str_start = start
-            print("F")
             out_toks[count].str_len   = len
-            print("G")
+            print("lex tok[")
+            print(count)
+            print("].type=")
+            print(kw)
+            print(" readback=")
+            print(out_toks[count].type)
+            print("\n")
             count = count + 1
-            print("H")
         }
 
         ; Two-char operators
@@ -392,13 +376,24 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
 
         ; Single-char operators
         else {
-            out_toks[count].type = char_to_tok(c)
+            let ct = char_to_tok(c)
+            out_toks[count].type = ct
+            print("lex tok[")
+            print(count)
+            print("].type=")
+            print(ct)
+            print(" readback=")
+            print(out_toks[count].type)
+            print("\n")
             count = count + 1
             pos = pos + 1
         }
     }
 
     out_toks[count].type = TOK_EOF
+    print("lex final tok[0].type readback=")
+    print(out_toks[0].type)
+    print("\n")
     out_cnt[0] = count
     ret ok(0)
 }
@@ -408,8 +403,17 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
 ; ============================================================
 
 fn expect(toks: &Token, pos: &i64, expected: i32) {
-    if toks[pos[0]].type != expected {
-        print("Parse error: unexpected token")
+    let idx = pos[0]
+    let t = toks[idx].type
+    print("expect: idx=")
+    print(idx)
+    print(" type=")
+    print(t)
+    print(" expected=")
+    print(expected)
+    print("\n")
+    if t != expected {
+        print("Parse error: unexpected token\n")
     }
     pos[0] = pos[0] + 1
 }
@@ -1103,8 +1107,15 @@ fn regalloc_free(ra: &RegAlloc, val_id: i64) {
 ; ============================================================
 
 fn emit_byte(out: &i8, pos: &i64, b: i8) {
+    print("emit_byte: b=")
+    print(b)
+    print(" pos[0]=")
+    print(pos[0])
+    print("\n")
     out[pos[0]] = b
+    print("emit_byte: stored\n")
     pos[0] = pos[0] + 1
+    print("emit_byte: done\n")
 }
 
 fn emit_i32_le(out: &i8, pos: &i64, val: i64) {
@@ -1214,11 +1225,18 @@ fn emit_cmp_zero(out: &i8, pos: &i64, r: i32) {
 
 ; PUSH r64
 fn emit_push_r(out: &i8, pos: &i64, r: i32) {
+    print("emit_push_r: r=")
+    print(r)
+    print("\n")
     if r >= 8 {
+        print("r>=8\n")
         emit_byte(out, pos, 0x41)
         emit_byte(out, pos, 0x50 + (r & 7))
     } else {
+        print("r<8, calling emit_byte\n")
         emit_byte(out, pos, 0x50 + r)
+        print("emit_push_r: done\n")
+    }
     }
 }
 
@@ -1586,6 +1604,9 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
 }
 
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    print("lower_fn: block_cnt=")
+    print(jfn.block_cnt)
+    print("\n")
     ; Function prologue: push rbp; mov rbp, rsp; sub rsp, frame_size
     emit_push_r(out, pos, PHYS_RBP)
     ; MOV rbp, rsp:  48 89 E5
@@ -1597,9 +1618,13 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_byte(out, pos, 0x81)
     emit_byte(out, pos, 0xEC)
     emit_i32_le(out, pos, 256)
+    print("lower_fn: prologue done\n")
 
     let i = 0
     loop i < jfn.block_cnt {
+        print("lower_fn: block ")
+        print(i)
+        print("\n")
         lower_block(&jfn.blocks[i], ctx, jfn, out, pos)
         i = i + 1
     }
@@ -1768,18 +1793,24 @@ fn main() {
     let ast = Node{}
     let pos = 0
     parse_fn(toks, &pos, &ast)
+    print("jda1: parse done\n")
     
     let jfn = JirFunction{}
     jfn.src = src_buf
+    print("jda1: codegen start\n")
     codegen_fn(&ast, &jfn)
+    print("jda1: codegen done\n")
     
     fold_constants(&jfn)
+    print("jda1: fold done\n")
     dce(&jfn)
+    print("jda1: dce done\n")
     
     let ctx = LowerCtx{}
     let code_buf = alloc_pages(8)                ; up to 32 KB code
     let code_len = 0
     regalloc_init(&ctx.ra)
+    print("jda1: lower start\n")
     lower_fn(&jfn, &ctx, code_buf, &code_len)
     print("jda1: patching\n")
 
