@@ -1,0 +1,213 @@
+; =============================================================================
+; jda::textwrap -- Text Wrapping and Formatting
+; =============================================================================
+; Word-wrap text at specified width, dedent, indent, and shorten.
+;
+; Functions:
+;   textwrap_wrap(src, slen, width, out, max)              -> i64  wrap text
+;   textwrap_fill(src, slen, width, out, max)              -> i64  wrap + join with newlines
+;   textwrap_dedent(src, slen, out, max)                   -> i64  remove common indent
+;   textwrap_indent(src, slen, pfx, plen, out, max)        -> i64  add prefix to lines
+;   textwrap_shorten(src, slen, width, out, max)           -> i64  truncate with [...]
+; =============================================================================
+
+;; Internal byte reader.
+fn _tw_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: copy bytes.
+fn _tw_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
+    let i = 0
+    loop i < n {
+        let b = src[soff + i]
+        poke_byte(dst, doff + i, b)
+        i = i + 1
+    }
+}
+
+;; Wrap text at word boundaries. Inserts newlines. Returns total length.
+fn textwrap_fill(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
+    let opos = 0
+    let line_len = 0
+    let word_start = 0
+    let i = 0
+    loop i < slen {
+        let b = _tw_byte_at(src, i)
+        if b == 32 {
+            ; Space — check if word fits on current line
+            let wlen = i - word_start
+            if wlen > 0 {
+                if line_len > 0 {
+                    let needed = line_len + 1 + wlen
+                    if needed > width {
+                        ; Wrap
+                        poke_byte(out, opos, 10)
+                        opos = opos + 1
+                        line_len = 0
+                    } else {
+                        poke_byte(out, opos, 32)
+                        opos = opos + 1
+                        line_len = line_len + 1
+                    }
+                }
+                _tw_copy(out, opos, src, word_start, wlen)
+                opos = opos + wlen
+                line_len = line_len + wlen
+            }
+            word_start = i + 1
+        }
+        i = i + 1
+    }
+    ; Last word
+    let wlen = slen - word_start
+    if wlen > 0 {
+        if line_len > 0 {
+            let needed = line_len + 1 + wlen
+            if needed > width {
+                poke_byte(out, opos, 10)
+                opos = opos + 1
+            } else {
+                poke_byte(out, opos, 32)
+                opos = opos + 1
+            }
+        }
+        _tw_copy(out, opos, src, word_start, wlen)
+        opos = opos + wlen
+    }
+    ret opos
+}
+
+;; Wrap text (alias for fill).
+fn textwrap_wrap(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
+    ret textwrap_fill(src, slen, width, out, max)
+}
+
+;; Remove common leading whitespace from all lines.
+fn textwrap_dedent(src: &i8, slen: i64, out: &i8, max: i64) -> i64 {
+    ; Find minimum indent (spaces only)
+    let min_indent = 9999
+    let line_start = 0
+    let i = 0
+    ; First pass: find minimum indent
+    loop i <= slen {
+        let at_end = 0
+        if i == slen { at_end = 1 }
+        if at_end == 0 {
+            let b = _tw_byte_at(src, i)
+            if b == 10 { at_end = 1 }
+        }
+        if at_end == 1 {
+            let llen = i - line_start
+            if llen > 0 {
+                ; Count leading spaces
+                let spaces = 0
+                let j = line_start
+                let counting = 1
+                loop counting == 1 {
+                    if j >= i { counting = 0 }
+                    if counting == 1 {
+                        let c = _tw_byte_at(src, j)
+                        if c == 32 {
+                            spaces = spaces + 1
+                            j = j + 1
+                        } else {
+                            counting = 0
+                        }
+                    }
+                }
+                if spaces < min_indent { min_indent = spaces }
+            }
+            line_start = i + 1
+        }
+        i = i + 1
+    }
+    if min_indent == 9999 { min_indent = 0 }
+    ; Second pass: copy with indent removed
+    let opos = 0
+    line_start = 0
+    i = 0
+    loop i <= slen {
+        let at_end = 0
+        if i == slen { at_end = 1 }
+        if at_end == 0 {
+            let b = _tw_byte_at(src, i)
+            if b == 10 { at_end = 1 }
+        }
+        if at_end == 1 {
+            let llen = i - line_start
+            let skip = min_indent
+            if skip > llen { skip = llen }
+            let copy_len = llen - skip
+            if copy_len > 0 {
+                _tw_copy(out, opos, src, line_start + skip, copy_len)
+                opos = opos + copy_len
+            }
+            if i < slen {
+                poke_byte(out, opos, 10)
+                opos = opos + 1
+            }
+            line_start = i + 1
+        }
+        i = i + 1
+    }
+    ret opos
+}
+
+;; Add prefix to each line.
+fn textwrap_indent(src: &i8, slen: i64, pfx: &i8, plen: i64, out: &i8, max: i64) -> i64 {
+    let opos = 0
+    let line_start = 0
+    let i = 0
+    loop i <= slen {
+        let at_end = 0
+        if i == slen { at_end = 1 }
+        if at_end == 0 {
+            let b = _tw_byte_at(src, i)
+            if b == 10 { at_end = 1 }
+        }
+        if at_end == 1 {
+            _tw_copy(out, opos, pfx, 0, plen)
+            opos = opos + plen
+            let llen = i - line_start
+            if llen > 0 {
+                _tw_copy(out, opos, src, line_start, llen)
+                opos = opos + llen
+            }
+            if i < slen {
+                poke_byte(out, opos, 10)
+                opos = opos + 1
+            }
+            line_start = i + 1
+        }
+        i = i + 1
+    }
+    ret opos
+}
+
+;; Truncate text to width, adding [...] if too long.
+fn textwrap_shorten(src: &i8, slen: i64, width: i64, out: &i8, max: i64) -> i64 {
+    if slen <= width {
+        _tw_copy(out, 0, src, 0, slen)
+        ret slen
+    }
+    let cut = width - 5
+    if cut < 0 { cut = 0 }
+    ; Find last space before cut
+    let last_space = cut
+    let i = cut
+    loop i > 0 {
+        let b = _tw_byte_at(src, i)
+        if b == 32 {
+            last_space = i
+            i = 0
+        }
+        i = i - 1
+    }
+    _tw_copy(out, 0, src, 0, last_space)
+    poke_byte(out, last_space, 32)
+    poke_byte(out, last_space + 1, 91)   ; [
+    poke_byte(out, last_space + 2, 46)   ; .
+    poke_byte(out, last_space + 3, 46)   ; .
+    poke_byte(out, last_space + 4, 46)   ; .
+    poke_byte(out, last_space + 5, 93)   ; ]
+    ret last_space + 6
+}

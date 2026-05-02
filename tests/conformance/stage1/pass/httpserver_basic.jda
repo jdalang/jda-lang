@@ -1,0 +1,123 @@
+fn main() -> i64 {
+    ; Build "GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n"
+    let req: &i8 = alloc_pages(1)
+    let p = 0
+    ; "GET /index.html HTTP/1.1\r\n"
+    poke_byte(req, p, 71) p = p + 1   ; G
+    poke_byte(req, p, 69) p = p + 1   ; E
+    poke_byte(req, p, 84) p = p + 1   ; T
+    poke_byte(req, p, 32) p = p + 1   ; space
+    poke_byte(req, p, 47) p = p + 1   ; /
+    poke_byte(req, p, 105) p = p + 1  ; i
+    poke_byte(req, p, 110) p = p + 1  ; n
+    poke_byte(req, p, 100) p = p + 1  ; d
+    poke_byte(req, p, 101) p = p + 1  ; e
+    poke_byte(req, p, 120) p = p + 1  ; x
+    poke_byte(req, p, 46) p = p + 1   ; .
+    poke_byte(req, p, 104) p = p + 1  ; h
+    poke_byte(req, p, 116) p = p + 1  ; t
+    poke_byte(req, p, 109) p = p + 1  ; m
+    poke_byte(req, p, 108) p = p + 1  ; l
+    poke_byte(req, p, 32) p = p + 1   ; space
+    poke_byte(req, p, 72) p = p + 1   ; H
+    poke_byte(req, p, 84) p = p + 1   ; T
+    poke_byte(req, p, 84) p = p + 1   ; T
+    poke_byte(req, p, 80) p = p + 1   ; P
+    poke_byte(req, p, 47) p = p + 1   ; /
+    poke_byte(req, p, 49) p = p + 1   ; 1
+    poke_byte(req, p, 46) p = p + 1   ; .
+    poke_byte(req, p, 49) p = p + 1   ; 1
+    poke_byte(req, p, 13) p = p + 1   ; CR
+    poke_byte(req, p, 10) p = p + 1   ; LF
+    ; "Host: example.com\r\n"
+    poke_byte(req, p, 72) p = p + 1   ; H
+    poke_byte(req, p, 111) p = p + 1  ; o
+    poke_byte(req, p, 115) p = p + 1  ; s
+    poke_byte(req, p, 116) p = p + 1  ; t
+    poke_byte(req, p, 58) p = p + 1   ; :
+    poke_byte(req, p, 32) p = p + 1   ; space
+    poke_byte(req, p, 101) p = p + 1  ; e
+    poke_byte(req, p, 120) p = p + 1  ; x
+    poke_byte(req, p, 97) p = p + 1   ; a
+    poke_byte(req, p, 109) p = p + 1  ; m
+    poke_byte(req, p, 112) p = p + 1  ; p
+    poke_byte(req, p, 108) p = p + 1  ; l
+    poke_byte(req, p, 101) p = p + 1  ; e
+    poke_byte(req, p, 46) p = p + 1   ; .
+    poke_byte(req, p, 99) p = p + 1   ; c
+    poke_byte(req, p, 111) p = p + 1  ; o
+    poke_byte(req, p, 109) p = p + 1  ; m
+    poke_byte(req, p, 13) p = p + 1   ; CR
+    poke_byte(req, p, 10) p = p + 1   ; LF
+    ; "\r\n" (end of headers)
+    poke_byte(req, p, 13) p = p + 1   ; CR
+    poke_byte(req, p, 10) p = p + 1   ; LF
+
+    let h = http_parse_request(req, p)
+    let method = http_req_method(h)
+    print("method: {method}\n")
+
+    let plen = http_req_path_len(h)
+    print("path len: {plen}\n")
+
+    let pathout: &i8 = alloc_pages(1)
+    let pcopy = http_req_path(h, pathout)
+    syscall(1, 1, pathout, pcopy)
+    print("\n")
+
+    ; Format 200 OK response with body "hi"
+    let body: &i8 = alloc_pages(1)
+    poke_byte(body, 0, 104)  ; h
+    poke_byte(body, 1, 105)  ; i
+    let resp: &i8 = alloc_pages(1)
+    let rlen = http_respond_ok(body, 2, resp)
+    print("resp len: {rlen}\n")
+
+    ; Format 404
+    let resp404: &i8 = alloc_pages(1)
+    let r404len = http_respond_404(resp404)
+    print("404 len: {r404len}\n")
+
+    ; Status line for 200
+    let stline: &i8 = alloc_pages(1)
+    let slen = http_status_line(200, stline)
+    print("status line len: {slen}\n")
+
+    ; Status line for 404
+    let stline2: &i8 = alloc_pages(1)
+    let slen2 = http_status_line(404, stline2)
+    print("status line 404 len: {slen2}\n")
+
+    ; Parse a POST request
+    let req2: &i8 = alloc_pages(1)
+    let p2 = 0
+    poke_byte(req2, p2, 80) p2 = p2 + 1   ; P
+    poke_byte(req2, p2, 79) p2 = p2 + 1   ; O
+    poke_byte(req2, p2, 83) p2 = p2 + 1   ; S
+    poke_byte(req2, p2, 84) p2 = p2 + 1   ; T
+    poke_byte(req2, p2, 32) p2 = p2 + 1   ; space
+    poke_byte(req2, p2, 47) p2 = p2 + 1   ; /
+    poke_byte(req2, p2, 97) p2 = p2 + 1   ; a
+    poke_byte(req2, p2, 112) p2 = p2 + 1  ; p
+    poke_byte(req2, p2, 105) p2 = p2 + 1  ; i
+    poke_byte(req2, p2, 32) p2 = p2 + 1   ; space
+    poke_byte(req2, p2, 72) p2 = p2 + 1   ; H
+    poke_byte(req2, p2, 84) p2 = p2 + 1   ; T
+    poke_byte(req2, p2, 84) p2 = p2 + 1   ; T
+    poke_byte(req2, p2, 80) p2 = p2 + 1   ; P
+    poke_byte(req2, p2, 47) p2 = p2 + 1   ; /
+    poke_byte(req2, p2, 49) p2 = p2 + 1   ; 1
+    poke_byte(req2, p2, 46) p2 = p2 + 1   ; .
+    poke_byte(req2, p2, 49) p2 = p2 + 1   ; 1
+    poke_byte(req2, p2, 13) p2 = p2 + 1   ; CR
+    poke_byte(req2, p2, 10) p2 = p2 + 1   ; LF
+    poke_byte(req2, p2, 13) p2 = p2 + 1   ; CR
+    poke_byte(req2, p2, 10) p2 = p2 + 1   ; LF
+    let h2 = http_parse_request(req2, p2)
+    let method2 = http_req_method(h2)
+    print("method2: {method2}\n")
+    let plen2 = http_req_path_len(h2)
+    print("path2 len: {plen2}\n")
+
+    ret 0
+}

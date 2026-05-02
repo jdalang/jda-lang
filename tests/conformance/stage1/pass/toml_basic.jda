@@ -1,0 +1,135 @@
+fn _toml_test_byte(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+fn main() -> i64 {
+    ; Build TOML:
+    ; title = "My App"
+    ; debug = true
+    ; [server]
+    ; port = 9090
+    ; host = "example.com"
+    let toml: &i8 = alloc_pages(1)
+    let p = 0
+    ; title = "My App"\n
+    poke_byte(toml, p, 116) p = p + 1  ; t
+    poke_byte(toml, p, 105) p = p + 1  ; i
+    poke_byte(toml, p, 116) p = p + 1  ; t
+    poke_byte(toml, p, 108) p = p + 1  ; l
+    poke_byte(toml, p, 101) p = p + 1  ; e
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 61) p = p + 1   ; =
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 34) p = p + 1   ; "
+    poke_byte(toml, p, 77) p = p + 1   ; M
+    poke_byte(toml, p, 121) p = p + 1  ; y
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 65) p = p + 1   ; A
+    poke_byte(toml, p, 112) p = p + 1  ; p
+    poke_byte(toml, p, 112) p = p + 1  ; p
+    poke_byte(toml, p, 34) p = p + 1   ; "
+    poke_byte(toml, p, 10) p = p + 1
+    ; debug = true\n
+    poke_byte(toml, p, 100) p = p + 1  ; d
+    poke_byte(toml, p, 101) p = p + 1  ; e
+    poke_byte(toml, p, 98) p = p + 1   ; b
+    poke_byte(toml, p, 117) p = p + 1  ; u
+    poke_byte(toml, p, 103) p = p + 1  ; g
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 61) p = p + 1   ; =
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 116) p = p + 1  ; t
+    poke_byte(toml, p, 114) p = p + 1  ; r
+    poke_byte(toml, p, 117) p = p + 1  ; u
+    poke_byte(toml, p, 101) p = p + 1  ; e
+    poke_byte(toml, p, 10) p = p + 1
+    ; [server]\n
+    poke_byte(toml, p, 91) p = p + 1   ; [
+    poke_byte(toml, p, 115) p = p + 1  ; s
+    poke_byte(toml, p, 101) p = p + 1  ; e
+    poke_byte(toml, p, 114) p = p + 1  ; r
+    poke_byte(toml, p, 118) p = p + 1  ; v
+    poke_byte(toml, p, 101) p = p + 1  ; e
+    poke_byte(toml, p, 114) p = p + 1  ; r
+    poke_byte(toml, p, 93) p = p + 1   ; ]
+    poke_byte(toml, p, 10) p = p + 1
+    ; port = 9090\n
+    poke_byte(toml, p, 112) p = p + 1  ; p
+    poke_byte(toml, p, 111) p = p + 1  ; o
+    poke_byte(toml, p, 114) p = p + 1  ; r
+    poke_byte(toml, p, 116) p = p + 1  ; t
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 61) p = p + 1   ; =
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 57) p = p + 1   ; 9
+    poke_byte(toml, p, 48) p = p + 1   ; 0
+    poke_byte(toml, p, 57) p = p + 1   ; 9
+    poke_byte(toml, p, 48) p = p + 1   ; 0
+    poke_byte(toml, p, 10) p = p + 1
+    ; host = "example.com"\n
+    poke_byte(toml, p, 104) p = p + 1  ; h
+    poke_byte(toml, p, 111) p = p + 1  ; o
+    poke_byte(toml, p, 115) p = p + 1  ; s
+    poke_byte(toml, p, 116) p = p + 1  ; t
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 61) p = p + 1   ; =
+    poke_byte(toml, p, 32) p = p + 1
+    poke_byte(toml, p, 34) p = p + 1   ; "
+    poke_byte(toml, p, 101) p = p + 1  ; e
+    poke_byte(toml, p, 120) p = p + 1  ; x
+    poke_byte(toml, p, 97) p = p + 1   ; a
+    poke_byte(toml, p, 109) p = p + 1  ; m
+    poke_byte(toml, p, 112) p = p + 1  ; p
+    poke_byte(toml, p, 108) p = p + 1  ; l
+    poke_byte(toml, p, 101) p = p + 1  ; e
+    poke_byte(toml, p, 46) p = p + 1   ; .
+    poke_byte(toml, p, 99) p = p + 1   ; c
+    poke_byte(toml, p, 111) p = p + 1  ; o
+    poke_byte(toml, p, 109) p = p + 1  ; m
+    poke_byte(toml, p, 34) p = p + 1   ; "
+    poke_byte(toml, p, 10) p = p + 1
+
+    let h = toml_parse(toml, p)
+    let cnt = toml_count(h)
+    print("count: {cnt}\n")
+
+    ; Get title (top-level, no table prefix)
+    let key: &i8 = alloc_pages(1)
+    poke_byte(key, 0, 116)  ; t
+    poke_byte(key, 1, 105)  ; i
+    poke_byte(key, 2, 116)  ; t
+    poke_byte(key, 3, 108)  ; l
+    poke_byte(key, 4, 101)  ; e
+    let out: &i8 = alloc_pages(1)
+    let tlen = toml_get_str(h, key, 5, out)
+    print("title len: {tlen}\n")
+    if tlen > 0 {
+        syscall(1, 1, out, tlen)
+        print("\n")
+    }
+
+    ; Get debug boolean
+    poke_byte(key, 0, 100)  ; d
+    poke_byte(key, 1, 101)  ; e
+    poke_byte(key, 2, 98)   ; b
+    poke_byte(key, 3, 117)  ; u
+    poke_byte(key, 4, 103)  ; g
+    let dbg = toml_get_bool(h, key, 5)
+    print("debug: {dbg}\n")
+
+    ; Get server.port
+    ; key = "server.port" (11 chars)
+    poke_byte(key, 0, 115)  ; s
+    poke_byte(key, 1, 101)  ; e
+    poke_byte(key, 2, 114)  ; r
+    poke_byte(key, 3, 118)  ; v
+    poke_byte(key, 4, 101)  ; e
+    poke_byte(key, 5, 114)  ; r
+    poke_byte(key, 6, 46)   ; .
+    poke_byte(key, 7, 112)  ; p
+    poke_byte(key, 8, 111)  ; o
+    poke_byte(key, 9, 114)  ; r
+    poke_byte(key, 10, 116) ; t
+    let port = toml_get_i64(h, key, 11)
+    print("port: {port}\n")
+
+    ret 0
+}
