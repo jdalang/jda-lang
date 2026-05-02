@@ -3050,6 +3050,9 @@ gen_expr_base:
     mov     r11, rax        ; save fn entry ptr in r11
     pop     r13
     pop     r12
+    ; restore fn name saved by .do_call push r12/r13 (lines 3024-3025)
+    pop     r13
+    pop     r12
     ; -----------------------------------------------------------------
     ; pop into arg regs (rdi, rsi, rdx, rcx, r8, r9)
     cmp     r14, 6
@@ -3925,39 +3928,41 @@ gen_syscall:
     ; Syscall number (rax) is ALREADY pushed by the caller of gen_syscall. Wait.
     ; gen_syscall caller (gen_stmt) calls gen_expr for the syscall number first.
     ; So rax is the LAST thing pushed? No, the arg loop pushes them.
-    ; Let's fix this properly.
-    cmp     r14, 6
+    ; r14 = total arg count including syscall number.
+    ; We emit (r14-1) pops for arg regs, then always pop rax for the nr.
+    ; So each threshold is one higher than for regular calls.
+    cmp     r14, 7
     jl      .gs_pop_r8
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x59
     call    emit1           ; pop r9 (arg5)
 .gs_pop_r8:
-    cmp     r14, 5
+    cmp     r14, 6
     jl      .gs_pop_r10
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x58
     call    emit1           ; pop r8 (arg4)
 .gs_pop_r10:
-    cmp     r14, 4
+    cmp     r14, 5
     jl      .gs_pop_rdx
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x5A
     call    emit1           ; pop r10 (arg3)
 .gs_pop_rdx:
-    cmp     r14, 3
+    cmp     r14, 4
     jl      .gs_pop_rsi
     mov     rdi, 0x5A
     call    emit1           ; pop rdx (arg2)
 .gs_pop_rsi:
-    cmp     r14, 2
+    cmp     r14, 3
     jl      .gs_pop_rdi
     mov     rdi, 0x5E
     call    emit1           ; pop rsi (arg1)
 .gs_pop_rdi:
-    cmp     r14, 1
+    cmp     r14, 2
     jl      .gs_pop_rax
     mov     rdi, 0x5F
     call    emit1           ; pop rdi (arg0)
