@@ -1,0 +1,177 @@
+; =============================================================================
+;  ██╗██████╗  █████╗     CHEAT SHEET
+;  ██║██╔══██╗██╔══██╗    Jda Programming Language
+;  ██║██║  ██║███████║    "Ruby-readable. Machine-code fast."
+;  ██║██║  ██║██╔══██║
+;  ██║██████╔╝██║  ██║
+;  ╚═╝╚═════╝ ╚═╝  ╚═╝
+; =============================================================================
+
+; ── VARIABLES ─────────────────────────────────────────────────────────────────
+let x      = 42                  ; immutable, type inferred (i64)
+let mut y  = 3.14                ; mutable, inferred (f64)
+let z: i32 = 100                 ; explicit type
+const MAX  = 10_000              ; compile-time constant
+
+; ── TYPES ─────────────────────────────────────────────────────────────────────
+; Integers : i8  i16  i32  i64   u8  u16  u32  u64
+; Floats   : f32  f64
+; Other    : bool  (i8 used as char)
+; Pointers : own *T   ref *T   mut *T
+; Slices   : []T   []mut T
+; Tuples   : (i32, f64, bool)
+; Arrays   : [N]T   e.g. [8]i64
+; Option   : ?T       → some(val) | none
+; Result   : Result<T,E> → ok(val) | err(e)
+
+; ── FUNCTIONS ─────────────────────────────────────────────────────────────────
+fn add(a: i64, b: i64) -> i64 { ret a + b }
+fn square(x: i64) -> i64 => x * x           ; arrow shorthand
+fn swap<T>(a: T, b: T) -> (T, T) => (b, a)  ; generic + tuple return
+
+let double = |x: i64| => x * 2              ; closure
+let add10  = |x|      => x + 10             ; inferred types
+
+; ── CONTROL FLOW ──────────────────────────────────────────────────────────────
+if x > 0 { print("pos") } else { print("neg") }
+
+let sign = if x > 0 { 1 } else if x < 0 { -1 } else { 0 }  ; expression
+
+loop          { break }              ; infinite loop
+loop x < 100  { x = x + 1 }         ; conditional (while)
+loop i in 0..10       { print(i) }  ; range loop
+loop i in 0..10 step 2 { print(i) } ; stepped range
+for item in slice      { use(item) } ; iterator
+
+; next = continue,  break = exit loop
+
+; ── MATCH ─────────────────────────────────────────────────────────────────────
+match x {
+    0       => print("zero")
+    1..=9   => print("1-9")
+    n if n > 100 => print("big: ", n)    ; guard
+    _       => print("other")
+}
+
+let y = match x {                        ; match as expression
+    ok(v)  => v * 2
+    err(e) => 0
+}
+
+; ── STRUCTS ───────────────────────────────────────────────────────────────────
+struct Point { x: f64   y: f64 }
+
+let p = Point { x: 1.0, y: 2.0 }
+let p2 = Point { x: 9.0, ..p }      ; spread (copies remaining fields)
+
+impl Point {
+    fn dist(self, other: ref Point) -> f64 => sqrt((self.x-other.x)^2 + (self.y-other.y)^2)
+    fn zero() -> Point => Point { x: 0.0, y: 0.0 }   ; static method
+}
+
+; ── ENUMS ─────────────────────────────────────────────────────────────────────
+enum Shape { Circle(f64)  Rect(f64, f64)  Triangle(f64, f64) }
+
+impl Shape {
+    fn area(self) -> f64 {
+        match self {
+            Circle(r)     => 3.14159 * r * r
+            Rect(w, h)    => w * h
+            Triangle(b,h) => 0.5 * b * h
+        }
+    }
+}
+
+; ── ERROR HANDLING ────────────────────────────────────────────────────────────
+fn parse(s: ref []i8) -> Result<i64, []i8> {
+    if s.len == 0 { ret err("empty") }
+    ret ok(42)
+}
+
+let n   = parse("42")?          ; propagate error with ?
+let n   = parse("x").unwrap_or(0)
+let n   = parse(s).map(|v| v * 2).unwrap_or(0)
+
+match parse(s) {
+    ok(v)  => print("got: ", v)
+    err(e) => print("fail: ", e)
+}
+
+; ── TRAITS ────────────────────────────────────────────────────────────────────
+trait Show { fn show(self) -> []i8 }
+trait Eq   { fn eq(self, other: ref Self) -> bool }
+
+impl Show for Point {
+    fn show(self) -> []i8 => "({self.x}, {self.y})"
+}
+
+fn print_all<T: Show>(items: []T) { for i in items { print(i.show()) } }
+
+; ── MEMORY ────────────────────────────────────────────────────────────────────
+let arr  = [1024]u8              ; stack array
+let page = pages_alloc(1)        ; OS page (4096 bytes), own *i8
+defer pages_free(page, 1)        ; freed at scope end
+
+let r = region_new(4)            ; 16 KB arena
+defer region_free(r)
+let buf = region_alloc(&mut r, 256, 8)  ; bump alloc
+
+; ── CONCURRENCY (J-Threads) ───────────────────────────────────────────────────
+let ch = chan<i64>()             ; lock-free channel
+
+spawn {                          ; spawn a J-Thread (green thread)
+    ch.send(compute())
+}
+
+let result = ch.recv()           ; blocks until data arrives
+
+select {                         ; wait on multiple channels
+    ch1.recv() => |v| handle(v)
+    ch2.recv() => |v| handle(v)
+    timeout(1000ms) => handle_timeout()
+}
+
+; ── INLINE ASSEMBLY ───────────────────────────────────────────────────────────
+asm { hlt }                      ; bare asm block
+let sp = asm i64 { out rax = sp  ---  mov rax, rsp }
+asm { in rdi = buf  in rdx = len  in rax = 1  ---  syscall }
+
+cpu::cr3::write(page_table)      ; write control register
+let cycles = rdtsc()             ; read timestamp counter
+
+; ── STRINGS ───────────────────────────────────────────────────────────────────
+let s   = "Hello"                ; []i8, UTF-8
+let msg = "Hi {name}!"           ; interpolation
+let sub = s[1..4]                ; slice
+let cat = s + " World"           ; concat (allocates)
+s.len  s.starts_with("H")  s.contains("ll")  s.trim()
+
+; ── MODULES ───────────────────────────────────────────────────────────────────
+import jda::net::tcp::TcpListener
+import jda::mem::region::{ region_new, region_free }
+import jda::concurrency::*
+
+; ── DEFER ─────────────────────────────────────────────────────────────────────
+fn f() {
+    let fd = open("file")
+    defer close(fd)              ; always runs at scope exit, LIFO
+}
+
+; ── NUMERIC LITERALS ──────────────────────────────────────────────────────────
+let a = 1_000_000               ; underscores for readability
+let b = 0xFF                    ; hex
+let c = 0b1010_1010             ; binary
+let d = 0o777                   ; octal
+let e = 1.5e10                  ; scientific notation
+
+; ── OPERATOR REFERENCE ────────────────────────────────────────────────────────
+; Arithmetic :  +  -  *  /  %  ^  (power)
+; Bitwise    :  &  |  ~  <<  >>  >>>  (unsigned shift)
+; Comparison :  ==  !=  <  >  <=  >=
+; Logical    :  and  or  not
+; Range      :  a..b  (exclusive)   a..=b  (inclusive)
+; Error prop :  ?    (on Result/Option — returns early on err/none)
+; Deref      :  *ptr
+; Address    :  &val  &mut val
+; Cast       :  val as T
+; Spread     :  ..struct   (struct update)

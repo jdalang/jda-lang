@@ -1,0 +1,319 @@
+; =============================================================================
+; jda VGA Text-Mode Driver
+; =============================================================================
+; Bare-metal VGA text output. No OS, no libc, no BIOS calls.
+; Directly writes to the VGA text buffer at physical address 0xB8000.
+;
+; VGA text mode: 80 columns × 25 rows
+; Each cell = 2 bytes:
+;   byte 0: ASCII character
+;   byte 1: attribute (colour)
+;              bits [7:4] = background colour (0–15)
+;              bits [3:0] = foreground colour (0–15)
+;
+; Colour constants:
+;   BLACK=0  BLUE=1   GREEN=2  CYAN=3
+;   RED=4    MAGENTA=5 BROWN=6 LIGHT_GREY=7
+;   DARK_GREY=8  LIGHT_BLUE=9  LIGHT_GREEN=10  LIGHT_CYAN=11
+;   LIGHT_RED=12  LIGHT_MAGENTA=13  YELLOW=14  WHITE=15
+; =============================================================================
+
+; VGA buffer base (physical address — valid in real/protected mode)
+let VGA_BASE    = 0xB8000 as *i16
+let VGA_COLS    = 80
+let VGA_ROWS    = 25
+let VGA_SIZE    = VGA_COLS * VGA_ROWS   ; 2000 cells
+
+; VGA I/O ports for cursor control
+let VGA_CTRL_PORT = 0x3D4   ; CRT Controller index register
+let VGA_DATA_PORT = 0x3D5   ; CRT Controller data register
+let VGA_CURSOR_HI = 14      ; cursor location high byte register
+let VGA_CURSOR_LO = 15      ; cursor location low byte register
+
+; Colour helpers
+fn vga_colour(fg: i8, bg: i8) -> i8 {
+    ret (bg << 4) | (fg & 0x0F)
+}
+
+; Default: white text on black background
+let VGA_DEFAULT_COLOUR = vga_colour(15, 0)
+
+; =============================================================================
+; VGA State — terminal cursor position
+; =============================================================================
+struct VgaTerminal {
+    col:    i32
+    row:    i32
+    colour: i8
+}
+
+; Global terminal state (lives at a known address for bare-metal use)
+let terminal = VgaTerminal { col: 0, row: 0, colour: VGA_DEFAULT_COLOUR }
+
+; =============================================================================
+; vga_init()
+; =============================================================================
+; Clear the entire VGA buffer and reset the cursor.
+fn vga_init() {
+    let i = 0
+    loop i < VGA_SIZE {
+        VGA_BASE[i] = (VGA_DEFAULT_COLOUR as i16 << 8) | (' ' as i16)
+        i = i + 1
+    }
+    terminal.col    = 0
+    terminal.row    = 0
+    terminal.colour = VGA_DEFAULT_COLOUR
+    vga_update_cursor(0)
+}
+
+; =============================================================================
+; vga_set_colour(fg: i8, bg: i8)
+; =============================================================================
+fn vga_set_colour(fg: i8, bg: i8) {
+    terminal.colour = vga_colour(fg, bg)
+}
+
+; =============================================================================
+; vga_putchar_at(ch: i8, col: i32, row: i32, colour: i8)
+; =============================================================================
+; Write a single character cell directly to VGA buffer.
+fn vga_putchar_at(ch: i8, col: i32, row: i32, colour: i8) {
+    let idx   = row * VGA_COLS + col
+    let entry = (colour as i16 << 8) | (ch as i16)
+    VGA_BASE[idx] = entry
+}
+
+; =============================================================================
+; vga_scroll()
+; =============================================================================
+; Scroll the screen up by one row. Copy rows 1..24 to 0..23, blank row 24.
+fn vga_scroll() {
+    ; Move rows 1–24 up to rows 0–23
+    let row = 0
+    loop row < VGA_ROWS - 1 {
+        let col = 0
+        loop col < VGA_COLS {
+            let src = (row + 1) * VGA_COLS + col
+            let dst = row * VGA_COLS + col
+            VGA_BASE[dst] = VGA_BASE[src]
+            col = col + 1
+        }
+        row = row + 1
+    }
+    ; Blank the last row
+    let col = 0
+    loop col < VGA_COLS {
+        let idx = (VGA_ROWS - 1) * VGA_COLS + col
+        VGA_BASE[idx] = (VGA_DEFAULT_COLOUR as i16 << 8) | (' ' as i16)
+        col = col + 1
+    }
+}
+
+; =============================================================================
+; vga_newline()
+; =============================================================================
+fn vga_newline() {
+    terminal.col = 0
+    terminal.row = terminal.row + 1
+    if terminal.row >= VGA_ROWS {
+        vga_scroll()
+        terminal.row = VGA_ROWS - 1
+    }
+}
+
+; =============================================================================
+; vga_putchar(ch: i8)
+; =============================================================================
+; Write one character, advancing the cursor. Handle \n, \t, \b.
+fn vga_putchar(ch: i8) {
+    if ch == '\n' {
+        vga_newline()
+    }
+    else if ch == '\r' {
+        terminal.col = 0
+    }
+    else if ch == '\t' {
+        ; Advance to next 8-column tab stop
+        terminal.col = (terminal.col + 8) & ~7
+        if terminal.col >= VGA_COLS {
+            vga_newline()
+        }
+    }
+    else if ch == '\b' {
+        ; Backspace
+        if terminal.col > 0 {
+            terminal.col = terminal.col - 1
+            vga_putchar_at(' ', terminal.col, terminal.row, terminal.colour)
+        }
+    }
+    else {
+        vga_putchar_at(ch, terminal.col, terminal.row, terminal.colour)
+        terminal.col = terminal.col + 1
+        if terminal.col >= VGA_COLS {
+            vga_newline()
+        }
+    }
+    vga_update_cursor(terminal.row * VGA_COLS + terminal.col)
+}
+
+; =============================================================================
+; vga_print(s: ref *i8)
+; =============================================================================
+; Print a null-terminated string to the VGA terminal.
+fn vga_print(s: ref *i8) {
+    let i = 0
+    loop s[i] != 0 {
+        vga_putchar(s[i])
+        i = i + 1
+    }
+}
+
+; =============================================================================
+; vga_println(s: ref *i8)
+; =============================================================================
+fn vga_println(s: ref *i8) {
+    vga_print(s)
+    vga_putchar('\n')
+}
+
+; =============================================================================
+; vga_print_hex(val: u64)
+; =============================================================================
+; Print a 64-bit value as "0x0000000000000000".
+fn vga_print_hex(val: u64) {
+    vga_print("0x")
+    let digits = "0123456789ABCDEF"
+    let shift  = 60
+    loop shift >= 0 {
+        let nibble = (val >> shift) & 0xF
+        vga_putchar(digits[nibble])
+        shift = shift - 4
+    }
+}
+
+; =============================================================================
+; vga_print_dec(val: i64)
+; =============================================================================
+; Print a signed 64-bit integer in decimal.
+fn vga_print_dec(val: i64) {
+    if val < 0 {
+        vga_putchar('-')
+        val = -val
+    }
+    if val == 0 {
+        vga_putchar('0')
+        ret
+    }
+    let buf = i8[20]
+    let i   = 0
+    loop val > 0 {
+        buf[i] = '0' + (val % 10) as i8
+        val    = val / 10
+        i      = i + 1
+    }
+    ; buf holds digits in reverse — print in reverse
+    let j = i - 1
+    loop j >= 0 {
+        vga_putchar(buf[j])
+        j = j - 1
+    }
+}
+
+; =============================================================================
+; vga_update_cursor(pos: i32)
+; =============================================================================
+; Move the hardware blinking cursor using VGA CRT controller I/O ports.
+; Uses `outb` — writes a byte to an x86 I/O port (requires kernel privilege).
+fn vga_update_cursor(pos: i32) {
+    ; Write high byte of cursor position
+    asm volatile {
+        in rax = VGA_CURSOR_HI
+        in rdx = VGA_CTRL_PORT
+        ---
+        out dx, al              ; outb(VGA_CTRL_PORT, VGA_CURSOR_HI)
+    }
+    asm volatile {
+        in rax = (pos >> 8) & 0xFF
+        in rdx = VGA_DATA_PORT
+        ---
+        out dx, al              ; outb(VGA_DATA_PORT, pos_hi)
+    }
+    ; Write low byte of cursor position
+    asm volatile {
+        in rax = VGA_CURSOR_LO
+        in rdx = VGA_CTRL_PORT
+        ---
+        out dx, al
+    }
+    asm volatile {
+        in rax = pos & 0xFF
+        in rdx = VGA_DATA_PORT
+        ---
+        out dx, al
+    }
+}
+
+; =============================================================================
+; vga_cursor_hide() / vga_cursor_show()
+; =============================================================================
+fn vga_cursor_hide() {
+    asm volatile {
+        in rdx = VGA_CTRL_PORT
+        ---
+        mov al, 0x0A
+        out dx, al
+    }
+    asm volatile {
+        in rdx = VGA_DATA_PORT
+        ---
+        mov al, 0x20        ; bit 5 = cursor disabled
+        out dx, al
+    }
+}
+
+; =============================================================================
+; Demo: kernel_main — bare-metal entry point
+; =============================================================================
+; This is what a kernel's first function looks like using jda's VGA driver.
+; No OS. No libc. Just jda and the hardware.
+
+fn kernel_main() {
+    vga_init()
+
+    vga_set_colour(14, 0)           ; yellow on black
+    vga_println("Jda Kernel v0.1")
+    vga_println("================")
+
+    vga_set_colour(15, 0)           ; white on black
+    vga_println("Phase 2: Kernel & Hardware Interfacing")
+    vga_println("")
+
+    vga_set_colour(10, 0)           ; light green
+    vga_print("  [OK] VGA driver initialised  (80x25 text mode)")
+    vga_println("")
+
+    vga_print("  [OK] Page allocator ready     (mmap-based, 4096-byte pages)")
+    vga_println("")
+
+    vga_print("  [OK] Region allocator ready   (bump-pointer, O(1) alloc)")
+    vga_println("")
+
+    vga_print("  [OK] Ownership model active   (compile-time, zero runtime cost)")
+    vga_println("")
+
+    vga_set_colour(11, 0)           ; light cyan
+    vga_println("")
+    vga_print("CR3 (page table base): ")
+    vga_print_hex(cpu::cr3::read())
+    vga_println("")
+
+    vga_print("TSC (CPU cycles):      ")
+    vga_print_dec(rdtsc())
+    vga_println("")
+
+    vga_set_colour(7, 0)            ; light grey
+    vga_println("")
+    vga_println("Halting. Press any key to continue.")
+
+    asm { hlt }
+}

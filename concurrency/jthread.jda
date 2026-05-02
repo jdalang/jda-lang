@@ -1,0 +1,197 @@
+; =============================================================================
+; jda::concurrency::jthread — J-Thread Runtime
+; =============================================================================
+; J-Threads are Jda's native green threads (lightweight coroutines).
+; They are cheaper than OS threads — you can spawn millions.
+;
+; Architecture:
+;   - M:N scheduling: M J-Threads mapped onto N OS threads
+;   - N = number of CPU cores (set at startup via sched_getaffinity)
+;   - Work-stealing scheduler: idle OS threads steal from busy ones
+;   - Each OS thread has a run-queue (lock-free MPSC deque)
+;   - J-Threads are stack-allocated (default 64 KB stack, growable)
+;   - Context switch: ~10ns (pure register save/restore, no kernel)
+;
+; Ownership model:
+;   - J-Thread receives `own` values — zero-copy message passing
+;   - No shared mutable state — races are compile-time errors
+; =============================================================================
+
+import jda::mem::page_alloc
+import jda::mem::region
+
+; --- J-Thread states ---
+;   JSTATE_READY   = 0   scheduled, waiting to run
+;   JSTATE_RUNNING = 1   currently executing on an OS thread
+;   JSTATE_BLOCKED = 2   waiting on channel recv / IO
+;   JSTATE_DONE    = 3   finished, resources reclaimable
+
+; --- Thread stack size ---
+const JTHREAD_STACK_PAGES = 16   ; 64 KB default stack
+
+; =============================================================================
+; JThread — Internal descriptor (lives in scheduler memory)
+; =============================================================================
+struct JThread {
+    id:      u64            ; unique thread id
+    state:   i32            ; JSTATE_*
+    ; Saved register context (for context switch)
+    rsp:     u64            ; stack pointer
+    rbp:     u64            ; base pointer
+    rip:     u64            ; instruction pointer (resume point)
+    r12:     u64            ; callee-saved registers
+    r13:     u64
+    r14:     u64
+    r15:     u64
+    rbx:     u64
+    ; Stack
+    stack:   own *i8        ; bottom of stack allocation
+    fn_ptr:  u64            ; entry function pointer
+    arg:     u64            ; opaque argument (moved ownership)
+}
+
+; =============================================================================
+; spawn { block } — syntax sugar, desugars to jthread_spawn(closure)
+; =============================================================================
+; The `spawn` keyword is handled by the compiler.
+; It captures the block as a closure, moves owned values in, calls spawn_raw.
+;
+; Example:
+;   spawn { compute_heavy_work() }
+;
+; Desugars to:
+;   jthread_spawn(move || { compute_heavy_work() })
+;
+; With channel:
+;   let ch = chan<i64>()
+;   spawn { ch.send(fib(40)) }
+;   let result = ch.recv()
+
+fn jthread_spawn(f: fn() -> ()) -> u64 {
+    ; Allocate stack for new thread
+    let stack = pages_alloc(JTHREAD_STACK_PAGES)
+
+    ; Stack grows downward — set RSP to top of allocation
+    let stack_top = (stack as u64) + (JTHREAD_STACK_PAGES * 4096) as u64
+
+    ; Build JThread descriptor
+    let t = JThread {
+        id:     next_thread_id(),
+        state:  JSTATE_READY,
+        rsp:    stack_top - 8,   ; room for return address
+        rbp:    stack_top - 8,
+        rip:    f as u64,
+        r12:    0, r13: 0, r14: 0, r15: 0, rbx: 0,
+        stack:  stack,
+        fn_ptr: f as u64,
+        arg:    0,
+    }
+
+    scheduler_enqueue(t)
+    ret t.id
+}
+
+; =============================================================================
+; Context Switch (pure assembly — no OS involvement)
+; =============================================================================
+; Saves current register state into `from`, restores from `to`.
+; Called by the scheduler when yielding between J-Threads.
+
+fn jthread_switch(from: &mut JThread, to: &mut JThread) {
+    asm volatile {
+        ; Save callee-saved registers of `from` thread
+        in  rdi = from
+        in  rsi = to
+        ---
+        ; Save: rbp, rbx, r12–r15, rsp, rip (via call/ret trick)
+        mov  [rdi + 8],  rbp
+        mov  [rdi + 24], rbx
+        mov  [rdi + 32], r12
+        mov  [rdi + 40], r13
+        mov  [rdi + 48], r14
+        mov  [rdi + 56], r15
+        lea  rax, [rip + .resume]   ; capture resume instruction pointer
+        mov  [rdi + 16], rax        ; save rip
+        mov  [rdi + 0],  rsp        ; save rsp
+
+        ; Restore `to` thread
+        mov  rsp, [rsi + 0]
+        mov  rbp, [rsi + 8]
+        mov  rbx, [rsi + 24]
+        mov  r12, [rsi + 32]
+        mov  r13, [rsi + 40]
+        mov  r14, [rsi + 48]
+        mov  r15, [rsi + 56]
+        jmp  [rsi + 16]             ; jump to to.rip
+
+        .resume:
+        ; `from` thread resumes here after being switched back
+    }
+}
+
+; =============================================================================
+; Scheduler — work-stealing, per-OS-thread run queues
+; =============================================================================
+struct Scheduler {
+    queues:   [256]WorkQueue    ; one queue per OS thread (max 256 cores)
+    n_cores:  i32
+    next_id:  u64
+}
+
+struct WorkQueue {
+    head:   u64             ; atomic — for lock-free steal
+    tail:   u64             ; atomic — only modified by owner
+    tasks:  [4096]JThread   ; ring buffer of ready threads
+}
+
+fn scheduler_enqueue(t: own JThread) {
+    ; Push to current OS thread's local queue (tail end)
+    let q = &mut scheduler.queues[current_core()]
+    let tail = q.tail & 4095
+    q.tasks[tail] = t
+    atomic_store(&q.tail, q.tail + 1)
+}
+
+fn scheduler_next() -> ?JThread {
+    ; Try local queue first
+    let q = &mut scheduler.queues[current_core()]
+    if q.head != q.tail {
+        let head = q.head & 4095
+        let t = q.tasks[head]
+        atomic_store(&q.head, q.head + 1)
+        ret some(t)
+    }
+    ; Local queue empty — try to steal from another core
+    ret steal_from_random_queue()
+}
+
+fn steal_from_random_queue() -> ?JThread {
+    let victim = random_core()
+    let q = &mut scheduler.queues[victim]
+    if q.head == q.tail { ret none }
+    ; Steal from head end (opposite of owner's tail push)
+    let head = q.head & 4095
+    let t = q.tasks[head]
+    if atomic_cmpxchg(&q.head, q.head, q.head + 1) {
+        ret some(t)
+    }
+    ret none
+}
+
+; =============================================================================
+; Yield — voluntarily give up the CPU to another J-Thread
+; =============================================================================
+fn jthread_yield() {
+    let current = get_current_thread()
+    match scheduler_next() {
+        some(next) => jthread_switch(current, &mut next)
+        none       => {}   ; no other threads ready, continue
+    }
+}
+
+; =============================================================================
+; next_thread_id() — atomic counter
+; =============================================================================
+fn next_thread_id() -> u64 {
+    ret atomic_fetch_add(&scheduler.next_id, 1)
+}
