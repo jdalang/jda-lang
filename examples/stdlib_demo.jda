@@ -1,0 +1,141 @@
+; stdlib_demo.jda -- demonstrates fs, fmt, time stdlib functions
+; Build: jda build --include stdlib/prelude.jda examples/stdlib_demo.jda
+
+fn main() -> i64 {
+    ; --- fmt: integer to string ---
+    let buf = alloc_pages(1)
+    let len = fmt_i64(buf, 42)
+    print("fmt_i64(42) = ")
+    print_str(buf, len)
+    print("\n")
+
+    len = fmt_i64(buf, -123)
+    print("fmt_i64(-123) = ")
+    print_str(buf, len)
+    print("\n")
+
+    len = fmt_i64(buf, 0)
+    print("fmt_i64(0) = ")
+    print_str(buf, len)
+    print("\n")
+
+    len = fmt_hex(buf, 255)
+    print("fmt_hex(255) = ")
+    print_str(buf, len)
+    print("\n")
+
+    len = fmt_hex(buf, 0)
+    print("fmt_hex(0) = ")
+    print_str(buf, len)
+    print("\n")
+
+    ; --- fmt: string utilities ---
+    ; Build null-terminated strings via set_byte (byte-granularity store)
+    let hello = alloc_pages(1)
+    set_byte(hello, 0, 104)
+    set_byte(hello, 1, 101)
+    set_byte(hello, 2, 108)
+    set_byte(hello, 3, 108)
+    set_byte(hello, 4, 111)
+    set_byte(hello, 5, 0)
+
+    let world = alloc_pages(1)
+    set_byte(world, 0, 119)
+    set_byte(world, 1, 111)
+    set_byte(world, 2, 114)
+    set_byte(world, 3, 108)
+    set_byte(world, 4, 100)
+    set_byte(world, 5, 0)
+
+    let hello2 = alloc_pages(1)
+    set_byte(hello2, 0, 104)
+    set_byte(hello2, 1, 101)
+    set_byte(hello2, 2, 108)
+    set_byte(hello2, 3, 108)
+    set_byte(hello2, 4, 111)
+    set_byte(hello2, 5, 0)
+
+    let slen = str_len(hello)
+    print("str_len(hello) = ")
+    print_int(slen)
+    print("\n")
+
+    if str_eq(hello, hello2) == 1 {
+        print("str_eq match: yes\n")
+    }
+    if str_eq(hello, world) == 0 {
+        print("str_eq differ: yes\n")
+    }
+
+    ; --- time: monotonic clock ---
+    let t0 = time_now_ns()
+    let t1 = time_now_ns()
+    let delta = t1 - t0
+    print("time delta (ns): ")
+    print_int(delta)
+    print("\n")
+
+    let ms = time_now_ms()
+    print("time_now_ms: ")
+    print_int(ms)
+    print("\n")
+
+    ; --- fs: write and read back ---
+    ; Build path: "/tmp/jda_test.txt"
+    let test_path = alloc_pages(1)
+    set_byte(test_path, 0, 47)
+    set_byte(test_path, 1, 116)
+    set_byte(test_path, 2, 109)
+    set_byte(test_path, 3, 112)
+    set_byte(test_path, 4, 47)
+    set_byte(test_path, 5, 106)
+    set_byte(test_path, 6, 100)
+    set_byte(test_path, 7, 97)
+    set_byte(test_path, 8, 95)
+    set_byte(test_path, 9, 116)
+    set_byte(test_path, 10, 101)
+    set_byte(test_path, 11, 115)
+    set_byte(test_path, 12, 116)
+    set_byte(test_path, 13, 46)
+    set_byte(test_path, 14, 116)
+    set_byte(test_path, 15, 120)
+    set_byte(test_path, 16, 116)
+    set_byte(test_path, 17, 0)
+
+    ; Build message: "Jda OK"
+    let msg = alloc_pages(1)
+    set_byte(msg, 0, 74)
+    set_byte(msg, 1, 100)
+    set_byte(msg, 2, 97)
+    set_byte(msg, 3, 32)
+    set_byte(msg, 4, 79)
+    set_byte(msg, 5, 75)
+    let msg_len = 6
+
+    let written = fs_write_file(test_path, msg, msg_len)
+    print("fs_write: ")
+    print_int(written)
+    print(" bytes\n")
+
+    if fs_exists(test_path) == 1 {
+        print("fs_exists: true\n")
+    }
+
+    let fsize = fs_file_size(test_path)
+    print("fs_file_size: ")
+    print_int(fsize)
+    print("\n")
+
+    let read_buf = alloc_pages(1)
+    let rlen = fs_read_file(test_path, read_buf, 4096)
+    print("fs_read: ")
+    print_int(rlen)
+    print(" bytes: ")
+    print_str(read_buf, rlen)
+    print("\n")
+
+    ; cleanup
+    fs_unlink(test_path)
+    print("STDLIB_DEMO_OK\n")
+    ret 0
+}

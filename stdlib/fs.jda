@@ -1,508 +1,83 @@
 ; =============================================================================
-; jda::fs — File System API
+; jda::fs -- Minimal File I/O
 ; =============================================================================
-; Direct Linux syscalls — no libc, no <unistd.h>, no <fcntl.h>.
+; Direct Linux syscalls. No libc.
 ;
-; Linux syscalls used:
-;   SYS_OPEN    =  2   open(path, flags, mode)
-;   SYS_CLOSE   =  3   close(fd)
-;   SYS_READ    =  0   read(fd, buf, count)
-;   SYS_WRITE   =  1   write(fd, buf, count)
-;   SYS_STAT    =  4   stat(path, statbuf)
-;   SYS_FSTAT   =  5   fstat(fd, statbuf)
-;   SYS_LSTAT   =  6   lstat(path, statbuf)
-;   SYS_LSEEK   =  8   lseek(fd, offset, whence)
-;   SYS_GETDENTS= 78   getdents64(fd, buf, count)
-;   SYS_MKDIR   = 83   mkdir(path, mode)
-;   SYS_RMDIR   = 84   rmdir(path)
-;   SYS_RENAME  = 82   rename(old, new)
-;   SYS_UNLINK  = 87   unlink(path)
-;   SYS_FSYNC   = 74   fsync(fd)
-;   SYS_MMAP    =  9   mmap(0, len, PROT_RW, MAP_PRIVATE|MAP_ANON, -1, 0)
-;   SYS_MUNMAP  = 11   munmap(addr, len)
-;   SYS_GETCWD  = 79   getcwd(buf, len)
-;   SYS_CHDIR   = 80   chdir(path)
-;
-; Usage:
-;   let f = File::open("/etc/passwd")?
-;   let data = f.read_all()?
-;   f.close()
-;
-;   let n = file_write("/tmp/out.txt", "hello\n")?
-;   let entries = dir_list(".")?
+; Functions:
+;   fs_read_file(path, buf, max) -> bytes read (-1 on error)
+;   fs_write_file(path, data, len) -> bytes written (-1 on error)
+;   fs_append_file(path, data, len) -> bytes written (-1 on error)
+;   fs_exists(path) -> 1 if file exists, 0 otherwise
+;   fs_unlink(path) -> 0 on success, -1 on error
+;   fs_mkdir(path) -> 0 on success, -1 on error
+;   fs_file_size(path) -> size in bytes (-1 on error)
 ; =============================================================================
 
-const SYS_READ      = 0
-const SYS_WRITE     = 1
-const SYS_OPEN      = 2
-const SYS_CLOSE     = 3
-const SYS_STAT      = 4
-const SYS_FSTAT     = 5
-const SYS_LSTAT     = 6
-const SYS_LSEEK     = 8
-const SYS_MMAP      = 9
-const SYS_MUNMAP    = 11
-const SYS_FSYNC     = 74
-const SYS_GETDENTS64= 78
-const SYS_GETCWD    = 79
-const SYS_CHDIR     = 80
-const SYS_RENAME    = 82
-const SYS_MKDIR     = 83
-const SYS_RMDIR     = 84
-const SYS_UNLINK    = 87
-const SYS_OPENAT    = 257
-const SYS_MKDIRAT   = 258
-const SYS_RENAMEAT  = 264
-const SYS_UNLINKAT  = 263
-
-; open() flags
-const O_RDONLY   = 0
-const O_WRONLY   = 1
-const O_RDWR     = 2
-const O_CREAT    = 64
-const O_TRUNC    = 512
-const O_APPEND   = 1024
-const O_NONBLOCK = 2048
-const O_CLOEXEC  = 524288
-
-; lseek() whence values
-const SEEK_SET = 0
-const SEEK_CUR = 1
-const SEEK_END = 2
-
-; getdents64 file types
-const DT_UNKNOWN = 0
-const DT_FIFO    = 1
-const DT_CHR     = 2
-const DT_DIR     = 4
-const DT_BLK     = 6
-const DT_REG     = 8
-const DT_LNK     = 10
-const DT_SOCK    = 12
-
-; =============================================================================
-; stat / fstat result structure (Linux x86-64 ABI)
-; =============================================================================
-struct Stat {
-    dev:     u64
-    ino:     u64
-    nlink:   u64
-    mode:    u32
-    uid:     u32
-    gid:     u32
-    _pad0:   u32
-    rdev:    u64
-    size:    i64    ; file size in bytes
-    blksize: i64
-    blocks:  i64
-    atime:   i64
-    atime_ns:i64
-    mtime:   i64
-    mtime_ns:i64
-    ctime:   i64
-    ctime_ns:i64
-    _unused: [3]i64
-}
-
-; mode bit helpers
-fn s_isreg(m: u32) -> bool  { ret m & 0xF000 == 0x8000 }
-fn s_isdir(m: u32) -> bool  { ret m & 0xF000 == 0x4000 }
-fn s_islnk(m: u32) -> bool  { ret m & 0xF000 == 0xA000 }
-
-; getdents64 kernel entry
-struct Dirent64 {
-    ino:    u64
-    off:    i64
-    reclen: u16
-    type_:  u8
-    name:   [256]i8   ; null-terminated — actual len given by reclen
-}
-
-; =============================================================================
-; File — buffered file handle
-; =============================================================================
-struct File {
-    fd:     i32
-    path:   []i8    ; for error messages
-}
-
-impl File {
-    ; ---- open for reading ----------------------------------------------------
-    fn open(path: ref []i8) -> Result<own File, []i8> {
-        let fd = syscall(SYS_OPEN, path, O_RDONLY | O_CLOEXEC, 0) as i32
-        if fd < 0 { ret err(fmt_str("fs: cannot open '{}': errno {}", [ArgStr(path), ArgI64(-fd as i64)])) }
-        ret ok(File { fd: fd, path: path })
-    }
-
-    ; ---- open for writing (create/truncate) ---------------------------------
-    fn create(path: ref []i8) -> Result<own File, []i8> {
-        let flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
-        let fd = syscall(SYS_OPEN, path, flags, 0o644) as i32
-        if fd < 0 { ret err(fmt_str("fs: cannot create '{}': errno {}", [ArgStr(path), ArgI64(-fd as i64)])) }
-        ret ok(File { fd: fd, path: path })
-    }
-
-    ; ---- open for append ----------------------------------------------------
-    fn append(path: ref []i8) -> Result<own File, []i8> {
-        let flags = O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC
-        let fd = syscall(SYS_OPEN, path, flags, 0o644) as i32
-        if fd < 0 { ret err(fmt_str("fs: cannot append '{}': errno {}", [ArgStr(path), ArgI64(-fd as i64)])) }
-        ret ok(File { fd: fd, path: path })
-    }
-
-    ; ---- open read/write ----------------------------------------------------
-    fn open_rw(path: ref []i8) -> Result<own File, []i8> {
-        let fd = syscall(SYS_OPEN, path, O_RDWR | O_CLOEXEC, 0) as i32
-        if fd < 0 { ret err(fmt_str("fs: cannot open_rw '{}': errno {}", [ArgStr(path), ArgI64(-fd as i64)])) }
-        ret ok(File { fd: fd, path: path })
-    }
-
-    ; ---- read into a caller-supplied buffer ---------------------------------
-    fn read(self, buf: []mut i8, max: i64) -> Result<i64, []i8> {
-        let n = syscall(SYS_READ, self.fd, buf, max) as i64
-        if n < 0 { ret err("fs: read failed") }
-        ret ok(n)
-    }
-
-    ; ---- read entire file into a newly mmap'd buffer ------------------------
-    fn read_all(self) -> Result<[]i8, []i8> {
-        let st = Stat { dev: 0, ino: 0, nlink: 0, mode: 0, uid: 0, gid: 0,
-                        _pad0: 0, rdev: 0, size: 0, blksize: 0, blocks: 0,
-                        atime: 0, atime_ns: 0, mtime: 0, mtime_ns: 0,
-                        ctime: 0, ctime_ns: 0, _unused: [0; 3] }
-        let r = syscall(SYS_FSTAT, self.fd, &st) as i32
-        if r < 0 { ret err("fs: fstat failed") }
-
-        let size = st.size
-        if size == 0 { ret ok("") }
-
-        ; mmap the file for zero-copy read
-        let ptr = syscall(SYS_MMAP, 0, size, 1,   ; PROT_READ
-                           2, self.fd, 0) as *i8   ; MAP_PRIVATE
-        if ptr as i64 < 0 { ret err("fs: mmap failed") }
-        ret ok(ptr[0..size])
-    }
-
-    ; ---- write all bytes from buf -------------------------------------------
-    fn write(self, buf: ref []i8) -> Result<i64, []i8> {
-        let total = 0i64
-        loop total < buf.len {
-            let n = syscall(SYS_WRITE, self.fd,
-                             buf[total..buf.len], buf.len - total) as i64
-            if n < 0 { ret err("fs: write failed") }
-            total = total + n
-        }
-        ret ok(total)
-    }
-
-    ; ---- seek ---------------------------------------------------------------
-    fn seek(self, offset: i64, whence: i32) -> Result<i64, []i8> {
-        let pos = syscall(SYS_LSEEK, self.fd, offset, whence) as i64
-        if pos < 0 { ret err("fs: lseek failed") }
-        ret ok(pos)
-    }
-
-    fn rewind(self) -> Result<(), []i8> {
-        self.seek(0, SEEK_SET)?
-        ret ok(())
-    }
-
-    fn size(self) -> Result<i64, []i8> {
-        let pos = self.seek(0, SEEK_CUR)?
-        let end = self.seek(0, SEEK_END)?
-        self.seek(pos, SEEK_SET)?
-        ret ok(end)
-    }
-
-    ; ---- fsync — flush kernel buffers to disk --------------------------------
-    fn sync(self) -> Result<(), []i8> {
-        let r = syscall(SYS_FSYNC, self.fd, 0, 0) as i32
-        if r < 0 { ret err("fs: fsync failed") }
-        ret ok(())
-    }
-
-    ; ---- stat ---------------------------------------------------------------
-    fn stat(self) -> Result<Stat, []i8> {
-        let st = Stat { dev: 0, ino: 0, nlink: 0, mode: 0, uid: 0, gid: 0,
-                        _pad0: 0, rdev: 0, size: 0, blksize: 0, blocks: 0,
-                        atime: 0, atime_ns: 0, mtime: 0, mtime_ns: 0,
-                        ctime: 0, ctime_ns: 0, _unused: [0; 3] }
-        let r = syscall(SYS_FSTAT, self.fd, &st) as i32
-        if r < 0 { ret err("fs: fstat failed") }
-        ret ok(st)
-    }
-
-    fn close(self) {
-        syscall(SYS_CLOSE, self.fd, 0, 0)
-    }
-}
-
-; =============================================================================
-; Convenience top-level functions
-; =============================================================================
-
-; Read entire file in one call — returns mmap'd slice (caller should munmap)
-fn file_read(path: ref []i8) -> Result<[]i8, []i8> {
-    let f = File::open(path)?
-    defer f.close()
-    ret f.read_all()
-}
-
-; Write bytes to a file (create/truncate)
-fn file_write(path: ref []i8, data: ref []i8) -> Result<i64, []i8> {
-    let f = File::create(path)?
-    defer f.close()
-    ret f.write(data)
-}
-
-; Append bytes to a file
-fn file_append(path: ref []i8, data: ref []i8) -> Result<i64, []i8> {
-    let f = File::append(path)?
-    defer f.close()
-    ret f.write(data)
-}
-
-; Copy src → dst
-fn file_copy(src: ref []i8, dst: ref []i8) -> Result<i64, []i8> {
-    let data = file_read(src)?
-    ret file_write(dst, data)
-}
-
-; =============================================================================
-; Path stat helpers
-; =============================================================================
-
-fn path_stat(path: ref []i8) -> Result<Stat, []i8> {
-    let st = Stat { dev: 0, ino: 0, nlink: 0, mode: 0, uid: 0, gid: 0,
-                    _pad0: 0, rdev: 0, size: 0, blksize: 0, blocks: 0,
-                    atime: 0, atime_ns: 0, mtime: 0, mtime_ns: 0,
-                    ctime: 0, ctime_ns: 0, _unused: [0; 3] }
-    let r = syscall(SYS_STAT, path, &st) as i32
-    if r < 0 { ret err("fs: stat failed") }
-    ret ok(st)
-}
-
-fn path_lstat(path: ref []i8) -> Result<Stat, []i8> {
-    let st = Stat { dev: 0, ino: 0, nlink: 0, mode: 0, uid: 0, gid: 0,
-                    _pad0: 0, rdev: 0, size: 0, blksize: 0, blocks: 0,
-                    atime: 0, atime_ns: 0, mtime: 0, mtime_ns: 0,
-                    ctime: 0, ctime_ns: 0, _unused: [0; 3] }
-    let r = syscall(SYS_LSTAT, path, &st) as i32
-    if r < 0 { ret err("fs: lstat failed") }
-    ret ok(st)
-}
-
-fn path_exists(path: ref []i8) -> bool {
-    match path_stat(path) { ok(_) => true   err(_) => false }
-}
-
-fn path_is_file(path: ref []i8) -> bool {
-    match path_stat(path) { ok(st) => s_isreg(st.mode)  err(_) => false }
-}
-
-fn path_is_dir(path: ref []i8) -> bool {
-    match path_stat(path) { ok(st) => s_isdir(st.mode)  err(_) => false }
-}
-
-fn path_size(path: ref []i8) -> Result<i64, []i8> {
-    let st = path_stat(path)?
-    ret ok(st.size)
-}
-
-; =============================================================================
-; Directory operations
-; =============================================================================
-
-fn mkdir(path: ref []i8, mode: u32) -> Result<(), []i8> {
-    let r = syscall(SYS_MKDIR, path, mode, 0) as i32
-    if r < 0 { ret err(fmt_str("fs: mkdir '{}' failed", [ArgStr(path)])) }
-    ret ok(())
-}
-
-fn mkdir_p(path: ref []i8) -> Result<(), []i8> {
-    ; Create path and all intermediate directories (like mkdir -p)
-    let buf = [4096]i8
-    let n   = path.len
-    loop i in 1..n + 1 {
-        if i < n and path[i] != '/' { continue }
-        let seg = path[0..i]
-        loop j in 0..i { buf[j] = seg[j] }
-        buf[i] = 0
-        if not path_is_dir(buf[0..i]) {
-            let r = syscall(SYS_MKDIR, buf, 0o755, 0) as i32
-            if r < 0 and -r != 17 {   ; EEXIST = 17, that's OK
-                ret err(fmt_str("fs: mkdir_p failed at '{}'",
-                                [ArgStr(buf[0..i])]))
+fn fs_read_file(path: &i8, buf: &i8, max_bytes: i64) -> i64 {
+    let fd = syscall(2, path, 0, 0)
+    if fd < 0 { ret -1 }
+    let total = 0
+    let keep = 1
+    loop keep == 1 {
+        let remaining = max_bytes - total
+        if remaining < 1 { keep = 0 }
+        if keep == 1 {
+            let n = syscall(0, fd, buf + total, remaining)
+            if n < 1 {
+                keep = 0
+            } else {
+                total = total + n
             }
         }
     }
-    ret ok(())
+    syscall(3, fd, 0, 0)
+    ret total
 }
 
-fn rmdir(path: ref []i8) -> Result<(), []i8> {
-    let r = syscall(SYS_RMDIR, path, 0, 0) as i32
-    if r < 0 { ret err(fmt_str("fs: rmdir '{}' failed", [ArgStr(path)])) }
-    ret ok(())
+fn fs_write_file(path: &i8, data: &i8, len: i64) -> i64 {
+    ; O_WRONLY | O_CREAT | O_TRUNC = 577, mode 0644 = 420
+    let fd = syscall(2, path, 577, 420)
+    if fd < 0 { ret -1 }
+    let n = syscall(1, fd, data, len)
+    syscall(3, fd, 0, 0)
+    ret n
 }
 
-fn rename(old: ref []i8, new: ref []i8) -> Result<(), []i8> {
-    let r = syscall(SYS_RENAME, old, new, 0) as i32
-    if r < 0 { ret err("fs: rename failed") }
-    ret ok(())
+fn fs_append_file(path: &i8, data: &i8, len: i64) -> i64 {
+    ; O_WRONLY | O_CREAT | O_APPEND = 1089, mode 0644 = 420
+    let fd = syscall(2, path, 1089, 420)
+    if fd < 0 { ret -1 }
+    let n = syscall(1, fd, data, len)
+    syscall(3, fd, 0, 0)
+    ret n
 }
 
-fn unlink(path: ref []i8) -> Result<(), []i8> {
-    let r = syscall(SYS_UNLINK, path, 0, 0) as i32
-    if r < 0 { ret err(fmt_str("fs: unlink '{}' failed", [ArgStr(path)])) }
-    ret ok(())
+fn fs_exists(path: &i8) -> i64 {
+    ; access(path, F_OK=0) via syscall 21
+    let r = syscall(21, path, 0, 0)
+    if r == 0 { ret 1 }
+    ret 0
 }
 
-; =============================================================================
-; Directory listing
-; =============================================================================
-
-struct DirEntry {
-    name:  []i8
-    type_: u8     ; DT_REG, DT_DIR, DT_LNK, …
-    ino:   u64
+fn fs_unlink(path: &i8) -> i64 {
+    let r = syscall(87, path, 0, 0)
+    if r < 0 { ret -1 }
+    ret 0
 }
 
-; List all entries in a directory (excluding . and ..)
-; Returns a Vec-like slice in the caller's region.
-fn dir_list(path: ref []i8) -> Result<[]DirEntry, []i8> {
-    let fd = syscall(SYS_OPEN, path, O_RDONLY | 0x10000, 0) as i32
-    ; O_DIRECTORY = 0x10000 on Linux x86-64
-    if fd < 0 { ret err(fmt_str("fs: cannot open dir '{}'", [ArgStr(path)])) }
-    defer { syscall(SYS_CLOSE, fd, 0, 0) }
-
-    let entries = Vec<DirEntry>::new()
-    let buf = [65536]i8
-
-    loop {
-        let n = syscall(SYS_GETDENTS64, fd, buf, 65536) as i64
-        if n < 0 { ret err("fs: getdents64 failed") }
-        if n == 0 { break }
-
-        let off = 0i64
-        loop off < n {
-            let de = &buf[off] as *Dirent64
-            let name_len = 0i64
-            loop buf[off + 19 + name_len] != 0 { name_len = name_len + 1 }
-            let name = buf[(off + 19)..(off + 19 + name_len)]
-
-            ; skip . and ..
-            if not (name_len == 1 and name[0] == '.') and
-               not (name_len == 2 and name[0] == '.' and name[1] == '.') {
-                entries.push(DirEntry {
-                    name:  name,
-                    type_: de.type_,
-                    ino:   de.ino,
-                })
-            }
-            off = off + de.reclen as i64
-        }
-    }
-    ret ok(entries.as_slice())
+fn fs_mkdir(path: &i8) -> i64 {
+    ; mkdir(path, 0755=493)
+    let r = syscall(83, path, 493, 0)
+    if r < 0 { ret -1 }
+    ret 0
 }
 
-; Recursive directory walk — calls `callback` for every file under `root`
-fn dir_walk(root: ref []i8, callback: fn(ref []i8)) {
-    match dir_list(root) {
-        err(_) => {}
-        ok(entries) => {
-            for e in entries {
-                let full = path_join(root, e.name)
-                if e.type_ == DT_DIR {
-                    dir_walk(full, callback)
-                } else {
-                    callback(full)
-                }
-            }
-        }
-    }
-}
-
-; =============================================================================
-; Path utilities
-; =============================================================================
-
-; Join two path segments with /
-fn path_join(dir: ref []i8, name: ref []i8) -> []i8 {
-    let buf = [4096]i8
-    let n   = 0i64
-    loop i in 0..dir.len  { buf[n] = dir[i]    n = n + 1 }
-    if n > 0 and buf[n-1] != '/' { buf[n] = '/'   n = n + 1 }
-    loop i in 0..name.len { buf[n] = name[i]   n = n + 1 }
-    ret buf[0..n]
-}
-
-; Return the directory part of a path  ("/a/b/c" → "/a/b")
-fn path_dir(p: ref []i8) -> []i8 {
-    let i = p.len - 1
-    loop i >= 0 and p[i] != '/' { i = i - 1 }
-    if i < 0 { ret "." }
-    if i == 0 { ret "/" }
-    ret p[0..i]
-}
-
-; Return the file name part  ("/a/b/c.txt" → "c.txt")
-fn path_base(p: ref []i8) -> []i8 {
-    let i = p.len - 1
-    loop i >= 0 and p[i] != '/' { i = i - 1 }
-    ret p[i+1..p.len]
-}
-
-; Return the extension  ("file.tar.gz" → ".gz")
-fn path_ext(p: ref []i8) -> []i8 {
-    let base = path_base(p)
-    let i    = base.len - 1
-    loop i >= 0 and base[i] != '.' { i = i - 1 }
-    if i < 0 { ret "" }
-    ret base[i..base.len]
-}
-
-; Strip extension  ("file.tar.gz" → "file.tar")
-fn path_stem(p: ref []i8) -> []i8 {
-    let ext = path_ext(p)
-    if ext.len == 0 { ret p }
-    ret p[0..p.len - ext.len]
-}
-
-; Resolve to absolute path using SYS_GETCWD
-fn path_abs(p: ref []i8) -> Result<[]i8, []i8> {
-    if p.len > 0 and p[0] == '/' { ret ok(p) }
-    let cwd = [4096]i8
-    let r = syscall(SYS_GETCWD, cwd, 4096) as i32
-    if r < 0 { ret err("fs: getcwd failed") }
-    let cwd_len = 0i64
-    loop cwd[cwd_len] != 0 { cwd_len = cwd_len + 1 }
-    ret ok(path_join(cwd[0..cwd_len], p))
-}
-
-fn chdir(path: ref []i8) -> Result<(), []i8> {
-    let r = syscall(SYS_CHDIR, path, 0, 0) as i32
-    if r < 0 { ret err(fmt_str("fs: chdir '{}' failed", [ArgStr(path)])) }
-    ret ok(())
-}
-
-fn getcwd() -> Result<[]i8, []i8> {
-    let buf = [4096]i8
-    let r = syscall(SYS_GETCWD, buf, 4096) as i32
-    if r < 0 { ret err("fs: getcwd failed") }
-    let n = 0i64
-    loop buf[n] != 0 { n = n + 1 }
-    ret ok(buf[0..n])
-}
-
-; =============================================================================
-; Temp file
-; =============================================================================
-fn temp_file(prefix: ref []i8) -> Result<(own File, []i8), []i8> {
-    ; Create /tmp/<prefix><pid><counter>
-    let buf = [256]i8
-    let n = write_fmt("/tmp/{}{}", [ArgStr(prefix), ArgI64(rdtsc() & 0xFFFFFF)],
-                       buf, 256)
-    let path = buf[0..n]
-    let f = File::create(path)?
-    ret ok((f, path))
+fn fs_file_size(path: &i8) -> i64 {
+    ; stat syscall = 4, st_size at offset 48 in struct stat
+    let statbuf = alloc_pages(1)
+    let r = syscall(4, path, statbuf, 0)
+    if r < 0 { ret -1 }
+    let size_ptr: &i64 = statbuf + 48
+    let size = size_ptr[0]
+    ret size
 }
