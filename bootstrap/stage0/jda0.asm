@@ -3534,9 +3534,15 @@ gen_stmt:
     call    cur_tok_type
     cmp     rax, TOK_ELSE
     jne     .gs_if_no_else
-    call    adv_tok
+    call    adv_tok         ; skip 'else'
+    call    cur_tok_type
+    cmp     rax, TOK_IF
+    je      .gs_else_if
     call    adv_tok         ; skip '{'
     call    gen_block_body
+    jmp     .gs_if_no_else
+.gs_else_if:
+    call    gen_stmt        ; recursively handle 'if ...'
 .gs_if_no_else:
     ; patch after offset
     mov     rax, [cod_len]
