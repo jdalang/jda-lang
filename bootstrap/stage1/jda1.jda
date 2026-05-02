@@ -158,6 +158,7 @@ const OP_ATOMIC_STORE = 36
 const OP_ATOMIC_CAS   = 37
 const OP_ATOMIC_ADD   = 38
 const OP_RDTSC        = 39
+const OP_CTX_SWITCH   = 40
 
 ; x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -6564,6 +6565,13 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         ins.op = OP_RDTSC
         ret emit(jfn, bb, &ins)
     }
+    if name_len == 10 and streq(src, name_start, 10, "ctx_switch") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CTX_SWITCH
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -7893,6 +7901,13 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         ins.op = OP_RDTSC
         ret emit(g_jfn, bb, &ins)
     }
+    if name.str_len == 10 and streq(g_src_buf_ptr, name.str_start, 10, "ctx_switch") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CTX_SWITCH
+        ins.operand0 = arg0
+        ins.operand1 = arg1
+        ret emit(g_jfn, bb, &ins)
+    }
 
     let ins = Instr{}
     ins.op        = OP_CALL
@@ -8201,7 +8216,7 @@ fn dce(jfn: &JirFunction) {
                 if o1 >= 0 { used[o1] = 1 }
                 if o2 >= 0 { used[o2] = 1 }
             }
-            if op == OP_ATOMIC_ADD {
+            if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
             }
@@ -8238,7 +8253,7 @@ fn dce(jfn: &JirFunction) {
             if op == OP_ATOMIC_STORE { used[id] = 1 }
             if op == OP_ATOMIC_CAS   { used[id] = 1 }
             if op == OP_ATOMIC_ADD   { used[id] = 1 }
-            if op == OP_RDTSC        { used[id] = 1 }
+            if op == OP_RDTSC or op == OP_CTX_SWITCH { used[id] = 1 }
             ii = ii + 1
         }
         bi = bi + 1
@@ -10141,6 +10156,102 @@ fn emit_trunc32(out: &i8, pos: &i64, reg: i32) {
     emit_byte(out, pos, 0xC0 + (r3 * 8) + r3)
 }
 
+fn emit_ctx_switch_save(out: &i8, pos: &i64) {
+    ; Save from context (RDI = from_ptr):
+    ; mov [rdi+0], rsp: 48 89 67 00
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x67)
+    emit_byte(out, pos, 0x00)
+    ; mov [rdi+8], rbp: 48 89 6F 08
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x6F)
+    emit_byte(out, pos, 0x08)
+    ; lea rax, [rip+55]: 48 8D 05 37 00 00 00
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8D)
+    emit_byte(out, pos, 0x05)
+    emit_byte(out, pos, 0x37)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    ; mov [rdi+16], rax: 48 89 47 10
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x47)
+    emit_byte(out, pos, 0x10)
+    ; mov [rdi+24], rbx: 48 89 5F 18
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x5F)
+    emit_byte(out, pos, 0x18)
+    ; mov [rdi+32], r12: 4C 89 67 20
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x67)
+    emit_byte(out, pos, 0x20)
+    ; mov [rdi+40], r13: 4C 89 6F 28
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x6F)
+    emit_byte(out, pos, 0x28)
+    ; mov [rdi+48], r14: 4C 89 77 30
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x77)
+    emit_byte(out, pos, 0x30)
+    ; mov [rdi+56], r15: 4C 89 7F 38
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0x7F)
+    emit_byte(out, pos, 0x38)
+}
+
+fn emit_ctx_switch_restore(out: &i8, pos: &i64) {
+    ; Restore to context (RSI = to_ptr):
+    ; mov rsp, [rsi+0]: 48 8B 66 00
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x00)
+    ; mov rbp, [rsi+8]: 48 8B 6E 08
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x6E)
+    emit_byte(out, pos, 0x08)
+    ; mov rbx, [rsi+24]: 48 8B 5E 18
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x5E)
+    emit_byte(out, pos, 0x18)
+    ; mov r12, [rsi+32]: 4C 8B 66 20
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x20)
+    ; mov r13, [rsi+40]: 4C 8B 6E 28
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x6E)
+    emit_byte(out, pos, 0x28)
+    ; mov r14, [rsi+48]: 4C 8B 76 30
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x76)
+    emit_byte(out, pos, 0x30)
+    ; mov r15, [rsi+56]: 4C 8B 7E 38
+    emit_byte(out, pos, 0x4C)
+    emit_byte(out, pos, 0x8B)
+    emit_byte(out, pos, 0x7E)
+    emit_byte(out, pos, 0x38)
+    ; jmp [rsi+16]: FF 66 10
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x10)
+    ; .resume lands here (offset 70 from LEA)
+}
+
 fn lower_instr_atomic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let op = ins.op
 
@@ -10281,6 +10392,23 @@ fn lower_instr_atomic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         if dst != PHYS_R12 {
             emit_mov_rr(out, pos, dst, PHYS_R12)
         }
+        ret 1
+    }
+
+    ; OP_CTX_SWITCH: ctx_switch(from_ptr, to_ptr)
+    if op == OP_CTX_SWITCH {
+        emit_save_pool(ctx.ra, out, pos)
+        let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_push_r(out, pos, r0)
+        let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_push_r(out, pos, r1)
+        emit_pop_r(out, pos, PHYS_RSI)
+        emit_pop_r(out, pos, PHYS_RDI)
+        emit_ctx_switch_save(out, pos)
+        emit_ctx_switch_restore(out, pos)
+        emit_restore_pool(ctx.ra, out, pos)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
         ret 1
     }
 
@@ -11663,7 +11791,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o1)
         mark_use(ctx, o2)
     }
-    if op == OP_ATOMIC_ADD {
+    if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
