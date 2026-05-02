@@ -1,152 +1,265 @@
-#!/usr/bin/env python3
-"""
-jda-doc — Documentation generator for Jda source files
+#!/bin/bash
+set -euo pipefail
 
-Extracts doc comments (;; comment) and generates static HTML documentation.
+# jda-doc — Documentation generator for Jda source files
+#
+# Extracts doc comments (;; comment) and generates static HTML documentation.
+#
+# Usage:
+#   jda-doc.sh <file.jda>              Generate docs for a single file
+#   jda-doc.sh <dir/>                  Generate docs for all .jda files
+#   jda-doc.sh --output <dir> <src>    Write HTML to output directory
+#   jda-doc.sh --json <file.jda>       Output doc data as JSON
 
-Usage:
-  jda-doc.sh <file.jda>              Generate docs for a single file
-  jda-doc.sh <dir/>                  Generate docs for all .jda files
-  jda-doc.sh --output <dir> <src>    Write HTML to output directory
-  jda-doc.sh --json <file.jda>       Output doc data as JSON
+# ─── CLI Parsing ──────────────────────────────────────────────────────────────
 
-Doc comment format:
-  ;; This is a doc comment for the next declaration.
-  ;; Multiple lines are joined.
-  fn my_function(x: i64) -> i64 { ... }
+OUTPUT_DIR="docs"
+JSON_MODE=0
+TARGETS=()
 
-Generates:
-  - index.html       — module index with all files
-  - <module>.html    — per-module page with functions, structs, enums
-  - style.css        — stylesheet
-"""
+if [[ $# -eq 0 ]]; then
+    echo "jda-doc — Jda documentation generator"
+    echo ""
+    echo "Usage:"
+    echo "  jda-doc.sh <file.jda>              Generate docs to ./docs/"
+    echo "  jda-doc.sh <dir/>                   Generate docs for all .jda files"
+    echo "  jda-doc.sh --output <dir> <src>     Write HTML to specified directory"
+    echo "  jda-doc.sh --json <file.jda>        Output doc data as JSON"
+    exit 1
+fi
 
-import sys
-import os
-import re
-import json
-import html
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --output)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --json)
+            JSON_MODE=1
+            shift
+            ;;
+        *)
+            TARGETS+=("$1")
+            shift
+            ;;
+    esac
+done
 
-# ─── Parsing ──────────────────────────────────────────────────────────────────
+if [[ ${#TARGETS[@]} -eq 0 ]]; then
+    echo "error: no files specified" >&2
+    exit 1
+fi
 
-class DocItem:
-    def __init__(self, kind, name, signature, doc, line, file):
-        self.kind = kind        # "fn", "struct", "enum", "const", "impl"
-        self.name = name
-        self.signature = signature
-        self.doc = doc          # list of doc comment lines
-        self.line = line        # 1-based line number
-        self.file = file
-        self.methods = []       # for impl blocks
+# ─── File Collection ─────────────────────────────────────────────────────────
 
-def parse_file(filepath):
-    """Parse a .jda file and extract documented items."""
-    with open(filepath, "r") as f:
-        lines = f.readlines()
+collect_files() {
+    local target="$1"
+    if [[ -d "$target" ]]; then
+        find "$target" -name '*.jda' -type f | sort
+    elif [[ -f "$target" ]]; then
+        echo "$target"
+    else
+        echo "error: $target not found" >&2
+        exit 1
+    fi
+}
 
-    items = []
-    doc_buf = []
-    current_impl = None
+module_name() {
+    local base
+    base="$(basename "$1")"
+    echo "${base%.jda}"
+}
 
-    for i, raw_line in enumerate(lines):
-        line = raw_line.rstrip()
-        stripped = line.strip()
+html_escape() {
+    local s="$1"
+    s="${s//&/&amp;}"
+    s="${s//</&lt;}"
+    s="${s//>/&gt;}"
+    s="${s//\"/&quot;}"
+    echo "$s"
+}
 
-        # Doc comment
-        if stripped.startswith(";;"):
-            doc_text = stripped[2:].strip()
-            doc_buf.append(doc_text)
-            continue
+# ─── Parse a .jda file with awk ──────────────────────────────────────────────
+# Output format: tab-separated records, one per item.
+# ITEM\tkind\tname\tsignature\tdoc\tline\tfile
+# METHOD\tparent_name\tname\tsignature\tdoc\tline
+# Fields within doc are joined with \x1F (unit separator) for line breaks.
 
-        # Regular comment or blank — reset doc buffer if not followed by decl
-        if not stripped or stripped.startswith(";"):
-            if not stripped.startswith(";;"):
-                doc_buf = []
-            continue
+parse_file() {
+    local filepath="$1"
+    awk -v filepath="$filepath" '
+BEGIN {
+    doc_count = 0
+    in_impl = ""
+    impl_brace_depth = 0
+}
 
-        # Check for declarations
-        item = None
+function flush_doc(    result, i) {
+    result = ""
+    for (i = 0; i < doc_count; i++) {
+        if (i > 0) result = result "\x1f"
+        result = result doc_buf[i]
+    }
+    doc_count = 0
+    return result
+}
 
-        if stripped.startswith("fn "):
-            m = re.match(r"fn\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)(\s*->\s*\S+)?", stripped)
-            if m:
-                name = m.group(1)
-                sig = stripped.split("{")[0].strip()
-                item = DocItem("fn", name, sig, list(doc_buf), i + 1, filepath)
-                if current_impl:
-                    current_impl.methods.append(item)
-                else:
-                    items.append(item)
+function clear_doc() {
+    doc_count = 0
+}
 
-        elif stripped.startswith("struct "):
-            m = re.match(r"struct\s+([a-zA-Z_]\w*)", stripped)
-            if m:
-                name = m.group(1)
-                # Collect struct fields
-                fields = []
-                if "{" in stripped:
-                    j = i + 1
-                    while j < len(lines):
-                        fl = lines[j].strip()
-                        if fl.startswith("}"):
-                            break
-                        if ":" in fl and not fl.startswith(";"):
-                            fields.append(fl.rstrip(",").strip())
-                        j += 1
-                sig = f"struct {name}"
-                if fields:
-                    sig += " { " + ", ".join(fields) + " }"
-                item = DocItem("struct", name, sig, list(doc_buf), i + 1, filepath)
-                items.append(item)
+{
+    line = $0
+    gsub(/^[ \t]+/, "", line)  # strip leading whitespace
+    gsub(/[ \t]+$/, "", line)  # strip trailing whitespace
 
-        elif stripped.startswith("enum "):
-            m = re.match(r"enum\s+([a-zA-Z_]\w*)", stripped)
-            if m:
-                name = m.group(1)
-                variants = []
-                if "{" in stripped:
-                    j = i + 1
-                    while j < len(lines):
-                        vl = lines[j].strip()
-                        if vl.startswith("}"):
-                            break
-                        if vl and not vl.startswith(";"):
-                            variants.append(vl.rstrip(",").strip())
-                        j += 1
-                sig = f"enum {name}"
-                if variants:
-                    sig += " { " + ", ".join(variants) + " }"
-                item = DocItem("enum", name, sig, list(doc_buf), i + 1, filepath)
-                items.append(item)
+    # Doc comment
+    if (line ~ /^;;/) {
+        doc_text = line
+        sub(/^;;[ \t]*/, "", doc_text)
+        doc_buf[doc_count++] = doc_text
+        next
+    }
 
-        elif stripped.startswith("const "):
-            m = re.match(r"const\s+([a-zA-Z_]\w*)\s*=\s*(.+)", stripped)
-            if m:
-                name = m.group(1)
-                sig = stripped
-                item = DocItem("const", name, sig, list(doc_buf), i + 1, filepath)
-                items.append(item)
+    # Blank line or regular comment — reset doc buffer
+    if (line == "" || (line ~ /^;/ && line !~ /^;;/)) {
+        clear_doc()
+        next
+    }
 
-        elif stripped.startswith("impl "):
-            m = re.match(r"impl\s+([a-zA-Z_]\w*)", stripped)
-            if m:
-                name = m.group(1)
-                item = DocItem("impl", name, f"impl {name}", list(doc_buf), i + 1, filepath)
-                items.append(item)
-                current_impl = item
+    # Track impl brace depth
+    if (in_impl != "") {
+        # Count braces in the raw line
+        tmp = $0
+        gsub(/[^{]/, "", tmp)
+        impl_brace_depth += length(tmp)
+        tmp = $0
+        gsub(/[^}]/, "", tmp)
+        impl_brace_depth -= length(tmp)
+        if (impl_brace_depth <= 0) {
+            in_impl = ""
+            impl_brace_depth = 0
+        }
+    }
 
-        if stripped == "}":
-            current_impl = None
+    # fn declaration
+    if (line ~ /^fn[ \t]+[a-zA-Z_]/) {
+        if (match(line, /^fn[ \t]+[a-zA-Z_][a-zA-Z0-9_]*/)) {
+            name = line; sub(/^fn[ \t]+/, "", name); sub(/[^a-zA-Z0-9_].*/, "", name)
+            sig = line
+            sub(/\{.*$/, "", sig)
+            gsub(/[ \t]+$/, "", sig)
+            doc = flush_doc()
+            if (in_impl != "") {
+                printf "METHOD\t%s\t%s\t%s\t%s\t%d\n", in_impl, name, sig, doc, NR
+            } else {
+                printf "ITEM\tfn\t%s\t%s\t%s\t%d\t%s\n", name, sig, doc, NR, filepath
+            }
+        } else {
+            clear_doc()
+        }
+        next
+    }
 
-        # Reset doc buffer after any non-doc line
-        doc_buf = []
+    # struct declaration
+    if (line ~ /^struct[ \t]+[a-zA-Z_]/) {
+        if (match(line, /^struct[ \t]+[a-zA-Z_][a-zA-Z0-9_]*/)) {
+            name = line; sub(/^struct[ \t]+/, "", name); sub(/[^a-zA-Z0-9_].*/, "", name)
+            fields = ""
+            if (line ~ /\{/) {
+                # read fields until closing brace
+                while ((getline fl) > 0) {
+                    gsub(/^[ \t]+/, "", fl)
+                    gsub(/[ \t]+$/, "", fl)
+                    if (fl ~ /^\}/) break
+                    if (fl ~ /:/ && fl !~ /^;/) {
+                        sub(/,[ \t]*$/, "", fl)
+                        if (fields != "") fields = fields ", "
+                        fields = fields fl
+                    }
+                }
+            }
+            sig = "struct " name
+            if (fields != "") sig = sig " { " fields " }"
+            doc = flush_doc()
+            printf "ITEM\tstruct\t%s\t%s\t%s\t%d\t%s\n", name, sig, doc, NR, filepath
+        } else {
+            clear_doc()
+        }
+        next
+    }
 
-    return items
+    # enum declaration
+    if (line ~ /^enum[ \t]+[a-zA-Z_]/) {
+        if (match(line, /^enum[ \t]+[a-zA-Z_][a-zA-Z0-9_]*/)) {
+            name = line; sub(/^enum[ \t]+/, "", name); sub(/[^a-zA-Z0-9_].*/, "", name)
+            variants = ""
+            if (line ~ /\{/) {
+                while ((getline vl) > 0) {
+                    gsub(/^[ \t]+/, "", vl)
+                    gsub(/[ \t]+$/, "", vl)
+                    if (vl ~ /^\}/) break
+                    if (vl != "" && vl !~ /^;/) {
+                        sub(/,[ \t]*$/, "", vl)
+                        if (variants != "") variants = variants ", "
+                        variants = variants vl
+                    }
+                }
+            }
+            sig = "enum " name
+            if (variants != "") sig = sig " { " variants " }"
+            doc = flush_doc()
+            printf "ITEM\tenum\t%s\t%s\t%s\t%d\t%s\n", name, sig, doc, NR, filepath
+        } else {
+            clear_doc()
+        }
+        next
+    }
 
+    # const declaration
+    if (line ~ /^const[ \t]+[a-zA-Z_][a-zA-Z0-9_]*[ \t]*=/) {
+        if (match(line, /^const[ \t]+[a-zA-Z_][a-zA-Z0-9_]*/)) {
+            name = line; sub(/^const[ \t]+/, "", name); sub(/[^a-zA-Z0-9_].*/, "", name)
+            sig = line
+            doc = flush_doc()
+            printf "ITEM\tconst\t%s\t%s\t%s\t%d\t%s\n", name, sig, doc, NR, filepath
+        } else {
+            clear_doc()
+        }
+        next
+    }
 
-# ─── HTML Generation ─────────────────────────────────────────────────────────
+    # impl declaration
+    if (line ~ /^impl[ \t]+[a-zA-Z_]/) {
+        if (match(line, /^impl[ \t]+[a-zA-Z_][a-zA-Z0-9_]*/)) {
+            name = line; sub(/^impl[ \t]+/, "", name); sub(/[^a-zA-Z0-9_].*/, "", name)
+            sig = "impl " name
+            doc = flush_doc()
+            printf "ITEM\timpl\t%s\t%s\t%s\t%d\t%s\n", name, sig, doc, NR, filepath
+            in_impl = name
+            # count braces on this line
+            tmp = $0
+            gsub(/[^{]/, "", tmp)
+            impl_brace_depth = length(tmp)
+            tmp = $0
+            gsub(/[^}]/, "", tmp)
+            impl_brace_depth -= length(tmp)
+        } else {
+            clear_doc()
+        }
+        next
+    }
 
-CSS = """
+    # Any other non-doc line resets the buffer
+    clear_doc()
+}
+' "$filepath"
+}
+
+# ─── CSS ──────────────────────────────────────────────────────────────────────
+
+write_css() {
+    cat > "$OUTPUT_DIR/style.css" <<'CSSEOF'
 :root {
   --bg: #1e1e2e;
   --fg: #cdd6f4;
@@ -197,113 +310,195 @@ a:hover { text-decoration: underline; }
 .toc li { margin: 0.2rem 0; list-style: none; }
 footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--overlay);
          color: var(--subtle); font-size: 0.85rem; }
-"""
+CSSEOF
+}
 
-def esc(s):
-    return html.escape(s)
+# ─── HTML Rendering ──────────────────────────────────────────────────────────
 
-def render_doc(doc_lines):
-    if not doc_lines:
-        return ""
-    paragraphs = []
-    current = []
-    for line in doc_lines:
-        if not line:
-            if current:
-                paragraphs.append(" ".join(current))
-                current = []
-        else:
-            current.append(line)
-    if current:
-        paragraphs.append(" ".join(current))
-    parts = "".join(f"<p>{esc(p)}</p>" for p in paragraphs)
-    return f'<div class="doc">{parts}</div>'
+# render_doc_html: convert \x1F-separated doc string to <div class="doc">...</div>
+render_doc_html() {
+    local doc="$1"
+    [[ -z "$doc" ]] && return
+    local IFS=$'\x1f'
+    local paragraphs=()
+    local current=""
+    for part in $doc; do
+        if [[ -z "$part" ]]; then
+            if [[ -n "$current" ]]; then
+                paragraphs+=("$current")
+                current=""
+            fi
+        else
+            if [[ -n "$current" ]]; then
+                current="$current $part"
+            else
+                current="$part"
+            fi
+        fi
+    done
+    [[ -n "$current" ]] && paragraphs+=("$current")
+    echo -n '<div class="doc">'
+    for p in "${paragraphs[@]}"; do
+        echo -n "<p>$(html_escape "$p")</p>"
+    done
+    echo -n '</div>'
+}
 
-def render_item(item, module_name):
-    badge = f'<span class="badge {item.kind}">{item.kind}</span>'
-    source = f'<span class="source-link">{os.path.basename(item.file)}:{item.line}</span>'
-    sig = f'<code class="sig">{esc(item.signature)}</code>'
-    doc = render_doc(item.doc)
+# ─── Collect all files ────────────────────────────────────────────────────────
 
-    methods_html = ""
-    if item.methods:
-        methods_html = "<h4>Methods</h4>"
-        for m in item.methods:
-            m_sig = f'<code class="sig">{esc(m.signature)}</code>'
-            m_doc = render_doc(m.doc)
-            methods_html += f'<div class="method">{m_sig}{m_doc}</div>'
+ALL_FILES=()
+for target in "${TARGETS[@]}"; do
+    while IFS= read -r f; do
+        ALL_FILES+=("$f")
+    done < <(collect_files "$target")
+done
 
-    return f'''<div class="item {item.kind}" id="{item.name}">
-  {source}{badge}<h3>{esc(item.name)}</h3>
-  {sig}{doc}{methods_html}
-</div>'''
+if [[ ${#ALL_FILES[@]} -eq 0 ]]; then
+    echo "error: no .jda files found" >&2
+    exit 1
+fi
 
-def render_module_page(module_name, items, all_modules):
-    nav = '<div class="nav"><a href="index.html">Index</a>'
-    for m in sorted(all_modules):
-        if m == module_name:
-            nav += f' | <strong>{esc(m)}</strong>'
-        else:
-            nav += f' | <a href="{m}.html">{esc(m)}</a>'
-    nav += "</div>"
+# ─── Parse all files into a temporary data store ─────────────────────────────
 
-    # Group by kind
-    functions = [i for i in items if i.kind == "fn"]
-    structs = [i for i in items if i.kind == "struct"]
-    enums = [i for i in items if i.kind == "enum"]
-    constants = [i for i in items if i.kind == "const"]
-    impls = [i for i in items if i.kind == "impl"]
+# We store parsed data in a temp file, then process it.
+TMPDATA="$(mktemp)"
+trap 'rm -f "$TMPDATA"' EXIT
 
-    body = f"<h1>{esc(module_name)}</h1>\n{nav}\n"
+SEEN_MODULES=""
+ALL_MODULE_NAMES=()
 
-    # Table of contents
-    if len(items) > 3:
-        body += '<ul class="toc">'
-        for item in items:
-            body += f'<li><span class="badge {item.kind}">{item.kind}</span><a href="#{item.name}">{esc(item.name)}</a></li>'
-        body += "</ul>"
+for filepath in "${ALL_FILES[@]}"; do
+    mod="$(module_name "$filepath")"
+    parsed="$(parse_file "$filepath")"
+    if [[ -n "$parsed" ]]; then
+        # Tag each line with the module name
+        while IFS= read -r line; do
+            echo "${mod}"$'\t'"${line}"
+        done <<< "$parsed"
+        case ",$SEEN_MODULES," in
+            *",$mod,"*) ;;
+            *)
+                SEEN_MODULES="${SEEN_MODULES},${mod}"
+                ALL_MODULE_NAMES+=("$mod")
+                ;;
+        esac
+    fi
+done > "$TMPDATA"
 
-    for title, group in [("Functions", functions), ("Structs", structs),
-                          ("Enums", enums), ("Constants", constants),
-                          ("Implementations", impls)]:
-        if group:
-            body += f"<h2>{title}</h2>\n"
-            for item in group:
-                body += render_item(item, module_name) + "\n"
+if [[ ${#ALL_MODULE_NAMES[@]} -eq 0 ]]; then
+    echo "No documented items found"
+    exit 0
+fi
 
-    body += '<footer>Generated by <code>jda-doc</code></footer>'
+# Sort module names
+IFS=$'\n' SORTED_MODULES=($(sort <<< "$(printf '%s\n' "${ALL_MODULE_NAMES[@]}")")); unset IFS
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(module_name)} — Jda Documentation</title>
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
-{body}
-</body>
-</html>"""
+# ─── JSON Mode ────────────────────────────────────────────────────────────────
 
-def render_index(modules):
-    """Render the index page listing all modules."""
-    body = "<h1>Jda Documentation</h1>\n"
-    body += "<h2>Modules</h2>\n<ul>\n"
-    for name, items in sorted(modules.items()):
-        fn_count = sum(1 for i in items if i.kind == "fn")
-        struct_count = sum(1 for i in items if i.kind == "struct")
-        summary = []
-        if fn_count:
-            summary.append(f"{fn_count} functions")
-        if struct_count:
-            summary.append(f"{struct_count} structs")
-        desc = f" — {', '.join(summary)}" if summary else ""
-        body += f'<li><a href="{name}.html">{esc(name)}</a>{desc}</li>\n'
-    body += "</ul>\n"
-    body += '<footer>Generated by <code>jda-doc</code></footer>'
+if [[ $JSON_MODE -eq 1 ]]; then
+    awk -F'\t' '
+BEGIN {
+    first_mod = 1
+    printf "{\n"
+}
 
-    return f"""<!DOCTYPE html>
+function json_escape(s) {
+    gsub(/\\/, "\\\\", s)
+    gsub(/"/, "\\\"", s)
+    gsub(/\n/, "\\n", s)
+    gsub(/\t/, "\\t", s)
+    return s
+}
+
+function print_doc_array(doc,    n, parts, i) {
+    if (doc == "") { printf "[]"; return }
+    n = split(doc, parts, "\x1f")
+    printf "["
+    for (i = 1; i <= n; i++) {
+        if (i > 1) printf ", "
+        printf "\"%s\"", json_escape(parts[i])
+    }
+    printf "]"
+}
+
+{
+    mod = $1
+    rectype = $2
+
+    if (rectype == "ITEM") {
+        kind = $3; name = $4; sig = $5; doc = $6; lineno = $7; file = $8
+
+        if (mod != cur_mod) {
+            if (cur_mod != "") {
+                # close methods of last impl if any
+                if (in_impl_json) { printf "\n          ]"; in_impl_json = 0 }
+                # close previous module
+                printf "\n    }\n  ]"
+            }
+            if (!first_mod) printf ","
+            first_mod = 0
+            printf "\n  \"%s\": [\n", json_escape(mod)
+            cur_mod = mod
+            first_item = 1
+        }
+
+        # close methods of previous impl if any
+        if (in_impl_json) { printf "\n          ]\n        }"; in_impl_json = 0; first_item = 0 }
+
+        if (!first_item) printf ","
+        first_item = 0
+
+        printf "\n    {\n"
+        printf "      \"kind\": \"%s\",\n", json_escape(kind)
+        printf "      \"name\": \"%s\",\n", json_escape(name)
+        printf "      \"signature\": \"%s\",\n", json_escape(sig)
+        printf "      \"doc\": "; print_doc_array(doc); printf ",\n"
+        printf "      \"line\": %s,\n", lineno
+        printf "      \"file\": \"%s\"", json_escape(file)
+
+        if (kind == "impl") {
+            printf ",\n      \"methods\": ["
+            in_impl_json = 1
+            first_method = 1
+        } else {
+            printf ",\n      \"methods\": []"
+            printf "\n    }"
+        }
+    }
+
+    if (rectype == "METHOD") {
+        parent = $3; mname = $4; msig = $5; mdoc = $6; mline = $7
+        if (!first_method) printf ","
+        first_method = 0
+        printf "\n        {\n"
+        printf "          \"name\": \"%s\",\n", json_escape(mname)
+        printf "          \"signature\": \"%s\",\n", json_escape(msig)
+        printf "          \"doc\": "; print_doc_array(mdoc); printf ",\n"
+        printf "          \"line\": %s\n", mline
+        printf "        }"
+    }
+}
+
+END {
+    if (cur_mod != "") {
+        if (in_impl_json) printf "\n      ]"
+        printf "\n    }\n  ]"
+    }
+    printf "\n}\n"
+}
+' "$TMPDATA"
+    exit 0
+fi
+
+# ─── HTML Generation ─────────────────────────────────────────────────────────
+
+mkdir -p "$OUTPUT_DIR"
+write_css
+
+# Generate index.html
+{
+    cat <<'HEADEOF'
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -312,110 +507,178 @@ def render_index(modules):
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-{body}
+<h1>Jda Documentation</h1>
+<h2>Modules</h2>
+<ul>
+HEADEOF
+
+    for mod in "${SORTED_MODULES[@]}"; do
+        # Count fns and structs for this module
+        fn_count="$(awk -F'\t' -v m="$mod" '$1==m && $2=="ITEM" && $3=="fn" {c++} END{print c+0}' "$TMPDATA")"
+        struct_count="$(awk -F'\t' -v m="$mod" '$1==m && $2=="ITEM" && $3=="struct" {c++} END{print c+0}' "$TMPDATA")"
+        summary=""
+        [[ $fn_count -gt 0 ]] && summary="${fn_count} functions"
+        if [[ $struct_count -gt 0 ]]; then
+            [[ -n "$summary" ]] && summary="$summary, "
+            summary="${summary}${struct_count} structs"
+        fi
+        [[ -n "$summary" ]] && summary=" &mdash; $summary"
+        echo "<li><a href=\"${mod}.html\">$(html_escape "$mod")</a>${summary}</li>"
+    done
+
+    cat <<'FOOTEOF'
+</ul>
+<footer>Generated by <code>jda-doc</code></footer>
 </body>
-</html>"""
+</html>
+FOOTEOF
+} > "$OUTPUT_DIR/index.html"
 
-# ─── File collection ──────────────────────────────────────────────────────────
+# Generate per-module HTML pages using awk
+for mod in "${SORTED_MODULES[@]}"; do
+    awk -F'\t' -v mod="$mod" -v sorted_mods="${SORTED_MODULES[*]}" '
+BEGIN {
+    # Build module nav
+    n = split(sorted_mods, mods, " ")
+}
 
-def collect_files(target):
-    if os.path.isdir(target):
-        files = []
-        for root, dirs, filenames in os.walk(target):
-            for fn in sorted(filenames):
-                if fn.endswith(".jda"):
-                    files.append(os.path.join(root, fn))
-        return files
-    elif os.path.isfile(target):
-        return [target]
-    else:
-        print(f"error: {target} not found", file=sys.stderr)
-        sys.exit(1)
+function html_esc(s) {
+    gsub(/&/, "\\&amp;", s)
+    gsub(/</, "\\&lt;", s)
+    gsub(/>/, "\\&gt;", s)
+    gsub(/"/, "\\&quot;", s)
+    return s
+}
 
-def module_name(filepath):
-    return os.path.splitext(os.path.basename(filepath))[0]
+function render_doc(doc,    n_parts, parts, i, result, paragraphs, np, cur) {
+    if (doc == "") return ""
+    n_parts = split(doc, parts, "\x1f")
+    np = 0
+    cur = ""
+    for (i = 1; i <= n_parts; i++) {
+        if (parts[i] == "") {
+            if (cur != "") { paragraphs[++np] = cur; cur = "" }
+        } else {
+            if (cur != "") cur = cur " " parts[i]
+            else cur = parts[i]
+        }
+    }
+    if (cur != "") paragraphs[++np] = cur
+    result = "<div class=\"doc\">"
+    for (i = 1; i <= np; i++) {
+        result = result "<p>" html_esc(paragraphs[i]) "</p>"
+    }
+    result = result "</div>"
+    return result
+}
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+# First pass: collect items for this module
+$1 == mod {
+    rectype = $2
+    if (rectype == "ITEM") {
+        item_count++
+        kind[item_count] = $3
+        name[item_count] = $4
+        sig[item_count] = $5
+        doc[item_count] = $6
+        lineno[item_count] = $7
+        file[item_count] = $8
+        method_count[item_count] = 0
+        current_item = item_count
+    }
+    if (rectype == "METHOD") {
+        # Find the parent impl item
+        parent = $3
+        for (pi = item_count; pi >= 1; pi--) {
+            if (kind[pi] == "impl" && name[pi] == parent) {
+                mc = ++method_count[pi]
+                m_name[pi, mc] = $4
+                m_sig[pi, mc] = $5
+                m_doc[pi, mc] = $6
+                m_line[pi, mc] = $7
+                break
+            }
+        }
+    }
+}
 
-def main():
-    args = sys.argv[1:]
+END {
+    # Header
+    printf "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
+    printf "<meta charset=\"utf-8\">\n"
+    printf "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+    printf "<title>%s — Jda Documentation</title>\n", html_esc(mod)
+    printf "<link rel=\"stylesheet\" href=\"style.css\">\n"
+    printf "</head>\n<body>\n"
+    printf "<h1>%s</h1>\n", html_esc(mod)
 
-    if not args:
-        print("jda-doc — Jda documentation generator")
-        print()
-        print("Usage:")
-        print("  jda-doc.sh <file.jda>              Generate docs to ./docs/")
-        print("  jda-doc.sh <dir/>                   Generate docs for all .jda files")
-        print("  jda-doc.sh --output <dir> <src>     Write HTML to specified directory")
-        print("  jda-doc.sh --json <file.jda>        Output doc data as JSON")
-        sys.exit(1)
+    # Nav
+    printf "<div class=\"nav\"><a href=\"index.html\">Index</a>"
+    for (mi = 1; mi <= n; mi++) {
+        if (mods[mi] == mod) {
+            printf " | <strong>%s</strong>", html_esc(mods[mi])
+        } else {
+            printf " | <a href=\"%s.html\">%s</a>", mods[mi], html_esc(mods[mi])
+        }
+    }
+    printf "</div>\n"
 
-    output_dir = "docs"
-    json_mode = False
-    targets = []
+    # TOC if more than 3 items
+    if (item_count > 3) {
+        printf "<ul class=\"toc\">"
+        for (i = 1; i <= item_count; i++) {
+            printf "<li><span class=\"badge %s\">%s</span><a href=\"#%s\">%s</a></li>", kind[i], kind[i], name[i], html_esc(name[i])
+        }
+        printf "</ul>\n"
+    }
 
-    i = 0
-    while i < len(args):
-        if args[i] == "--output" and i + 1 < len(args):
-            output_dir = args[i + 1]
-            i += 2
-        elif args[i] == "--json":
-            json_mode = True
-            i += 1
-        else:
-            targets.append(args[i])
-            i += 1
+    # Group output by kind
+    split("fn struct enum const impl", kinds, " ")
+    split("Functions Structs Enums Constants Implementations", titles, " ")
 
-    if not targets:
-        print("error: no files specified", file=sys.stderr)
-        sys.exit(1)
+    for (ki = 1; ki <= 5; ki++) {
+        k = kinds[ki]
+        has_kind = 0
+        for (i = 1; i <= item_count; i++) {
+            if (kind[i] == k) { has_kind = 1; break }
+        }
+        if (!has_kind) continue
+        printf "<h2>%s</h2>\n", titles[ki]
 
-    # Collect and parse all files
-    modules = {}
-    for target in targets:
-        for filepath in collect_files(target):
-            name = module_name(filepath)
-            items = parse_file(filepath)
-            if items:
-                modules[name] = items
+        for (i = 1; i <= item_count; i++) {
+            if (kind[i] != k) continue
+            # basename of file
+            fname = file[i]
+            gsub(/.*\//, "", fname)
+            printf "<div class=\"item %s\" id=\"%s\">\n", kind[i], name[i]
+            printf "  <span class=\"source-link\">%s:%s</span>", html_esc(fname), lineno[i]
+            printf "<span class=\"badge %s\">%s</span>", kind[i], kind[i]
+            printf "<h3>%s</h3>\n", html_esc(name[i])
+            printf "  <code class=\"sig\">%s</code>", html_esc(sig[i])
+            printf "%s", render_doc(doc[i])
 
-    if not modules:
-        print("No documented items found")
-        sys.exit(0)
+            # Methods for impl blocks
+            if (method_count[i] > 0) {
+                printf "<h4>Methods</h4>"
+                for (mi = 1; mi <= method_count[i]; mi++) {
+                    printf "<div class=\"method\">"
+                    printf "<code class=\"sig\">%s</code>", html_esc(m_sig[i, mi])
+                    printf "%s", render_doc(m_doc[i, mi])
+                    printf "</div>"
+                }
+            }
 
-    # JSON output mode
-    if json_mode:
-        data = {}
-        for name, items in modules.items():
-            data[name] = [{
-                "kind": i.kind, "name": i.name, "signature": i.signature,
-                "doc": i.doc, "line": i.line, "file": i.file,
-                "methods": [{"name": m.name, "signature": m.signature,
-                             "doc": m.doc, "line": m.line} for m in i.methods]
-            } for i in items]
-        print(json.dumps(data, indent=2))
-        sys.exit(0)
+            printf "\n</div>\n"
+        }
+    }
 
-    # Generate HTML
-    os.makedirs(output_dir, exist_ok=True)
+    printf "<footer>Generated by <code>jda-doc</code></footer>\n"
+    printf "</body>\n</html>\n"
+}
+' "$TMPDATA" > "$OUTPUT_DIR/${mod}.html"
+done
 
-    # Write CSS
-    with open(os.path.join(output_dir, "style.css"), "w") as f:
-        f.write(CSS)
-
-    # Write index
-    with open(os.path.join(output_dir, "index.html"), "w") as f:
-        f.write(render_index(modules))
-
-    # Write module pages
-    all_module_names = list(modules.keys())
-    for name, items in modules.items():
-        with open(os.path.join(output_dir, f"{name}.html"), "w") as f:
-            f.write(render_module_page(name, items, all_module_names))
-
-    total_items = sum(len(items) for items in modules.values())
-    print(f"Generated documentation: {len(modules)} modules, {total_items} items")
-    print(f"Output: {output_dir}/")
-
-if __name__ == "__main__":
-    main()
+# Summary
+total_items="$(awk -F'\t' '$2=="ITEM" {c++} END{print c+0}' "$TMPDATA")"
+echo "Generated documentation: ${#SORTED_MODULES[@]} modules, ${total_items} items"
+echo "Output: ${OUTPUT_DIR}/"
