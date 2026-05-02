@@ -154,3 +154,30 @@ MAP_PA               equ 34
 
 ; String table size
 STR_SZ               equ 3104
+
+; ============================================================
+; COMPATIBILITY CONSTANTS - Used by jda0, not in jda1 spec
+; ============================================================
+
+; Additional token types
+TOK_ASM              equ 41
+TOK_BREAK            equ 42
+TOK_CHAR             equ 45
+TOK_LTEQ             equ 46
+TOK_GTEQ             equ 47
+TOK_PIPE             equ 48
+TOK_SHL              equ 49
+TOK_SHR              equ 50
+TOK_ALLOC_PAGES      equ 51
+
+; Type kind constants
+TK_SCALAR            equ 0
+TK_STRUCT            equ 1
+TK_PTR               equ 2
+
+; Additional size constants
+LOC_SZ               equ 48
+GLB_SZ               equ 32
+
+; Pointer type flag
+PTR_FLAG             equ 0x8000000000000000

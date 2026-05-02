@@ -146,6 +146,53 @@ def generate_system_constants():
 
     return output
 
+def generate_compatibility_constants():
+    """Generate compatibility constants used by jda0 but not in jda1 spec
+
+    These are tokens and constants that jda0 needs for backward compatibility
+    or for features that jda1 hasn't formalized yet.
+    """
+    output = "\n; ============================================================\n"
+    output += "; COMPATIBILITY CONSTANTS - Used by jda0, not in jda1 spec\n"
+    output += "; ============================================================\n\n"
+
+    # Token types that jda0 uses but jda1 doesn't explicitly define
+    output += "; Additional token types\n"
+    compat_tokens = {
+        'TOK_CHAR': 45,
+        'TOK_LTEQ': 46,
+        'TOK_GTEQ': 47,
+        'TOK_PIPE': 48,
+        'TOK_SHL': 49,
+        'TOK_SHR': 50,
+        'TOK_ALLOC_PAGES': 51,
+        'TOK_ASM': 41,
+        'TOK_BREAK': 42,
+    }
+    for name, value in sorted(compat_tokens.items(), key=lambda x: x[1]):
+        output += f"{name:20} equ {value}\n"
+
+    # Type kind constants
+    output += "\n; Type kind constants\n"
+    type_kinds = {
+        'TK_SCALAR': 0,
+        'TK_STRUCT': 1,
+        'TK_PTR': 2,
+    }
+    for name, value in type_kinds.items():
+        output += f"{name:20} equ {value}\n"
+
+    # Size constants not in spec
+    output += "\n; Additional size constants\n"
+    output += f"{'LOC_SZ':20} equ 48\n"
+    output += f"{'GLB_SZ':20} equ 32\n"
+
+    # Pointer flag
+    output += "\n; Pointer type flag\n"
+    output += f"{'PTR_FLAG':20} equ 0x8000000000000000\n"
+
+    return output
+
 def generate_header():
     """Generate file header"""
     return """; ============================================================
@@ -180,6 +227,7 @@ def main():
     output += generate_struct_sizes(spec)
     output += generate_node_type_constants(spec)
     output += generate_system_constants()
+    output += generate_compatibility_constants()
 
     # Write to output file
     output_path = os.path.join(
