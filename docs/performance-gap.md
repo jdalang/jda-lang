@@ -70,7 +70,7 @@ scalar f64 ops would also benefit matrix multiply.
 
 ---
 
-### 3. No Inlining of Hot Callees
+### 3. No Inlining of Hot Callees  ✅ DONE (Phase 1a+1b + splicer built, April 2026)
 
 **Impact: 5x upper bound measured on accessor-heavy code (April 2026)**
 
