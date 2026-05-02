@@ -1708,55 +1708,35 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
 ; 13. ENTRY POINT
 ; ============================================================
 
-fn main(argv: &i64) {
-    ; print("jda1: starting\n")
-    ; print("jda1: opening source\n")
-    let src_path = "test_arr_field.jda"
-    print("before open\n")
-    let src_fd   = syscall(2, src_path, 0, 0)      ; open(O_RDONLY)
-    if src_fd < 0 {
-        print("jda1: open failed\n")
-        ret
-    }
-    print("A\n")
-    let src_buf  = alloc_pages(8)                ; up to 32 KB source
-    let src_len  = syscall(0, src_fd, src_buf, 32768)
-    if src_len < 0 {
-        print("jda1: read failed\n")
-        ret
-    }
-    if src_len < 0 {
-        print("jda1: read failed\n")
-        ret
-    }
-    syscall(3, src_fd, 0, 0)                     ; close
-    print("jda1: lexing\n")
-
-    ; Lex
-    let toks    = alloc_pages(4)                 ; token array
+fn main(argc: i64, argv: &i8[]) {
+    print("jda1: start\n")
+    let src_buf  = alloc_pages(8)
+    let toks    = alloc_pages(4)
+    let code_buf = alloc_pages(8)
+    
+    asm { out argv_ptr = rsi }
+    let src_path = get_argv(1)
+    let out_path = get_argv(2)
+    
+    let src_fd = syscall(2, src_path, 0, 0)
+    let src_len = syscall(0, src_fd, src_buf, 32768)
+    syscall(3, src_fd, 0, 0)
+    
     let tok_cnt = 0
     lex(src_buf, src_len, toks, &tok_cnt)
-    print("jda1: parsing\n")
-
-    ; Parse top-level function
+    
     let ast = Node{}
     let pos = 0
     parse_fn(toks, &pos, &ast)
-    print("jda1: jir codegen\n")
-
-    ; JIR codegen
+    
     let jfn = JirFunction{}
     jfn.src = src_buf
     codegen_fn(&ast, &jfn)
-    print("jda1: optimising\n")
-
-    ; Optimise
+    
     fold_constants(&jfn)
     dce(&jfn)
-    print("jda1: lowering\n")
-
-    ; Lower JIR → x86-64
-    let ctx      = LowerCtx{}
+    
+    let ctx = LowerCtx{}
     let code_buf = alloc_pages(8)                ; up to 32 KB code
     let code_len = 0
     regalloc_init(&ctx.ra)
