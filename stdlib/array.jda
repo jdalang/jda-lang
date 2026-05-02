@@ -1,0 +1,296 @@
+; =============================================================================
+; jda::array -- Array Literals and Utilities
+; =============================================================================
+; Fixed-size arrays with literal constructors. Provides [1,2,3]-style
+; initialization via arr2(1,2), arr3(1,2,3), etc. Direct i64 indexing
+; works: a[0], a[1], etc.
+;
+; Memory layout: raw &i64 pointer to element data (no header).
+; Length must be tracked by the caller or use arr_with_len() which
+; stores length at index -1 (one slot before data pointer).
+;
+; Literal constructors (up to 6 elements, max fn args):
+;   arr1(a)                   -> &i64
+;   arr2(a,b)                 -> &i64
+;   arr3(a,b,c)               -> &i64
+;   arr4(a,b,c,d)             -> &i64
+;   arr5(a,b,c,d,e)           -> &i64
+;   arr6(a,b,c,d,e,f)         -> &i64
+;
+; Allocation:
+;   arr_new(n)                -> &i64   uninitialized, n elements
+;   arr_fill(n, val)          -> &i64   n elements all set to val
+;   arr_zeros(n)              -> &i64   n elements set to 0
+;   arr_range(start, end)     -> &i64   [start, start+1, ..., end-1]
+;   arr_copy(src, n)          -> &i64   shallow copy of n elements
+;
+; Access (bounds unchecked):
+;   arr_get(a, i)             -> i64    a[i]
+;   arr_set(a, i, val)                  a[i] = val
+;   arr_swap(a, i, j)                   swap elements at i and j
+;
+; Query:
+;   arr_eq(a, b, n)           -> i64    1 if all n elements equal
+;   arr_contains(a, n, val)   -> i64    1 if val found
+;   arr_index_of(a, n, val)   -> i64    first index or -1
+;   arr_count(a, n, val)      -> i64    count of val in array
+;   arr_sum(a, n)             -> i64    sum of elements
+;   arr_min(a, n)             -> i64    minimum element
+;   arr_max(a, n)             -> i64    maximum element
+;
+; Transform (in-place):
+;   arr_reverse(a, n)                   reverse array in place
+;   arr_sort(a, n)                      insertion sort in place
+;
+; Output:
+;   arr_print(a, n)                     print as [1, 2, 3]
+;   arr_println(a, n)                   print as [1, 2, 3]\n
+; =============================================================================
+
+;; Internal: allocate raw i64 array for n elements.
+fn arr_alloc(n: i64) -> &i64 {
+    let bytes = n * 8
+    let pages = bytes / 4096
+    let rem = bytes - pages * 4096
+    if rem > 0 { pages = pages + 1 }
+    if pages == 0 { pages = 1 }
+    let data: &i64 = alloc_pages(pages)
+    ret data
+}
+
+;; Allocate uninitialized array of n elements.
+fn arr_new(n: i64) -> &i64 {
+    ret arr_alloc(n)
+}
+
+;; Create array of n elements all set to val.
+fn arr_fill(n: i64, val: i64) -> &i64 {
+    let a = arr_alloc(n)
+    let i = 0
+    loop i < n {
+        a[i] = val
+        i = i + 1
+    }
+    ret a
+}
+
+;; Create array of n zeros.
+fn arr_zeros(n: i64) -> &i64 {
+    ret arr_fill(n, 0)
+}
+
+;; Create array [start, start+1, ..., end-1].
+fn arr_range(start: i64, end: i64) -> &i64 {
+    let n = end - start
+    if n <= 0 { ret arr_alloc(1) }
+    let a = arr_alloc(n)
+    let i = 0
+    loop i < n {
+        a[i] = start + i
+        i = i + 1
+    }
+    ret a
+}
+
+;; Copy n elements from src into a new array.
+fn arr_copy(src: &i64, n: i64) -> &i64 {
+    let a = arr_alloc(n)
+    let i = 0
+    loop i < n {
+        a[i] = src[i]
+        i = i + 1
+    }
+    ret a
+}
+
+; --- Literal constructors ---
+
+fn arr1(a: i64) -> &i64 {
+    let r = arr_alloc(1)
+    r[0] = a
+    ret r
+}
+
+fn arr2(a: i64, b: i64) -> &i64 {
+    let r = arr_alloc(2)
+    r[0] = a
+    r[1] = b
+    ret r
+}
+
+fn arr3(a: i64, b: i64, c: i64) -> &i64 {
+    let r = arr_alloc(3)
+    r[0] = a
+    r[1] = b
+    r[2] = c
+    ret r
+}
+
+fn arr4(a: i64, b: i64, c: i64, d: i64) -> &i64 {
+    let r = arr_alloc(4)
+    r[0] = a
+    r[1] = b
+    r[2] = c
+    r[3] = d
+    ret r
+}
+
+fn arr5(a: i64, b: i64, c: i64, d: i64, e: i64) -> &i64 {
+    let r = arr_alloc(5)
+    r[0] = a
+    r[1] = b
+    r[2] = c
+    r[3] = d
+    r[4] = e
+    ret r
+}
+
+fn arr6(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> &i64 {
+    let r = arr_alloc(6)
+    r[0] = a
+    r[1] = b
+    r[2] = c
+    r[3] = d
+    r[4] = e
+    r[5] = f
+    ret r
+}
+
+; --- Access ---
+
+fn arr_get(a: &i64, i: i64) -> i64 {
+    ret a[i]
+}
+
+fn arr_set(a: &i64, i: i64, val: i64) {
+    a[i] = val
+}
+
+fn arr_swap(a: &i64, i: i64, j: i64) {
+    let tmp = a[i]
+    a[i] = a[j]
+    a[j] = tmp
+}
+
+; --- Query ---
+
+fn arr_eq(a: &i64, b: &i64, n: i64) -> i64 {
+    let i = 0
+    loop i < n {
+        if a[i] != b[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+fn arr_contains(a: &i64, n: i64, val: i64) -> i64 {
+    let i = 0
+    loop i < n {
+        if a[i] == val { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn arr_index_of(a: &i64, n: i64, val: i64) -> i64 {
+    let i = 0
+    loop i < n {
+        if a[i] == val { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+fn arr_count(a: &i64, n: i64, val: i64) -> i64 {
+    let c = 0
+    let i = 0
+    loop i < n {
+        if a[i] == val { c = c + 1 }
+        i = i + 1
+    }
+    ret c
+}
+
+fn arr_sum(a: &i64, n: i64) -> i64 {
+    let s = 0
+    let i = 0
+    loop i < n {
+        s = s + a[i]
+        i = i + 1
+    }
+    ret s
+}
+
+fn arr_min(a: &i64, n: i64) -> i64 {
+    let m = a[0]
+    let i = 1
+    loop i < n {
+        if a[i] < m { m = a[i] }
+        i = i + 1
+    }
+    ret m
+}
+
+fn arr_max(a: &i64, n: i64) -> i64 {
+    let m = a[0]
+    let i = 1
+    loop i < n {
+        if a[i] > m { m = a[i] }
+        i = i + 1
+    }
+    ret m
+}
+
+; --- Transform (in-place) ---
+
+fn arr_reverse(a: &i64, n: i64) {
+    let lo = 0
+    let hi = n - 1
+    loop lo < hi {
+        arr_swap(a, lo, hi)
+        lo = lo + 1
+        hi = hi - 1
+    }
+}
+
+;; Insertion sort (in-place, stable, O(n^2)).
+fn arr_sort(a: &i64, n: i64) {
+    let i = 1
+    loop i < n {
+        let key = a[i]
+        let j = i - 1
+        let running = 1
+        loop j >= 0 and running == 1 {
+            if a[j] > key {
+                a[j + 1] = a[j]
+                j = j - 1
+            } else {
+                running = 0
+            }
+        }
+        a[j + 1] = key
+        i = i + 1
+    }
+}
+
+; --- Output ---
+
+;; Print array as [1, 2, 3].
+fn arr_print(a: &i64, n: i64) {
+    print("[")
+    let i = 0
+    loop i < n {
+        let v = a[i]
+        print("{v}")
+        let last = n - 1
+        if i < last { print(", ") }
+        i = i + 1
+    }
+    print("]")
+}
+
+;; Print array as [1, 2, 3] followed by newline.
+fn arr_println(a: &i64, n: i64) {
+    arr_print(a, n)
+    print("\n")
+}
