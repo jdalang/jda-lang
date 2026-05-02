@@ -325,6 +325,288 @@ cmd_deps() {
     done
 }
 
+# ─── remove ──────────────────────────────────────────────────────────────────
+
+cmd_remove() {
+    [ $# -ge 1 ] || die "usage: jda-pkg.sh remove <name>"
+    local name="$1"
+
+    [ -f "$MANIFEST" ] || die "no $MANIFEST found"
+
+    # Check if dependency exists
+    if ! grep -q "^${name} " "$MANIFEST" 2>/dev/null; then
+        die "dependency '$name' not found in $MANIFEST"
+    fi
+
+    # Remove from manifest
+    local tmp
+    tmp="$(mktemp)"
+    grep -v "^${name} " "$MANIFEST" > "$tmp"
+    mv "$tmp" "$MANIFEST"
+
+    # Remove cached clone
+    if [ -d "$DEPS_DIR/$name" ]; then
+        rm -rf "$DEPS_DIR/$name"
+    fi
+
+    # Remove from lockfile
+    if [ -f "$LOCKFILE" ]; then
+        tmp="$(mktemp)"
+        grep -v "^${name} " "$LOCKFILE" > "$tmp" || true
+        mv "$tmp" "$LOCKFILE"
+    fi
+
+    echo "Removed dependency: $name"
+}
+
+# ─── update ──────────────────────────────────────────────────────────────────
+
+cmd_update() {
+    parse_manifest
+
+    local count=${#DEP_NAMES[@]}
+    if [ "$count" -eq 0 ]; then
+        echo "No dependencies to update."
+        return 0
+    fi
+
+    # If a specific dep name given, only update that one
+    local target="${1:-}"
+
+    echo "Updating dependencies for $PKG_NAME v$PKG_VERSION"
+
+    mkdir -p "$DEPS_DIR"
+    : > "$LOCKFILE"
+
+    for i in $(seq 0 $((count - 1))); do
+        local name="${DEP_NAMES[$i]}"
+        local url="${DEP_URLS[$i]}"
+        local tag="${DEP_TAGS[$i]}"
+        local dep_dir="$DEPS_DIR/$name"
+
+        if [ -n "$target" ] && [ "$name" != "$target" ]; then
+            # Re-lock unchanged dep
+            if [ -d "$dep_dir" ]; then
+                local commit
+                commit="$(cd "$dep_dir" && git rev-parse HEAD)"
+                echo "$name $tag $commit $url" >> "$LOCKFILE"
+            fi
+            continue
+        fi
+
+        echo "  Updating $name..."
+
+        if [ -d "$dep_dir" ]; then
+            (cd "$dep_dir" && git fetch --quiet origin 2>/dev/null) || true
+        else
+            git clone --quiet "$url" "$dep_dir" 2>/dev/null || \
+                die "failed to clone $url"
+        fi
+
+        # Checkout latest for the tag/branch
+        (cd "$dep_dir" && {
+            git checkout --quiet "$tag" 2>/dev/null || \
+            git checkout --quiet "origin/$tag" 2>/dev/null || \
+            git checkout --quiet "tags/$tag" 2>/dev/null || true
+            # If it's a branch, pull latest
+            git pull --quiet origin "$tag" 2>/dev/null || true
+        })
+
+        local commit
+        commit="$(cd "$dep_dir" && git rev-parse HEAD)"
+        echo "$name $tag $commit $url" >> "$LOCKFILE"
+        echo "  Updated $name @ $commit"
+    done
+}
+
+# ─── clean ───────────────────────────────────────────────────────────────────
+
+cmd_clean() {
+    local removed=0
+
+    if [ -d "$DEPS_DIR" ]; then
+        rm -rf "$DEPS_DIR"
+        echo "  Removed $DEPS_DIR/"
+        removed=$((removed + 1))
+    fi
+
+    if [ -f "$LOCKFILE" ]; then
+        rm -f "$LOCKFILE"
+        echo "  Removed $LOCKFILE"
+        removed=$((removed + 1))
+    fi
+
+    if [ -d "build" ]; then
+        rm -rf "build"
+        echo "  Removed build/"
+        removed=$((removed + 1))
+    fi
+
+    if [ "$removed" -eq 0 ]; then
+        echo "Already clean."
+    else
+        echo "Cleaned $removed items."
+    fi
+}
+
+# ─── run (build + execute) ───────────────────────────────────────────────────
+
+cmd_run() {
+    cmd_build
+    echo ""
+    echo "Running $PKG_OUTPUT..."
+    echo "---"
+    "$PKG_OUTPUT"
+}
+
+# ─── tree (dependency tree) ──────────────────────────────────────────────────
+
+cmd_tree() {
+    parse_manifest
+
+    echo "$PKG_NAME v$PKG_VERSION"
+
+    local count=${#DEP_NAMES[@]}
+    if [ "$count" -eq 0 ]; then
+        echo "  (no dependencies)"
+        return
+    fi
+
+    for i in $(seq 0 $((count - 1))); do
+        local name="${DEP_NAMES[$i]}"
+        local tag="${DEP_TAGS[$i]}"
+        local mod="${DEP_MODS[$i]}"
+        local prefix="├──"
+        if [ "$i" -eq $((count - 1)) ]; then
+            prefix="└──"
+        fi
+
+        local commit_info=""
+        if [ -f "$LOCKFILE" ] && grep -q "^$name " "$LOCKFILE"; then
+            local commit
+            commit="$(grep "^$name " "$LOCKFILE" | awk '{print $3}' | head -c 8)"
+            commit_info=" ($commit)"
+        fi
+
+        echo "  $prefix $name@$tag$commit_info [$mod]"
+
+        # Check for transitive deps (if dep has its own jda.toml)
+        local dep_manifest="$DEPS_DIR/$name/$MANIFEST"
+        if [ -f "$dep_manifest" ]; then
+            local sub_prefix="  │   "
+            if [ "$i" -eq $((count - 1)) ]; then
+                sub_prefix="      "
+            fi
+            # Simple grep for transitive deps
+            local trans_deps
+            trans_deps="$(grep -E "^[a-zA-Z].*=.*git" "$dep_manifest" 2>/dev/null | awk -F'=' '{print $1}' | tr -d ' ' || true)"
+            if [ -n "$trans_deps" ]; then
+                echo "$trans_deps" | while read -r tdep; do
+                    echo "  ${sub_prefix}└── $tdep (transitive)"
+                done
+            fi
+        fi
+    done
+}
+
+# ─── check (verify manifest & lockfile) ─────────────────────────────────────
+
+cmd_check() {
+    parse_manifest
+    local errors=0
+
+    echo "Checking $PKG_NAME v$PKG_VERSION..."
+
+    # Check entry point exists
+    if [ ! -f "$PKG_ENTRY" ]; then
+        echo "  ERROR: entry point '$PKG_ENTRY' not found"
+        errors=$((errors + 1))
+    else
+        echo "  OK: entry point '$PKG_ENTRY' exists"
+    fi
+
+    # Check manifest has valid fields
+    if [ -z "$PKG_NAME" ]; then
+        echo "  ERROR: missing package name"
+        errors=$((errors + 1))
+    fi
+
+    local count=${#DEP_NAMES[@]}
+
+    # Check each dependency
+    if [ "$count" -gt 0 ]; then
+    for i in $(seq 0 $((count - 1))); do
+        local name="${DEP_NAMES[$i]}"
+        local mod="${DEP_MODS[$i]}"
+        local dep_dir="$DEPS_DIR/$name"
+
+        if [ ! -d "$dep_dir" ]; then
+            echo "  WARN: dependency '$name' not fetched (run 'jda-pkg build')"
+        else
+            local mod_path="$dep_dir/$mod"
+            if [ ! -f "$mod_path" ]; then
+                echo "  ERROR: module '$mod' missing in dependency '$name'"
+                errors=$((errors + 1))
+            else
+                echo "  OK: $name/$mod exists"
+            fi
+        fi
+    done
+    fi
+
+    # Check lockfile consistency
+    if [ -f "$LOCKFILE" ]; then
+        local locked_count
+        locked_count="$(wc -l < "$LOCKFILE" | tr -d ' ')"
+        if [ "$locked_count" -ne "$count" ]; then
+            echo "  WARN: lockfile has $locked_count entries, manifest has $count deps"
+        else
+            echo "  OK: lockfile in sync ($locked_count deps)"
+        fi
+    elif [ "$count" -gt 0 ]; then
+        echo "  WARN: no lockfile (run 'jda-pkg build' to generate)"
+    fi
+
+    if [ "$errors" -gt 0 ]; then
+        echo ""
+        echo "$errors error(s) found."
+        exit 1
+    else
+        echo ""
+        echo "All checks passed."
+    fi
+}
+
+# ─── search (search stdlib packages) ────────────────────────────────────────
+
+cmd_search() {
+    local query="${1:-}"
+    local index="$SCRIPT_DIR/../stdlib/PACKAGES.md"
+
+    if [ ! -f "$index" ]; then
+        die "package index not found at $index"
+    fi
+
+    if [ -z "$query" ]; then
+        echo "Available Jda stdlib packages:"
+        echo ""
+        # Show all packages
+        grep "^|" "$index" | grep -v "^| Package" | grep -v "^|---" | while IFS='|' read -r _ name desc _; do
+            name="$(echo "$name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            desc="$(echo "$desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            [ -n "$name" ] && printf "  %-24s %s\n" "$name" "$desc"
+        done
+    else
+        echo "Search results for '$query':"
+        echo ""
+        grep -i "$query" "$index" | grep "^|" | while IFS='|' read -r _ name desc _; do
+            name="$(echo "$name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            desc="$(echo "$desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            [ -n "$name" ] && printf "  %-24s %s\n" "$name" "$desc"
+        done
+    fi
+}
+
 # ─── main ─────────────────────────────────────────────────────────────────────
 
 if [ $# -lt 1 ]; then
@@ -333,8 +615,15 @@ if [ $# -lt 1 ]; then
     echo "Usage:"
     echo "  jda-pkg.sh init                       Create jda.toml"
     echo "  jda-pkg.sh add <name> <url> [tag]     Add git dependency"
+    echo "  jda-pkg.sh remove <name>              Remove a dependency"
+    echo "  jda-pkg.sh update [name]              Update deps (or one dep)"
     echo "  jda-pkg.sh build                      Resolve deps & compile"
+    echo "  jda-pkg.sh run                        Build & execute"
     echo "  jda-pkg.sh deps                       List dependencies"
+    echo "  jda-pkg.sh tree                       Dependency tree"
+    echo "  jda-pkg.sh check                      Verify manifest & lockfile"
+    echo "  jda-pkg.sh clean                      Remove build artifacts & cache"
+    echo "  jda-pkg.sh search [query]             Search stdlib packages"
     exit 1
 fi
 
@@ -342,9 +631,16 @@ CMD="$1"
 shift
 
 case "$CMD" in
-    init)  cmd_init "$@" ;;
-    add)   cmd_add "$@" ;;
-    build) cmd_build "$@" ;;
-    deps)  cmd_deps "$@" ;;
-    *)     die "unknown command: $CMD" ;;
+    init)   cmd_init "$@" ;;
+    add)    cmd_add "$@" ;;
+    remove) cmd_remove "$@" ;;
+    update) cmd_update "$@" ;;
+    build)  cmd_build "$@" ;;
+    run)    cmd_run "$@" ;;
+    deps)   cmd_deps "$@" ;;
+    tree)   cmd_tree "$@" ;;
+    check)  cmd_check "$@" ;;
+    clean)  cmd_clean "$@" ;;
+    search) cmd_search "$@" ;;
+    *)      die "unknown command: $CMD" ;;
 esac
