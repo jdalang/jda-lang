@@ -5,13 +5,11 @@ let mem: &i64
 
 fn _sb(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-fn _clk(buf: &i8) -> i64 { ret syscall(228, 1, buf, 0, 0) }
-
 fn _rd(buf: &i8, n: i64) -> i64 { ret syscall(0, 0, buf, n, 0) }
 
-fn now_ms(ts: &i8) -> i64 {
-    _clk(ts)
-    let s = ts[0]; let ptr = ts + 8; let ns = ptr[0]
+fn now_ms(ts: &i64) -> i64 {
+    syscall(228, 1, ts, 0, 0)
+    let s = ts[0]; let ns = ts[1]
     ret s * 1000 + ns / 1000000
 }
 
@@ -44,56 +42,80 @@ fn save_base() -> i64 {
     ret 200 + d * 108
 }
 
+// Brian Kernighan's bit count — faster than shift loop for sparse masks
 fn cbits(x: i64) -> i64 {
     let c = 0; let v = x
-    loop v > 0 { c = c + (v & 1); v = v >> 1 }
+    loop v > 0 { v = v & (v - 1); c = c + 1 }
     ret c
 }
 
 fn init_board(pz: &i8) {
     let i = 0
     loop i < 9 { row_set(i, 0); col_set(i, 0); box_set(i, 0); i = i + 1 }
-    i = 0
+    // First pass: place given digits — incremental r/c/b tracking, no division
+    i = 0; let r = 0; let c = 0; let b_row = 0; let b_col = 0
     loop i < 81 {
         let ch = _sb(pz, i)
         if ch >= 49 and ch <= 57 {
             let v = ch - 48
             grid_set(i, v)
             let bit = 1 << v
-            let r = i / 9; let c = i % 9; let b = (r / 3) * 3 + c / 3
+            let b = b_row + b_col
             row_set(r, row_used(r) | bit)
             col_set(c, col_used(c) | bit)
             box_set(b, box_used(b) | bit)
         } else {
             grid_set(i, 0)
         }
-        i = i + 1
+        i = i + 1; c = c + 1
+        if c == 3 { b_col = 1 }
+        if c == 6 { b_col = 2 }
+        if c == 9 {
+            c = 0; b_col = 0; r = r + 1
+            if r == 3 { b_row = 3 }
+            if r == 6 { b_row = 6 }
+        }
     }
-    i = 0
+    // Second pass: compute possibilities — incremental tracking
+    r = 0; c = 0; b_row = 0; b_col = 0; i = 0
     loop i < 81 {
         if grid(i) == 0 {
-            let r = i / 9; let c = i % 9; let b = (r / 3) * 3 + c / 3
+            let b = b_row + b_col
             let used = row_used(r) | col_used(c) | box_used(b)
             let neg = 0 - 1 - used
             poss_set(i, neg & 1022)
         } else {
             poss_set(i, 0)
         }
-        i = i + 1
+        i = i + 1; c = c + 1
+        if c == 3 { b_col = 1 }
+        if c == 6 { b_col = 2 }
+        if c == 9 {
+            c = 0; b_col = 0; r = r + 1
+            if r == 3 { b_row = 3 }
+            if r == 6 { b_row = 6 }
+        }
     }
     mem[189] = 0
 }
 
 fn recompute_poss() {
-    let i = 0
+    let i = 0; let r = 0; let c = 0; let b_row = 0; let b_col = 0
     loop i < 81 {
-        if grid(i) == 0 {
-            let r = i / 9; let c = i % 9; let b = (r / 3) * 3 + c / 3
-            let used = row_used(r) | col_used(c) | box_used(b)
+        if mem[i] == 0 {
+            let b = b_row + b_col
+            let used = mem[162 + r] | mem[171 + c] | mem[180 + b]
             let neg = 0 - 1 - used
-            poss_set(i, neg & 1022)
+            mem[81 + i] = neg & 1022
         }
-        i = i + 1
+        i = i + 1; c = c + 1
+        if c == 3 { b_col = 1 }
+        if c == 6 { b_col = 2 }
+        if c == 9 {
+            c = 0; b_col = 0; r = r + 1
+            if r == 3 { b_row = 3 }
+            if r == 6 { b_row = 6 }
+        }
     }
 }
 
@@ -129,10 +151,11 @@ fn solve() -> i64 {
     let best = 0 - 1; let bc = 10
     let i = 0
     loop i < 81 {
-        if grid(i) == 0 {
-            let cnt = cbits(poss(i))
+        if mem[i] == 0 {
+            let cnt = cbits(mem[81 + i])
             if cnt == 0 { ret 0 }
             if cnt < bc { best = i; bc = cnt }
+            if bc == 1 { i = 81 }
         }
         i = i + 1
     }
@@ -141,20 +164,19 @@ fn solve() -> i64 {
     let r = best / 9; let c = best % 9; let b = (r / 3) * 3 + c / 3
     save_state()
 
-    let bits = poss(best)
+    let bits = mem[81 + best]
     let v = 1
     loop v <= 9 {
         let mask = 1 << v
         let test = bits & mask
         if test != 0 {
-            let bit = 1 << v
-            grid_set(best, v)
-            row_set(r, row_used(r) | bit)
-            col_set(c, col_used(c) | bit)
-            box_set(b, box_used(b) | bit)
+            mem[best] = v
+            mem[162 + r] = mem[162 + r] | mask
+            mem[171 + c] = mem[171 + c] | mask
+            mem[180 + b] = mem[180 + b] | mask
             recompute_poss()
             if solve() == 1 { ret 1 }
-            grid_set(best, 0)
+            mem[best] = 0
             restore_state()
         }
         v = v + 1
