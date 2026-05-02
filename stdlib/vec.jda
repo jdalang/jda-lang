@@ -1,0 +1,152 @@
+; =============================================================================
+; jda::vec -- Dynamic Array (Vec<i64>)
+; =============================================================================
+; Growable array of i64 values. Doubles capacity on overflow.
+; No external dependencies.
+;
+; Memory layout per vec (&i64):
+;   [0] length     (number of elements)
+;   [1] capacity   (allocated slots)
+;   [2] data_ptr   (&i64 — the backing array)
+;
+; Functions:
+;   vec_new(cap)              -> &i64   create vec
+;   vec_push(v, val)                    append element
+;   vec_pop(v)                -> i64    remove & return last
+;   vec_get(v, idx)           -> i64    get element at index
+;   vec_set(v, idx, val)                set element at index
+;   vec_len(v)                -> i64    length
+;   vec_cap(v)                -> i64    capacity
+;   vec_clear(v)                        reset length to 0
+;   vec_last(v)               -> i64    get last element
+;   vec_contains(v, val)      -> i64    1 if found, 0 otherwise
+;   vec_remove(v, idx)        -> i64    remove at index, shift left
+; =============================================================================
+
+;; Pages needed for n i64 elements.
+fn vec_pages_for(n: i64) -> i64 {
+    let bytes = n * 8
+    let pages = bytes / 4096
+    let rem = bytes - pages * 4096
+    if rem > 0 { pages = pages + 1 }
+    if pages == 0 { pages = 1 }
+    ret pages
+}
+
+;; Create a new vec with given initial capacity (minimum 16).
+fn vec_new(cap: i64) -> &i64 {
+    let c = cap
+    if c < 16 { c = 16 }
+    let hdr: &i64 = alloc_pages(1)
+    let pg = vec_pages_for(c)
+    let data: &i64 = alloc_pages(pg)
+    hdr[0] = 0
+    hdr[1] = c
+    hdr[2] = data
+    ret hdr
+}
+
+;; Get length.
+fn vec_len(v: &i64) -> i64 {
+    ret v[0]
+}
+
+;; Get capacity.
+fn vec_cap(v: &i64) -> i64 {
+    ret v[1]
+}
+
+;; Internal: grow the backing array to double capacity.
+fn vec_grow(v: &i64) {
+    let old_cap = v[1]
+    let old_data: &i64 = v[2]
+    let new_cap = old_cap * 2
+    let pg = vec_pages_for(new_cap)
+    let new_data: &i64 = alloc_pages(pg)
+    ; Copy old elements
+    let i = 0
+    let len = v[0]
+    loop i < len {
+        new_data[i] = old_data[i]
+        i = i + 1
+    }
+    v[1] = new_cap
+    v[2] = new_data
+}
+
+;; Append an element.
+fn vec_push(v: &i64, val: i64) {
+    let len = v[0]
+    let cap = v[1]
+    if len == cap {
+        vec_grow(v)
+    }
+    let data: &i64 = v[2]
+    let cur_len = v[0]
+    data[cur_len] = val
+    v[0] = cur_len + 1
+}
+
+;; Remove and return last element. Returns 0 if empty.
+fn vec_pop(v: &i64) -> i64 {
+    let len = v[0]
+    if len == 0 { ret 0 }
+    let new_len = len - 1
+    v[0] = new_len
+    let data: &i64 = v[2]
+    ret data[new_len]
+}
+
+;; Get element at index.
+fn vec_get(v: &i64, idx: i64) -> i64 {
+    let data: &i64 = v[2]
+    ret data[idx]
+}
+
+;; Set element at index.
+fn vec_set(v: &i64, idx: i64, val: i64) {
+    let data: &i64 = v[2]
+    data[idx] = val
+}
+
+;; Reset length to 0 (does not free memory).
+fn vec_clear(v: &i64) {
+    v[0] = 0
+}
+
+;; Get last element (0 if empty).
+fn vec_last(v: &i64) -> i64 {
+    let len = v[0]
+    if len == 0 { ret 0 }
+    let data: &i64 = v[2]
+    let last_idx = len - 1
+    ret data[last_idx]
+}
+
+;; Check if vec contains value. Returns 1 or 0.
+fn vec_contains(v: &i64, val: i64) -> i64 {
+    let data: &i64 = v[2]
+    let len = v[0]
+    let i = 0
+    loop i < len {
+        if data[i] == val { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Remove element at index, shift remaining left. Returns removed value.
+fn vec_remove(v: &i64, idx: i64) -> i64 {
+    let data: &i64 = v[2]
+    let len = v[0]
+    let removed = data[idx]
+    let i = idx
+    let end = len - 1
+    loop i < end {
+        let next = i + 1
+        data[i] = data[next]
+        i = i + 1
+    }
+    v[0] = end
+    ret removed
+}
