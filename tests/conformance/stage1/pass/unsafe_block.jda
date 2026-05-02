@@ -1,0 +1,13 @@
+; Test: unsafe block allows syscall
+
+fn write_stdout(msg: &i8, len: i64) -> i64 {
+    unsafe {
+        let r = syscall(1, 1, msg, len)
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    write_stdout("unsafe ok\n", 10)
+    ret 0
+}

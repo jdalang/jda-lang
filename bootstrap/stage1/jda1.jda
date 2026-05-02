@@ -78,6 +78,7 @@ const TOK_QUESTION= 50
 const TOK_IMPL    = 51
 const TOK_SPAWN   = 52
 const TOK_TRAIT   = 53
+const TOK_UNSAFE  = 54
 
 ; Derive trait IDs
 const DERIVE_DEBUG = 1
@@ -453,6 +454,8 @@ let g_derive_struct_tok: &i64 = 0
 let g_trait_buf: &i64 = 0
 let g_trait_cnt: i64 = 0
 let g_trait_copy_pos: i64 = 0
+let g_unsafe_depth: i64 = 0
+let g_check_unsafe: i64 = 0
 let g_derive_cnt = 0
 let g_dbg_main_steps = 0
 let g_small_err_loop = 0
@@ -2914,8 +2917,11 @@ fn live_codegen_expr_inline(bb: i64) -> i64 {
         let as_l = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos)
         if as_l == 2 and streq(g_src_buf_ptr, as_s, 2, "as") == 1 {
             g_main_pos = g_main_pos + 1
-            ; Skip '&' if present (pointer cast)
-            if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_AMP { g_main_pos = g_main_pos + 1 }
+            ; Skip '&' if present (pointer cast) — requires unsafe
+            if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_AMP {
+                if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error("pointer cast requires unsafe block") }
+                g_main_pos = g_main_pos + 1
+            }
             ; Skip the type token
             g_main_pos = g_main_pos + 1
         }
@@ -3094,7 +3100,9 @@ fn classify_keyword_len6(src: &i8, start: i64, len: i64) {
     let c5 = load_i8_at(src, start + 5)
     let struct_ok = 0
     if c0 == 115 { if c1 == 116 { if c2 == 114 { if c3 == 117 { if c4 == 99 { if c5 == 116 { struct_ok = 1 } } } } } }
-    let tok = struct_ok * TOK_STRUCT
+    let unsafe_ok = 0
+    if c0 == 117 { if c1 == 110 { if c2 == 115 { if c3 == 97 { if c4 == 102 { if c5 == 101 { unsafe_ok = 1 } } } } } }
+    let tok = struct_ok * TOK_STRUCT + unsafe_ok * TOK_UNSAFE
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -4072,8 +4080,20 @@ fn run_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, fn_n
         if line_start == 1 {
             let rs_c1 = src[scan_i + 1]
             let rs_c2 = src[scan_i + 2]
-            if c0 == 102 and rs_c1 == 110 and rs_c2 == 32 {
-                let name_start = scan_i + 3
+            ; Check for 'unsafe fn ' prefix: skip "unsafe " (7 chars) if present
+            let fn_off = 0
+            if c0 == 117 and scan_i + 10 < src_len {
+                if rs_c1 == 110 and rs_c2 == 115 {
+                    if src[scan_i + 3] == 97 and src[scan_i + 4] == 102 and src[scan_i + 5] == 101 and src[scan_i + 6] == 32 {
+                        fn_off = 7
+                    }
+                }
+            }
+            let fc0 = src[scan_i + fn_off]
+            let fc1 = src[scan_i + fn_off + 1]
+            let fc2 = src[scan_i + fn_off + 2]
+            if fc0 == 102 and fc1 == 110 and fc2 == 32 {
+                let name_start = scan_i + fn_off + 3
                 let name_end = name_start
                 let keep_name = 1
                 loop keep_name == 1 {
@@ -6849,6 +6869,7 @@ fn skip_asm_stmt_inline(toks: &Token, pos: &i64, src: &i8) -> i64 {
     let t = toks[pos[0]]
     if t.str_len != 3 { ret 0 }
     if streq(src, t.str_start, t.str_len, "asm") != 1 { ret 0 }
+    if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error("asm block requires unsafe") }
     if tok_type_at(toks, pos[0] + 1) != TOK_LBRACE { ret 0 }
     pos[0] = pos[0] + 2
     let depth = 1
@@ -6986,6 +7007,13 @@ fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
             emit(jfn, cur, &rins)
         } else if t == TOK_PRINT {
             cur = compile_print_inline(toks, pos, stab, src, jfn, cur)
+        } else if t == TOK_UNSAFE {
+            pos[0] = pos[0] + 1
+            expect(TOK_LBRACE)
+            g_unsafe_depth = g_unsafe_depth + 1
+            cur = compile_stmts_inline(toks, pos, stab, src, jfn, cur)
+            expect(TOK_RBRACE)
+            g_unsafe_depth = g_unsafe_depth - 1
         } else if t == TOK_IDENT {
             cur = compile_expr_stmt_ident_inline(toks, pos, stab, src, jfn, cur)
         } else {
@@ -7033,8 +7061,11 @@ fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         let as_l = tok_str_len_at(toks, pos[0])
         if as_l == 2 and streq(src, as_s, 2, "as") == 1 {
             pos[0] = pos[0] + 1
-            ; Skip '&' if present (pointer cast)
-            if tok_type_at(toks, pos[0]) == TOK_AMP { pos[0] = pos[0] + 1 }
+            ; Check for pointer cast (as &T) — requires unsafe
+            if tok_type_at(toks, pos[0]) == TOK_AMP {
+                if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error("pointer cast requires unsafe block") }
+                pos[0] = pos[0] + 1
+            }
             ; Skip the type token (i64, i32, i8, or ident)
             pos[0] = pos[0] + 1
         }
@@ -8751,6 +8782,7 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
 }
 
 fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error("syscall() requires unsafe block") }
     expect(TOK_SYSCALL)
     expect(TOK_LPAREN)
     let nr = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
@@ -18217,6 +18249,13 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         cur = compile_print_inline(toks0, &g_main_pos, stab, src, jfn, cur)
                     } else if t == TOK_SYSCALL {
                         codegen_syscall_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+                    } else if t == TOK_UNSAFE {
+                        g_main_pos = g_main_pos + 1
+                        expect(TOK_LBRACE)
+                        g_unsafe_depth = g_unsafe_depth + 1
+                        cur = live_compile_block(toks0, stab, src, jfn, cur)
+                        expect(TOK_RBRACE)
+                        g_unsafe_depth = g_unsafe_depth - 1
                     } else if t == TOK_IDENT {
                         let pos_before = g_main_pos
                         let name_start = tok_str_start_at(toks0, g_main_pos)
@@ -19411,6 +19450,24 @@ fn get_argv(base: &i64, n: i64) -> &i8 {
     ret val
 }
 
+fn check_unsafe_fn_prefix(toks: &Token, pos: i64) -> i64 {
+    if pos > 0 {
+        if tok_type_at_raw(toks, pos - 1) == TOK_UNSAFE { g_unsafe_depth = 1 }
+    }
+    ret 0
+}
+
+fn parse_safe_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    if argc > ai {
+        let maybe_safe = get_argv(argv_ptr, ai)
+        if cstr_eq(maybe_safe, "--safe") == 1 {
+            g_check_unsafe = 1
+            ret ai + 1
+        }
+    }
+    ret ai
+}
+
 ; Compare two null-terminated C strings. Returns 1 if equal, 0 otherwise.
 fn cstr_eq(a: &i8, b: &i8) -> i64 {
     if a == 0 or b == 0 { ret 0 }
@@ -19858,7 +19915,7 @@ fn main(argc: i64, argv_ptr: &i64) {
         syscall(60, 0, 0, 0)
     }
 
-    ; jda build [--include <lib>] <file> [-o output]
+    ; jda build [--include <lib>] [--safe] <file> [-o output]
     if cstr_eq(arg1, "build") == 1 {
         let ai = 2
         if argc > ai {
@@ -19873,6 +19930,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 ai = ai + 1
             }
         }
+        ai = parse_safe_flag(argc, argv_ptr, ai)
         if argc <= ai {
             eprint("error: missing input file\n")
             print_usage()
@@ -20180,6 +20238,7 @@ fn main(argc: i64, argv_ptr: &i64) {
         } else if top_len == 6 and streq(src_buf, top_start, 6, "linear") == 1 {
             parse_struct_decl(toks, g_stab_ptr, src_buf)
         } else if top_t == TOK_FN or (top_len == 2 and streq(src_buf, top_start, 2, "fn") == 1) {
+            check_unsafe_fn_prefix(toks, g_main_pos)
             let fn_tok_pos = g_main_pos
             let cur_name_off = tok_str_start_at(toks, g_main_pos + 1)
             let cur_name_len = tok_str_len_at(toks, g_main_pos + 1)
@@ -20368,6 +20427,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                     gf_strtab_cnt = g_lam_strtab_cnt
                     gf_call_cnt = g_lam_call_cnt
                 }
+                g_unsafe_depth = 0
         } else if top_t == TOK_LET or (top_len == 3 and streq(src_buf, top_start, 3, "let") == 1) {
             skip_top_level_let(toks, g_stab_ptr, src_buf)
         } else {
