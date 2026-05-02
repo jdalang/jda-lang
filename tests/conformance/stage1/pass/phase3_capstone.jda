@@ -1,0 +1,25 @@
+enum Shape {
+    Circle(radius: i64)
+    Rect(w: i64, h: i64)
+}
+
+impl Shape {
+    fn area(&self) -> i64 {
+        match self {
+            Circle(r) => r * r * 3
+            Rect(w, h) => w * h
+        }
+    }
+}
+
+fn describe(s: Shape) -> Result<i64, i64> {
+    let a = s.area()
+    if a == 0 { ret Result.Err(1) }
+    ret Result.Ok(a)
+}
+
+fn main() {
+    let s = Shape.Circle(10)
+    let result = describe(s)?
+    print_int(result)
+}
