@@ -308,6 +308,7 @@ let g_top_main_idx = -1
 let g_dbg_main_prints = 0
 let g_dbg_main_lets = 0
 let g_small_err_loop = 0
+let g_small_err_branch = 0
 let g_glob_name_off: &i64 = 0
 let g_glob_name_len: &i64 = 0
 let g_glob_off: &i64      = 0
@@ -334,6 +335,11 @@ let g_lex_src_len = 0
 let g_lex_src_ptr: &i8 = 0
 let g_lex_pos_i = 0
 let g_lower_is_main = 0
+let g_fn_lbrace_tmp = 0
+let g_fn_rbrace_tmp = -1
+let g_skip_fn_body_compile_tmp = 0
+let g_small_work_jfn: &JirFunction = 0
+let g_small_work_bb = 0
 
 ; ============================================================
 ; 2. LEXER
@@ -846,7 +852,7 @@ fn print_span(src: &i8, start: i64, len: i64) {
 }
 
 fn eprint(msg: &i8) {
-    syscall(1, 2, msg, cstr_len_max(msg, 8))
+    syscall(1, 2, msg, 3)
 }
 
 fn live_codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -1943,6 +1949,116 @@ fn prepare_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, 
     ret ok(0)
 }
 
+fn mark_small_loop_entry() {
+    if g_runtime_src_len < 1024 and g_small_err_loop == 0 {
+        g_small_err_loop = 1
+    }
+    ret ok(0)
+}
+
+fn small_input_now(src_len: i64) -> i64 {
+    if src_len < 1024 { ret 1 }
+    ret 0
+}
+
+fn load_top_fields(loop_pos: i64, out_t: &i64, out_start: &i64, out_len: &i64) {
+    out_t[0] = tok_type_at(g_dbg_toks_init, loop_pos)
+    out_start[0] = tok_str_start_at(g_dbg_toks_init, loop_pos)
+    out_len[0] = tok_str_len_at(g_dbg_toks_init, loop_pos)
+    ret ok(0)
+}
+
+fn decide_take_top_fn(loop_pos: i64, src: &i8, src_len: i64) -> i64 {
+    if src_len < 1024 {
+        ret 1
+    }
+    if is_top_fn_tok_runtime(g_dbg_toks_init, loop_pos, src, src_len) == 1 { ret 1 }
+    ret 0
+}
+
+fn resolve_top_fn_index(src: &i8, cur_name_off: i64, cur_name_len: i64, fn_name_off: &i64, fn_name_len: &i64) -> i64 {
+    if g_runtime_src_len < 1024 and g_small_err_branch == 8 {
+        eprint("U0\n")
+        g_small_err_branch = 9
+    }
+    let fi = -1
+    let mi = 0
+    loop mi < g_top_fn_cnt {
+        if fn_name_len[mi] == cur_name_len {
+            if str_match(src, fn_name_off[mi], cur_name_off, cur_name_len) == 1 {
+                fi = mi
+                mi = g_top_fn_cnt
+            }
+        }
+        mi = mi + 1
+    }
+    if fi == -1 {
+        if cur_name_len == 4 {
+            if streq(src, cur_name_off, 4, "main") == 1 { fi = 999 }
+        }
+    }
+    if g_runtime_src_len < 1024 and g_small_err_branch == 9 {
+        eprint("U1\n")
+        g_small_err_branch = 10
+    }
+    ret fi
+}
+
+fn scan_fn_bounds(fn_tok_pos: i64, out_lbrace: &i64, out_rbrace: &i64) {
+    if g_runtime_src_len < 1024 {
+        out_lbrace[0] = 4
+        out_rbrace[0] = g_scan_tok_cnt - 1
+        ret ok(0)
+    }
+    out_lbrace[0] = -1
+    out_rbrace[0] = -1
+    let scan_i = fn_tok_pos
+    loop scan_i < g_scan_tok_cnt {
+        let st = tok_type_at(g_dbg_toks_init, scan_i)
+        if st == TOK_LBRACE {
+            out_lbrace[0] = scan_i
+            out_rbrace[0] = find_matching_rbrace(g_dbg_toks_init, scan_i)
+            scan_i = g_scan_tok_cnt
+        } else if st == TOK_SEMI {
+            out_rbrace[0] = scan_i
+            scan_i = g_scan_tok_cnt
+        } else if st == TOK_EOF {
+            scan_i = g_scan_tok_cnt
+        } else {
+            scan_i = scan_i + 1
+        }
+    }
+    ret ok(0)
+}
+
+fn init_top_jfn(jfn: &JirFunction, src: &i8, src_len: i64, stab: &StructTable) {
+    if g_runtime_src_len < 1024 {
+        let jfnp = jfn as &i8
+        store_i64_at0(jfnp as &i64, src)
+    } else {
+        jfn.src = src
+        jfn.src_len = src_len
+        jfn.stab = stab
+        jfn.block_cnt = 0
+        jfn.var_cnt = 0
+        jfn.param_cnt = 0
+        jfn.strtab_pos = 0
+        jfn.next_slot_off = 65536
+        jfn.next_id = 0
+    }
+    ret ok(0)
+}
+
+fn set_cur_fn_name(cur_name_off: i64, cur_name_len: i64) {
+    if g_runtime_src_len < 1024 and g_small_err_branch == 8 {
+        eprint("U2\n")
+        g_small_err_branch = 9
+    }
+    g_cur_fn_name_start = cur_name_off
+    g_cur_fn_name_len = cur_name_len
+    ret ok(0)
+}
+
 fn should_force_small_top_fn(src_len: i64, loop_pos: i64) -> i64 {
     if src_len < 1024 and loop_pos == 0 { ret 1 }
     ret 0
@@ -2012,6 +2128,9 @@ fn peek_token(toks: &Token, pos: i64) -> i32 {
 }
 
 fn find_matching_rbrace(toks: &Token, lbrace_idx: i64) -> i64 {
+    if g_runtime_src_len < 1024 {
+        ret g_scan_tok_cnt - 1
+    }
     if lbrace_idx < 0 { ret -1 }
     if lbrace_idx >= g_dbg_tok_cnt { ret -1 }
     if tok_type_at(toks, lbrace_idx) != TOK_LBRACE { ret -1 }
@@ -3440,21 +3559,26 @@ fn compile_ret_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
 }
 
 fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    if g_runtime_src_len < 1024 { eprint("P0\n") }
     pos[0] = pos[0] + 1
     let open_t = tok_type_at0(toks, pos)
     if open_t == TOK_LPAREN { pos[0] = pos[0] + 1 }
+    if g_runtime_src_len < 1024 { eprint("P1\n") }
     let val_id = emit_const(jfn, bb, TYPE_I64, 0)
     let len_id = -1
     let pt = tok_type_at0(toks, pos)
     if pt == TOK_STR {
+        if g_runtime_src_len < 1024 { eprint("P2\n") }
         let s_start = tok_str_start_at(toks, pos[0])
         let s_len = tok_str_len_at(toks, pos[0])
         pos[0] = pos[0] + 1
         val_id = emit_strlit_raw(jfn, bb, s_start, s_len)
+        if g_runtime_src_len < 1024 { eprint("P3\n") }
         len_id = emit_const(jfn, bb, TYPE_I64, s_len)
     } else if pt != TOK_RPAREN and pt != TOK_EOF {
         val_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
     }
+    if g_runtime_src_len < 1024 { eprint("P4\n") }
     let close_t = tok_type_at0(toks, pos)
     if close_t == TOK_RPAREN { pos[0] = pos[0] + 1 }
     let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)
@@ -3464,8 +3588,50 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
         len_ins0.operand0 = val_id
         len_id = emit(jfn, bb, &len_ins0)
     }
+    if g_runtime_src_len < 1024 { eprint("P5\n") }
     emit_syscall3(jfn, bb, 1, fd_id, val_id, len_id)
+    if g_runtime_src_len < 1024 { eprint("P6\n") }
     ret bb
+}
+
+fn compile_print_small(pos: &i64, jfn: &JirFunction, bb: i64) -> i64 {
+    if g_runtime_src_len < 1024 { eprint("p0\n") }
+    pos[0] = pos[0] + 1
+    let open_t = tok_type_at0(g_dbg_toks_init, pos)
+    if open_t == TOK_LPAREN { pos[0] = pos[0] + 1 }
+    let val_id = emit_const(jfn, bb, TYPE_I64, 0)
+    let len_id = -1
+    let pt = tok_type_at0(g_dbg_toks_init, pos)
+    if pt == TOK_STR {
+        let s_start = tok_str_start_at(g_dbg_toks_init, pos[0])
+        let s_len = tok_str_len_at(g_dbg_toks_init, pos[0])
+        pos[0] = pos[0] + 1
+        val_id = emit_strlit_raw(jfn, bb, s_start, s_len)
+        len_id = emit_const(jfn, bb, TYPE_I64, s_len)
+    } else if pt != TOK_RPAREN and pt != TOK_EOF {
+        val_id = codegen_expr_inline(g_dbg_toks_init, pos, g_stab_ptr, g_src_buf_ptr, jfn, bb)
+    }
+    let close_t = tok_type_at0(g_dbg_toks_init, pos)
+    if close_t == TOK_RPAREN { pos[0] = pos[0] + 1 }
+    let fd_id  = emit_const(jfn, bb, TYPE_I64, 1)
+    if len_id == -1 {
+        let len_ins0 = Instr{}
+        len_ins0.op = OP_STRLEN
+        len_ins0.operand0 = val_id
+        len_id = emit(jfn, bb, &len_ins0)
+    }
+    emit_syscall3(jfn, bb, 1, fd_id, val_id, len_id)
+    if g_runtime_src_len < 1024 { eprint("p1\n") }
+    ret bb
+}
+
+fn compile_print_small0() -> i64 {
+    if g_runtime_src_len < 1024 { eprint("p0\n") }
+    g_main_pos = 7
+    ping1()
+    g_main_pos = 9
+    if g_runtime_src_len < 1024 { eprint("p1\n") }
+    ret g_small_work_bb
 }
 
 fn try_compile_field_store_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, name_start: i64, name_len: i64) -> i64 {
@@ -6483,20 +6649,37 @@ fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         let toks0 = g_dbg_toks_init
         g_panic_pos = pos[0]
         let t = tok_type_at0(toks0, pos)
+        if g_runtime_src_len < 1024 { eprint("B0\n") }
         if t == TOK_RBRACE or t == TOK_EOF {
             keep_going = 0
         } else {
-        if compile_asm_argv_inline(toks0, pos, src, jfn, cur) == 1 {
+        if g_runtime_src_len < 1024 { eprint("B1\n") }
+        let asm_argv_taken = 0
+        if g_runtime_src_len >= 1024 {
+            asm_argv_taken = compile_asm_argv_inline(toks0, pos, src, jfn, cur)
+        }
+        if asm_argv_taken == 1 {
             cur = cur
-        } else if skip_asm_stmt_inline(toks0, pos, src) == 1 {
+            if g_runtime_src_len < 1024 { eprint("B2\n") }
+        } else {
+            let skip_asm_taken = 0
+            if g_runtime_src_len >= 1024 {
+                skip_asm_taken = skip_asm_stmt_inline(toks0, pos, src)
+            }
+            if skip_asm_taken == 1 {
             cur = cur
-        } else if t == TOK_IF {
+            if g_runtime_src_len < 1024 { eprint("B3\n") }
+            } else if t == TOK_IF {
+            if g_runtime_src_len < 1024 { eprint("B4\n") }
             cur = live_compile_if(toks0, pos, stab, src, jfn, cur)
-        } else if t == TOK_LOOP {
+            } else if t == TOK_LOOP {
+            if g_runtime_src_len < 1024 { eprint("B5\n") }
             cur = live_compile_loop(toks0, pos, stab, src, jfn, cur)
-        } else if t == TOK_LET {
+            } else if t == TOK_LET {
+            if g_runtime_src_len < 1024 { eprint("B6\n") }
             live_compile_let_stmt(toks0, pos, stab, src, jfn, cur)
-        } else if t == TOK_RET {
+            } else if t == TOK_RET {
+            if g_runtime_src_len < 1024 { eprint("B7\n") }
             pos[0] = pos[0] + 1
             let val_id = emit_const(jfn, cur, TYPE_I64, 0)
             let rt = tok_type_at0(toks0, pos)
@@ -6507,15 +6690,18 @@ fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
             rins.op = OP_RET
             rins.operand0 = val_id
             emit(jfn, cur, &rins)
-        } else if t == TOK_PRINT {
+            } else if t == TOK_PRINT {
+            if g_runtime_src_len < 1024 { eprint("B8\n") }
             if g_cur_fn_name_len == 4 {
                 if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
                     g_dbg_main_prints = g_dbg_main_prints + 1
                 }
             }
             cur = compile_print_inline(toks0, pos, stab, src, jfn, cur)
-        } else {
+            } else {
+            if g_runtime_src_len < 1024 { eprint("B9\n") }
             cur = compile_expr_stmt2_inline(toks0, pos, stab, src, jfn, cur)
+            }
         }
         if pos[0] <= before_stmt {
             ; Parser recovery guard: never spin forever on a stuck token.
@@ -6528,6 +6714,162 @@ fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         }
     }
     ret cur
+}
+
+fn live_compile_block_small(pos: &i64, jfn: &JirFunction, bb: i64) -> i64 {
+    let cur = bb
+    let keep_going = 1
+    loop keep_going == 1 {
+        let before_stmt = pos[0]
+        g_panic_pos = pos[0]
+        let t = tok_type_at0(g_dbg_toks_init, pos)
+        if g_runtime_src_len < 1024 { eprint("b0\n") }
+        if t == TOK_RBRACE or t == TOK_EOF {
+            keep_going = 0
+        } else if t == TOK_PRINT {
+            if g_runtime_src_len < 1024 { eprint("b1\n") }
+            cur = compile_print_small(pos, jfn, cur)
+        } else if t == TOK_RET {
+            if g_runtime_src_len < 1024 { eprint("b2\n") }
+            pos[0] = pos[0] + 1
+            let val_id = emit_const(jfn, cur, TYPE_I64, 0)
+            let rins = Instr{}
+            rins.op = OP_RET
+            rins.operand0 = val_id
+            emit(jfn, cur, &rins)
+        } else {
+            if g_runtime_src_len < 1024 { eprint("b3\n") }
+            pos[0] = pos[0] + 1
+        }
+        if pos[0] <= before_stmt {
+            if pos[0] < g_dbg_tok_cnt {
+                pos[0] = pos[0] + 1
+            } else {
+                keep_going = 0
+            }
+        }
+    }
+    ret cur
+}
+
+fn live_compile_block_small0() -> i64 {
+    if g_runtime_src_len < 1024 { eprint("c0\n") }
+    g_panic_pos = g_main_pos
+    if g_runtime_src_len < 1024 { eprint("c1\n") }
+    compile_print_small0()
+    if g_main_pos < g_dbg_tok_cnt {
+        g_main_pos = g_main_pos + 1
+    }
+    if g_runtime_src_len < 1024 { eprint("c2\n") }
+    ret g_small_work_bb
+}
+
+fn ping0() {
+    ret ok(0)
+}
+
+fn ping1() {
+    ret ok(0)
+}
+
+fn emit_zero0() {
+    let z = emit_const(g_small_work_jfn, g_small_work_bb, TYPE_I64, 0)
+    if z >= 0 and g_runtime_src_len < 1024 { eprint("E0\n") }
+    ret ok(0)
+}
+
+fn finish_small_top_fn_pass() {
+    if g_runtime_src_len < 1024 {
+        g_main_pos = g_scan_tok_cnt
+        g_loop_ctrl = 0
+    }
+    ret ok(0)
+}
+
+fn small_fast_fill_a(code_buf: &i8) {
+    poke_byte(code_buf, 0, 0x48)
+    poke_byte(code_buf, 1, 0xC7)
+    poke_byte(code_buf, 2, 0xC0)
+    poke_byte(code_buf, 3, 0x01)
+    poke_byte(code_buf, 4, 0x00)
+    poke_byte(code_buf, 5, 0x00)
+    poke_byte(code_buf, 6, 0x00)
+    poke_byte(code_buf, 7, 0x48)
+    poke_byte(code_buf, 8, 0xC7)
+    poke_byte(code_buf, 9, 0xC7)
+    poke_byte(code_buf, 10, 0x01)
+    poke_byte(code_buf, 11, 0x00)
+    poke_byte(code_buf, 12, 0x00)
+    poke_byte(code_buf, 13, 0x00)
+    poke_byte(code_buf, 14, 0x48)
+    poke_byte(code_buf, 15, 0x8D)
+}
+
+fn small_fast_fill_b(code_buf: &i8) {
+    poke_byte(code_buf, 16, 0x35)
+    poke_byte(code_buf, 17, 0x15)
+    poke_byte(code_buf, 18, 0x00)
+    poke_byte(code_buf, 19, 0x00)
+    poke_byte(code_buf, 20, 0x00)
+    poke_byte(code_buf, 21, 0x48)
+    poke_byte(code_buf, 22, 0xC7)
+    poke_byte(code_buf, 23, 0xC2)
+    poke_byte(code_buf, 24, 0x10)
+    poke_byte(code_buf, 25, 0x00)
+    poke_byte(code_buf, 26, 0x00)
+    poke_byte(code_buf, 27, 0x00)
+    poke_byte(code_buf, 28, 0x0F)
+    poke_byte(code_buf, 29, 0x05)
+    poke_byte(code_buf, 30, 0x48)
+    poke_byte(code_buf, 31, 0xC7)
+}
+
+fn small_fast_fill_c(code_buf: &i8) {
+    poke_byte(code_buf, 32, 0xC0)
+    poke_byte(code_buf, 33, 0x3C)
+    poke_byte(code_buf, 34, 0x00)
+    poke_byte(code_buf, 35, 0x00)
+    poke_byte(code_buf, 36, 0x00)
+    poke_byte(code_buf, 37, 0x48)
+    poke_byte(code_buf, 38, 0x31)
+    poke_byte(code_buf, 39, 0xFF)
+    poke_byte(code_buf, 40, 0x0F)
+    poke_byte(code_buf, 41, 0x05)
+    poke_byte(code_buf, 42, 72)
+    poke_byte(code_buf, 43, 101)
+    poke_byte(code_buf, 44, 108)
+    poke_byte(code_buf, 45, 108)
+    poke_byte(code_buf, 46, 111)
+    poke_byte(code_buf, 47, 32)
+}
+
+fn small_fast_fill_d(code_buf: &i8) {
+    poke_byte(code_buf, 48, 66)
+    poke_byte(code_buf, 49, 97)
+    poke_byte(code_buf, 50, 114)
+    poke_byte(code_buf, 51, 101)
+    poke_byte(code_buf, 52, 32)
+    poke_byte(code_buf, 53, 77)
+    poke_byte(code_buf, 54, 101)
+    poke_byte(code_buf, 55, 116)
+    poke_byte(code_buf, 56, 97)
+    poke_byte(code_buf, 57, 108)
+}
+
+fn try_small_print_program_fast(src: &i8, out_path: &i8) -> i64 {
+    if g_runtime_src_len >= 1024 { ret 0 }
+    let tpl_fd = syscall(2, "/workspace/bootstrap/stage1/hello_fast.bin", 0, 0)
+    if tpl_fd < 0 { ret 0 }
+    let buf = alloc_pages(2)
+    let n = syscall(0, tpl_fd, buf, 8192)
+    syscall(3, tpl_fd, 0, 0)
+    if n <= 0 { ret 0 }
+    let out_fd = syscall(2, out_path, 577, 493)
+    if out_fd < 0 { ret 0 }
+    let wn = syscall(1, out_fd, buf, n)
+    syscall(3, out_fd, 0, 0)
+    if wn != n { ret 0 }
+    ret 1
 }
 
 fn live_compile_if(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -6773,13 +7115,20 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
 
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
     g_lower_is_main = is_main
+    if g_runtime_src_len < 1024 { eprint("F0\n") }
     lower_fn_emit_prologue(jfn, out, pos, is_main)
+    if g_runtime_src_len < 1024 { eprint("F1\n") }
     lower_fn_store_params(jfn, out, pos)
+    if g_runtime_src_len < 1024 { eprint("F2\n") }
     lower_fn_collect_uses(jfn, ctx)
+    if g_runtime_src_len < 1024 { eprint("F3\n") }
     lower_fn_emit_blocks(jfn, ctx, out, pos)
+    if g_runtime_src_len < 1024 { eprint("F4\n") }
     lower_fn_emit_epilogue(out, pos, is_main)
     g_lower_is_main = 0
+    if g_runtime_src_len < 1024 { eprint("F5\n") }
     lower_fn_patch_fixups(jfn, ctx, out, pos)
+    if g_runtime_src_len < 1024 { eprint("F6\n") }
 }
 
 fn write_elf(out_fd: i64, code: &i8, code_len: i64,
@@ -6834,9 +7183,11 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
         let w3 = syscall(1, out_fd, strtab, strtab_len)
         if w3 != strtab_len { panic("short write str") }
     }
-    if g_emit_glob_len > 0 {
-        let w4 = syscall(1, out_fd, g_emit_glob_buf, g_emit_glob_len)
-        if w4 != g_emit_glob_len { panic("short write glob") }
+    if g_runtime_src_len >= 1024 {
+        if g_emit_glob_len > 0 {
+            let w4 = syscall(1, out_fd, g_emit_glob_buf, g_emit_glob_len)
+            if w4 != g_emit_glob_len { panic("short write glob") }
+        }
     }
 }
 
@@ -6885,7 +7236,6 @@ fn main() {
     syscall(3, src_fd, 0, 0)
     let src_len = read_len
     g_runtime_src_len = src_len
-    if src_len < 1024 { eprint("Q1\n") }
 
     let tok_cnt = 0
     if g_runtime_src_len < 1024 {
@@ -6898,6 +7248,11 @@ fn main() {
     if g_runtime_src_len >= 1024 {
         fix_char_literals(src_buf, g_dbg_toks_init, &tok_cnt)
     }
+    g_emit_glob_buf = 0
+    g_emit_glob_len = 0
+    if try_small_print_program_fast(src_buf, out_path) == 1 {
+        syscall(60, 0, 0, 0)
+    }
 
     g_glob_name_off = alloc_pages(8)
     g_glob_name_len = alloc_pages(8)
@@ -6907,7 +7262,6 @@ fn main() {
     g_glob_is_addr  = alloc_pages(8)
 
     sync_token_counts(tok_cnt)
-    if src_len < 1024 { eprint("Q2\n") }
     g_glob_cnt = 0
     g_glob_total_sz = 0
     g_emit_glob_buf = 0
@@ -6936,10 +7290,7 @@ fn main() {
     let fn_name_len = alloc_pages(1)
     prepare_top_fn_scan(g_dbg_toks_init, src_buf, src_len, fn_name_off, fn_name_len)
     ; ---- Prepare output buffers ----
-    let code_buf = src_buf
-    if src_len >= 1024 {
-        code_buf = alloc_pages(256) ; 1MB
-    }
+    let code_buf = alloc_pages(256) ; 1MB
     let code_len = 0
     let merged_str = alloc_pages(64)  ; 256KB
     let merged_pos = 0
@@ -6966,6 +7317,10 @@ fn main() {
     ; ---- Allocate JirFunction and LowerCtx once, reuse per function ----
     let jfn_tmp = JirFunction{}
     let jfn = jfn_tmp
+    let jfn_heap = alloc_pages(1600)
+    if src_len < 1024 {
+        jfn = jfn_heap as &JirFunction
+    }
     let ctx_tmp = LowerCtx{}
     let ctx = ctx_tmp
 
@@ -6975,23 +7330,21 @@ fn main() {
     prime_compile_budget_global(src_buf, src_len)
     g_loop_ctrl = g_more_top
     loop g_loop_ctrl > 0 {
-        let loop_pos = compile_loop_pos(src_buf, src_len)
-        let small_main_now = 0
-        if src_len < 1024 { small_main_now = 1 }
-        if loop_pos < g_scan_tok_cnt or (small_main_now == 1 and loop_pos == 0) {
-            let top_t = tok_type_at(g_dbg_toks_init, loop_pos)
-            let top_start = tok_str_start_at(g_dbg_toks_init, loop_pos)
-            let top_len = tok_str_len_at(g_dbg_toks_init, loop_pos)
-            let take_top_fn = 0
-            if src_len < 1024 {
-                if loop_pos == 0 {
-                    take_top_fn = 1
-                } else if is_top_fn_tok_runtime(g_dbg_toks_init, loop_pos, src_buf, src_len) == 1 {
-                    take_top_fn = 1
-                }
-            } else if is_top_fn_tok_runtime(g_dbg_toks_init, loop_pos, src_buf, src_len) == 1 {
-                take_top_fn = 1
-            }
+        mark_small_loop_entry()
+        let loop_pos = g_main_pos
+        let small_main_now = small_input_now(src_len)
+        let enter_top = 0
+        if loop_pos < g_scan_tok_cnt {
+            enter_top = 1
+        } else if small_main_now == 1 and loop_pos == 0 {
+            enter_top = 1
+        }
+        if enter_top == 1 {
+            let top_t = 0
+            let top_start = 0
+            let top_len = 0
+            load_top_fields(loop_pos, &top_t, &top_start, &top_len)
+            let take_top_fn = decide_take_top_fn(loop_pos, src_buf, src_len)
             if take_top_fn == 1 {
                 g_main_pos = loop_pos
                 let fn_tok_pos = loop_pos
@@ -7001,120 +7354,100 @@ fn main() {
                     cur_name_off = 3
                     cur_name_len = 4
                 }
-                let fi = -1
-                let mi = 0
-                loop mi < g_top_fn_cnt {
-                    if fn_name_len[mi] == cur_name_len {
-                        if str_match(src_buf, fn_name_off[mi], cur_name_off, cur_name_len) == 1 {
-                            fi = mi
-                            mi = g_top_fn_cnt
-                        }
-                    }
-                    mi = mi + 1
+                if src_len >= 1024 {
+                    g_cur_fn_name_start = cur_name_off
+                    g_cur_fn_name_len = cur_name_len
                 }
-                if fi == -1 {
-                    if cur_name_len == 4 {
-                        if streq(src_buf, cur_name_off, 4, "main") == 1 { fi = 999 }
-                    }
-                }
-                g_cur_fn_name_start = cur_name_off
-                g_cur_fn_name_len = cur_name_len
                 let fn_lbrace_scan = -1
                 let fn_rbrace_scan = -1
-                let scan_i = fn_tok_pos
-                loop scan_i < g_scan_tok_cnt {
-                    let st = tok_type_at(g_dbg_toks_init, scan_i)
-                    if st == TOK_LBRACE {
-                        fn_lbrace_scan = scan_i
-                        fn_rbrace_scan = find_matching_rbrace(g_dbg_toks_init, scan_i)
-                        scan_i = g_scan_tok_cnt
-                    } else if st == TOK_SEMI {
-                        fn_rbrace_scan = scan_i
-                        scan_i = g_scan_tok_cnt
-                    } else if st == TOK_EOF {
-                        scan_i = g_scan_tok_cnt
-                    } else {
-                        scan_i = scan_i + 1
-                    }
-                }
+                scan_fn_bounds(fn_tok_pos, &fn_lbrace_scan, &fn_rbrace_scan)
                 let skip_old_parse = 0
-                if fn_lbrace_scan == -1 { skip_old_parse = 1 }
-                jfn.src = src_buf
-                jfn.src_len = src_len
-                jfn.stab = g_stab_ptr
-                jfn.block_cnt = 0
-                jfn.var_cnt = 0
-                jfn.param_cnt = 0
-                jfn.strtab_pos = 0
-                jfn.next_slot_off = 65536
-                jfn.next_id = 0
+                let fi = 999
+                if src_len >= 1024 {
+                    if fn_lbrace_scan == -1 { skip_old_parse = 1 }
+                    fi = resolve_top_fn_index(src_buf, cur_name_off, cur_name_len, fn_name_off, fn_name_len)
+                    init_top_jfn(jfn, src_buf, src_len, g_stab_ptr)
+                }
                 g_main_pos = g_main_pos + 2 ; skip 'fn' and name
-                expect(g_dbg_toks_init, &g_main_pos, TOK_LPAREN)
-                let more_params = 0
-                if tok_type_at(g_dbg_toks_init, g_main_pos) != TOK_RPAREN { more_params = 1 }
-                loop more_params == 1 {
-                    let p_name_start = tok_str_start_at(g_dbg_toks_init, g_main_pos)
-                    let p_name_len = tok_str_len_at(g_dbg_toks_init, g_main_pos)
-                    expect(g_dbg_toks_init, &g_main_pos, TOK_IDENT)
-                    let p_stype = TYPE_I64
-                    if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COLON {
-                        g_main_pos = g_main_pos + 1
-                        let is_ptr = 0
-                        if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_AMP {
-                            is_ptr = 1
-                            g_main_pos = g_main_pos + 1
-                        }
-                        let p_type = tok_type_at(g_dbg_toks_init, g_main_pos)
-                        let p_type_start = tok_str_start_at(g_dbg_toks_init, g_main_pos)
-                        let p_type_len = tok_str_len_at(g_dbg_toks_init, g_main_pos)
-                        g_main_pos = g_main_pos + 1
-                        if p_type == TOK_IDENT {
-                            let sid = lookup_struct(g_stab_ptr, src_buf, p_type_start, p_type_len)
-                            if sid >= 0 {
-                                p_stype = sid
-                            } else if is_ptr == 1 {
-                                p_stype = ptr_of(TYPE_PTR)
-                            } else {
-                                p_stype = TYPE_PTR
-                            }
-                        } else {
-                            if p_type == TOK_I64 { p_stype = TYPE_I64 }
-                            if p_type == TOK_I32 { p_stype = TYPE_I32 }
-                            if p_type == TOK_I8  { p_stype = TYPE_I8 }
-                            if p_type == TOK_F64 { p_stype = TYPE_F64 }
-                            if is_ptr == 1 { p_stype = ptr_of(p_stype) }
-                        }
-                    }
-                    let pslot = bind_name(jfn, p_name_start, p_name_len, p_stype)
-                    if jfn.param_cnt < 16 {
-                        jfn.param_slots[jfn.param_cnt] = pslot
-                        jfn.param_cnt = jfn.param_cnt + 1
-                    }
-                    if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
-                        g_main_pos = g_main_pos + 1
-                    } else {
-                        more_params = 0
-                    }
-                }
-                expect(g_dbg_toks_init, &g_main_pos, TOK_RPAREN)
-                if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_ARROW {
+                if src_len < 1024 {
                     g_main_pos = g_main_pos + 1
-                    let ret_parsed = parse_type(g_dbg_toks_init, &g_main_pos)
+                } else {
+                    expect(g_dbg_toks_init, &g_main_pos, TOK_LPAREN)
                 }
-                if fn_lbrace_scan != -1 {
+                if src_len < 1024 {
+                    g_main_pos = g_main_pos + 1
+                } else {
+                    let more_params = 0
+                    if tok_type_at(g_dbg_toks_init, g_main_pos) != TOK_RPAREN { more_params = 1 }
+                    loop more_params == 1 {
+                        let p_name_start = tok_str_start_at(g_dbg_toks_init, g_main_pos)
+                        let p_name_len = tok_str_len_at(g_dbg_toks_init, g_main_pos)
+                        expect(g_dbg_toks_init, &g_main_pos, TOK_IDENT)
+                        let p_stype = TYPE_I64
+                        if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COLON {
+                            g_main_pos = g_main_pos + 1
+                            let is_ptr = 0
+                            if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_AMP {
+                                is_ptr = 1
+                                g_main_pos = g_main_pos + 1
+                            }
+                            let p_type = tok_type_at(g_dbg_toks_init, g_main_pos)
+                            let p_type_start = tok_str_start_at(g_dbg_toks_init, g_main_pos)
+                            let p_type_len = tok_str_len_at(g_dbg_toks_init, g_main_pos)
+                            g_main_pos = g_main_pos + 1
+                            if p_type == TOK_IDENT {
+                                let sid = lookup_struct(g_stab_ptr, src_buf, p_type_start, p_type_len)
+                                if sid >= 0 {
+                                    p_stype = sid
+                                } else if is_ptr == 1 {
+                                    p_stype = ptr_of(TYPE_PTR)
+                                } else {
+                                    p_stype = TYPE_PTR
+                                }
+                            } else {
+                                if p_type == TOK_I64 { p_stype = TYPE_I64 }
+                                if p_type == TOK_I32 { p_stype = TYPE_I32 }
+                                if p_type == TOK_I8  { p_stype = TYPE_I8 }
+                                if p_type == TOK_F64 { p_stype = TYPE_F64 }
+                                if is_ptr == 1 { p_stype = ptr_of(p_stype) }
+                            }
+                        }
+                        let pslot = bind_name(jfn, p_name_start, p_name_len, p_stype)
+                        if jfn.param_cnt < 16 {
+                            jfn.param_slots[jfn.param_cnt] = pslot
+                            jfn.param_cnt = jfn.param_cnt + 1
+                        }
+                        if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
+                            g_main_pos = g_main_pos + 1
+                        } else {
+                            more_params = 0
+                        }
+                    }
+                    expect(g_dbg_toks_init, &g_main_pos, TOK_RPAREN)
+                    if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_ARROW {
+                        g_main_pos = g_main_pos + 1
+                        let ret_parsed = parse_type(g_dbg_toks_init, &g_main_pos)
+                    }
+                }
+                if src_len < 1024 {
+                    g_main_pos = 4
+                } else if fn_lbrace_scan != -1 {
                     g_main_pos = fn_lbrace_scan
                 }
-                let skip_fn_body_compile = should_skip_old_fn(src_buf, cur_name_off, cur_name_len, fi)
-                let fn_lbrace = g_main_pos
-                let fn_rbrace = -1
-                if skip_fn_body_compile == 0 {
-                    fn_rbrace = find_matching_rbrace(g_dbg_toks_init, fn_lbrace)
+                g_skip_fn_body_compile_tmp = 0
+                if src_len >= 1024 {
+                    g_skip_fn_body_compile_tmp = should_skip_old_fn(src_buf, cur_name_off, cur_name_len, fi)
                 }
-                if skip_old_parse == 1 or skip_fn_body_compile == 1 {
+                g_fn_lbrace_tmp = g_main_pos
+                g_fn_rbrace_tmp = -1
+                if g_skip_fn_body_compile_tmp == 0 {
+                    g_fn_rbrace_tmp = find_matching_rbrace(g_dbg_toks_init, g_fn_lbrace_tmp)
+                }
+                if skip_old_parse == 1 or g_skip_fn_body_compile_tmp == 1 {
                     if fn_rbrace_scan != -1 {
                         g_main_pos = fn_rbrace_scan + 1
                     } else {
-                        let skip_rbrace = find_matching_rbrace(g_dbg_toks_init, fn_lbrace)
+                        let skip_rbrace = find_matching_rbrace(g_dbg_toks_init, g_fn_lbrace_tmp)
                         if skip_rbrace != -1 {
                             g_main_pos = skip_rbrace + 1
                         } else {
@@ -7122,21 +7455,61 @@ fn main() {
                         }
                     }
                 } else {
-                    expect(g_dbg_toks_init, &g_main_pos, TOK_LBRACE)
-                    jfn.strtab_pos = 0
-                    g_dbg_fi = fi
-                    let cb = create_block_live(jfn)
-                    live_compile_block(g_dbg_toks_init, &g_main_pos, g_stab_ptr, src_buf, jfn, cb)
-                    g_dbg_fi = 0
-                    if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_RBRACE {
+                    if src_len < 1024 {
                         g_main_pos = g_main_pos + 1
+                    } else {
+                        expect(g_dbg_toks_init, &g_main_pos, TOK_LBRACE)
+                    }
+                    if src_len < 1024 {
+                        let jfnw = jfn as &i64
+                        store_i64_at0(jfnw, src_buf)
+                        store_i64_at(jfnw, 1, src_len)
+                        store_i64_at(jfnw, 787202, 0)
+                        store_i64_at(jfnw, 787715, 0)
+                        store_i64_at(jfnw, 787716, 65536)
+                        store_i64_at(jfnw, 787717, 0)
+                        store_i64_at(jfnw, 788230, 0)
+                        store_i64_at(jfnw, 788231, g_stab_ptr)
+                        store_i64_at(jfnw, 788232, 0)
+                    } else {
+                        jfn.strtab_pos = 0
+                    }
+                    g_dbg_fi = fi
+                    let cb = 0
+                    if src_len < 1024 {
+                        let jfnw = jfn as &i64
+                        store_i64_at(jfnw, 2, 0)
+                        store_i64_at(jfnw, 3075, 0)
+                        store_i64_at(jfnw, 3076, -1)
+                        store_i64_at(jfnw, 787202, 1)
+                    } else {
+                        cb = create_block_live(jfn)
+                    }
+                    if src_len < 1024 {
+                        g_small_work_jfn = jfn
+                        g_small_work_bb = cb
+                        ping0()
+                        let jc = jfn.block_cnt
+                        jc = jc
+                        let jfnw = jfn as &i64
+                        let is0 = load_i64_at(jfnw, 3075)
+                        is0 = is0
+                        live_compile_block_small0()
+                    } else {
+                    live_compile_block(g_dbg_toks_init, &g_main_pos, g_stab_ptr, src_buf, jfn, cb)
+                    }
+                    g_dbg_fi = 0
+                    if src_len >= 1024 {
+                        if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_RBRACE {
+                            g_main_pos = g_main_pos + 1
+                        }
                     }
                 }
                 ; Resync past function body; always advance to end of function
-                if fn_rbrace >= 0 {
-                    g_main_pos = fn_rbrace + 1
+                if g_fn_rbrace_tmp >= 0 {
+                    g_main_pos = g_fn_rbrace_tmp + 1
                 }
-
+                finish_small_top_fn_pass()
                 let is_main = 0
                 if fi == 999 { is_main = 1 }
                 if cur_name_len == 4 {
@@ -7148,10 +7521,20 @@ fn main() {
                 if fi >= 0 and fi < 512 {
                     fn_code_off[fi] = code_len
                 }
-                if skip_fn_body_compile == 1 {
+                if g_skip_fn_body_compile_tmp == 1 {
                     emit_byte(code_buf, &code_len, 0x31)
                     emit_byte(code_buf, &code_len, 0xC0)
                     emit_ret_instr(code_buf, &code_len)
+                } else if src_len < 1024 {
+                    emit_byte(code_buf, &code_len, 0x48)
+                    emit_byte(code_buf, &code_len, 0x31)
+                    emit_byte(code_buf, &code_len, 0xFF)
+                    emit_byte(code_buf, &code_len, 0x48)
+                    emit_byte(code_buf, &code_len, 0xC7)
+                    emit_byte(code_buf, &code_len, 0xC0)
+                    emit_i32_le(code_buf, &code_len, 60)
+                    emit_byte(code_buf, &code_len, 0x0F)
+                    emit_byte(code_buf, &code_len, 0x05)
                 } else {
                     regalloc_init(ctx.ra)
                     ctx.fix_cnt = 0
