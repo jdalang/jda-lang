@@ -152,6 +152,8 @@ section .data
     dbg_s_l equ $-dbg_s-1
     dbg_f db `F`,0
     dbg_f_l equ $-dbg_f-1
+    dbg_g db `G`,0
+    dbg_g_l equ $-dbg_g-1
     dbg_dot db `.`,0
     dbg_dot_l equ $-dbg_dot-1
     dbg_nl db 10,0
@@ -1263,6 +1265,8 @@ p1_scan:
     je      .p1_const
     cmp     rax, TOK_STRUCT
     je      .p1_struct
+    cmp     rax, TOK_LET
+    je      .p1_let
     cmp     rax, TOK_FN
     je      .p1_fn
     ; unknown token, skip
@@ -1296,6 +1300,26 @@ p1_scan:
     mov     [rbx+16], r14
     mov     qword [rbx+24], 0
     inc     qword [cst_cnt]
+    jmp     .p1_loop
+
+; --- let NAME = VALUE ---
+.p1_let:
+    ; debug: print "G" for global
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_g]
+    mov     edx, dbg_g_l
+    syscall
+    call    adv_tok         ; skip 'let'
+    call    get_cur_tok_ptr
+    mov     r8,  [rax+8]    ; var name_start
+    mov     r9,  [rax+16]   ; var name_len
+    call    adv_tok         ; skip NAME
+    call    adv_tok         ; skip '='
+    call    adv_tok         ; skip VALUE
+    ; register as global with type i64
+    mov     r10, -1         ; type_id = i64 (untyped)
+    call    add_global
     jmp     .p1_loop
 
 ; --- struct NAME { field:type ... } ---
