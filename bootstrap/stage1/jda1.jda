@@ -518,9 +518,9 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
     expect(toks, pos, TOK_IDENT)
     expect(toks, pos, TOK_EQ)
     let t = tok_type_at0(toks, pos)
-    if g_glob_name_off == 0 { panic_global_table_missing() }
+    if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
-    if gidx >= 256 { panic_too_many_globals() }
+    if gidx >= 256 { panic("Too many globals") }
     g_glob_name_off[gidx] = name_start
     g_glob_name_len[gidx] = name_len
     g_glob_off[gidx]      = g_glob_total_sz
@@ -528,8 +528,8 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
     g_glob_stype[gidx]    = TYPE_I64
     g_glob_is_addr[gidx]  = 0
     if t == TOK_INT {
-        if is_g_consts_name(src, name_start, name_len) == 1 {
-            let sid = lookup_consttable_sid(stab, src)
+        if streq(src, name_start, name_len, "g_consts") == 1 {
+            let sid = lookup_struct_kw(stab, src, "ConstTable", 10)
             if sid >= 0 { g_glob_stype[gidx] = sid }
         }
         inc_i64_at0(pos)
@@ -744,14 +744,14 @@ fn classify_keyword(src: &i8, start: i64, len: i64) {
 }
 
 fn emit_lex_tok(out_toks: &Token, count: &i64, tok: i32) {
-    if count[0] >= 65535 { panic_token_buffer_overflow() }
+    if count[0] >= 65535 { panic("Token buffer overflow") }
     let idx = load_i64_at0(count)
     out_toks[idx].type = tok
     inc_i64_at0(count)
 }
 
 fn emit_lex_span(out_toks: &Token, count: &i64, tok: i32, start: i64, len: i64) {
-    if count[0] >= 65535 { panic_token_buffer_overflow() }
+    if count[0] >= 65535 { panic("Token buffer overflow") }
     let idx = load_i64_at0(count)
     out_toks[idx].type = tok
     out_toks[idx].str_start = start
@@ -762,7 +762,7 @@ fn emit_lex_span(out_toks: &Token, count: &i64, tok: i32, start: i64, len: i64) 
 fn lex_handle_minus(pos: &i64) {
     let next = load_i64_at0(pos)
     if next + 1 < g_lex_src_len {
-        let nxt = g_lex_src_ptr[pos[0] + 1]
+        let nxt = load_i8_at(g_lex_src_ptr, next + 1)
         if nxt == 62 {
             emit_lex_tok(g_lex_out_toks, g_lex_count_ptr, TOK_ARROW)
             inc_i64_at0_twice(pos)
@@ -843,95 +843,10 @@ fn lex_handle_lt(pos: &i64) {
     }
 }
 
-fn lex_handle_comment(src: &i8, src_len: i64, pos: &i64) {
-    loop load_i64_at0(pos) < src_len {
-        let c = load_i8_at0(src, pos)
-        if c != 10 {
-            inc_i64_at0(pos)
-        } else {
-            ret 0
-        }
-    }
-}
-
-fn lex_handle_string(pos: &i64) {
-    lex_set_pos_ptr(pos)
-    lex_mark_string_start()
-    lex_skip_string_body()
-    lex_emit_marked_string()
-    lex_sync_pos_ptr(pos)
-    if pos[0] < g_lex_src_len {
-        inc_i64_at0(pos)
-    }
-}
-
-fn lex_handle_int(src: &i8, pos: &i64) {
-    let val = lex_scan_int(pos)
-    lex_emit_int(val)
-    ret 0
-}
-
-fn emit_lex_int(out_toks: &Token, count: &i64, val: i64) {
-    let out_idx = load_i64_at0(count)
-    if out_idx >= 65535 { panic("Token buffer overflow") }
-    emit_lex_tok(out_toks, count, TOK_INT)
-    tok_set_imm_at(out_toks, out_idx, val)
-}
-
-fn lex_emit_int(val: i64) {
-    emit_lex_int(g_lex_out_toks, g_lex_count_ptr, val)
-}
-
-fn panic_global_table_missing() {
-    panic("Global table missing")
-}
-
-fn panic_too_many_globals() {
-    panic("Too many globals")
-}
-
-fn is_g_consts_name(src: &i8, name_start: i64, name_len: i64) -> i64 {
-    ret streq(src, name_start, name_len, "g_consts")
-}
-
-fn lookup_consttable_sid(stab: &StructTable, src: &i8) -> i64 {
-    ret lookup_struct_kw(stab, src, "ConstTable", 10)
-}
-
-fn panic_token_buffer_overflow() {
-    panic("Token buffer overflow")
-}
-
-fn lex_handle_ident(src: &i8, src_len: i64, pos: &i64, out_toks: &Token, count: &i64) {
-    let start = pos[0]
-    let keep_ident = 1
-    loop keep_ident == 1 {
-        if pos[0] >= src_len {
-            keep_ident = 0
-        } else {
-            let cur = src[pos[0]]
-            if is_ident_continue(cur) == 1 {
-                pos[0] = pos[0] + 1
-            } else {
-                keep_ident = 0
-            }
-        }
-    }
-    let len = pos[0] - start
-    let kw = classify_keyword(src, start, len)
-    emit_lex_span(out_toks, count, kw, start, len)
-}
-
-fn lex_handle_single(c: i8, pos: &i64, out_toks: &Token, count: &i64) {
-    emit_lex_tok(out_toks, count, char_to_tok(c))
-    pos[0] = pos[0] + 1
-}
-
-fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
+fn lex(src: &i8, src_len: i64) -> i32 {
     let pos   = 0
     let count = 0
     g_lex_count_ptr = &count
-    g_lex_out_toks = out_toks
     g_lex_src_len = src_len
     g_lex_src_ptr = src
 
@@ -946,22 +861,59 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
 
         ; Skip line comments: ;=59 ...
         else if c == 59 {
-            lex_handle_comment(src, src_len, &pos)
+            pos = pos + 1
+            let keep_comment = 1
+            loop keep_comment == 1 {
+                if pos >= src_len {
+                    keep_comment = 0
+                } else if src[pos] != 10 {
+                    pos = pos + 1
+                } else {
+                    keep_comment = 0
+                }
+            }
         }
 
         ; String literal: "=34
         else if c == 34 {
-            lex_handle_string(&pos)
+            lex_set_pos_ptr(&pos)
+            lex_mark_string_start()
+            lex_skip_string_body()
+            lex_emit_marked_string()
+            if g_lex_pos_i < g_lex_src_len {
+                lex_inc_pos_i()
+            }
+            pos = g_lex_pos_i
         }
 
         ; Integer literal: 0=48 9=57
         else if is_digit(c) == 1 {
-            lex_handle_int(src, &pos)
+            let val = lex_scan_int(&pos)
+            let out_idx = load_i64_at0(&count)
+            if out_idx >= 65535 { panic("Token buffer overflow") }
+            emit_lex_tok(g_lex_out_toks, &count, TOK_INT)
+            tok_set_imm_at(g_lex_out_toks, out_idx, val)
         }
 
         ; Identifier or keyword: _=95
         else if is_ident_start(c) == 1 {
-            lex_handle_ident(src, src_len, &pos, out_toks, &count)
+            let start = pos
+            let keep_ident = 1
+            loop keep_ident == 1 {
+                if pos >= src_len {
+                    keep_ident = 0
+                } else {
+                    let cur = src[pos]
+                    if is_ident_continue(cur) == 1 {
+                        pos = pos + 1
+                    } else {
+                        keep_ident = 0
+                    }
+                }
+            }
+            let len = pos - start
+            let kw = classify_keyword(src, start, len)
+            emit_lex_span(g_lex_out_toks, &count, kw, start, len)
         }
 
         ; Two-char operators: -=45 >=62 ==61 !=33 <=60
@@ -983,14 +935,14 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
 
         ; Single-char operators
         else {
-            lex_handle_single(c, &pos, out_toks, &count)
+            emit_lex_tok(g_lex_out_toks, &count, char_to_tok(c))
+            pos = pos + 1
         }
     }
 
     if count >= 65535 { panic("Token buffer overflow") }
-    out_toks[count].type = TOK_EOF
-    out_cnt[0] = count
-    ret ok(0)
+    g_lex_out_toks[count].type = TOK_EOF
+    ret count
 }
 
 ; Post-lex pass: convert character literal token triples to TOK_INT
@@ -2285,34 +2237,10 @@ fn emit_ident_value(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
 
 fn compile_let_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     expect(toks, pos, TOK_LET)
-    print("LET_HEAD p=")
-    print(pos[0])
-    print(" t0=")
-    print(tok_type_at(toks, pos[0]))
-    print(" t1=")
-    print(tok_type_at(toks, pos[0] + 1))
-    print(" t2=")
-    print(tok_type_at(toks, pos[0] + 2))
-    print(" ")
-    if tok_type_at(toks, pos[0]) == TOK_IDENT {
-        print_span(src, tok_str_start_at(toks, pos[0]), tok_str_len_at(toks, pos[0]))
-    }
-    print("\n")
     let name_start = tok_str_start_at(toks, pos[0])
     let name_len = tok_str_len_at(toks, pos[0])
     expect(toks, pos, TOK_IDENT)
     expect(toks, pos, TOK_EQ)
-    print("LET_RHS p=")
-    print(pos[0])
-    print(" t0=")
-    print(tok_type_at(toks, pos[0]))
-    print(" t1=")
-    print(tok_type_at(toks, pos[0] + 1))
-    print(" ")
-    if tok_type_at(toks, pos[0]) == TOK_IDENT {
-        print_span(src, tok_str_start_at(toks, pos[0]), tok_str_len_at(toks, pos[0]))
-    }
-    print("\n")
     let rhs_stype = TYPE_I64
     if tok_type_at(toks, pos[0]) == TOK_IDENT and tok_type_at(toks, pos[0] + 1) == TOK_LBRACK {
         let rhs_save = pos[0]
@@ -5979,10 +5907,9 @@ fn main() {
     syscall(3, src_fd, 0, 0)
 
     let tok_cnt = 0
-    lex(src_buf, src_len, toks, &tok_cnt)
-    print("A\n")
+    g_lex_out_toks = toks
+    tok_cnt = lex(src_buf, src_len)
     fix_char_literals(src_buf, toks, &tok_cnt)
-    print("B\n")
     g_glob_cnt = 0
     g_glob_total_sz = 0
     g_emit_glob_buf = 0
@@ -6010,22 +5937,10 @@ fn main() {
             sanity_i = sanity_i + 1
         }
     }
-    print("C\n")
-
     ; Parse and record top-level structs
     loop pos < tok_cnt and toks[pos].type == TOK_STRUCT {
         parse_struct_decl(toks, &pos, stab, src_buf)
     }
-    let token_sid = lookup_struct_kw(stab, src_buf, "Token", 5)
-    if token_sid < 0 {
-        print("NO_TOKEN\n")
-        panic("missing Token")
-    }
-    if lookup_field_idx_kw(stab, src_buf, token_sid, "type", 4) < 0 {
-        print("NO_TOKEN_FIELD_KW\n")
-        panic("missing Token.type")
-    }
-    print("D\n")
 
     ; Prepare output buffers
     let code_buf    = alloc_pages(256)
@@ -6070,53 +5985,6 @@ fn main() {
             print(" name=")
             print_span(src_buf, tok_str_start_at(toks, pos + 1), tok_str_len_at(toks, pos + 1))
             print("\n")
-            if pos == 4435 {
-                print("SPWIN ")
-                print(toks[4435].type)
-                print(" ")
-                print(toks[4436].type)
-                print(" ")
-                print(toks[4437].type)
-                print(" ")
-                print(toks[4438].type)
-                print(" ")
-                print(toks[4439].type)
-                print(" ")
-                print(toks[4440].type)
-                print(" ")
-                print(toks[4441].type)
-                print(" ")
-                print(toks[4442].type)
-                print(" ")
-                print(toks[4443].type)
-                print(" ")
-                print(toks[4444].type)
-                print(" ")
-                print(toks[4445].type)
-                print(" ")
-                print(toks[4446].type)
-                print(" ")
-                print(toks[4447].type)
-                print(" ")
-                print(toks[4448].type)
-                print(" ")
-                print(toks[4449].type)
-                print(" ")
-                print(toks[4450].type)
-                print(" ")
-                print(toks[4451].type)
-                print(" ")
-                print(toks[4452].type)
-                print(" ")
-                print(toks[4453].type)
-                print(" ")
-                print(toks[4454].type)
-                print(" ")
-                print(toks[4455].type)
-                print(" ")
-                print(toks[4456].type)
-                print("\n")
-            }
             let cur_name_off = tok_str_start_at(toks, pos + 1)
             let cur_name_len = tok_str_len_at(toks, pos + 1)
 
@@ -6185,7 +6053,6 @@ fn main() {
                 pos = pos + 1
                 let ret_parsed = parse_type(toks, &pos)
             }
-
             if tok_type_at(toks, pos) == TOK_LBRACE {
                 let fi = fn_cnt
                 if fi >= 256 { panic("Too many functions") }
