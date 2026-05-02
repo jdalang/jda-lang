@@ -167,7 +167,11 @@ jda-lang/
 ├── stdlib/
 │   ├── net/
 │   │   ├── tcp.jda      # TCP sockets (raw Linux syscalls, yield-based I/O)
-│   │   └── http.jda     # HTTP/1.1 zero-copy parser + response writer
+│   │   ├── http.jda     # HTTP/1.1 zero-copy parser + response writer
+│   │   ├── udp.jda      # UDP sockets: bind, send_to, recv_from, broadcast, multicast
+│   │   └── ws.jda       # WebSockets (RFC 6455): handshake, frame parser/builder
+│   ├── json.jda         # Zero-copy JSON parser + compact/pretty serialiser
+│   ├── fmt.jda          # String formatting (fmt!) + coloured compiler diagnostics
 │   └── ml/
 │       └── nn.jda       # Neural network layers: Linear, ReLU, Adam, SGD
 │
@@ -254,6 +258,10 @@ Ruby ergonomics. Go concurrency. No compromises.
 | Web Server | `examples/web_server.jda` | 10k concurrent connections: acceptor + 256-worker pool + per-request arena |
 | TCP stdlib | `stdlib/net/tcp.jda` | `TcpListener`/`TcpStream` via raw syscalls. Non-blocking + J-Thread yield |
 | HTTP stdlib | `stdlib/net/http.jda` | Zero-copy HTTP/1.1 parser. All slices point into the original request buffer |
+| UDP stdlib | `stdlib/net/udp.jda` | `UdpSocket` bind/send_to/recv_from. Broadcast + multicast (RFC 1112) |
+| WebSocket stdlib | `stdlib/net/ws.jda` | RFC 6455: HTTP upgrade, SHA-1 accept key, frame parser/builder, masking |
+| JSON stdlib | `stdlib/json.jda` | Zero-copy recursive descent parser + compact/pretty serialiser |
+| Fmt stdlib | `stdlib/fmt.jda` | `fmt!` string formatting + rustc-style coloured compiler diagnostics |
 
 ### Phase 4 — Native Machine Learning ✅
 Tensors, autograd, and GPU execution as language primitives. No Python. No C++.
