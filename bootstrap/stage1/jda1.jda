@@ -5133,9 +5133,77 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
         let s_start = tok_str_start_at(toks, pos[0])
         let s_len = tok_str_len_at(toks, pos[0])
         pos[0] = pos[0] + 1
-        val_id = emit_strlit_raw(jfn, bb, s_start, s_len)
-        ; len_id stays -1 so OP_STRLEN computes the decoded length at runtime
-        ; (s_len is source token length, not decoded byte count for escape sequences)
+        ; Check for interpolation: scan for unescaped {
+        let has_interp = 0
+        let si = 0
+        loop si < s_len {
+            let ch = load_i8_at(src, s_start + si)
+            if ch == 92 { si = si + 1 }
+            else if ch == 123 { has_interp = 1 }
+            si = si + 1
+        }
+        if has_interp == 0 {
+            val_id = emit_strlit_raw(jfn, bb, s_start, s_len)
+        } else {
+            ; String interpolation: split on {ident} and emit segments
+            let seg_start = s_start
+            let ii = 0
+            let fd_id = emit_const(jfn, bb, TYPE_I64, 1)
+            loop ii < s_len {
+                let c = load_i8_at(src, s_start + ii)
+                if c == 92 and ii + 1 < s_len {
+                    let nc = load_i8_at(src, s_start + ii + 1)
+                    if nc == 123 or nc == 125 { ii = ii + 2 }
+                    else { ii = ii + 1 }
+                } else if c == 123 {
+                    ; Emit literal segment before {
+                    let seg_len = (s_start + ii) - seg_start
+                    if seg_len > 0 {
+                        let sv = emit_strlit_raw(jfn, bb, seg_start, seg_len)
+                        let sl = Instr{}
+                        sl.op = OP_STRLEN
+                        sl.operand0 = sv
+                        let slen = emit(jfn, bb, &sl)
+                        emit_syscall3(jfn, bb, 1, fd_id, sv, slen)
+                    }
+                    ; Find matching }
+                    ii = ii + 1
+                    let id_start = s_start + ii
+                    loop ii < s_len and load_i8_at(src, s_start + ii) != 125 { ii = ii + 1 }
+                    let id_len = (s_start + ii) - id_start
+                    if ii < s_len { ii = ii + 1 }
+                    seg_start = s_start + ii
+                    ; Look up variable and emit OP_PRINT_INT (no newline: imm=1)
+                    let vidx = lookup_slot_name(jfn, id_start, id_len)
+                    if vidx != -1 {
+                        let ld = Instr{}
+                        ld.op = OP_LOAD
+                        ld.operand0 = vidx
+                        let vval = emit(jfn, bb, &ld)
+                        let pi = Instr{}
+                        pi.op = OP_PRINT_INT
+                        pi.operand0 = vval
+                        pi.imm = 1
+                        emit(jfn, bb, &pi)
+                    }
+                } else {
+                    ii = ii + 1
+                }
+            }
+            ; Emit trailing literal segment
+            let tail_len = (s_start + s_len) - seg_start
+            if tail_len > 0 {
+                let tv = emit_strlit_raw(jfn, bb, seg_start, tail_len)
+                let tl = Instr{}
+                tl.op = OP_STRLEN
+                tl.operand0 = tv
+                let tlen = emit(jfn, bb, &tl)
+                emit_syscall3(jfn, bb, 1, fd_id, tv, tlen)
+            }
+            let close_t2 = tok_type_at0(toks, pos)
+            pos[0] = pos[0] + (close_t2 == TOK_RPAREN)
+            ret bb
+        }
     } else if pt != TOK_RPAREN and pt != TOK_EOF {
         val_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
     }
@@ -10762,12 +10830,14 @@ fn lower_print_int(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_byte(out, pos, 0x89)
     emit_byte(out, pos, 0xCE)
 
-    ; lea rdx, [rsp + 32]
+    ; lea rdx, [rsp + N] where N=31 if no-newline (imm==1), else 32
+    let end_off = 32
+    if ins.imm == 1 { end_off = 31 }
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x8D)
     emit_byte(out, pos, 0x54)
     emit_byte(out, pos, 0x24)
-    emit_byte(out, pos, 32)
+    emit_byte(out, pos, end_off)
 
     ; sub rdx, rcx  (len = end - ptr)
     emit_byte(out, pos, 0x48)
