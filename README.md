@@ -6,27 +6,40 @@
 
 <p align="center"><strong>A high-performance systems language with built-in concurrency and ML — without GC.</strong><br>Bootstrapped from raw x86-64 assembly. The compiler compiles itself.</p>
 
+<p align="center">
+  <a href="#installation">Install</a> &bull;
+  <a href="docs/language/syntax.md">Docs</a> &bull;
+  <a href="docs/language/stdlib.md">Stdlib</a> &bull;
+  <a href="examples/">Examples</a> &bull;
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+---
+
+## Highlights
+
+- **Self-hosted** — the compiler is written entirely in Jda (zero C/C++/Rust)
+- **Bootstrapped from assembly** — no external compiler dependency
+- **114 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, and more
+- **350 conformance tests** — all passing
+- **Cross-platform** — native on Linux, Docker-based on macOS/Windows
+- **Built-in concurrency** — goroutine-style green threads with channels
+- **ML primitives** — tensors, autograd, neural networks, AVX-512 acceleration
+
 ## Current Status
 
-**Phase 1 complete: self-hosting achieved** (April 2, 2026).
-
-The compiler reaches a fixed point — it compiles its own source and produces an identical binary:
+**Self-hosting converged** (April 2, 2026). The compiler compiles itself and produces a byte-identical binary:
 
 ```
-jda0 (asm) → jda1 (374 KB) → jda1_sh2 (1.77 MB) → jda1_sh3 → jda1_sh4
-                                                     ^^^^^^^^^^^^^^^^^^^^^^^^
-                                                     byte-identical — converged
+jda0 (asm) → jda1 (374 KB) → jda1_sh2 (2.1 MB) → jda1_sh3
+                                                    ^^^^^^^^
+                                                    identical — fixed point
 ```
 
-C and C++ are officially eliminated from the toolchain. The Jda compiler is written entirely in Jda.
-
-## Language Features (Current)
+## Quick Example
 
 ```jda
-struct Point {
-    x: i64
-    y: i64
-}
+struct Point { x: i64  y: i64 }
 
 fn distance(a: &Point, b: &Point) -> i64 {
     let dx = b.x - a.x
@@ -37,22 +50,34 @@ fn distance(a: &Point, b: &Point) -> i64 {
 fn main() -> i64 {
     let p1 = Point{}
     let p2 = Point{}
-    p1.x = 3
-    p1.y = 4
-    p2.x = 6
-    p2.y = 8
+    p1.x = 3   p1.y = 4
+    p2.x = 6   p2.y = 8
     let d = distance(&p1, &p2)
-    print_i64(d)
-    print("\n")
+    print("{d}\n")
     ret 0
 }
 ```
 
-**Working**: functions, structs, arrays, pointers, references, if/else-if/else, loops, const declarations, logical operators, inline assembly, syscalls, string literals with escapes, print/print_i64, SSA-based IR with constant folding and DCE, register allocator with spill, x86-64 native code generation, ELF binary output.
+```bash
+$ jda run example.jda
+25
+```
+
+## Language Features
+
+**Core**: functions, structs, arrays, pointers, references, if/else, loops, const, enums, generics, closures, pattern matching, inline assembly
+
+**Type System**: i64, i32, i8, f64, &T references, const generics (`fn foo<const N>()`), traits, derive macros (Debug, Eq, Clone, Hash, Ord)
+
+**OOP**: struct + trait + impl (Rust-style), method dispatch, operator overloading
+
+**Concurrency**: spawn/channels, green threads, deadlock detection, atomic ops
+
+**Compiler**: SSA IR, constant folding, DCE, tail call optimization, peephole opts, register allocator with spill, x86-64 native codegen, ELF output
 
 ## Installation
 
-### Linux / macOS / WSL2
+### Linux / macOS / WSL2 / FreeBSD
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | sh
@@ -70,38 +95,61 @@ irm https://raw.githubusercontent.com/jdalang/jda-lang/main/install.ps1 | iex
 curl -o install.bat https://raw.githubusercontent.com/jdalang/jda-lang/main/install.bat && install.bat
 ```
 
-### Platform Details
+The installer auto-detects your platform and chooses the best method:
 
 | Platform | Method | Requirements |
 |----------|--------|-------------|
-| Linux x86-64 | Native binary | None |
+| Linux x86-64 | **Native binary** | None |
 | Linux ARM64 | Docker emulation | Docker |
-| macOS (Intel/Apple Silicon) | Docker | Docker Desktop |
-| Windows 10/11 | WSL2 (recommended) | `wsl --install` |
-| Windows 10/11 | Docker | Docker Desktop |
-| FreeBSD x86-64 | Native (Linux compat) | Linux compat layer |
+| macOS (Intel / Apple Silicon) | Docker | [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/) |
+| Windows 10/11 | WSL2 *(recommended)* | `wsl --install` then run the Linux installer inside WSL |
+| Windows 10/11 | Docker | [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) |
+| FreeBSD x86-64 | Native (Linux compat) | `sysctl kern.elf64.fallback_brand=3` |
+| ChromeOS | Linux (Crostini) | Enable Linux dev environment |
 
-### Options
+<details>
+<summary>Installer options</summary>
 
 ```bash
-JDA_VERSION=0.1.0 curl -fsSL .../install.sh | sh   # Specific version
-JDA_INSTALL_DIR=/opt/jda ... | sh                    # Custom location
-curl -fsSL .../install.sh | sh -s -- --uninstall     # Uninstall
+# Install a specific version
+JDA_VERSION=0.1.0 curl -fsSL .../install.sh | sh
+
+# Custom install directory
+JDA_INSTALL_DIR=/opt/jda curl -fsSL .../install.sh | sh
+
+# Skip PATH modification
+JDA_NO_MODIFY_PATH=1 curl -fsSL .../install.sh | sh
+
+# Uninstall
+curl -fsSL .../install.sh | sh -s -- --uninstall
+
+# Windows uninstall
+.\install.ps1 -Uninstall
 ```
+
+</details>
+
+See [docs/INSTALL.md](docs/INSTALL.md) for the full installation guide, troubleshooting, and building from source.
 
 ## Building from Source
 
-Requires Docker Desktop (builds target Linux x86-64). No NASM or assembly tools needed — the bootstrap compiler is a self-hosted Jda binary.
+Requires Docker (any OS). No NASM or assembly tools needed — the bootstrap compiler is a self-hosted Jda binary.
 
 ```bash
-# Build the Docker image (once)
-docker build -t jda-build docker/
+git clone https://github.com/jdalang/jda-lang.git && cd jda-lang
 
-# Build jda1 from the bootstrap compiler
+# Build the Docker image (once)
+docker build --platform linux/amd64 -t jda-build docker/
+
+# Build the compiler
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make stage1
 
-# Verify self-hosting convergence
+# Run the test suite (350 tests)
+docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
+  -v $(PWD):/jda -w /jda jda-build bash tools/run_tests.sh
+
+# Verify self-hosting (compiler compiles itself)
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
   -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build make selfhost
 ```
@@ -191,7 +239,7 @@ bootstrap/
   stage1/          jda1 compiler source (jda1.jda — self-hosted)
 stdlib/            114 standard library packages
 tools/             CLI tools (jda, jda-doc, jda-test, jda-pkg, etc.)
-tests/             291 pass + 7 fail conformance tests
+tests/             350 conformance tests (pass + fail)
 examples/          Example programs
 docs/
   language/        Language reference (syntax, structs/OOP, stdlib, toolchain, compiler)
