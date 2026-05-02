@@ -1,0 +1,32 @@
+; Test: trait with multiple methods
+
+trait Shape {
+    fn area(&self) -> i64
+    fn perimeter(&self) -> i64
+}
+
+struct Rect {
+    w: i64
+    h: i64
+}
+
+impl Shape for Rect {
+    fn area(&self) -> i64 {
+        ret self.w * self.h
+    }
+    fn perimeter(&self) -> i64 {
+        let s = self.w + self.h
+        ret s * 2
+    }
+}
+
+fn main() -> i64 {
+    let r = Rect{}
+    r.w = 3
+    r.h = 4
+    let a = r.area()
+    if a == 12 { print "area ok\n" }
+    let p = r.perimeter()
+    if p == 14 { print "perimeter ok\n" }
+    ret 0
+}
