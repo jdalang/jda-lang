@@ -1,0 +1,134 @@
+; =============================================================================
+; jda::socketserver -- TCP/UDP Server Primitives
+; =============================================================================
+; Server address parsing and TCP server handle management.
+; Network I/O functions are stubs (would use syscalls in real use).
+;
+; Memory layout per SrvHandle (&i64):
+;   [0] socket_fd
+;   [1] port
+;   [2] backlog
+;   [3] host_buf    (&i8)
+;   [4] host_len
+;
+; Functions:
+;   srv_tcp_new(port, backlog)                -> &i64   create server handle
+;   srv_tcp_start(h)                          -> i64    bind+listen (stub)
+;   srv_tcp_accept(h)                         -> i64    accept connection (stub)
+;   srv_parse_addr(buf, len)                  -> &i64   parse "host:port"
+;   srv_addr_port(h)                          -> i64    get port
+;   srv_addr_host_len(h)                      -> i64    get host length
+;   srv_addr_host(h, out)                     -> i64    copy host to out
+; =============================================================================
+
+;; Internal byte reader.
+fn _srv_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: copy bytes.
+fn _srv_copy(dst: &i8, doff: i64, src: &i8, soff: i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let ch = _srv_byte_at(src, soff + i)
+        poke_byte(dst, doff + i, ch)
+        i = i + 1
+    }
+    ret len
+}
+
+;; Internal: parse integer from bytes at offset, returns value.
+fn _srv_parse_int(buf: &i8, off: i64, len: i64) -> i64 {
+    let val = 0
+    let i = off
+    loop i < len {
+        let ch = _srv_byte_at(buf, i)
+        if ch >= 48 and ch <= 57 {
+            let d = ch - 48
+            val = val * 10 + d
+        }
+        i = i + 1
+    }
+    ret val
+}
+
+;; Create a TCP server handle.
+fn srv_tcp_new(port: i64, backlog: i64) -> &i64 {
+    let h: &i64 = alloc_pages(1)
+    let host_buf: &i8 = alloc_pages(1)
+    h[0] = 0 - 1
+    h[1] = port
+    h[2] = backlog
+    h[3] = host_buf
+    h[4] = 0
+    ; Default host: 0.0.0.0
+    poke_byte(host_buf, 0, 48)   ; 0
+    poke_byte(host_buf, 1, 46)   ; .
+    poke_byte(host_buf, 2, 48)   ; 0
+    poke_byte(host_buf, 3, 46)   ; .
+    poke_byte(host_buf, 4, 48)   ; 0
+    poke_byte(host_buf, 5, 46)   ; .
+    poke_byte(host_buf, 6, 48)   ; 0
+    h[4] = 7
+    ret h
+}
+
+;; Start listening (stub — returns -1, would use socket/bind/listen syscalls).
+fn srv_tcp_start(h: &i64) -> i64 {
+    ret 0 - 1
+}
+
+;; Accept a connection (stub — returns -1).
+fn srv_tcp_accept(h: &i64) -> i64 {
+    ret 0 - 1
+}
+
+;; Parse "host:port" string into a server handle.
+fn srv_parse_addr(buf: &i8, len: i64) -> &i64 {
+    let h: &i64 = alloc_pages(1)
+    let host_buf: &i8 = alloc_pages(1)
+    h[3] = host_buf
+    ; Find the colon separator
+    let colon_pos = 0 - 1
+    let i = 0
+    loop i < len {
+        let ch = _srv_byte_at(buf, i)
+        if ch == 58 { colon_pos = i }
+        i = i + 1
+    }
+    if colon_pos < 0 {
+        ; No colon — treat entire string as host, port = 0
+        _srv_copy(host_buf, 0, buf, 0, len)
+        h[4] = len
+        h[1] = 0
+        h[0] = 0 - 1
+        h[2] = 128
+        ret h
+    }
+    ; Copy host part
+    _srv_copy(host_buf, 0, buf, 0, colon_pos)
+    h[4] = colon_pos
+    ; Parse port part
+    let port_start = colon_pos + 1
+    let port = _srv_parse_int(buf, port_start, len)
+    h[1] = port
+    h[0] = 0 - 1
+    h[2] = 128
+    ret h
+}
+
+;; Get the port from a server handle.
+fn srv_addr_port(h: &i64) -> i64 {
+    ret h[1]
+}
+
+;; Get the host length from a server handle.
+fn srv_addr_host_len(h: &i64) -> i64 {
+    ret h[4]
+}
+
+;; Copy host string to output buffer. Returns length.
+fn srv_addr_host(h: &i64, out: &i8) -> i64 {
+    let host_buf: &i8 = h[3]
+    let hlen = h[4]
+    _srv_copy(out, 0, host_buf, 0, hlen)
+    ret hlen
+}

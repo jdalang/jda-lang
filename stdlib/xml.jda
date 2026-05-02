@@ -1,0 +1,381 @@
+; =============================================================================
+; jda::xml -- Simple XML Parser (SAX-style events)
+; =============================================================================
+; Parses XML into a sequence of events: open-tag, close-tag, text.
+; Does not handle attributes, namespaces, CDATA, or processing instructions.
+;
+; Memory layout per XmlHandle (&i64):
+;   [0] event_count
+;   [1] event_types  (&i64 — 1=open, 2=close, 3=text)
+;   [2] event_offs   (&i64 — byte offsets into data)
+;   [3] event_lens   (&i64 — byte lengths)
+;   [4] data         (&i8  — copy of source)
+;   [5] data_len
+;
+; Functions:
+;   xml_parse(buf, len)            -> &i64  parse XML
+;   xml_event_count(h)             -> i64
+;   xml_event_type(h, idx)         -> i64   1=open, 2=close, 3=text
+;   xml_event_name(h, idx, out)    -> i64   copy tag name to out
+;   xml_event_text(h, idx, out)    -> i64   copy text to out
+;   xml_escape(buf, len, out)      -> i64   escape &<>"'
+;   xml_unescape(buf, len, out)    -> i64   unescape &amp; &lt; &gt; &quot; &apos;
+; =============================================================================
+
+;; Internal byte reader.
+fn _xml_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: copy bytes.
+fn _xml_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) -> i64 {
+    let i = 0
+    loop i < n {
+        let ch = _xml_byte_at(src, soff + i)
+        poke_byte(dst, doff + i, ch)
+        i = i + 1
+    }
+    ret n
+}
+
+;; Internal: add event.
+fn _xml_add_evt(h: &i64, typ: i64, off: i64, ln: i64) -> i64 {
+    let cnt = h[0]
+    let types: &i64 = h[1]
+    let offs: &i64 = h[2]
+    let lens: &i64 = h[3]
+    types[cnt] = typ
+    offs[cnt] = off
+    lens[cnt] = ln
+    h[0] = cnt + 1
+    ret cnt + 1
+}
+
+;; Internal: find end of tag name (space or > or /).
+fn _xml_tag_name_end(data: &i8, start: i64, limit: i64) -> i64 {
+    let p = start
+    loop p < limit {
+        let c = _xml_byte_at(data, p)
+        if c == 32 { ret p }   ; space
+        if c == 62 { ret p }   ; >
+        if c == 47 { ret p }   ; /
+        if c == 10 { ret p }   ; newline
+        p = p + 1
+    }
+    ret limit
+}
+
+;; Internal: find '<' from pos.
+fn _xml_find_lt(data: &i8, pos: i64, len: i64) -> i64 {
+    let p = pos
+    loop p < len {
+        let c = _xml_byte_at(data, p)
+        if c == 60 { ret p }
+        p = p + 1
+    }
+    ret len
+}
+
+;; Internal: find '>' from pos.
+fn _xml_find_gt(data: &i8, pos: i64, len: i64) -> i64 {
+    let p = pos
+    loop p < len {
+        let c = _xml_byte_at(data, p)
+        if c == 62 { ret p }
+        p = p + 1
+    }
+    ret len
+}
+
+;; Internal: skip comment <!-- ... -->. Returns position after -->.
+fn _xml_skip_comment(data: &i8, pos: i64, len: i64) -> i64 {
+    let p = pos
+    loop p + 2 < len {
+        let c0 = _xml_byte_at(data, p)
+        let c1 = _xml_byte_at(data, p + 1)
+        let c2 = _xml_byte_at(data, p + 2)
+        if c0 == 45 and c1 == 45 and c2 == 62 {
+            ret p + 3
+        }
+        p = p + 1
+    }
+    ret len
+}
+
+;; Internal: skip PI <?...?>. Returns position after ?>.
+fn _xml_skip_pi(data: &i8, pos: i64, len: i64) -> i64 {
+    let p = pos
+    loop p + 1 < len {
+        let c0 = _xml_byte_at(data, p)
+        let c1 = _xml_byte_at(data, p + 1)
+        if c0 == 63 and c1 == 62 {
+            ret p + 2
+        }
+        p = p + 1
+    }
+    ret len
+}
+
+;; Internal: process a tag starting at '<'. Returns new pos.
+fn _xml_process_tag(h: &i64, data: &i8, pos: i64, len: i64) -> i64 {
+    let tstart = pos + 1
+    ; Check for comment <!--
+    if tstart + 2 < len {
+        let c1 = _xml_byte_at(data, tstart)
+        let c2 = _xml_byte_at(data, tstart + 1)
+        let c3 = _xml_byte_at(data, tstart + 2)
+        if c1 == 33 and c2 == 45 and c3 == 45 {
+            ret _xml_skip_comment(data, tstart + 3, len)
+        }
+    }
+    ; Check for PI <?
+    if tstart < len {
+        let pc = _xml_byte_at(data, tstart)
+        if pc == 63 {
+            ret _xml_skip_pi(data, tstart + 1, len)
+        }
+    }
+    ; Normal tag - find '>'
+    let ge = _xml_find_gt(data, tstart, len)
+    if ge >= len { ret len }
+    let first = _xml_byte_at(data, tstart)
+    if first == 47 {
+        ; Close tag </xxx>
+        let ns = tstart + 1
+        let ne = _xml_tag_name_end(data, ns, ge)
+        let nl = ne - ns
+        _xml_add_evt(h, 2, ns, nl)
+    } else {
+        ; Check self-closing
+        let selfclose = 0
+        if ge > tstart {
+            let lc = _xml_byte_at(data, ge - 1)
+            if lc == 47 { selfclose = 1 }
+        }
+        let ne = _xml_tag_name_end(data, tstart, ge)
+        let nl = ne - tstart
+        _xml_add_evt(h, 1, tstart, nl)
+        if selfclose == 1 {
+            _xml_add_evt(h, 2, tstart, nl)
+        }
+    }
+    ret ge + 1
+}
+
+;; Parse XML buffer into events.
+fn xml_parse(buf: &i8, len: i64) -> &i64 {
+    let h: &i64 = alloc_pages(1)
+    let types: &i64 = alloc_pages(1)
+    let offs: &i64 = alloc_pages(1)
+    let lens: &i64 = alloc_pages(1)
+    let data: &i8 = alloc_pages(2)
+    h[0] = 0
+    h[1] = types
+    h[2] = offs
+    h[3] = lens
+    h[4] = data
+    h[5] = len
+    let ci = 0
+    loop ci < len {
+        let cb = _xml_byte_at(buf, ci)
+        poke_byte(data, ci, cb)
+        ci = ci + 1
+    }
+    let pos = 0
+    loop pos < len {
+        let ch = _xml_byte_at(data, pos)
+        if ch == 60 {
+            pos = _xml_process_tag(h, data, pos, len)
+        } else {
+            ; Text content
+            let te = _xml_find_lt(data, pos, len)
+            let tlen = te - pos
+            if tlen > 0 {
+                _xml_add_evt(h, 3, pos, tlen)
+            }
+            pos = te
+        }
+    }
+    ret h
+}
+
+;; Return event count.
+fn xml_event_count(h: &i64) -> i64 { ret h[0] }
+
+;; Return event type at index.
+fn xml_event_type(h: &i64, idx: i64) -> i64 {
+    let types: &i64 = h[1]
+    ret types[idx]
+}
+
+;; Copy event name/text to out. Return length.
+fn xml_event_name(h: &i64, idx: i64, out: &i8) -> i64 {
+    let offs: &i64 = h[2]
+    let lens: &i64 = h[3]
+    let data: &i8 = h[4]
+    _xml_copy(out, 0, data, offs[idx], lens[idx])
+    ret lens[idx]
+}
+
+;; Copy event text to out. Return length.
+fn xml_event_text(h: &i64, idx: i64, out: &i8) -> i64 {
+    ret xml_event_name(h, idx, out)
+}
+
+;; Escape XML special chars: & < > " '
+fn xml_escape(buf: &i8, len: i64, out: &i8) -> i64 {
+    let oi = 0
+    let i = 0
+    loop i < len {
+        let ch = _xml_byte_at(buf, i)
+        if ch == 38 {
+            ; &amp;
+            poke_byte(out, oi, 38)
+            poke_byte(out, oi + 1, 97)
+            poke_byte(out, oi + 2, 109)
+            poke_byte(out, oi + 3, 112)
+            poke_byte(out, oi + 4, 59)
+            oi = oi + 5
+        } else {
+            if ch == 60 {
+                ; &lt;
+                poke_byte(out, oi, 38)
+                poke_byte(out, oi + 1, 108)
+                poke_byte(out, oi + 2, 116)
+                poke_byte(out, oi + 3, 59)
+                oi = oi + 4
+            } else {
+                if ch == 62 {
+                    ; &gt;
+                    poke_byte(out, oi, 38)
+                    poke_byte(out, oi + 1, 103)
+                    poke_byte(out, oi + 2, 116)
+                    poke_byte(out, oi + 3, 59)
+                    oi = oi + 4
+                } else {
+                    poke_byte(out, oi, ch)
+                    oi = oi + 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    ret oi
+}
+
+;; Internal: check 3-char entity after &.
+fn _xml_check_lt(buf: &i8, i: i64) -> i64 {
+    ; lt; = 108 116 59
+    let c1 = _xml_byte_at(buf, i + 1)
+    let c2 = _xml_byte_at(buf, i + 2)
+    let c3 = _xml_byte_at(buf, i + 3)
+    if c1 == 108 and c2 == 116 and c3 == 59 { ret 1 }
+    ret 0
+}
+
+fn _xml_check_gt(buf: &i8, i: i64) -> i64 {
+    ; gt; = 103 116 59
+    let c1 = _xml_byte_at(buf, i + 1)
+    let c2 = _xml_byte_at(buf, i + 2)
+    let c3 = _xml_byte_at(buf, i + 3)
+    if c1 == 103 and c2 == 116 and c3 == 59 { ret 1 }
+    ret 0
+}
+
+fn _xml_check_amp(buf: &i8, i: i64) -> i64 {
+    ; amp; = 97 109 112 59
+    let c1 = _xml_byte_at(buf, i + 1)
+    let c2 = _xml_byte_at(buf, i + 2)
+    let c3 = _xml_byte_at(buf, i + 3)
+    let c4 = _xml_byte_at(buf, i + 4)
+    if c1 == 97 and c2 == 109 and c3 == 112 and c4 == 59 { ret 1 }
+    ret 0
+}
+
+fn _xml_check_quot(buf: &i8, i: i64) -> i64 {
+    ; quot; = 113 117 111 116 59
+    let c1 = _xml_byte_at(buf, i + 1)
+    let c2 = _xml_byte_at(buf, i + 2)
+    let c3 = _xml_byte_at(buf, i + 3)
+    let c4 = _xml_byte_at(buf, i + 4)
+    let c5 = _xml_byte_at(buf, i + 5)
+    if c1 == 113 and c2 == 117 and c3 == 111 and c4 == 116 and c5 == 59 { ret 1 }
+    ret 0
+}
+
+fn _xml_check_apos(buf: &i8, i: i64) -> i64 {
+    ; apos; = 97 112 111 115 59
+    let c1 = _xml_byte_at(buf, i + 1)
+    let c2 = _xml_byte_at(buf, i + 2)
+    let c3 = _xml_byte_at(buf, i + 3)
+    let c4 = _xml_byte_at(buf, i + 4)
+    let c5 = _xml_byte_at(buf, i + 5)
+    if c1 == 97 and c2 == 112 and c3 == 111 and c4 == 115 and c5 == 59 { ret 1 }
+    ret 0
+}
+
+;; Unescape XML entities: &amp; &lt; &gt; &quot; &apos;
+fn xml_unescape(buf: &i8, len: i64, out: &i8) -> i64 {
+    let oi = 0
+    let i = 0
+    loop i < len {
+        let ch = _xml_byte_at(buf, i)
+        if ch == 38 {
+            let rem = len - i
+            let matched = 0
+            if rem >= 4 and matched == 0 {
+                let is_lt = _xml_check_lt(buf, i)
+                if is_lt == 1 {
+                    poke_byte(out, oi, 60)
+                    oi = oi + 1
+                    i = i + 4
+                    matched = 1
+                }
+            }
+            if rem >= 4 and matched == 0 {
+                let is_gt = _xml_check_gt(buf, i)
+                if is_gt == 1 {
+                    poke_byte(out, oi, 62)
+                    oi = oi + 1
+                    i = i + 4
+                    matched = 1
+                }
+            }
+            if rem >= 5 and matched == 0 {
+                let is_amp = _xml_check_amp(buf, i)
+                if is_amp == 1 {
+                    poke_byte(out, oi, 38)
+                    oi = oi + 1
+                    i = i + 5
+                    matched = 1
+                }
+            }
+            if rem >= 6 and matched == 0 {
+                let is_quot = _xml_check_quot(buf, i)
+                if is_quot == 1 {
+                    poke_byte(out, oi, 34)
+                    oi = oi + 1
+                    i = i + 6
+                    matched = 1
+                }
+            }
+            if rem >= 6 and matched == 0 {
+                let is_apos = _xml_check_apos(buf, i)
+                if is_apos == 1 {
+                    poke_byte(out, oi, 39)
+                    oi = oi + 1
+                    i = i + 6
+                    matched = 1
+                }
+            }
+            if matched == 0 {
+                poke_byte(out, oi, ch)
+                oi = oi + 1
+                i = i + 1
+            }
+        } else {
+            poke_byte(out, oi, ch)
+            oi = oi + 1
+            i = i + 1
+        }
+    }
+    ret oi
+}

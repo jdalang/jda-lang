@@ -1,58 +1,53 @@
-let g_queue: &i64 = 0
-let g_head = 0
-let g_tail = 0
-let g_current: &i64 = 0
-let g_main_ctx: &i64 = 0
+fn main() -> i64 {
+    let h = sched_new()
 
-fn __thread_done() {
-    if g_head == g_tail {
-        ctx_switch(g_current, g_main_ctx)
-    } else {
-        let next: &i64 = g_queue[g_head]
-        g_head = g_head + 1
-        let old = g_current
-        g_current = next
-        ctx_switch(old, next)
-    }
-}
+    ; Check empty
+    let emp = sched_empty(h)
+    print("empty: {emp}\n")
 
-fn sched_yield() {
-    g_queue[g_tail] = g_current
-    g_tail = g_tail + 1
-    let next: &i64 = g_queue[g_head]
-    g_head = g_head + 1
-    let old = g_current
-    g_current = next
-    ctx_switch(old, next)
-}
+    ; Add tasks: id=10 at time=100, id=20 at time=50, id=30 at time=75
+    let dummy = sched_enter(h, 100, 10)
+    let dummy2 = sched_enter(h, 50, 20)
+    let dummy3 = sched_enter(h, 75, 30)
 
-fn worker_a() {
-    print("a1")
-    sched_yield()
-    print("a2")
-}
+    let cnt = sched_count(h)
+    print("count: {cnt}\n")
 
-fn worker_b() {
-    print("b1")
-    sched_yield()
-    print("b2")
-}
+    ; Next should be id=20 (time=50, earliest)
+    let nxt = sched_next(h)
+    print("next id: {nxt}\n")
 
-fn main() {
-    g_queue = alloc_pages(1)
-    g_main_ctx = alloc_pages(1)
+    let nt = sched_next_time(h)
+    print("next time: {nt}\n")
 
-    let ta = spawn worker_a()
-    g_queue[g_tail] = ta
-    g_tail = g_tail + 1
+    ; Run at now=40 -> nothing ready
+    let r1 = sched_run(h, 40)
+    print("run at 40: {r1}\n")
 
-    let tb = spawn worker_b()
-    g_queue[g_tail] = tb
-    g_tail = g_tail + 1
+    ; Run at now=50 -> id=20
+    let r2 = sched_run(h, 50)
+    print("run at 50: {r2}\n")
 
-    let first: &i64 = g_queue[g_head]
-    g_head = g_head + 1
-    g_current = first
-    ctx_switch(g_main_ctx, first)
-    print("done")
+    let cnt2 = sched_count(h)
+    print("count after run: {cnt2}\n")
+
+    ; Cancel id=10
+    let canc = sched_cancel(h, 10)
+    print("cancel 10: {canc}\n")
+
+    let cnt3 = sched_count(h)
+    print("count after cancel: {cnt3}\n")
+
+    ; Only id=30 remains
+    let nxt2 = sched_next(h)
+    print("next id: {nxt2}\n")
+
+    ; Run at now=75 -> id=30
+    let r3 = sched_run(h, 75)
+    print("run at 75: {r3}\n")
+
+    let emp2 = sched_empty(h)
+    print("empty: {emp2}\n")
+
+    ret 0
 }

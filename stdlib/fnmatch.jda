@@ -1,0 +1,160 @@
+; =============================================================================
+; jda::fnmatch -- Filename Pattern Matching
+; =============================================================================
+; Unix-style glob pattern matching: *, ?, [abc], [!abc].
+;
+; Functions:
+;   fnmatch(pat, plen, name, nlen)     -> i64  1 if matches, 0 otherwise
+;   fnmatch_has_magic(pat, plen)       -> i64  1 if contains glob chars
+;   fnmatch_escape(path, plen, out)    -> i64  escape special chars
+; =============================================================================
+
+;; Internal byte reader.
+fn _fnm_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+;; Internal: recursive match helper.
+;; Returns 1 if pat[pi..] matches name[ni..].
+fn _fnm_match(pat: &i8, plen: i64, pi: i64, name: &i8, nlen: i64, ni: i64) -> i64 {
+    let running = 1
+    let result = 0
+    loop running == 1 {
+        if pi == plen {
+            if ni == nlen { result = 1 }
+            running = 0
+        }
+        if running == 1 {
+            let pc = _fnm_byte_at(pat, pi)
+            if pc == 42 {
+                ; * — match zero or more characters
+                ; Try matching rest of pattern at each position
+                let k = ni
+                let found = 0
+                loop k <= nlen {
+                    if found == 0 {
+                        let r = _fnm_match(pat, plen, pi + 1, name, nlen, k)
+                        if r == 1 { found = 1 }
+                    }
+                    k = k + 1
+                }
+                result = found
+                running = 0
+            }
+            if running == 1 {
+                if ni >= nlen {
+                    running = 0
+                }
+            }
+            if running == 1 {
+                let nc = _fnm_byte_at(name, ni)
+                if pc == 63 {
+                    ; ? — match any single character
+                    pi = pi + 1
+                    ni = ni + 1
+                } else {
+                    if pc == 91 {
+                        ; [ — character class
+                        pi = pi + 1
+                        let negate = 0
+                        if pi < plen {
+                            let nx = _fnm_byte_at(pat, pi)
+                            if nx == 33 {
+                                negate = 1
+                                pi = pi + 1
+                            }
+                        }
+                        let found = 0
+                        let scanning = 1
+                        loop scanning == 1 {
+                            if pi >= plen { scanning = 0 }
+                            if scanning == 1 {
+                                let cc = _fnm_byte_at(pat, pi)
+                                if cc == 93 { scanning = 0 }
+                                if scanning == 1 {
+                                    if cc == nc { found = 1 }
+                                    pi = pi + 1
+                                }
+                            }
+                        }
+                        if pi < plen { pi = pi + 1 }
+                        let ok = found
+                        if negate == 1 {
+                            if found == 1 { ok = 0 } else { ok = 1 }
+                        }
+                        if ok == 0 {
+                            running = 0
+                        } else {
+                            ni = ni + 1
+                        }
+                    } else {
+                        ; Literal match
+                        if pc != nc {
+                            running = 0
+                        } else {
+                            pi = pi + 1
+                            ni = ni + 1
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ret result
+}
+
+;; Match a filename against a glob pattern. Returns 1 if matches.
+fn fnmatch(pat: &i8, plen: i64, name: &i8, nlen: i64) -> i64 {
+    ret _fnm_match(pat, plen, 0, name, nlen, 0)
+}
+
+;; Check if pattern contains glob special characters (*, ?, [).
+fn fnmatch_has_magic(pat: &i8, plen: i64) -> i64 {
+    let i = 0
+    loop i < plen {
+        let b = _fnm_byte_at(pat, i)
+        if b == 42 { ret 1 }
+        if b == 63 { ret 1 }
+        if b == 91 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Escape glob special characters in a path. Returns length written.
+fn fnmatch_escape(path: &i8, plen: i64, out: &i8) -> i64 {
+    let opos = 0
+    let i = 0
+    loop i < plen {
+        let b = _fnm_byte_at(path, i)
+        if b == 42 {
+            poke_byte(out, opos, 91)
+            opos = opos + 1
+            poke_byte(out, opos, 42)
+            opos = opos + 1
+            poke_byte(out, opos, 93)
+            opos = opos + 1
+        } else {
+            if b == 63 {
+                poke_byte(out, opos, 91)
+                opos = opos + 1
+                poke_byte(out, opos, 63)
+                opos = opos + 1
+                poke_byte(out, opos, 93)
+                opos = opos + 1
+            } else {
+                if b == 91 {
+                    poke_byte(out, opos, 91)
+                    opos = opos + 1
+                    poke_byte(out, opos, 91)
+                    opos = opos + 1
+                    poke_byte(out, opos, 93)
+                    opos = opos + 1
+                } else {
+                    poke_byte(out, opos, b)
+                    opos = opos + 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    ret opos
+}
