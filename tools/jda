@@ -1,0 +1,97 @@
+#!/bin/bash
+# jda — Unified CLI for the Jda programming language
+#
+# Usage:
+#   jda build [--include <lib>] <file.jda> [-o output]
+#   jda run [--include <lib>] <file.jda>
+#   jda repl
+#   jda test <file.jda | dir/>
+#   jda fmt [--check|--diff] <file.jda | dir/>
+#   jda doc [--output <dir>] <file.jda | dir/>
+#   jda pkg <init|add|build|deps>
+#   jda version
+#   jda help
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Locate jda1 compiler binary
+JDA1="${JDA:-$PROJECT_ROOT/bootstrap/stage0/jda1}"
+
+print_help() {
+    cat <<'HELP'
+jda — The Jda Programming Language
+
+Usage: jda <command> [options]
+
+Commands:
+  build   Compile a .jda file to a binary
+  run     Compile and execute a .jda file
+  repl    Start the interactive REPL
+  test    Run test files with assertions
+  fmt     Format .jda source files
+  doc     Generate documentation from doc comments
+  pkg     Package manager (init, add, build, deps)
+
+Info:
+  version   Print version
+  help      Print this help message
+
+Examples:
+  jda build hello.jda -o hello
+  jda build --include stdlib/vec.jda app.jda -o app
+  jda run hello.jda
+  jda test tests/
+  jda fmt src/
+  jda fmt --check src/
+
+Environment:
+  JDA   Override path to jda1 compiler binary
+HELP
+}
+
+if [ $# -eq 0 ]; then
+    print_help
+    exit 0
+fi
+
+CMD="$1"
+shift
+
+case "$CMD" in
+    build)
+        exec "$JDA1" build "$@"
+        ;;
+    run)
+        exec "$JDA1" run "$@"
+        ;;
+    repl)
+        exec "$JDA1" repl "$@"
+        ;;
+    test)
+        exec "$SCRIPT_DIR/jda-test.sh" "$@"
+        ;;
+    fmt)
+        exec "$SCRIPT_DIR/jda-fmt.sh" "$@"
+        ;;
+    doc)
+        exec "$SCRIPT_DIR/jda-doc.sh" "$@"
+        ;;
+    pkg)
+        exec "$SCRIPT_DIR/jda-pkg.sh" "$@"
+        ;;
+    version|--version|-V)
+        exec "$JDA1" --version
+        ;;
+    help|--help|-h)
+        print_help
+        exit 0
+        ;;
+    *)
+        echo "jda: unknown command '$CMD'" >&2
+        echo "Run 'jda help' for usage." >&2
+        exit 1
+        ;;
+esac
