@@ -3095,7 +3095,7 @@ fn init_top_jfn(jfn: &JirFunction, src: &i8, src_len: i64, stab: &StructTable) {
     jfn.var_cnt = 0
     jfn.param_cnt = 0
     jfn.strtab_pos = 0
-    jfn.next_slot_off = 65536
+    jfn.next_slot_off = 4096
     jfn.next_id = 0
     clear_owned_flags(jfn)
     ret ok(0)
@@ -4019,7 +4019,7 @@ fn parse_fn(toks: &Token, jfn: &JirFunction, stab: &StructTable, src: &i8) -> i3
 
     ; Emit this function immediately to avoid fragile AST lifetimes.
     jfn.var_cnt       = 0
-    jfn.next_slot_off = 65536
+    jfn.next_slot_off = 4096
     jfn.param_cnt     = param_cnt
     let pi = 0
     loop pi < param_cnt {
@@ -8306,7 +8306,7 @@ fn regalloc_init(ra: &RegAlloc) {
     ; Fill spill_off[8192] with -1
     fill_i64_words((ra_bytes + 32960) as &i64, 8192, -1)
     ; Spill slots start at 8 (growing up). Local variable slots now start at
-    ; jfn.next_slot_off = 65536 (set in function reset), so no collision.
+    ; jfn.next_slot_off = 4096 (set in function reset), so no collision.
     ra.sp_top = 8
     ra.evict_idx = 0
 }
@@ -11384,7 +11384,7 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     }
     emit_i32_le(out, pos, frame_sz)
     ; Stack probe: touch each 4KB page in the frame top-down so the kernel
-    ; maps them before we access [RBP - 65544] for parameter storage.
+    ; maps them before we access stack slots for parameter storage.
     ; Without this, SUB RSP, 512KB skips the guard page and causes SIGSEGV.
     ;
     ; Emits (22 bytes):
@@ -11529,10 +11529,29 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
 
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
     g_lower_is_main = is_main
+    let fn_start = pos[0]
     lower_fn_emit_prologue(jfn, out, pos, is_main)
     lower_fn_store_params(jfn, out, pos)
     lower_fn_collect_uses(jfn, ctx)
     lower_fn_emit_blocks(jfn, ctx, out, pos)
+    ; Patch frame size to actual usage (P1: right-sized stack frames)
+    if is_main != 1 {
+        let real_frame = ctx.ra.sp_top
+        if jfn.next_slot_off > real_frame {
+            real_frame = jfn.next_slot_off
+        }
+        real_frame = real_frame + 16
+        ; Align to 16 bytes
+        let rem = real_frame - ((real_frame / 16) * 16)
+        if rem > 0 {
+            real_frame = real_frame + 16 - rem
+        }
+        let patch_off = fn_start + 8
+        poke_byte(out, patch_off,     i32_b0(real_frame))
+        poke_byte(out, patch_off + 1, i32_b1(real_frame))
+        poke_byte(out, patch_off + 2, i32_b2(real_frame))
+        poke_byte(out, patch_off + 3, i32_b3(real_frame))
+    }
     lower_fn_emit_epilogue(out, pos, is_main)
     g_lower_is_main = 0
     lower_fn_patch_fixups(jfn, ctx, out, pos)
