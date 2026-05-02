@@ -503,6 +503,11 @@ let g_promo_exit = -1
 let g_cur_block_idx = -1
 let g_cur_instr_idx = -1
 let g_fused_cmp_cc = -1
+; Value metadata for ADD/CMP immediate + promoted register opts
+let g_val_op: &i32 = 0
+let g_val_imm: &i64 = 0
+let g_val_load_slot: &i64 = 0
+let g_val_promo_reg: &i64 = 0
 let g_cand_slots: &i64 = 0
 let g_cand_load: &i64 = 0
 let g_cand_store: &i64 = 0
@@ -12610,6 +12615,36 @@ fn emit_add_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
     emit_byte(out, pos, modrm_rr(src, dst))
 }
 
+; ADD r/m64, imm32:  REX.W 81 /0 id
+fn emit_add_imm32(out: &i8, pos: &i64, dst: i32, imm: i64) {
+    let b = 0
+    if dst >= 8 { b = 1 }
+    emit_byte(out, pos, 0x48 + b)
+    emit_byte(out, pos, 0x81)
+    emit_byte(out, pos, 0xC0 + mod8(dst))
+    emit_i32_le(out, pos, imm)
+}
+
+; SUB r/m64, imm32:  REX.W 81 /5 id
+fn emit_sub_imm32(out: &i8, pos: &i64, dst: i32, imm: i64) {
+    let b = 0
+    if dst >= 8 { b = 1 }
+    emit_byte(out, pos, 0x48 + b)
+    emit_byte(out, pos, 0x81)
+    emit_byte(out, pos, 0xE8 + mod8(dst))
+    emit_i32_le(out, pos, imm)
+}
+
+; CMP r/m64, imm32:  REX.W 81 /7 id
+fn emit_cmp_imm32(out: &i8, pos: &i64, reg: i32, imm: i64) {
+    let b = 0
+    if reg >= 8 { b = 1 }
+    emit_byte(out, pos, 0x48 + b)
+    emit_byte(out, pos, 0x81)
+    emit_byte(out, pos, 0xF8 + mod8(reg))
+    emit_i32_le(out, pos, imm)
+}
+
 ; SUB r/m64, r64:  REX.W 29 /r
 fn emit_sub_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
     emit_rex_w_rr(out, pos, src, dst)
@@ -13147,6 +13182,9 @@ fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     if val_id < 0 { valid = 0 }
     if val_id >= 8192 { valid = 0 }
     if valid != 1 { ret PHYS_RAX }
+    ; Check if value is in a promoted register (deferred load)
+    let vpr = g_val_promo_reg[val_id]
+    if vpr >= 0 { ret vpr }
     let r = regalloc_get(ra, val_id)
     let cached = 0
     if r != -1 { cached = 1 }
@@ -13158,7 +13196,19 @@ fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     if spilled == 1 {
         emit_load_spill(out, pos, new_r, off)
     } else {
-        emit_mov_imm64(out, pos, new_r, 0)
+        ; Check if this is a deferred constant
+        if g_val_op[val_id] == OP_CONST {
+            let cimm = g_val_imm[val_id]
+            if cimm == 0 {
+                emit_rex_w_rr(out, pos, new_r, new_r)
+                emit_byte(out, pos, 0x33)
+                emit_byte(out, pos, modrm_rr(new_r, new_r))
+            } else {
+                emit_mov_imm64(out, pos, new_r, cimm)
+            }
+        } else {
+            emit_mov_imm64(out, pos, new_r, 0)
+        }
     }
     ret new_r
 }
@@ -13408,6 +13458,12 @@ fn lower_instr_constlike(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i
     let is_const = 0
     if ins.op == OP_CONST { is_const = 1 }
     if is_const == 1 {
+        ; Defer single-use constants with small imm — ADD/CMP/SUB will inline them
+        if ctx.use_cnt[ins.id] == 1 {
+            let can_defer = 0
+            if ins.imm >= 0 and ins.imm < 2147483648 { can_defer = 1 }
+            if can_defer == 1 { ret 1 }
+        }
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         if ins.imm == 0 {
             ; XOR dst, dst — 3 bytes instead of MOV imm64 (10 bytes)
@@ -13479,7 +13535,12 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
             promo_r = promo_reg_for_slot(ins.operand0)
         }
         if promo_r != -1 {
-            ; Promoted: read from pinned register instead of memory
+            ; Promoted: defer single-use loads (no code emitted)
+            if ctx.use_cnt[ins.id] == 1 {
+                g_val_promo_reg[ins.id] = promo_r
+                ret 1
+            }
+            ; Multi-use: read from pinned register into pool register
             let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
             emit_mov_rr(out, pos, dst, promo_r)
             if ctx.use_cnt[ins.id] > 1 {
@@ -13530,8 +13591,10 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
             st_promo_r = promo_reg_for_slot(ins.operand1)
         }
         if st_promo_r != -1 {
-            ; Promoted: update pinned register; skip memory store inside loop
-            emit_mov_rr(out, pos, st_promo_r, src_r)
+            ; Promoted: update pinned register; skip if already there
+            if src_r != st_promo_r {
+                emit_mov_rr(out, pos, st_promo_r, src_r)
+            }
             if g_cur_block_idx < g_promo_header or g_cur_block_idx > g_promo_body_end {
                 emit_store_spill(out, pos, ins.operand1, src_r)
             }
@@ -13579,6 +13642,72 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_add = 0
     if ins.op == OP_ADD { is_add = 1 }
     if is_add == 1 {
+        ; Promoted in-place optimization: ADD directly on promoted register
+        let add_promo = -1
+        if ins.id >= 0 and ins.id < 8192 { add_promo = g_val_promo_reg[ins.id] }
+        if add_promo >= 0 {
+            ; operand1: check promoted or constant
+            let b1_promo = -1
+            if ins.operand1 >= 0 and ins.operand1 < 8192 {
+                b1_promo = g_val_promo_reg[ins.operand1]
+            }
+            if b1_promo >= 0 {
+                ; Both promoted: ADD promo_a, promo_b
+                emit_add_rr(out, pos, add_promo, b1_promo)
+                consume_use(ctx, ins.operand0)
+                consume_use(ctx, ins.operand1)
+                ret 1
+            }
+            let ab_const = 0
+            let ab_imm = 0
+            if ins.operand1 >= 0 and ins.operand1 < 8192 {
+                if g_val_op[ins.operand1] == OP_CONST {
+                    ab_imm = g_val_imm[ins.operand1]
+                    if ab_imm >= 0 and ab_imm < 2147483648 { ab_const = 1 }
+                }
+            }
+            if ab_const == 1 {
+                ; Promoted + immediate: ADD promo_a, imm32
+                emit_add_imm32(out, pos, add_promo, ab_imm)
+                consume_use(ctx, ins.operand0)
+                consume_use(ctx, ins.operand1)
+                ret 1
+            }
+            ; Promoted + non-promoted: load operand1, ADD promo, reg
+            let b1r = get_or_load(ctx.ra, out, pos, ins.operand1)
+            emit_add_rr(out, pos, add_promo, b1r)
+            consume_use(ctx, ins.operand0)
+            consume_use(ctx, ins.operand1)
+            ret 1
+        }
+        ; Optimization: ADD with immediate constant
+        let b_is_const = 0
+        let b_imm = 0
+        let b_id = ins.operand1
+        if b_id >= 0 and b_id < 8192 {
+            if g_val_op[b_id] == OP_CONST { b_is_const = 1  b_imm = g_val_imm[b_id] }
+        }
+        ; Check if imm fits in signed 32-bit
+        let imm_fits = 0
+        if b_is_const == 1 {
+            if b_imm >= 0 and b_imm < 2147483648 { imm_fits = 1 }
+        }
+        if imm_fits == 1 {
+            let a = get_or_load(ctx.ra, out, pos, ins.operand0)
+            emit_mov_rr(out, pos, PHYS_R12, a)
+            emit_add_imm32(out, pos, PHYS_R12, b_imm)
+            consume_use(ctx, ins.operand0)
+            consume_use(ctx, ins.operand1)
+            let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+            emit_mov_rr(out, pos, dst, PHYS_R12)
+            if ctx.use_cnt[ins.id] > 1 {
+                let asp2 = ctx.ra.sp_top + 8
+                ra_set_sp_top(&ctx.ra, asp2)
+                ra_set_spill(&ctx.ra, ins.id, asp2)
+                emit_store_spill(out, pos, asp2, dst)
+            }
+            ret 1
+        }
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         emit_mov_rr(out, pos, PHYS_R12, a)
         let b = get_or_load(ctx.ra, out, pos, ins.operand1)
@@ -13598,6 +13727,67 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_sub = 0
     if ins.op == OP_SUB { is_sub = 1 }
     if is_sub == 1 {
+        ; Promoted in-place SUB
+        let sub_promo = -1
+        if ins.id >= 0 and ins.id < 8192 { sub_promo = g_val_promo_reg[ins.id] }
+        if sub_promo >= 0 {
+            let sb1_promo = -1
+            if ins.operand1 >= 0 and ins.operand1 < 8192 {
+                sb1_promo = g_val_promo_reg[ins.operand1]
+            }
+            if sb1_promo >= 0 {
+                emit_sub_rr(out, pos, sub_promo, sb1_promo)
+                consume_use(ctx, ins.operand0)
+                consume_use(ctx, ins.operand1)
+                ret 1
+            }
+            let sbc = 0
+            let sbi = 0
+            if ins.operand1 >= 0 and ins.operand1 < 8192 {
+                if g_val_op[ins.operand1] == OP_CONST {
+                    sbi = g_val_imm[ins.operand1]
+                    if sbi >= 0 and sbi < 2147483648 { sbc = 1 }
+                }
+            }
+            if sbc == 1 {
+                emit_sub_imm32(out, pos, sub_promo, sbi)
+                consume_use(ctx, ins.operand0)
+                consume_use(ctx, ins.operand1)
+                ret 1
+            }
+            let sb1r = get_or_load(ctx.ra, out, pos, ins.operand1)
+            emit_sub_rr(out, pos, sub_promo, sb1r)
+            consume_use(ctx, ins.operand0)
+            consume_use(ctx, ins.operand1)
+            ret 1
+        }
+        ; Optimization: SUB with immediate constant
+        let sb_is_const = 0
+        let sb_imm = 0
+        let sb_id = ins.operand1
+        if sb_id >= 0 and sb_id < 8192 {
+            if g_val_op[sb_id] == OP_CONST { sb_is_const = 1  sb_imm = g_val_imm[sb_id] }
+        }
+        let sb_fits = 0
+        if sb_is_const == 1 {
+            if sb_imm >= 0 and sb_imm < 2147483648 { sb_fits = 1 }
+        }
+        if sb_fits == 1 {
+            let a = get_or_load(ctx.ra, out, pos, ins.operand0)
+            emit_mov_rr(out, pos, PHYS_R12, a)
+            emit_sub_imm32(out, pos, PHYS_R12, sb_imm)
+            consume_use(ctx, ins.operand0)
+            consume_use(ctx, ins.operand1)
+            let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+            emit_mov_rr(out, pos, dst, PHYS_R12)
+            if ctx.use_cnt[ins.id] > 1 {
+                let ssp2 = ctx.ra.sp_top + 8
+                ra_set_sp_top(&ctx.ra, ssp2)
+                ra_set_spill(&ctx.ra, ins.id, ssp2)
+                emit_store_spill(out, pos, ssp2, dst)
+            }
+            ret 1
+        }
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         emit_mov_rr(out, pos, PHYS_R12, a)
         let b = get_or_load(ctx.ra, out, pos, ins.operand1)
@@ -13688,6 +13878,23 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
     if ins.op == OP_CMP_LTE { is_cmp = 1 }
     if ins.op == OP_CMP_GTE { is_cmp = 1 }
     if is_cmp == 1 {
+        ; Optimization: CMP with immediate constant
+        let cb_is_const = 0
+        let cb_imm = 0
+        let cb_id = ins.operand1
+        if cb_id >= 0 and cb_id < 8192 {
+            if g_val_op[cb_id] == OP_CONST { cb_is_const = 1  cb_imm = g_val_imm[cb_id] }
+        }
+        let cb_fits = 0
+        if cb_is_const == 1 {
+            if cb_imm >= 0 and cb_imm < 2147483648 { cb_fits = 1 }
+        }
+        if cb_fits == 1 {
+            let a = get_or_load(ctx.ra, out, pos, ins.operand0)
+            emit_cmp_imm32(out, pos, a, cb_imm)
+            consume_use(ctx, ins.operand0)
+            consume_use(ctx, ins.operand1)
+        } else {
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let cmp_a = a
         if ins.operand0 != ins.operand1 {
@@ -13699,6 +13906,9 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         }
         let b = get_or_load(ctx.ra, out, pos, ins.operand1)
         emit_cmp_rr(out, pos, cmp_a, b)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        }
         let cc = 4
         if ins.op == OP_CMP_NE { cc = 5 }
         if ins.op == OP_CMP_LT { cc = 0xC }
@@ -13726,14 +13936,10 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
             }
             if can_fuse == 1 {
                 g_fused_cmp_cc = cc
-                consume_use(ctx, ins.operand0)
-                consume_use(ctx, ins.operand1)
                 ret 1
             }
         }
         emit_setcc_r12(out, pos, cc)
-        consume_use(ctx, ins.operand0)
-        consume_use(ctx, ins.operand1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, PHYS_R12)
         let csp2 = ctx.ra.sp_top + 8
@@ -19670,6 +19876,10 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
     let ui = 0
     loop ui < 8192 {
         ctx.use_cnt[ui] = 0
+        g_val_op[ui] = 0
+        g_val_imm[ui] = 0
+        g_val_load_slot[ui] = -1
+        g_val_promo_reg[ui] = -1
         ui = ui + 1
     }
     let bi = 0
@@ -19677,6 +19887,58 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
         let ii = 0
         loop ii < jfn.blocks[bi].instr_cnt {
             lower_fn_mark_uses_instr(ctx, jfn.blocks[bi].instrs[ii])
+            let vid = jfn.blocks[bi].instrs[ii].id
+            if vid >= 0 and vid < 8192 {
+                g_val_op[vid] = jfn.blocks[bi].instrs[ii].op
+                g_val_imm[vid] = jfn.blocks[bi].instrs[ii].imm
+                if jfn.blocks[bi].instrs[ii].op == OP_LOAD {
+                    g_val_load_slot[vid] = jfn.blocks[bi].instrs[ii].operand0
+                }
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+fn lower_fn_mark_promo_patterns(jfn: &JirFunction, ctx: &LowerCtx) {
+    ; Mark ADD/SUB instructions that can use in-place promoted register ops
+    ; Pattern: LOAD promo_slot → a, ADD a b → c, STORE c → same promo_slot
+    if g_promo_cnt == 0 { ret ok(0) }
+    let bi = g_promo_header
+    loop bi <= g_promo_body_end {
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let ins_op = jfn.blocks[bi].instrs[ii].op
+            let ins_id = jfn.blocks[bi].instrs[ii].id
+            let is_arith = 0
+            if ins_op == OP_ADD { is_arith = 1 }
+            if ins_op == OP_SUB { is_arith = 1 }
+            if is_arith == 1 and ins_id >= 0 and ins_id < 8192 {
+                let a_id = jfn.blocks[bi].instrs[ii].operand0
+                let a_slot = -1
+                if a_id >= 0 and a_id < 8192 { a_slot = g_val_load_slot[a_id] }
+                let a_promo = -1
+                if a_slot >= 0 { a_promo = promo_reg_for_slot(a_slot) }
+                if a_promo >= 0 and ctx.use_cnt[ins_id] == 1 {
+                    ; Scan forward for STORE of this result to same slot
+                    let si = ii + 1
+                    let found_store = 0
+                    loop si < jfn.blocks[bi].instr_cnt {
+                        if jfn.blocks[bi].instrs[si].op == OP_STORE {
+                            let s_val = jfn.blocks[bi].instrs[si].operand0
+                            let s_slot = jfn.blocks[bi].instrs[si].operand1
+                            if s_val == ins_id and s_slot == a_slot {
+                                found_store = 1
+                            }
+                        }
+                        si = si + 1
+                    }
+                    if found_store == 1 {
+                        g_val_promo_reg[ins_id] = a_promo
+                    }
+                }
+            }
             ii = ii + 1
         }
         bi = bi + 1
@@ -19778,6 +20040,7 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     lower_fn_store_params(jfn, out, pos)
     lower_fn_collect_uses(jfn, ctx)
     loop_promote_scan(jfn)
+    lower_fn_mark_promo_patterns(jfn, ctx)
     lower_fn_emit_blocks(jfn, ctx, out, pos)
     ; Patch frame size to actual usage (P1: right-sized stack frames)
     if is_main != 1 {
@@ -20623,6 +20886,11 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_cand_slots = alloc_pages(1) as &i64
     g_cand_load = alloc_pages(1) as &i64
     g_cand_store = alloc_pages(1) as &i64
+    ; Value metadata for ADD/CMP immediate + promoted register opts
+    g_val_op = alloc_pages(8) as &i32
+    g_val_imm = alloc_pages(16) as &i64
+    g_val_load_slot = alloc_pages(16) as &i64
+    g_val_promo_reg = alloc_pages(16) as &i64
     ; Bootstrap: alloc_pages gives zero-initialized memory so entry 0 is already zero.
     ; Just set the count and total size to skip slot 0 (dummy entry).
     g_glob_cnt      = 1
