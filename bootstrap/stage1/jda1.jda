@@ -6840,6 +6840,157 @@ fn codegen_unary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
     ret emit_const(jfn, bb, TYPE_I64, 0)
 }
 
+; ── Primitive method dispatch (branchless, single BB) ────────────────
+fn try_prim_i64(bb: i64, self_id: i64, fs: i64, fl: i64) -> i64 {
+    let src = g_src_buf_ptr
+    if streq(src, fs, fl, "abs") {
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        ; abs(x) = x * ((x > 0) * 2 - 1)
+        let zero = emit_const(g_jfn, bb, TYPE_I64, 0)
+        let gt = emit_binop(g_jfn, bb, OP_CMP_GT, self_id, zero)
+        let two = emit_const(g_jfn, bb, TYPE_I64, 2)
+        let gt2 = emit_binop(g_jfn, bb, OP_MUL, gt, two)
+        let one = emit_const(g_jfn, bb, TYPE_I64, 1)
+        let sign = emit_binop(g_jfn, bb, OP_SUB, gt2, one)
+        ret emit_binop(g_jfn, bb, OP_MUL, self_id, sign)
+    }
+    if streq(src, fs, fl, "neg") {
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        let zero = emit_const(g_jfn, bb, TYPE_I64, 0)
+        ret emit_binop(g_jfn, bb, OP_SUB, zero, self_id)
+    }
+    if streq(src, fs, fl, "min") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ; min(a, b) = b + (a - b) * (a < b)
+        let diff = emit_binop(g_jfn, bb, OP_SUB, self_id, other)
+        let lt = emit_binop(g_jfn, bb, OP_CMP_LT, self_id, other)
+        let sel = emit_binop(g_jfn, bb, OP_MUL, diff, lt)
+        ret emit_binop(g_jfn, bb, OP_ADD, other, sel)
+    }
+    if streq(src, fs, fl, "max") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ; max(a, b) = a + (b - a) * (a < b)
+        let diff = emit_binop(g_jfn, bb, OP_SUB, other, self_id)
+        let lt = emit_binop(g_jfn, bb, OP_CMP_LT, self_id, other)
+        let sel = emit_binop(g_jfn, bb, OP_MUL, diff, lt)
+        ret emit_binop(g_jfn, bb, OP_ADD, self_id, sel)
+    }
+    if streq(src, fs, fl, "clamp") {
+        expect(TOK_LPAREN)
+        let lo = live_codegen_expr_inline(bb)
+        expect(TOK_COMMA)
+        let hi = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ; clamp = max(lo, min(self, hi))
+        ; min(self, hi) = hi + (self - hi) * (self < hi)
+        let d1 = emit_binop(g_jfn, bb, OP_SUB, self_id, hi)
+        let lt1 = emit_binop(g_jfn, bb, OP_CMP_LT, self_id, hi)
+        let s1 = emit_binop(g_jfn, bb, OP_MUL, d1, lt1)
+        let mn = emit_binop(g_jfn, bb, OP_ADD, hi, s1)
+        ; max(lo, mn) = lo + (mn - lo) * (lo < mn)
+        let d2 = emit_binop(g_jfn, bb, OP_SUB, mn, lo)
+        let lt2 = emit_binop(g_jfn, bb, OP_CMP_LT, lo, mn)
+        let s2 = emit_binop(g_jfn, bb, OP_MUL, d2, lt2)
+        ret emit_binop(g_jfn, bb, OP_ADD, lo, s2)
+    }
+    if streq(src, fs, fl, "to_f64") {
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        let ins = Instr{}
+        ins.op = OP_I2F
+        ins.operand0 = self_id
+        ins.itype = TYPE_F64
+        ret emit(g_jfn, bb, &ins)
+    }
+    ret -1
+}
+
+fn try_prim_f64(bb: i64, self_id: i64, fs: i64, fl: i64) -> i64 {
+    let src = g_src_buf_ptr
+    if streq(src, fs, fl, "abs") {
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        let ins = Instr{}
+        ins.op = OP_FABS
+        ins.operand0 = self_id
+        ret emit(g_jfn, bb, &ins)
+    }
+    if streq(src, fs, fl, "neg") {
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        let ins = Instr{}
+        ins.op = OP_FNEG
+        ins.operand0 = self_id
+        ret emit(g_jfn, bb, &ins)
+    }
+    if streq(src, fs, fl, "sqrt") {
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        let ins = Instr{}
+        ins.op = OP_FSQRT
+        ins.operand0 = self_id
+        ret emit(g_jfn, bb, &ins)
+    }
+    if streq(src, fs, fl, "add") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ret emit_binop(g_jfn, bb, OP_FADD, self_id, other)
+    }
+    if streq(src, fs, fl, "sub") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ret emit_binop(g_jfn, bb, OP_FSUB, self_id, other)
+    }
+    if streq(src, fs, fl, "mul") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ret emit_binop(g_jfn, bb, OP_FMUL, self_id, other)
+    }
+    if streq(src, fs, fl, "div") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ret emit_binop(g_jfn, bb, OP_FDIV, self_id, other)
+    }
+    if streq(src, fs, fl, "lt") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ret emit_binop(g_jfn, bb, OP_FCMP_LT, self_id, other)
+    }
+    if streq(src, fs, fl, "gt") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ret emit_binop(g_jfn, bb, OP_FCMP_GT, self_id, other)
+    }
+    if streq(src, fs, fl, "eq") {
+        expect(TOK_LPAREN)
+        let other = live_codegen_expr_inline(bb)
+        expect(TOK_RPAREN)
+        ret emit_binop(g_jfn, bb, OP_FCMP_EQ, self_id, other)
+    }
+    if streq(src, fs, fl, "to_i64") {
+        expect(TOK_LPAREN)
+        expect(TOK_RPAREN)
+        let ins = Instr{}
+        ins.op = OP_F2I
+        ins.operand0 = self_id
+        ins.itype = TYPE_I64
+        ret emit(g_jfn, bb, &ins)
+    }
+    ret -1
+}
+
 fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     if pos[0] < 0 or pos[0] >= g_dbg_tok_cnt {
         ret emit_const(jfn, bb, TYPE_I64, 0)
@@ -6884,6 +7035,25 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                         g_main_pos = save_pos
                         ret mc_result
                     }
+                }
+                ; Primitive method dispatch: i64/f64 method syntax
+                if tok_type_at(toks, pos[0]) == TOK_LPAREN {
+                    let prim_r = -1
+                    if cur_stype == TYPE_I64 {
+                        let sp = g_main_pos
+                        g_main_pos = pos[0]
+                        prim_r = try_prim_i64(bb, expr_id, field_start, field_len)
+                        pos[0] = g_main_pos
+                        g_main_pos = sp
+                    }
+                    if cur_stype == TYPE_F64 {
+                        let sp2 = g_main_pos
+                        g_main_pos = pos[0]
+                        prim_r = try_prim_f64(bb, expr_id, field_start, field_len)
+                        pos[0] = g_main_pos
+                        g_main_pos = sp2
+                    }
+                    if prim_r != -1 { ret prim_r }
                 }
                 ret expr_id
             }
@@ -9639,6 +9809,17 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
                     ; expr_id is already the pointer/address of the struct
                     ret live_codegen_method_call(&mt, bb, expr_id)
                 }
+            }
+            ; Primitive method dispatch: i64/f64 method syntax
+            if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LPAREN {
+                let prim_r = -1
+                if cur_stype == TYPE_I64 {
+                    prim_r = try_prim_i64(bb, expr_id, field_ss, field_sl)
+                }
+                if cur_stype == TYPE_F64 {
+                    prim_r = try_prim_f64(bb, expr_id, field_ss, field_sl)
+                }
+                if prim_r != -1 { ret prim_r }
             }
             ret expr_id
         }
@@ -17323,6 +17504,8 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         rhs_id = emit(jfn, ok_bb, &ld_val)
         let_cur = ok_bb
     }
+    ; Explicit type annotation overrides inferred type
+    if arr_type_tok == TOK_F64 { bind_stype = TYPE_F64 }
     let slot = bind_name(jfn, name_start, name_len, bind_stype)
     ; CTRC: mark ownership for alloc_pages(N) with constant arg
     if ctrc_pages > 0 {
