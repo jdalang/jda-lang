@@ -195,6 +195,39 @@ Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Fu
 7. ✅ Confirmed jda1 successfully compiles simple programs (hello.jda)
 8. ❌ Function parsing still segfaults when processing jda1.jda (use-after-free in parse_block)
 
+## Investigation: Character Literal Support Blocker (March 8, 2026 - Extended Debugging)
+
+**Problem**: jda1 fails to parse functions that use character literals (`'a'`, `'0'`, etc.)
+- Functions 1-8 parse successfully (up to ptr_of)
+- Function 9 (is_alpha) uses `c >= 'a' and c <= 'z'` and fails with "Parse error: unexpected token"
+- Root cause: jda1's lexer doesn't recognize single quote as the start of a character literal token
+
+**Attempted Solutions**:
+1. Direct comparison `c == 39` in lex() → jda0 crashes when executing generated code
+2. Direct comparison `c == '\''` with escaped quote → jda0 crashes
+3. Helper function `is_single_quote()` → jda0 still crashes
+4. Simplified code with minimal logic → jda0 crashes
+5. Using ASCII values throughout → jda0 crashes
+6. Source file preprocessing (replacing literals with decimals) → broke string literal handling
+
+**Key Finding**: The crash is NOT during jda0 compilation, but during EXECUTION of the jda1 binary that jda0 produced. This indicates jda0 generates incorrect x86-64 code for this particular pattern.
+
+**Likely Root Cause**: jda0 has a code generation bug when compiling Jda code that:
+- Reads from a byte pointer multiple times in sequence (`src[pos]` multiple times)
+- Uses those reads within conditional branches
+- The pattern may conflict with jda0's register allocation or bounds checking code generation
+
+**Impact**:
+- Can't parse is_alpha, is_digit, and related char classification functions
+- These functions are critical for the lexer itself
+- Blocks self-hosting roundtrip without fixing jda0 first
+
+**Remaining Options**:
+1. **Debug jda0 assembly** - Identify exactly which instruction sequence crashes, fix jda0's codegen
+2. **Implement character literals in parser instead of lexer** - More complex, but might avoid the jda0 bug
+3. **Rewrite functions to avoid character literals** - Requires changing jda1.jda source to use alternatives
+4. **Use a preprocessor** - Convert character literals to decimals before lexing (but must not break other parts of the code)
+
 ## Latest Investigation: Block Body Skipping Approach (March 8, 2026 - Continued Session)
 
 **Attempted Solution**: Skip block body parsing entirely to avoid use-after-free
