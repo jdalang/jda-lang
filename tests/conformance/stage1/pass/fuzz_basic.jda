@@ -1,0 +1,25 @@
+; Basic fuzz target — tests that the fuzzer can discover and run fuzz_* functions
+; This fuzz target validates safe division: crash on divide-by-zero
+fn fuzz_safe_div(a: i64, b: i64) {
+    if b == 0 { ret }
+    let result = a / b
+    ; Result * b should approximately equal a (integer division truncates)
+    let check = result * b
+    ; Difference should be less than abs(b)
+    let diff = a - check
+    if diff < 0 { diff = 0 - diff }
+    if b < 0 { b = 0 - b }
+    if diff >= b {
+        syscall(60, 1, 0, 0)
+    }
+}
+
+fn main() {
+    ; Quick smoke test: run a few known inputs
+    fuzz_safe_div(10, 3)
+    fuzz_safe_div(0, 1)
+    fuzz_safe_div(100, -7)
+    fuzz_safe_div(-50, 3)
+    fuzz_safe_div(7, 7)
+    print "ok"
+}
