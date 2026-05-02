@@ -1,0 +1,43 @@
+; Test GPU vector addition with CPU fallback
+
+fn main() -> i64 {
+    let a = tensor_new1(4)
+    let b = tensor_new1(4)
+    let c = tensor_new1(4)
+
+    let v1 = f64_from_int(1)
+    let v2 = f64_from_int(2)
+    let v3 = f64_from_int(3)
+    let v4 = f64_from_int(4)
+    let v10 = f64_from_int(10)
+    let v20 = f64_from_int(20)
+    let v30 = f64_from_int(30)
+    let v40 = f64_from_int(40)
+
+    tensor_set(a, 0, v1)
+    tensor_set(a, 1, v2)
+    tensor_set(a, 2, v3)
+    tensor_set(a, 3, v4)
+
+    tensor_set(b, 0, v10)
+    tensor_set(b, 1, v20)
+    tensor_set(b, 2, v30)
+    tensor_set(b, 3, v40)
+
+    ; c = a + b → [11, 22, 33, 44]
+    gpu_vecadd(a, b, c, 4)
+
+    let r0 = f64_to_int(tensor_get(c, 0))
+    let r1 = f64_to_int(tensor_get(c, 1))
+    let r2 = f64_to_int(tensor_get(c, 2))
+    let r3 = f64_to_int(tensor_get(c, 3))
+
+    if r0 == 11 and r1 == 22 and r2 == 33 and r3 == 44 {
+        print "vecadd ok"
+    }
+
+    tensor_free(a)
+    tensor_free(b)
+    tensor_free(c)
+    ret 0
+}

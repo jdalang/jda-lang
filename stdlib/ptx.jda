@@ -1,0 +1,70 @@
+; PTX Backend — GPU compute with CPU fallback
+; Provides GPU detection, vector add, and matrix multiply
+; Uses NVIDIA driver detection via /dev/nvidiactl
+; Falls back to optimized CPU paths when no GPU is available
+
+; Check if NVIDIA GPU driver is available
+; Returns 1 if /dev/nvidiactl can be opened, 0 otherwise
+fn ptx_has_gpu() -> i64 {
+    ret gpu_has_nvidia()
+}
+
+; Vector addition: c[i] = a[i] + b[i] for i in 0..len
+; Uses GPU if available, otherwise CPU SSE2 fallback
+; a, b, c are tensor handles; len is element count
+fn ptx_vecadd(a: i64, b: i64, c: i64, len: i64) -> i64 {
+    gpu_vecadd(a, b, c, len)
+    ret 0
+}
+
+; Matrix multiply: C = A * B
+; A is [M,K], B is [K,N], C is [M,N] — all tensor handles
+; Uses GPU if available, otherwise CPU fallback
+fn ptx_matmul(a: i64, b: i64, c: i64, M: i64, N: i64, K: i64) -> i64 {
+    gpu_matmul(a, b, c, M, N, K)
+    ret 0
+}
+
+; Scale vector: c[i] = a[i] * scalar for i in 0..len
+; CPU-only implementation using tensor builtins
+fn ptx_scale(a: i64, c: i64, scalar: i64, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let v = tensor_get(a, i)
+        let sv = f64_mul(v, scalar)
+        tensor_set(c, i, sv)
+        i = i + 1
+    }
+    ret 0
+}
+
+; Dot product: sum of a[i] * b[i] for i in 0..len
+; Returns f64 bit pattern
+fn ptx_dot(a: i64, b: i64, len: i64) -> i64 {
+    let acc = f64_from_int(0)
+    let i = 0
+    loop i < len {
+        let av = tensor_get(a, i)
+        let bv = tensor_get(b, i)
+        let prod = f64_mul(av, bv)
+        acc = f64_add(acc, prod)
+        i = i + 1
+    }
+    ret acc
+}
+
+; ReLU: c[i] = max(0, a[i]) for i in 0..len
+fn ptx_relu(a: i64, c: i64, len: i64) -> i64 {
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < len {
+        let v = tensor_get(a, i)
+        if f64_gt(v, zero) == 1 {
+            tensor_set(c, i, v)
+        } else {
+            tensor_set(c, i, zero)
+        }
+        i = i + 1
+    }
+    ret 0
+}
