@@ -53,7 +53,19 @@ fn main() -> i64 {
 
 **Working**: functions, structs, arrays, pointers, references, if/else-if/else, loops, const declarations, logical operators, inline assembly, syscalls, string literals with escapes, print/print_i64, SSA-based IR with constant folding and DCE, register allocator with spill, x86-64 native code generation, ELF binary output.
 
-## Building
+## Quick Install (Linux x86-64)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | bash
+```
+
+Or specify a version:
+
+```bash
+JDA_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | bash
+```
+
+## Building from Source
 
 Requires Docker Desktop (builds target Linux x86-64). No NASM or assembly tools needed — the bootstrap compiler is a self-hosted Jda binary.
 
