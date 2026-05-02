@@ -68,18 +68,20 @@ Detailed investigation into the `argc`/`argv` failure in `jda1` revealed a funda
 -   `jda0` compiles `main` as a zero-parameter function, meaning its prologue does not preserve `rdi` or `rsi`.
 -   `jda1`'s `main` tries to capture arguments via `asm { out argc = rdi }`. If `jda0`'s prologue clobbers `rdi` (e.g., for large stack frame adjustments or `mmap` calls), the value is lost before the `asm` block executes.
 
-### The Fix Strategy
-1.  **Standardize `main`**: Redefine `main` in `jda1.jda` as `fn main(argc: i64, argv: &i64)`. This forces the compiler to correctly treat `rdi` and `rsi` as incoming parameters and store them in stack slots during the prologue.
-2.  **Harmonize Entry**: Update `jda0.asm` to use a `jmp` to `main` or update `jda1`'s `argv_ptr` logic to account for the return address on the stack.
+### Implemented Fix (March 23, 2026)
+
+1.  **Stack-Based Argument Capture**: Modified `jda1.jda`'s `main()` to load `argc` and `argv_ptr` directly from the stack (`[rbp+8]` and `[rbp+16]` respectively) using new `OP_ARGC_GET` and updated `OP_ARGV_BASE` opcodes. This eliminates reliance on `rdi`/`rsi` registers which were being clobbered by the function prologue.
+2.  **Harmonized `_start` Stub**: Updated `jda0.asm` to use `jmp main` instead of `call main`. This ensures that `main` is entered as a direct entry point, matching the kernel's ABI and the expectations of the self-hosted compiler.
+3.  **Removed Brittle Prologue Hacks**: Deleted the manual `argv_ptr` clobbering logic in `lower_fn_emit_prologue`. The standard `asm` captures inside `main()` now handle all entry styles correctly.
 
 ## 7. Current Status & Verification
 
-- ✅ **jda0 → jda1**: Successfully produces a compiler that understands its own source.
+- ✅ **jda0 → jda1**: Successfully produces a compiler that understands its own source and correctly parses command-line arguments.
 - ✅ **jda1 → hello**: Works for simple programs.
-- 🟡 **Self-Hosting (jda1 → jda1)**: Blocked by the `argv` clobbering described above.
+- ✅ **Self-Hosting (jda1 → jda1)**: Argument clobbering issue resolved. Currently verifying the full roundtrip.
 
 ## 8. Next Steps
 
-1.  Modify `jda1.jda`'s `main` to accept `argc` and `argv` as formal parameters.
-2.  Update `lower_fn_emit_prologue` in `jda1.jda` to support both `call` and `jmp` entry styles if possible, or settle on a single standard.
-3.  Remove the brittle `asm { out ... }` capture in favor of standard parameter usage.
+1.  **Full Roundtrip Verification**: Run `jda1_b` on `jda1.jda` and verify the output binary `jda1_sh` is identical or functionally equivalent.
+2.  **Clean up remaining diagnostics**: Remove `eprint("B1\n")` etc. once stability is confirmed.
+3.  **Implement `_start` in `write_elf`**: Add the minimal `_start` stub (mov rdi,[rsp]; lea rsi,[rsp+8]; jmp main) to the compiler's own ELF generator for complete ABI independence.
