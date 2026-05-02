@@ -226,8 +226,11 @@ struct LowerCtx {
 ; ============================================================
 
 fn streq(src: &i8, start: i64, len: i64, kw: &i8) -> i32 {
+    print(111)
     let i = 0
+    print(222)
     loop i < len {
+        print(333)
         if src[start + i] != kw[i] { ret 0 }
         i = i + 1
     }
@@ -236,6 +239,7 @@ fn streq(src: &i8, start: i64, len: i64, kw: &i8) -> i32 {
 }
 
 fn is_alpha(c: i8) -> i32 {
+    print("A")
     ret (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')
 }
 
@@ -265,6 +269,12 @@ fn char_to_tok(c: i8) -> i32 {
 }
 
 fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
+    print("CK len=")
+    print(len)
+    print(" start=")
+    print(start)
+    print("\n")
+    ret TOK_IDENT
     if streq(src, start, len, "fn")      { ret TOK_FN }
     if streq(src, start, len, "let")     { ret TOK_LET }
     if streq(src, start, len, "if")      { ret TOK_IF }
@@ -341,14 +351,21 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
         ; Identifier or keyword
         else if is_alpha(c) or c == '_' {
             let start = pos
+            print("B")
             loop pos < src_len and (is_alpha(src[pos]) or is_digit(src[pos]) or src[pos] == '_') {
                 pos = pos + 1
             }
+            print("C")
             let len = pos - start
+            print("D")
             out_toks[count].type      = classify_keyword(src, start, len)
+            print("E")
             out_toks[count].str_start = start
+            print("F")
             out_toks[count].str_len   = len
+            print("G")
             count = count + 1
+            print("H")
         }
 
         ; Two-char operators
