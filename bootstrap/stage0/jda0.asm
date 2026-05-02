@@ -1904,6 +1904,137 @@ lookup_global:
 
 
 ; =============================================================================
+; parse_reg_name: r8=name_start, r9=name_len -> rax=register code (0-15) or -1
+; Maps register names (rax, rcx, rdx, rsi, rdi, rbx, rsp, rbp, r8-r15)
+; =============================================================================
+parse_reg_name:
+    push    rbp
+    mov     rbp, rsp
+    push    rbx
+    push    rcx
+    push    rdx
+    cmp     r9, 0
+    je      .prn_fail
+    mov     al, byte [r8]
+    cmp     al, 'r'
+    jne     .prn_fail
+    cmp     r9, 2
+    je      .prn_2char
+    cmp     r9, 3
+    jg      .prn_3plus
+    jmp     .prn_fail
+.prn_2char:
+    mov     cl, byte [r8+1]
+    cmp     cl, 'a'
+    je      .prn_set_0
+    cmp     cl, 'c'
+    je      .prn_set_1
+    cmp     cl, 'd'
+    je      .prn_set_2
+    cmp     cl, 's'
+    je      .prn_set_6
+    cmp     cl, 'b'
+    je      .prn_set_3
+    jmp     .prn_fail
+.prn_set_0:
+    mov     eax, 0
+    jmp     .prn_done
+.prn_set_1:
+    mov     eax, 1
+    jmp     .prn_done
+.prn_set_2:
+    mov     eax, 2
+    jmp     .prn_done
+.prn_set_3:
+    mov     eax, 3
+    jmp     .prn_done
+.prn_set_6:
+    mov     eax, 6
+    jmp     .prn_done
+.prn_3plus:
+    mov     cl, byte [r8+1]
+    mov     dl, byte [r8+2]
+    cmp     cl, 'd'
+    je      .prn_set_7
+    cmp     cl, 'b'
+    je      .prn_bp_sp
+    cmp     cl, '8'
+    je      .prn_check_r8
+    cmp     cl, '9'
+    je      .prn_check_r9
+    cmp     cl, '1'
+    je      .prn_r1x
+    jmp     .prn_fail
+.prn_set_7:
+    mov     eax, 7
+    jmp     .prn_done
+.prn_bp_sp:
+    cmp     dl, 'p'
+    je      .prn_set_5
+    cmp     dl, 's'
+    je      .prn_set_4
+    jmp     .prn_fail
+.prn_set_4:
+    mov     eax, 4
+    jmp     .prn_done
+.prn_set_5:
+    mov     eax, 5
+    jmp     .prn_done
+.prn_check_r8:
+    cmp     r9, 2
+    jne     .prn_fail
+    mov     eax, 8
+    jmp     .prn_done
+.prn_check_r9:
+    cmp     r9, 2
+    jne     .prn_fail
+    mov     eax, 9
+    jmp     .prn_done
+.prn_r1x:
+    cmp     r9, 3
+    jne     .prn_fail
+    mov     al, byte [r8+2]
+    cmp     al, '0'
+    je      .prn_set_10
+    cmp     al, '1'
+    je      .prn_set_11
+    cmp     al, '2'
+    je      .prn_set_12
+    cmp     al, '3'
+    je      .prn_set_13
+    cmp     al, '4'
+    je      .prn_set_14
+    cmp     al, '5'
+    je      .prn_set_15
+    jmp     .prn_fail
+.prn_set_10:
+    mov     eax, 10
+    jmp     .prn_done
+.prn_set_11:
+    mov     eax, 11
+    jmp     .prn_done
+.prn_set_12:
+    mov     eax, 12
+    jmp     .prn_done
+.prn_set_13:
+    mov     eax, 13
+    jmp     .prn_done
+.prn_set_14:
+    mov     eax, 14
+    jmp     .prn_done
+.prn_set_15:
+    mov     eax, 15
+    jmp     .prn_done
+.prn_fail:
+    mov     eax, -1
+.prn_done:
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    leave
+    ret
+
+; =============================================================================
 ; gen_expr — evaluate expression into rax; advances tok_pos
 ; Handles: INT, CHAR, STR, IDENT (local/global/const/fn-call), unary-, &, binary ops
 ; Note: complex LHS.field and x[i] are handled by gen_lvalue/gen_field
@@ -3643,15 +3774,24 @@ gen_stmt:
     cmp     rax, 0
     je      .gs_asm_out_global
     mov     r12, [rax+16]   ; rbp_offset
-    ; emit: mov [rbp-off], <reg>  — simplified: assume rsi for now
-    ; emit 48 89 75 XX (for rsi) or proper reg
-    ; For full impl: need to identify register from name
-    ; Simplified: always emit for rsi -> [rbp-off]
+    ; parse register name from r14/r15
+    mov     r8, r14
+    mov     r9, r15
+    call    parse_reg_name
+    cmp     rax, -1
+    je      .gs_asm_loop    ; skip invalid register
+    mov     r11d, eax       ; r11d = register code
+    ; emit: mov [rbp + disp8], <reg>
+    ; 48 89 /r (mov r64, r/m64)
+    ; ModRM = mod(2) | reg(3) | rm(3)
     mov     rdi, 0x48
     call    emit1
     mov     rdi, 0x89
     call    emit1
-    mov     rdi, 0xB5  ; mod=01, reg=rsi, rm=rbp
+    mov     rax, r11
+    shl     rax, 3
+    or      rax, 0x45       ; mod=01, rm=101 (rbp)
+    mov     rdi, rax
     call    emit1
     neg     r12
     and     r12, 0xFFFFFFFF
@@ -3665,12 +3805,24 @@ gen_stmt:
     cmp     rax, 0
     je      .gs_asm_loop
     mov     r12, [rax+16]   ; r15_offset
-    ; emit: mov [r15 + off], rsi   -> 49 89 B7 off32
-    mov     rdi, 0x49
+    ; parse register name from r14/r15
+    mov     r8, r14
+    mov     r9, r15
+    call    parse_reg_name
+    cmp     rax, -1
+    je      .gs_asm_loop    ; skip invalid register
+    mov     r11d, eax       ; r11d = register code
+    ; emit: mov [r15 + disp32], <reg>
+    ; 49 89 /r (REX.B mov r64, r/m64)
+    ; ModRM = mod(2) | reg(3) | rm(3)
+    mov     rdi, 0x49       ; REX.B
     call    emit1
     mov     rdi, 0x89
     call    emit1
-    mov     rdi, 0xB7
+    mov     rax, r11
+    shl     rax, 3
+    or      rax, 0x87       ; mod=10, rm=111 (r15)
+    mov     rdi, rax
     call    emit1
     mov     rdi, r12
     call    emit4
