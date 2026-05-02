@@ -672,27 +672,9 @@ fn skip_top_level_let(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) {
 
 fn panic(msg: &i8) {
     print("PANIC ")
-    let ml = 0
-    let ml_more = 1
-    loop ml_more == 1 {
-        let ch = load_i8_at(msg, ml)
-        if ch == 0 {
-            ml_more = 0
-        } else {
-            ml = ml + 1
-        }
-    }
-    syscall(1, 1, msg, ml)
+    print(msg)
     print(" pos=")
     print(g_panic_pos)
-    if g_dbg_toks != 0 and g_panic_pos >= 0 and g_panic_pos < g_dbg_tok_cnt {
-        print(" t=")
-        print(tok_type_at(g_dbg_toks, g_panic_pos))
-        print(" ss=")
-        print(tok_str_start_at(g_dbg_toks, g_panic_pos))
-        print(" sl=")
-        print(tok_str_len_at(g_dbg_toks, g_panic_pos))
-    }
     print("\n")
     syscall(60, 1, 0, 0)
 }
@@ -700,13 +682,12 @@ fn panic(msg: &i8) {
 fn streq(src: &i8, start: i64, len: i64, kw: &i8) {
     let i = 0
     loop i < len {
-        let src_i = start + i
-        let a = load_i8_at(src, src_i)
-        let b = load_i8_at(kw, i)
+        let a = src[start + i]
+        let b = kw[i]
         if a != b { ret 0 }
         i = i + 1
     }
-    let tail = load_i8_at(kw, len)
+    let tail = kw[len]
     if tail != 0 { ret 0 }
     ret 1
 }
@@ -1219,6 +1200,9 @@ fn is_main_fn_src(src: &i8, src_len: i64, fn_start: i64) -> i64 {
 }
 
 fn should_skip_old_fn_short(src: &i8, name_off: i64, name_len: i64) -> i64 {
+    if name_len == 3 {
+        if streq(src, name_off, 3, "dce") == 1 { ret 1 }
+    }
     if name_len == 8 {
         if streq(src, name_off, 8, "parse_fn") == 1 { ret 1 }
         if streq(src, name_off, 8, "parse_if") == 1 { ret 1 }
@@ -1228,14 +1212,13 @@ fn should_skip_old_fn_short(src: &i8, name_off: i64, name_len: i64) -> i64 {
         if streq(src, name_off, 9, "parse_ret") == 1 { ret 1 }
     }
     if name_len == 10 {
+        if streq(src, name_off, 10, "span_eq_kw") == 1 { ret 1 }
         if streq(src, name_off, 10, "codegen_fn") == 1 { ret 1 }
         if streq(src, name_off, 10, "parse_stmt") == 1 { ret 1 }
         if streq(src, name_off, 10, "parse_loop") == 1 { ret 1 }
         if streq(src, name_off, 10, "parse_expr") == 1 { ret 1 }
     }
     if name_len == 11 {
-        if streq(src, name_off, 11, "codegen_stmt") == 1 { ret 1 }
-        if streq(src, name_off, 11, "codegen_expr") == 1 { ret 1 }
         if streq(src, name_off, 11, "parse_block") == 1 { ret 1 }
         if streq(src, name_off, 11, "parse_print") == 1 { ret 1 }
         if streq(src, name_off, 11, "parse_binop") == 1 { ret 1 }
@@ -1243,9 +1226,11 @@ fn should_skip_old_fn_short(src: &i8, name_off: i64, name_len: i64) -> i64 {
     ret 0
 }
 
-fn should_skip_old_fn_long(src: &i8, name_off: i64, name_len: i64) -> i64 {
+fn should_skip_old_fn_long_a(src: &i8, name_off: i64, name_len: i64) -> i64 {
     if name_len == 12 {
         if streq(src, name_off, 12, "codegen_call") == 1 { ret 1 }
+        if streq(src, name_off, 12, "codegen_stmt") == 1 { ret 1 }
+        if streq(src, name_off, 12, "codegen_expr") == 1 { ret 1 }
         if streq(src, name_off, 12, "parse_syscall") == 1 { ret 1 }
     }
     if name_len == 13 {
@@ -1256,9 +1241,14 @@ fn should_skip_old_fn_long(src: &i8, name_off: i64, name_len: i64) -> i64 {
     }
     if name_len == 17 {
         if streq(src, name_off, 17, "codegen_addr_expr") == 1 { ret 1 }
+        if streq(src, name_off, 17, "compile_if_inline") == 1 { ret 1 }
     }
     if name_len == 20 {
         if streq(src, name_off, 20, "field_addr_from_base") == 1 { ret 1 }
+        if streq(src, name_off, 20, "compile_stmts_inline") == 1 { ret 1 }
+    }
+    if name_len == 19 {
+        if streq(src, name_off, 19, "lookup_field_idx_kw") == 1 { ret 1 }
     }
     if name_len == 15 {
         if streq(src, name_off, 15, "parse_expr_stmt") == 1 { ret 1 }
@@ -1267,16 +1257,34 @@ fn should_skip_old_fn_long(src: &i8, name_off: i64, name_len: i64) -> i64 {
     ret 0
 }
 
+fn should_skip_old_fn_long_b(src: &i8, name_off: i64, name_len: i64) -> i64 {
+    if name_len == 14 {
+        if streq(src, name_off, 14, "fold_constants") == 1 { ret 1 }
+    }
+    if name_len == 23 {
+        if streq(src, name_off, 23, "live_codegen_call_inline") == 1 { ret 1 }
+    }
+    if name_len == 25 {
+        if streq(src, name_off, 25, "live_codegen_binop_inline") == 1 { ret 1 }
+    }
+    if name_len == 27 {
+        if streq(src, name_off, 27, "live_codegen_expr_inline_old") == 1 { ret 1 }
+        if streq(src, name_off, 27, "live_codegen_postfix_inline") == 1 { ret 1 }
+        if streq(src, name_off, 27, "live_codegen_primary_inline") == 1 { ret 1 }
+    }
+    ret 0
+}
+
+fn should_skip_old_fn_long(src: &i8, name_off: i64, name_len: i64) -> i64 {
+    if should_skip_old_fn_long_a(src, name_off, name_len) == 1 { ret 1 }
+    if should_skip_old_fn_long_b(src, name_off, name_len) == 1 { ret 1 }
+    ret 0
+}
+
 fn should_skip_old_fn(src: &i8, name_off: i64, name_len: i64, fi: i64) -> i64 {
     if fi < 0 { ret 0 }
     if should_skip_old_fn_short(src, name_off, name_len) == 1 { ret 1 }
     if should_skip_old_fn_long(src, name_off, name_len) == 1 { ret 1 }
-    ; Temporary guard: legacy AST codegen cluster is not needed on live path.
-    if fi >= 145 and fi <= 160 { ret 1 }
-    ; Old live_codegen_* helpers are no longer used by the active pipeline.
-    if fi >= 161 and fi <= 167 { ret 1 }
-    ; Optimizer passes are disabled during selfhost bring-up.
-    if fi >= 170 and fi <= 172 { ret 1 }
     ret 0
 }
 
@@ -1393,21 +1401,27 @@ fn lookup_field_idx_any(stab: &StructTable, src: &i8, sid: i64, fs: i64, fl: i64
     ret -1
 }
 
+fn span_eq_kw(src: &i8, src_start: i64, kw: &i8, kw_len: i64) -> i64 {
+    let j = 0
+    loop j < kw_len {
+        let si = src_start + j
+        let a = load_i8_at(src, si)
+        let b = load_i8_at(kw, j)
+        if a != b { ret 0 }
+        j = j + 1
+    }
+    ret 1
+}
+
 fn lookup_field_idx_kw(stab: &StructTable, src: &i8, sid: i64, kw: &i8, kw_len: i64) -> i64 {
     let i = 0
     loop i < stab.field_cnt {
         if stab.fowners[i] == sid {
             if stab.flens[i] == kw_len {
-                let j = 0
-                let ok = 1
-                loop j < kw_len {
-                    let fn_i = stab.fnames[i] + j
-                    let a = load_i8_at(src, fn_i)
-                    let b = load_i8_at(kw, j)
-                    if a != b { ok = 0 }
-                    j = j + 1
+                let fn_start = stab.fnames[i]
+                if span_eq_kw(src, fn_start, kw, kw_len) == 1 {
+                    ret i
                 }
-                if ok == 1 { ret i }
             }
         }
         i = i + 1
@@ -4930,33 +4944,23 @@ fn lower_print_int(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
 }
 
 fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
-    emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
     let nr_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-    emit_push_r(out, pos, nr_r)
+    if nr_r != PHYS_RAX { emit_mov_rr(out, pos, PHYS_RAX, nr_r) }
     let a0_r = get_or_load(ctx.ra, out, pos, ins.operand1)
-    emit_push_r(out, pos, a0_r)
+    if a0_r != PHYS_RDI { emit_mov_rr(out, pos, PHYS_RDI, a0_r) }
     let a1_r = get_or_load(ctx.ra, out, pos, ins.operand2)
-    emit_push_r(out, pos, a1_r)
+    if a1_r != PHYS_RSI { emit_mov_rr(out, pos, PHYS_RSI, a1_r) }
     let a2_r = get_or_load(ctx.ra, out, pos, ins.operand3)
-    emit_push_r(out, pos, a2_r)
-    emit_pop_r(out, pos, PHYS_RDX)
-    emit_pop_r(out, pos, PHYS_RSI)
-    emit_pop_r(out, pos, PHYS_RDI)
-    emit_pop_r(out, pos, PHYS_RAX)
-    emit_byte(out, pos, 0x0F)
-    emit_byte(out, pos, 0x05)
+    if a2_r != PHYS_RDX { emit_mov_rr(out, pos, PHYS_RDX, a2_r) }
+    emit_syscall_instr(out, pos)
     if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
-        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
-        emit_restore_pool(ctx.ra, out, pos)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        if dst != PHYS_R12 {
-            emit_mov_rr(out, pos, dst, PHYS_R12)
-        }
+        emit_restore_pool(ctx.ra, out, pos)
+        if dst != PHYS_RAX { emit_mov_rr(out, pos, dst, PHYS_RAX) }
     } else {
         emit_restore_pool(ctx.ra, out, pos)
     }
-    emit_pop_r(out, pos, PHYS_R12)
     consume_use(ctx, ins.operand0)
     consume_use(ctx, ins.operand1)
     consume_use(ctx, ins.operand2)
@@ -5147,6 +5151,167 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
     ret 0
 }
 
+fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    if ins.op == OP_RET {
+        let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        if g_lower_is_main == 1 {
+            if src_r != PHYS_RDI {
+                emit_mov_rr(out, pos, PHYS_RDI, src_r)
+            }
+            emit_mov_imm64(out, pos, PHYS_RAX, 60)
+            emit_syscall_instr(out, pos)
+            consume_use(ctx, ins.operand0)
+            ret 1
+        }
+        if src_r != PHYS_RAX {
+            emit_mov_rr(out, pos, PHYS_RAX, src_r)
+        }
+        emit_byte(out, pos, 0x48)
+        emit_byte(out, pos, 0x89)
+        emit_byte(out, pos, 0xEC)
+        emit_pop_r(out, pos, PHYS_RBP)
+        emit_ret_instr(out, pos)
+        consume_use(ctx, ins.operand0)
+        ret 1
+    }
+    if ins.op == OP_JMP {
+        if ctx.fix_cnt >= 1024 { panic("Lower fixup overflow") }
+        let fix_idx = ctx.fix_cnt
+        ctx.fixups[fix_idx].code_off  = pos[0] + 1
+        ctx.fixups[fix_idx].target_bb = ins.bb_target0
+        ctx.fixups[fix_idx].kind      = 0
+        ctx.fixups[fix_idx].str_len   = 0
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_jmp_rel32(out, pos, 0)
+        ret 1
+    }
+    if ins.op == OP_BR {
+        let cond_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_cmp_zero(out, pos, cond_r)
+        if ctx.fix_cnt >= 1024 { panic("Lower fixup overflow") }
+        let fix_else = ctx.fix_cnt
+        ctx.fixups[fix_else].code_off  = pos[0] + 2
+        ctx.fixups[fix_else].target_bb = ins.bb_target1
+        ctx.fixups[fix_else].kind      = 0
+        ctx.fixups[fix_else].str_len   = 0
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_je_rel32(out, pos, 0)
+        if ctx.fix_cnt >= 1024 { panic("Lower fixup overflow") }
+        let fix_then = ctx.fix_cnt
+        ctx.fixups[fix_then].code_off  = pos[0] + 1
+        ctx.fixups[fix_then].target_bb = ins.bb_target0
+        ctx.fixups[fix_then].kind      = 0
+        ctx.fixups[fix_then].str_len   = 0
+        ctx.fix_cnt = ctx.fix_cnt + 1
+        emit_jmp_rel32(out, pos, 0)
+        consume_use(ctx, ins.operand0)
+        ret 1
+    }
+    if ins.op == OP_SYSCALL {
+        lower_syscall(ins, ctx, out, pos)
+        ret 1
+    }
+    ret 0
+}
+
+fn lower_instr_alloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    if ins.op != OP_ALLOC { ret 0 }
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    let sz_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    if sz_r != PHYS_RSI { emit_mov_rr(out, pos, PHYS_RSI, sz_r) }
+    emit_mov_imm64(out, pos, PHYS_RAX, 9)
+    emit_mov_imm64(out, pos, PHYS_RDI, 0)
+    emit_mov_imm64(out, pos, PHYS_RDX, 3)
+    emit_mov_imm64(out, pos, PHYS_R10, 0x22)
+    emit_mov_imm64(out, pos, PHYS_R8, -1)
+    emit_mov_imm64(out, pos, PHYS_R9, 0)
+    emit_syscall_instr(out, pos)
+    if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 {
+            emit_mov_rr(out, pos, dst, PHYS_R12)
+        }
+    } else {
+        emit_restore_pool(ctx.ra, out, pos)
+    }
+    emit_pop_r(out, pos, PHYS_R12)
+    consume_use(ctx, ins.operand0)
+    ret 1
+}
+
+fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    if ins.op != OP_CALL { ret 0 }
+    emit_push_r(out, pos, PHYS_R12)
+    emit_save_pool(ctx.ra, out, pos)
+    lower_instr_call_args(ins, ctx, out, pos)
+    lower_instr_call_emit(ins, ctx, out, pos)
+    emit_pop_r(out, pos, PHYS_R12)
+    if ins.operand3 >= 1 { consume_use(ctx, ins.operand0) }
+    if ins.operand3 >= 2 { consume_use(ctx, ins.operand1) }
+    if ins.operand3 >= 3 { consume_use(ctx, ins.operand2) }
+    if ins.operand3 >= 4 { consume_use(ctx, ins.bb_target0) }
+    if ins.operand3 >= 5 { consume_use(ctx, ins.bb_target1) }
+    if ins.operand3 >= 6 { consume_use(ctx, ins.imm) }
+    ret 1
+}
+
+fn lower_instr_call_args(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    if ins.operand3 >= 1 {
+        let r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        if r != PHYS_RDI { emit_mov_rr(out, pos, PHYS_RDI, r) }
+    }
+    if ins.operand3 >= 2 {
+        let r = get_or_load(ctx.ra, out, pos, ins.operand1)
+        if r != PHYS_RSI { emit_mov_rr(out, pos, PHYS_RSI, r) }
+    }
+    if ins.operand3 >= 3 {
+        let r = get_or_load(ctx.ra, out, pos, ins.operand2)
+        if r != PHYS_RDX { emit_mov_rr(out, pos, PHYS_RDX, r) }
+    }
+    if ins.operand3 >= 4 {
+        let r = get_or_load(ctx.ra, out, pos, ins.bb_target0)
+        if r != PHYS_RCX { emit_mov_rr(out, pos, PHYS_RCX, r) }
+    }
+    if ins.operand3 >= 5 {
+        let r = get_or_load(ctx.ra, out, pos, ins.bb_target1)
+        if r != PHYS_R8 { emit_mov_rr(out, pos, PHYS_R8, r) }
+    }
+    if ins.operand3 >= 6 {
+        let r = get_or_load(ctx.ra, out, pos, ins.imm)
+        if r != PHYS_R9 { emit_mov_rr(out, pos, PHYS_R9, r) }
+    }
+}
+
+fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    if ctx.fix_cnt >= 1024 { panic("Lower fixup overflow") }
+    let fix_idx = ctx.fix_cnt
+    ctx.fixups[fix_idx].code_off  = pos[0] + 1
+    ctx.fixups[fix_idx].target_bb = ins.str_start
+    ctx.fixups[fix_idx].kind      = 2
+    ctx.fixups[fix_idx].str_len   = ins.str_len
+    ctx.fix_cnt = ctx.fix_cnt + 1
+    emit_call_rel32(out, pos, 0)
+    if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
+        emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        emit_restore_pool(ctx.ra, out, pos)
+        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        if dst != PHYS_R12 {
+            emit_mov_rr(out, pos, dst, PHYS_R12)
+        }
+    } else {
+        emit_restore_pool(ctx.ra, out, pos)
+    }
+}
+
+fn lower_instr_callalloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    if lower_instr_alloc(ins, ctx, out, pos) == 1 { ret 1 }
+    if lower_instr_call(ins, ctx, out, pos) == 1 { ret 1 }
+    ret 0
+}
+
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     if lower_instr_constlike(ins, ctx, jfn, out, pos) == 1 {
@@ -5226,162 +5391,8 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
-    if ins.op == OP_RET {
-        ; Move result to rax, restore frame, return
-        let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-        if g_lower_is_main == 1 {
-            if src_r != PHYS_RDI {
-                emit_mov_rr(out, pos, PHYS_RDI, src_r)
-            }
-            emit_mov_imm64(out, pos, PHYS_RAX, 60)
-            emit_syscall_instr(out, pos)
-            consume_use(ctx, ins.operand0)
-            ret ok(0)
-        }
-        if src_r != PHYS_RAX {
-            emit_mov_rr(out, pos, PHYS_RAX, src_r)
-        }
-        ; Epilogue: mov rsp, rbp; pop rbp; ret
-        emit_byte(out, pos, 0x48)   ; REX.W
-        emit_byte(out, pos, 0x89)   ; MOV r/m64, r64
-        emit_byte(out, pos, 0xEC)   ; mov rsp, rbp
-        emit_pop_r(out, pos, PHYS_RBP)
-        emit_ret_instr(out, pos)
-        consume_use(ctx, ins.operand0)
-        ret ok(0)
-    }
-
-    if ins.op == OP_JMP {
-        ; Unconditional jump to target basic block
-        ; after opcode byte
-        if ctx.fix_cnt >= 1024 { panic("Lower fixup overflow") }
-        let fix_idx = ctx.fix_cnt
-        ctx.fixups[fix_idx].code_off  = pos[0] + 1
-        ctx.fixups[fix_idx].target_bb = ins.bb_target0
-        ctx.fixups[fix_idx].kind      = 0
-        ctx.fixups[fix_idx].str_len   = 0
-        ctx.fix_cnt = ctx.fix_cnt + 1
-        emit_jmp_rel32(out, pos, 0)                   ; rel32 patched later
-        ret ok(0)
-    }
-
-    if ins.op == OP_BR {
-        let cond_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-        emit_cmp_zero(out, pos, cond_r)
-        ; JE -> else_bb
-        if ctx.fix_cnt >= 1024 { panic("Lower fixup overflow") }
-        let fix_else = ctx.fix_cnt
-        ctx.fixups[fix_else].code_off  = pos[0] + 2
-        ctx.fixups[fix_else].target_bb = ins.bb_target1
-        ctx.fixups[fix_else].kind      = 0
-        ctx.fixups[fix_else].str_len   = 0
-        ctx.fix_cnt = ctx.fix_cnt + 1
-        emit_je_rel32(out, pos, 0)
-        ; JMP -> then_bb
-        if ctx.fix_cnt >= 1024 { panic("Lower fixup overflow") }
-        let fix_then = ctx.fix_cnt
-        ctx.fixups[fix_then].code_off  = pos[0] + 1
-        ctx.fixups[fix_then].target_bb = ins.bb_target0
-        ctx.fixups[fix_then].kind      = 0
-        ctx.fixups[fix_then].str_len   = 0
-        ctx.fix_cnt = ctx.fix_cnt + 1
-        emit_jmp_rel32(out, pos, 0)
-        consume_use(ctx, ins.operand0)
-        ret ok(0)
-    }
-
-    if ins.op == OP_SYSCALL {
-        ret lower_syscall(ins, ctx, out, pos)
-    }
-
-    if ins.op == OP_ALLOC {
-        emit_push_r(out, pos, PHYS_R12)
-        emit_save_pool(ctx.ra, out, pos)
-        let sz_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-        if sz_r != PHYS_RSI { emit_mov_rr(out, pos, PHYS_RSI, sz_r) }
-        emit_mov_imm64(out, pos, PHYS_RAX, 9)
-        emit_mov_imm64(out, pos, PHYS_RDI, 0)
-        emit_mov_imm64(out, pos, PHYS_RDX, 3)
-        emit_mov_imm64(out, pos, PHYS_R10, 0x22)
-        emit_mov_imm64(out, pos, PHYS_R8, -1)
-        emit_mov_imm64(out, pos, PHYS_R9, 0)
-        emit_syscall_instr(out, pos)
-        if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
-            emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
-            emit_restore_pool(ctx.ra, out, pos)
-            let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-            if dst != PHYS_R12 {
-                emit_mov_rr(out, pos, dst, PHYS_R12)
-            }
-        } else {
-            emit_restore_pool(ctx.ra, out, pos)
-        }
-        emit_pop_r(out, pos, PHYS_R12)
-        consume_use(ctx, ins.operand0)
-        ret ok(0)
-    }
-
-    if ins.op == OP_CALL {
-        emit_push_r(out, pos, PHYS_R12)
-        emit_save_pool(ctx.ra, out, pos)
-        if ins.operand3 >= 1 {
-            let r = get_or_load(ctx.ra, out, pos, ins.operand0)
-            emit_push_r(out, pos, r)
-        }
-        if ins.operand3 >= 2 {
-            let r = get_or_load(ctx.ra, out, pos, ins.operand1)
-            emit_push_r(out, pos, r)
-        }
-        if ins.operand3 >= 3 {
-            let r = get_or_load(ctx.ra, out, pos, ins.operand2)
-            emit_push_r(out, pos, r)
-        }
-        if ins.operand3 >= 4 {
-            let r = get_or_load(ctx.ra, out, pos, ins.bb_target0)
-            emit_push_r(out, pos, r)
-        }
-        if ins.operand3 >= 5 {
-            let r = get_or_load(ctx.ra, out, pos, ins.bb_target1)
-            emit_push_r(out, pos, r)
-        }
-        if ins.operand3 >= 6 {
-            let r = get_or_load(ctx.ra, out, pos, ins.imm)
-            emit_push_r(out, pos, r)
-        }
-        if ins.operand3 >= 6 { emit_pop_r(out, pos, PHYS_R9) }
-        if ins.operand3 >= 5 { emit_pop_r(out, pos, PHYS_R8) }
-        if ins.operand3 >= 4 { emit_pop_r(out, pos, PHYS_RCX) }
-        if ins.operand3 >= 3 { emit_pop_r(out, pos, PHYS_RDX) }
-        if ins.operand3 >= 2 { emit_pop_r(out, pos, PHYS_RSI) }
-        if ins.operand3 >= 1 { emit_pop_r(out, pos, PHYS_RDI) }
-
-        if ctx.fix_cnt >= 1024 { panic("Lower fixup overflow") }
-        let fix_idx = ctx.fix_cnt
-        ctx.fixups[fix_idx].code_off  = pos[0] + 1
-        ctx.fixups[fix_idx].target_bb = ins.str_start
-        ctx.fixups[fix_idx].kind      = 2
-        ctx.fixups[fix_idx].str_len   = ins.str_len
-        ctx.fix_cnt = ctx.fix_cnt + 1
-        emit_call_rel32(out, pos, 0)
-        if ins.id >= 0 and ins.id < 4096 and ctx.use_cnt[ins.id] > 0 {
-            emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
-            emit_restore_pool(ctx.ra, out, pos)
-            let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-            if dst != PHYS_R12 {
-                emit_mov_rr(out, pos, dst, PHYS_R12)
-            }
-        } else {
-            emit_restore_pool(ctx.ra, out, pos)
-        }
-        emit_pop_r(out, pos, PHYS_R12)
-        if ins.operand3 >= 1 { consume_use(ctx, ins.operand0) }
-        if ins.operand3 >= 2 { consume_use(ctx, ins.operand1) }
-        if ins.operand3 >= 3 { consume_use(ctx, ins.operand2) }
-        if ins.operand3 >= 4 { consume_use(ctx, ins.bb_target0) }
-        if ins.operand3 >= 5 { consume_use(ctx, ins.bb_target1) }
-        if ins.operand3 >= 6 { consume_use(ctx, ins.imm) }
-        ret ok(0)
-    }
+    if lower_instr_ctrl(ins, ctx, out, pos) == 1 { ret ok(0) }
+    if lower_instr_callalloc(ins, ctx, out, pos) == 1 { ret ok(0) }
 
 }
 
@@ -5397,9 +5408,57 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     }
 }
 
-fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
-fn live_compile_if(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
-fn live_compile_loop(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64;
+fn live_compile_let_stmt(toks0: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) {
+    if g_cur_fn_name_len == 4 {
+        if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
+            g_dbg_main_lets = g_dbg_main_lets + 1
+        }
+    }
+    pos[0] = pos[0] + 1
+    let name_start = tok_str_start_at(toks0, pos[0])
+    let name_len = tok_str_len_at(toks0, pos[0])
+    pos[0] = pos[0] + 1
+    pos[0] = pos[0] + 1
+    let skip_store = 0
+    let bind_stype = TYPE_I64
+    let rhs_id = -1
+    let rhs_t = tok_type_at0(toks0, pos)
+    if rhs_t == TOK_STR {
+        bind_stype = TYPE_PTR_I8
+    } else if rhs_t == TOK_IDENT {
+        let rhs_start0 = tok_str_start_at(toks0, pos[0])
+        let rhs_len0 = tok_str_len_at(toks0, pos[0])
+        let rhs_slot0 = lookup_slot_name(jfn, rhs_start0, rhs_len0)
+        if rhs_slot0 != -1 {
+            bind_stype = lookup_stype_name(jfn, rhs_start0, rhs_len0)
+        } else {
+            let rhs_gi0 = lookup_global2(rhs_start0, rhs_len0, src)
+            if rhs_gi0 != -1 {
+                bind_stype = g_glob_stype[rhs_gi0]
+                if g_glob_is_addr[rhs_gi0] == 1 and bind_stype < TYPE_PTR_FLAG {
+                    bind_stype = ptr_of(bind_stype)
+                }
+            }
+        }
+        if rhs_len0 == 11 and streq(src, rhs_start0, 11, "alloc_pages") == 1 {
+            bind_stype = TYPE_PTR
+        } else if rhs_len0 == 8 and streq(src, rhs_start0, 8, "get_argv") == 1 {
+            bind_stype = TYPE_PTR_I8
+        }
+    }
+    rhs_id = codegen_expr_inline(toks0, pos, stab, src, jfn, cur)
+    let slot = bind_name(jfn, name_start, name_len, bind_stype)
+    if skip_store == 0 {
+        if rhs_id == -1 {
+            rhs_id = emit_const(jfn, cur, TYPE_I64, 0)
+        }
+        let ins = Instr{}
+        ins.op = OP_STORE
+        ins.operand0 = rhs_id
+        ins.operand1 = slot
+        emit(jfn, cur, &ins)
+    }
+}
 
 fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     let cur = bb
@@ -5419,103 +5478,7 @@ fn live_compile_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
         } else if t == TOK_LOOP {
             cur = live_compile_loop(toks0, pos, stab, src, jfn, cur)
         } else if t == TOK_LET {
-            if g_cur_fn_name_len == 4 {
-                if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
-                    g_dbg_main_lets = g_dbg_main_lets + 1
-                }
-            }
-            pos[0] = pos[0] + 1
-            let name_start = tok_str_start_at(toks0, pos[0])
-            let name_len = tok_str_len_at(toks0, pos[0])
-            pos[0] = pos[0] + 1
-            pos[0] = pos[0] + 1
-            let skip_store = 0
-            let bind_stype = TYPE_I64
-            let rhs_id = -1
-            let skip_bootstrap_rhs = 0
-            let rhs_t = tok_type_at0(toks0, pos)
-            if rhs_t == TOK_STR {
-                bind_stype = TYPE_PTR_I8
-            } else if rhs_t == TOK_IDENT {
-                let rhs_start0 = tok_str_start_at(toks0, pos[0])
-                let rhs_len0 = tok_str_len_at(toks0, pos[0])
-                let rhs_slot0 = lookup_slot_name(jfn, rhs_start0, rhs_len0)
-                if rhs_slot0 != -1 {
-                    bind_stype = lookup_stype_name(jfn, rhs_start0, rhs_len0)
-                } else {
-                    let rhs_gi0 = lookup_global2(rhs_start0, rhs_len0, src)
-                    if rhs_gi0 != -1 {
-                        bind_stype = g_glob_stype[rhs_gi0]
-                        if g_glob_is_addr[rhs_gi0] == 1 and bind_stype < TYPE_PTR_FLAG {
-                            bind_stype = ptr_of(bind_stype)
-                        }
-                    }
-                }
-                if rhs_len0 == 11 and streq(src, rhs_start0, 11, "alloc_pages") == 1 {
-                    bind_stype = TYPE_PTR
-                } else if rhs_len0 == 8 and streq(src, rhs_start0, 8, "get_argv") == 1 {
-                    bind_stype = TYPE_PTR_I8
-                }
-            }
-            if g_cur_fn_name_len == 4 {
-                if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
-                    if name_len == 8 {
-                        if streq(src, name_start, 8, "argv_ptr") == 1 {
-                            bind_stype = TYPE_PTR
-                            skip_store = 1
-                            skip_bootstrap_rhs = 0
-                            if tok_type_at0(toks0, pos) != TOK_EOF {
-                                pos[0] = pos[0] + 1
-                            }
-                        } else if streq(src, name_start, 8, "src_path") == 1 {
-                            bind_stype = TYPE_PTR_I8
-                            skip_store = 1
-                            skip_bootstrap_rhs = 1
-                        } else if streq(src, name_start, 8, "out_path") == 1 {
-                            bind_stype = TYPE_PTR_I8
-                            skip_store = 1
-                            skip_bootstrap_rhs = 1
-                        }
-                    }
-                }
-            }
-            if skip_bootstrap_rhs == 1 {
-                if tok_type_at0(toks0, pos) == TOK_IDENT {
-                    pos[0] = pos[0] + 1
-                    if tok_type_at0(toks0, pos) == TOK_LPAREN {
-                        let depth = 1
-                        pos[0] = pos[0] + 1
-                        loop depth > 0 and tok_type_at0(toks0, pos) != TOK_EOF {
-                            let tt2 = tok_type_at0(toks0, pos)
-                            if tt2 == TOK_LPAREN { depth = depth + 1 }
-                            if tt2 == TOK_RPAREN { depth = depth - 1 }
-                            pos[0] = pos[0] + 1
-                        }
-                    } else if tok_type_at0(toks0, pos) == TOK_LBRACK {
-                        let depth = 1
-                        pos[0] = pos[0] + 1
-                        loop depth > 0 and tok_type_at0(toks0, pos) != TOK_EOF {
-                            let tt3 = tok_type_at0(toks0, pos)
-                            if tt3 == TOK_LBRACK { depth = depth + 1 }
-                            if tt3 == TOK_RBRACK { depth = depth - 1 }
-                            pos[0] = pos[0] + 1
-                        }
-                    }
-                }
-            } else {
-                rhs_id = codegen_expr_inline(toks0, pos, stab, src, jfn, cur)
-            }
-            let slot = bind_name(jfn, name_start, name_len, bind_stype)
-            if skip_store == 0 {
-                if rhs_id == -1 {
-                    rhs_id = emit_const(jfn, cur, TYPE_I64, 0)
-                }
-                let ins = Instr{}
-                ins.op = OP_STORE
-                ins.operand0 = rhs_id
-                ins.operand1 = slot
-                emit(jfn, cur, &ins)
-            }
+            live_compile_let_stmt(toks0, pos, stab, src, jfn, cur)
         } else if t == TOK_RET {
             pos[0] = pos[0] + 1
             let val_id = emit_const(jfn, cur, TYPE_I64, 0)
@@ -5633,9 +5596,50 @@ fn live_compile_loop(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn:
     ret merge_bb
 }
 
-fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
-    ; Function prologue: push rbp; mov rbp, rsp; sub rsp, frame_size
-    g_lower_is_main = is_main
+fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
+    if ins.dead != 0 { ret ok(0) }
+    let op = ins.op
+    let o0 = ins.operand0
+    let o1 = ins.operand1
+    let o2 = ins.operand2
+    let o3 = ins.operand3
+    if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
+       op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
+       op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
+       op == OP_SHR or op == OP_SHL {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
+    }
+    if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_STORE or op == OP_PRINT_INT {
+        mark_use(ctx, o0)
+    }
+    if op == OP_LOAD_MEM {
+        mark_use(ctx, o0)
+    }
+    if op == OP_STORE_MEM {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
+    }
+    if op == OP_SYSCALL {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
+        mark_use(ctx, o2)
+        mark_use(ctx, o3)
+    }
+    if op == OP_ALLOC {
+        mark_use(ctx, o0)
+    }
+    if op == OP_CALL {
+        if o3 >= 1 { mark_use(ctx, o0) }
+        if o3 >= 2 { mark_use(ctx, o1) }
+        if o3 >= 3 { mark_use(ctx, o2) }
+        if o3 >= 4 { mark_use(ctx, ins.bb_target0) }
+        if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
+        if o3 >= 6 { mark_use(ctx, ins.imm) }
+    }
+}
+
+fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) {
     emit_push_r(out, pos, PHYS_RBP)
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x89)
@@ -5643,38 +5647,38 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x81)
     emit_byte(out, pos, 0xEC)
-    let frame_sz = 32768
+    let frame_sz = 524288
     if is_main == 1 {
         frame_sz = 786432
     }
     emit_i32_le(out, pos, frame_sz)
-
-    if is_main == 1 {
-        let vi = 0
-        loop vi < jfn.var_cnt {
-            let vlen = jfn.vars[vi].name_len
-            if vlen == 8 {
-                if streq(jfn.src, jfn.vars[vi].name_start, 8, "argv_ptr") == 1 {
-                    print("HACK argv_ptr\n")
-                    emit_byte(out, pos, 0x48)
-                    emit_byte(out, pos, 0x8D)
-                    emit_byte(out, pos, 0x85)
-                    emit_i32_le(out, pos, 16)
-                    emit_store_spill(out, pos, jfn.vars[vi].slot_off, PHYS_RAX)
-                } else if streq(jfn.src, jfn.vars[vi].name_start, 8, "src_path") == 1 {
-                    print("HACK src_path\n")
-                    emit_load_spill(out, pos, PHYS_RAX, -24)
-                    emit_store_spill(out, pos, jfn.vars[vi].slot_off, PHYS_RAX)
-                } else if streq(jfn.src, jfn.vars[vi].name_start, 8, "out_path") == 1 {
-                    print("HACK out_path\n")
-                    emit_load_spill(out, pos, PHYS_RAX, -32)
-                    emit_store_spill(out, pos, jfn.vars[vi].slot_off, PHYS_RAX)
-                }
+    if is_main != 1 { ret ok(0) }
+    let vi = 0
+    loop vi < jfn.var_cnt {
+        let vlen = jfn.vars[vi].name_len
+        if vlen == 8 {
+            if streq(jfn.src, jfn.vars[vi].name_start, 8, "argv_ptr") == 1 {
+                print("HACK argv_ptr\n")
+                emit_byte(out, pos, 0x48)
+                emit_byte(out, pos, 0x8D)
+                emit_byte(out, pos, 0x85)
+                emit_i32_le(out, pos, 16)
+                emit_store_spill(out, pos, jfn.vars[vi].slot_off, PHYS_RAX)
+            } else if streq(jfn.src, jfn.vars[vi].name_start, 8, "src_path") == 1 {
+                print("HACK src_path\n")
+                emit_load_spill(out, pos, PHYS_RAX, -24)
+                emit_store_spill(out, pos, jfn.vars[vi].slot_off, PHYS_RAX)
+            } else if streq(jfn.src, jfn.vars[vi].name_start, 8, "out_path") == 1 {
+                print("HACK out_path\n")
+                emit_load_spill(out, pos, PHYS_RAX, -32)
+                emit_store_spill(out, pos, jfn.vars[vi].slot_off, PHYS_RAX)
             }
-            vi = vi + 1
         }
+        vi = vi + 1
     }
+}
 
+fn lower_fn_store_params(jfn: &JirFunction, out: &i8, pos: &i64) {
     let pi = 0
     loop pi < jfn.param_cnt and pi < 6 {
         let pr = PHYS_RDI
@@ -5686,7 +5690,9 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
         emit_store_spill(out, pos, jfn.param_slots[pi], pr)
         pi = pi + 1
     }
+}
 
+fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
     let ui = 0
     loop ui < 4096 {
         ctx.use_cnt[ui] = 0
@@ -5696,59 +5702,23 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     loop bi < jfn.block_cnt {
         let ii = 0
         loop ii < jfn.blocks[bi].instr_cnt {
-            if jfn.blocks[bi].instrs[ii].dead == 0 {
-                let op = jfn.blocks[bi].instrs[ii].op
-                let o0 = jfn.blocks[bi].instrs[ii].operand0
-                let o1 = jfn.blocks[bi].instrs[ii].operand1
-                let o2 = jfn.blocks[bi].instrs[ii].operand2
-                let o3 = jfn.blocks[bi].instrs[ii].operand3
-                if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or
-                   op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
-                   op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
-                   op == OP_SHR or op == OP_SHL {
-                    mark_use(ctx, o0)
-                    mark_use(ctx, o1)
-                }
-                if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_STORE or op == OP_PRINT_INT {
-                    mark_use(ctx, o0)
-                }
-                if op == OP_LOAD_MEM {
-                    mark_use(ctx, o0)
-                }
-                if op == OP_STORE_MEM {
-                    mark_use(ctx, o0)
-                    mark_use(ctx, o1)
-                }
-                if op == OP_SYSCALL {
-                    mark_use(ctx, o0)
-                    mark_use(ctx, o1)
-                    mark_use(ctx, o2)
-                    mark_use(ctx, o3)
-                }
-                if op == OP_ALLOC {
-                    mark_use(ctx, o0)
-                }
-                if op == OP_CALL {
-                    if o3 >= 1 { mark_use(ctx, o0) }
-                    if o3 >= 2 { mark_use(ctx, o1) }
-                    if o3 >= 3 { mark_use(ctx, o2) }
-                    if o3 >= 4 { mark_use(ctx, jfn.blocks[bi].instrs[ii].bb_target0) }
-                    if o3 >= 5 { mark_use(ctx, jfn.blocks[bi].instrs[ii].bb_target1) }
-                    if o3 >= 6 { mark_use(ctx, jfn.blocks[bi].instrs[ii].imm) }
-                }
-            }
+            lower_fn_mark_uses_instr(ctx, jfn.blocks[bi].instrs[ii])
             ii = ii + 1
         }
         bi = bi + 1
     }
+}
 
+fn lower_fn_emit_blocks(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
     let i = 0
     loop i < jfn.block_cnt {
         ctx.bb_offsets[i] = pos[0]
         lower_block(jfn.blocks[i], ctx, jfn, out, pos)
         i = i + 1
     }
+}
 
+fn lower_fn_emit_epilogue(out: &i8, pos: &i64, is_main: i64) {
     if is_main == 1 {
         emit_byte(out, pos, 0x48)
         emit_byte(out, pos, 0xC7)
@@ -5759,15 +5729,16 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
         emit_byte(out, pos, 0xFF)
         emit_byte(out, pos, 0x0F)
         emit_byte(out, pos, 0x05)
-    } else {
-        emit_byte(out, pos, 0x48)
-        emit_byte(out, pos, 0x89)
-        emit_byte(out, pos, 0xEC)
-        emit_pop_r(out, pos, PHYS_RBP)
-        emit_ret_instr(out, pos)
+        ret ok(0)
     }
-    g_lower_is_main = 0
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x89)
+    emit_byte(out, pos, 0xEC)
+    emit_pop_r(out, pos, PHYS_RBP)
+    emit_ret_instr(out, pos)
+}
 
+fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
     let fi = 0
     loop fi < ctx.fix_cnt {
         if ctx.fixups[fi].kind == 0 {
@@ -5784,6 +5755,17 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
         }
         fi = fi + 1
     }
+}
+
+fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
+    g_lower_is_main = is_main
+    lower_fn_emit_prologue(jfn, out, pos, is_main)
+    lower_fn_store_params(jfn, out, pos)
+    lower_fn_collect_uses(jfn, ctx)
+    lower_fn_emit_blocks(jfn, ctx, out, pos)
+    lower_fn_emit_epilogue(out, pos, is_main)
+    g_lower_is_main = 0
+    lower_fn_patch_fixups(jfn, ctx, out, pos)
 }
 
 fn write_elf(out_fd: i64, code: &i8, code_len: i64,
@@ -5859,151 +5841,67 @@ fn main() {
     ; jda0 _start: lea rsi, [rsp+8] -> rsi = &argv[0]
     let argv_ptr = 0
     asm { out argv_ptr = rsi }
-    print("PH enter\n")
     let src_buf  = i8[262144]  ; 64 pages = 256KB, enough for current jda1.jda
-    print("PH a1\n")
-    print("PH pre2\n")
     let toks     = Token[65536]  ; 65536 * 32 bytes = 2 MiB
-    print("PH a2\n")
 
     ; Initialize global constant table (Bug 2 fix)
     let ct_tmp = ConstTable{}
     g_consts = ct_tmp
-    print("PH a3\n")
     let ct_init = g_consts
     ct_init.cnt = 0
-    print("PH a3b\n")
     let c_names_off = i64[4096]
     g_const_name_off_tbl = c_names_off
     let c_names_len = i64[4096]
     g_const_name_len_tbl = c_names_len
     let c_vals = i64[4096]
     g_const_val_tbl = c_vals
-    print("PH a3c\n")
     g_const_cnt = 0
     let g_names_off = i64[4096]
     g_glob_name_off = g_names_off
-    print("PH a3d\n")
     let g_names_len = i64[4096]
-    print("PH a3d1\n")
     g_glob_name_len = g_names_len
-    print("PH a3d2\n")
     let g_offs = i64[4096]
-    print("PH a3d3\n")
     g_glob_off      = g_offs
-    print("PH a3e\n")
     let g_sizes = i64[4096]
     g_glob_size     = g_sizes
     let g_stypes = i64[4096]
     g_glob_stype    = g_stypes
     let g_is_addrs = i64[4096]
     g_glob_is_addr  = g_is_addrs
-    print("PH allocs\n")
-    print("PH g0\n")
     let src_path = argv_ptr[1]
-    print("PH g1\n")
     let out_path = argv_ptr[2]
-    print("PH g2\n")
-    print("PH argvs\n")
-    print("PH s\n")
-    syscall(1, 1, src_path, 1)
-    print("PH s1\n")
-    print("PH o\n")
-    syscall(1, 1, out_path, 1)
-    print("PH o1\n")
-    print("\n")
-    print("PH n1\n")
-    print("PH src_path ")
-    print("PH sp1\n")
-    let src_path_len = 0
-    let src_len_more = 1
-    loop src_len_more == 1 {
-        let ch = load_i8_at(src_path, src_path_len)
-        if ch == 0 {
-            src_len_more = 0
-        } else {
-            src_path_len = src_path_len + 1
-        }
-    }
-    print("PH sl1\n")
-    syscall(1, 1, src_path, src_path_len)
-    print("PH sw1\n")
-    print("\n")
-    print("PH sn1\n")
-    print("PH out_path ")
-    print("PH op1\n")
-    let out_path_len = 0
-    let out_len_more = 1
-    loop out_len_more == 1 {
-        let ch = load_i8_at(out_path, out_path_len)
-        if ch == 0 {
-            out_len_more = 0
-        } else {
-            out_path_len = out_path_len + 1
-        }
-    }
-    print("PH ol1\n")
-    syscall(1, 1, out_path, out_path_len)
-    print("PH ow1\n")
-    print("\n")
 
     let src_fd = syscall(2, src_path, 0, 0)
     let src_len = syscall(0, src_fd, src_buf, 262144)  ; Read up to 256KB
     syscall(3, src_fd, 0, 0)
 
-    print("PH read\n")
     let tok_cnt = 0
     g_lex_out_toks = toks
     tok_cnt = lex(src_buf, src_len)
-    print("PH lex\n")
-    print("PH tokcnt ")
-    print(tok_cnt)
-    print(" t0 ")
-    print(toks[0].type)
-    print(" s0 ")
-    print(toks[0].str_start)
-    print(" l0 ")
-    print(toks[0].str_len)
-    print("\n")
-    print("PH raw0 ")
-    syscall(1, 1, src_buf + tok_str_start_at(toks, 0), tok_str_len_at(toks, 0))
-    print("\n")
     fix_char_literals(src_buf, toks, &tok_cnt)
-    print("PH fix\n")
     g_dbg_toks = toks
     g_dbg_tok_cnt = tok_cnt
     g_glob_cnt = 0
     g_glob_total_sz = 0
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
-    print("PH before compile setup\n")
-
     ; ---- Parse/compile functions ----
-    print("PH top\n")
     g_top_fn_cnt = 0
     g_top_main_idx = -1
-    print("PH pre-alloc\n")
     let fn_name_off = i64[512]
     let fn_name_len = i64[512]
     let fn_cnt = 0
     let pos = 0
-    print("PH pre-stab\n")
     let stab_tmp = StructTable{}
     g_stab_ptr = stab_tmp
     let stab = g_stab_ptr
-    print("PH post-stab\n")
     stab.cnt = 0
-    print("PH stab-cnt\n")
     stab.field_cnt = 0
-    print("PH stab fields ok\n")
-    print("PH loop start\n")
 
     ; Parse const declarations first (jda1.jda starts with 40+ consts)
     let more_consts = 1
-    print("PH loop start really\n")
     loop more_consts == 1 {
         if pos < tok_cnt {
-            print("LOOP pos ok\n")
             let top_start = tok_str_start_at(toks, pos)
             let top_len = tok_str_len_at(toks, pos)
             let top_t = tok_type_at(toks, pos)
@@ -6020,10 +5918,6 @@ fn main() {
             more_consts = 0
         }
     }
-    print("PH post-consts pos=")
-    print(pos)
-    print("\n")
-    print("PH structs\n")
     ; Parse and record top-level structs
     let more_structs = 1
     loop more_structs == 1 {
@@ -6036,9 +5930,6 @@ fn main() {
                 if streq(src_buf, top_start, 6, "struct") == 1 { top_is_struct_kw = 1 }
             }
             if top_t == TOK_STRUCT or top_is_struct_kw == 1 {
-                print("STRUCT ")
-                syscall(1, 1, src_buf + tok_str_start_at(toks, pos+1), tok_str_len_at(toks, pos+1))
-                print("\n")
                 parse_struct_decl(toks, &pos, g_stab_ptr, src_buf)
             } else {
                 more_structs = 0
@@ -6047,7 +5938,6 @@ fn main() {
             more_structs = 0
         }
     }
-    print("PH structs done\n")
     ; ---- Prepare output buffers ----
     let code_buf    = i8[1048576]
     let code_len    = 0
@@ -6075,15 +5965,9 @@ fn main() {
     let main_fallback = 0
 
     ; ---- Parse and compile each function immediately ----
-    print("PH compilation start\n")
     let top_iter = 0
     let more_top = 1
     loop more_top == 1 {
-        print("TOP iter=")
-        print(top_iter)
-        print(" pos=")
-        print(pos)
-        print("\n")
         if pos >= tok_cnt {
             more_top = 0
         } else {
@@ -6133,7 +6017,6 @@ fn main() {
                     scan_i = scan_i + 1
                 }
             }
-            print("PH rbrace_scan done\n")
             let skip_old_parse = 0
             if fn_lbrace_scan == -1 {
                 skip_old_parse = 1
@@ -6239,18 +6122,15 @@ fn main() {
                 }
             } else if tok_type_at(g_dbg_toks, pos) == TOK_LBRACE {
                 let fi = g_top_fn_cnt
-                print("FN#")
+                print("F ")
                 print(fi)
                 print(" ")
                 syscall(1, 1, src_buf + cur_name_off, cur_name_len)
                 print("\n")
-                if fi >= 256 { panic("Too many functions") }
+                if fi >= 512 { panic("Too many functions") }
                 fn_name_off[fi] = cur_name_off
                 fn_name_len[fi] = cur_name_len
                 g_top_fn_cnt = g_top_fn_cnt + 1
-                print("FI=")
-                print(g_top_fn_cnt)
-                print("\n")
                 fn_cnt = g_top_fn_cnt
                 g_cur_fn_name_start = cur_name_off
                 g_cur_fn_name_len = cur_name_len
@@ -6276,31 +6156,19 @@ fn main() {
                     }
                 } else {
                     expect(g_dbg_toks, &pos, TOK_LBRACE)
-                    print("START compile block fi=")
-                    print(fi)
-                    print(" ")
-                    syscall(1, 1, src_buf + cur_name_off, cur_name_len)
-                    print("\n")
                     jfn.strtab_pos = 0
                     g_dbg_fi = fi
                     live_compile_block(g_dbg_toks, &pos, g_stab_ptr, src_buf, jfn, start_bb)
-                    print("DONE compile block fi=")
-                    print(fi)
-                    print(" skip=")
-                    print(skip_fn_body_compile)
-                    print("\n")
                     g_dbg_fi = 0
                     if tok_type_at(g_dbg_toks, pos) == TOK_RBRACE {
                         pos = pos + 1
                     }
                 }
-                print("PH sync start\n")
                 ; Resync only when still within this function's span, and ignore
                 ; obviously bogus file-tail matches from the brace scanner.
                 if pos <= fn_rbrace and (fn_rbrace - fn_lbrace) < 2048 {
                     pos = fn_rbrace + 1
                 }
-                print("PH sync done\n")
                 ; Temporarily skip optimization passes during selfhost bring-up.
                 ; Current failures are occurring before lowering, inside IR cleanup.
                 ; Keep raw IR until the parser/codegen path is stable again.
@@ -6411,20 +6279,6 @@ fn main() {
         poke_byte(code_buf, 3, (jmp_rel >> 16) & 0xFF)
         poke_byte(code_buf, 4, (jmp_rel >> 24) & 0xFF)
     }
-    print("PH has ")
-    print(lookup_top_fn(fn_name_off, fn_name_len, fn_cnt, src_buf, "main", 4))
-    print(" ")
-    print(lookup_top_fn(fn_name_off, fn_name_len, fn_cnt, src_buf, "lookup_const", 12))
-    print(" ")
-    print(lookup_top_fn(fn_name_off, fn_name_len, fn_cnt, src_buf, "tok_set_imm_at", 14))
-    print(" ")
-    print(lookup_top_fn(fn_name_off, fn_name_len, fn_cnt, src_buf, "emit_byte", 9))
-    print(" ")
-    print(lookup_top_fn(fn_name_off, fn_name_len, fn_cnt, src_buf, "consume_use", 11))
-    print(" ")
-    print(lookup_top_fn(fn_name_off, fn_name_len, fn_cnt, src_buf, "live_codegen_expr_inline", 24))
-    print("\n")
-
     ; ---- Patch strtab fixups ----
     let strtab_va = 0x400000 + 120 + code_len
     let si = 0
@@ -6503,17 +6357,9 @@ fn main() {
         }
         ci = ci + 1
     }
-    print("PH unres ")
-    print(unresolved_calls)
-    print("\n")
-    print("PH patch\n")
     let out_fd = syscall(2, out_path, 577, 493)
-    print("PH out_fd ")
-    print(out_fd)
-    print("\n")
     g_emit_glob_buf = glob_buf
     g_emit_glob_len = g_glob_total_sz
-    print("PH write\n")
     write_elf(out_fd, code_buf, code_len, merged_str, merged_pos)
     syscall(3, out_fd, 0, 0)
     syscall(60, 0, 0, 0)
