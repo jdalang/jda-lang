@@ -1,0 +1,146 @@
+; =============================================================================
+; jda::ring -- Ring Buffer (Circular Buffer)
+; =============================================================================
+; Fixed-capacity FIFO ring buffer. Useful for streaming/windowed data.
+;
+; Memory layout (&i64):
+;   [0] length    (current elements)
+;   [1] capacity  (max elements)
+;   [2] head      (read index)
+;   [3] tail      (write index)
+;   [4] data_ptr  (&i64)
+;
+; Functions:
+;   ring_new(cap)          -> &i64  create ring buffer
+;   ring_push(r, val)      -> i64   push (overwrites oldest if full), returns evicted
+;   ring_pop(r)            -> i64   pop oldest (0 if empty)
+;   ring_peek(r)           -> i64   peek oldest (0 if empty)
+;   ring_peek_newest(r)    -> i64   peek newest (0 if empty)
+;   ring_len(r)            -> i64   current length
+;   ring_cap(r)            -> i64   capacity
+;   ring_full(r)           -> i64   1 if full
+;   ring_empty(r)          -> i64   1 if empty
+;   ring_get(r, idx)       -> i64   element at logical index (0=oldest)
+;   ring_clear(r)                   reset to empty
+;   ring_sum(r)            -> i64   sum of all elements
+;   ring_avg(r)            -> i64   integer average
+; =============================================================================
+
+fn ring_pages_for(n: i64) -> i64 {
+    let bytes = n * 8
+    let pages = bytes / 4096
+    let rem = bytes - pages * 4096
+    if rem > 0 { pages = pages + 1 }
+    if pages == 0 { pages = 1 }
+    ret pages
+}
+
+;; Create ring buffer with given capacity.
+fn ring_new(cap: i64) -> &i64 {
+    let c = cap
+    if c < 4 { c = 4 }
+    let hdr: &i64 = alloc_pages(1)
+    let data: &i64 = alloc_pages(ring_pages_for(c))
+    hdr[0] = 0
+    hdr[1] = c
+    hdr[2] = 0
+    hdr[3] = 0
+    hdr[4] = data
+    ret hdr
+}
+
+;; Push a value. If full, overwrites oldest and returns evicted value.
+;; Returns 0 if not full.
+fn ring_push(r: &i64, val: i64) -> i64 {
+    let data: &i64 = r[4]
+    let cap = r[1]
+    let tail = r[3]
+    let evicted = 0
+    if r[0] == cap {
+        ; Full — overwrite oldest
+        let head = r[2]
+        evicted = data[head]
+        let new_head = head + 1
+        if new_head >= cap { new_head = 0 }
+        r[2] = new_head
+    } else {
+        r[0] = r[0] + 1
+    }
+    data[tail] = val
+    let new_tail = tail + 1
+    if new_tail >= cap { new_tail = 0 }
+    r[3] = new_tail
+    ret evicted
+}
+
+;; Pop oldest value. Returns 0 if empty.
+fn ring_pop(r: &i64) -> i64 {
+    if r[0] == 0 { ret 0 }
+    let data: &i64 = r[4]
+    let head = r[2]
+    let val = data[head]
+    let cap = r[1]
+    let new_head = head + 1
+    if new_head >= cap { new_head = 0 }
+    r[2] = new_head
+    r[0] = r[0] - 1
+    ret val
+}
+
+;; Peek at oldest without removing.
+fn ring_peek(r: &i64) -> i64 {
+    if r[0] == 0 { ret 0 }
+    let data: &i64 = r[4]
+    ret data[r[2]]
+}
+
+;; Peek at newest without removing.
+fn ring_peek_newest(r: &i64) -> i64 {
+    if r[0] == 0 { ret 0 }
+    let data: &i64 = r[4]
+    let cap = r[1]
+    let idx = r[3] - 1
+    if idx < 0 { idx = cap - 1 }
+    ret data[idx]
+}
+
+fn ring_len(r: &i64) -> i64 { ret r[0] }
+fn ring_cap(r: &i64) -> i64 { ret r[1] }
+fn ring_full(r: &i64) -> i64 { if r[0] == r[1] { ret 1 } ret 0 }
+fn ring_empty(r: &i64) -> i64 { if r[0] == 0 { ret 1 } ret 0 }
+
+;; Get element at logical index (0 = oldest).
+fn ring_get(r: &i64, idx: i64) -> i64 {
+    if idx >= r[0] { ret 0 }
+    let data: &i64 = r[4]
+    let cap = r[1]
+    let actual = r[2] + idx
+    if actual >= cap { actual = actual - cap }
+    ret data[actual]
+}
+
+;; Clear the ring buffer.
+fn ring_clear(r: &i64) {
+    r[0] = 0
+    r[2] = 0
+    r[3] = 0
+}
+
+;; Sum of all elements.
+fn ring_sum(r: &i64) -> i64 {
+    let total = 0
+    let i = 0
+    let len = r[0]
+    loop i < len {
+        total = total + ring_get(r, i)
+        i = i + 1
+    }
+    ret total
+}
+
+;; Integer average (0 if empty).
+fn ring_avg(r: &i64) -> i64 {
+    let len = r[0]
+    if len == 0 { ret 0 }
+    ret ring_sum(r) / len
+}
