@@ -310,6 +310,9 @@ let g_emit_glob_len = 0
 let g_cmp_src = 0
 let g_cmp_name_start = 0
 let g_cmp_name_len = 0
+let g_lex_count_ptr = 0
+let g_lex_out_toks = 0
+let g_lex_src_len = 0
 
 ; ============================================================
 ; 2. LEXER
@@ -358,6 +361,10 @@ fn load_i8_at(p: &i8, idx: i64) -> i8 {
 
 fn load_i8_at0(p: &i8, idxp: &i64) -> i8 {
     ret p[idxp[0]]
+}
+
+fn char_at_pos(src: &i8, pos: &i64) -> i8 {
+    ret load_i8_at0(src, pos)
 }
 
 fn tok_type_at0(toks: &Token, pos: &i64) -> i32 {
@@ -812,12 +819,13 @@ fn lex_handle_string(src: &i8, src_len: i64, pos: &i64, out_toks: &Token, count:
     }
 }
 
-fn lex_handle_int(src: &i8, src_len: i64, pos: &i64, out_toks: &Token, count: &i64) {
+fn lex_handle_int(src: &i8, pos: &i64) {
     let val = 0
-    let limit = src_len
+    let limit = 0
+    limit = g_lex_src_len
     let out_idx = 0
     loop pos[0] < limit {
-        let cur = load_i8_at0(src, pos)
+        let cur = char_at_pos(src, pos)
         if cur < 48 {
             limit = pos[0]
         }
@@ -831,9 +839,9 @@ fn lex_handle_int(src: &i8, src_len: i64, pos: &i64, out_toks: &Token, count: &i
             pos[0] = pos[0] + 1
         }
     }
-    out_idx = count[0]
-    tok_set_int_at(out_toks, out_idx, val)
-    inc_i64_at0(count)
+    out_idx = g_lex_count_ptr[0]
+    tok_set_int_at(g_lex_out_toks, out_idx, val)
+    inc_i64_at0(g_lex_count_ptr)
     ret 0
 }
 
@@ -872,6 +880,9 @@ fn lex_handle_single(c: i8, pos: &i64, out_toks: &Token, count: &i64) {
 fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
     let pos   = 0
     let count = 0
+    g_lex_count_ptr = &count
+    g_lex_out_toks = out_toks
+    g_lex_src_len = src_len
 
     loop pos < src_len {
         let c = src[pos]
@@ -894,7 +905,7 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
 
         ; Integer literal: 0=48 9=57
         else if is_digit(c) == 1 {
-            lex_handle_int(src, src_len, &pos, out_toks, &count)
+            lex_handle_int(src, &pos)
         }
 
         ; Identifier or keyword: _=95
@@ -2223,10 +2234,34 @@ fn emit_ident_value(jfn: &JirFunction, bb: i64, tok: &Token) -> i64 {
 
 fn compile_let_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     expect(toks, pos, TOK_LET)
+    print("LET_HEAD p=")
+    print(pos[0])
+    print(" t0=")
+    print(tok_type_at(toks, pos[0]))
+    print(" t1=")
+    print(tok_type_at(toks, pos[0] + 1))
+    print(" t2=")
+    print(tok_type_at(toks, pos[0] + 2))
+    print(" ")
+    if tok_type_at(toks, pos[0]) == TOK_IDENT {
+        print_span(src, tok_str_start_at(toks, pos[0]), tok_str_len_at(toks, pos[0]))
+    }
+    print("\n")
     let name_start = tok_str_start_at(toks, pos[0])
     let name_len = tok_str_len_at(toks, pos[0])
     expect(toks, pos, TOK_IDENT)
     expect(toks, pos, TOK_EQ)
+    print("LET_RHS p=")
+    print(pos[0])
+    print(" t0=")
+    print(tok_type_at(toks, pos[0]))
+    print(" t1=")
+    print(tok_type_at(toks, pos[0] + 1))
+    print(" ")
+    if tok_type_at(toks, pos[0]) == TOK_IDENT {
+        print_span(src, tok_str_start_at(toks, pos[0]), tok_str_len_at(toks, pos[0]))
+    }
+    print("\n")
     let rhs_stype = TYPE_I64
     if tok_type_at(toks, pos[0]) == TOK_IDENT and tok_type_at(toks, pos[0] + 1) == TOK_LBRACK {
         let rhs_save = pos[0]
@@ -2579,6 +2614,35 @@ fn compile_expr_stmt_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i
                 }
             }
         }
+        if toks[pos[0]].type == TOK_IDENT and tok_type_at(toks, pos[0] + 1) != TOK_LPAREN {
+            let rhs_next = tok_type_at(toks, pos[0] + 1)
+            if rhs_next == TOK_LET or rhs_next == TOK_IF or rhs_next == TOK_LOOP or
+               rhs_next == TOK_RET or rhs_next == TOK_PRINT or rhs_next == TOK_RBRACE or
+               rhs_next == TOK_EOF or rhs_next == TOK_ELSE {
+                let rhs_tok = toks[pos[0]]
+                let rhs_id_fast = emit_ident_value(jfn, bb, &rhs_tok)
+                pos[0] = pos[0] + 1
+                let slot_fast = lookup_slot_name(jfn, name_start, name_len)
+                if slot_fast != -1 {
+                    let st_fast = Instr{}
+                    st_fast.op = OP_STORE
+                    st_fast.operand0 = rhs_id_fast
+                    st_fast.operand1 = slot_fast
+                    emit(jfn, bb, &st_fast)
+                    ret bb
+                }
+                let gi_fast = lookup_global(name_start, name_len, src)
+                if gi_fast != -1 {
+                    let gaddr_fast = emit_global_addr(jfn, bb, gi_fast)
+                    let stg_fast = Instr{}
+                    stg_fast.op = OP_STORE_MEM
+                    stg_fast.operand0 = rhs_id_fast
+                    stg_fast.operand1 = gaddr_fast
+                    emit(jfn, bb, &stg_fast)
+                    ret bb
+                }
+            }
+        }
         let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
         let slot = lookup_slot_name(jfn, name_start, name_len)
         if slot != -1 {
@@ -2888,8 +2952,18 @@ fn codegen_rel_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
     let left_id = codegen_add_inline(toks, pos, stab, src, jfn, bb)
     loop {
         let op = toks[pos[0]].type
+        print("rel p=")
+        print(pos[0])
+        print(" op=")
+        print(op)
+        print("\n")
         if op != TOK_LT and op != TOK_GT and op != TOK_LTE and op != TOK_GTE { ret left_id }
         pos[0] = pos[0] + 1
+        print("rel rhs p=")
+        print(pos[0])
+        print(" t=")
+        print(toks[pos[0]].type)
+        print("\n")
         let right_id = codegen_add_inline(toks, pos, stab, src, jfn, bb)
         let jir_op = tok_to_jir_op(op)
         left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
@@ -5616,13 +5690,29 @@ fn live_compile_if(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &
 
 fn live_compile_loop(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     expect(toks, pos, TOK_LOOP)
+    print("loop1\n")
+    print("p=")
+    print(pos[0])
+    print("\n")
     let start_bb = create_block(jfn)
     emit_jmp(jfn, bb, start_bb)
     let body_bb = create_block(jfn)
     let merge_bb = create_block(jfn)
     let cond_id = codegen_expr_inline(toks, pos, stab, src, jfn, start_bb)
+    print("loop2\n")
+    print("p=")
+    print(pos[0])
+    print(" t=")
+    print(tok_type_at0(toks, pos))
+    print("\n")
     emit_br(jfn, start_bb, cond_id, body_bb, merge_bb)
     expect(toks, pos, TOK_LBRACE)
+    print("loop3\n")
+    print("p=")
+    print(pos[0])
+    print(" t=")
+    print(tok_type_at0(toks, pos))
+    print("\n")
     let body_end = live_compile_block(toks, pos, stab, src, jfn, body_bb)
     expect(toks, pos, TOK_RBRACE)
     emit_jmp(jfn, body_end, start_bb)
@@ -5933,6 +6023,8 @@ fn main() {
             print(toks[pos + 1].type)
             print(" t2=")
             print(toks[pos + 2].type)
+            print(" name=")
+            print_span(src_buf, tok_str_start_at(toks, pos + 1), tok_str_len_at(toks, pos + 1))
             print("\n")
             if pos == 4435 {
                 print("SPWIN ")
@@ -5996,6 +6088,15 @@ fn main() {
             let more_params = 0
             if tok_type_at(toks, pos) != TOK_RPAREN { more_params = 1 }
             loop more_params == 1 {
+                    print("PARM p=")
+                    print(pos)
+                    print(" t0=")
+                    print(tok_type_at(toks, pos))
+                    print(" t1=")
+                    print(tok_type_at(toks, pos + 1))
+                    print(" t2=")
+                    print(tok_type_at(toks, pos + 2))
+                    print("\n")
                     let p_name_start = tok_str_start_at(toks, pos)
                     let p_name_len = tok_str_len_at(toks, pos)
                     expect(toks, &pos, TOK_IDENT)
@@ -6059,6 +6160,15 @@ fn main() {
                 print("H\n")
                 expect(toks, &pos, TOK_LBRACE)
                 print("I\n")
+                print("BODY p=")
+                print(pos)
+                print(" t0=")
+                print(tok_type_at(toks, pos))
+                print(" t1=")
+                print(tok_type_at(toks, pos + 1))
+                print(" t2=")
+                print(tok_type_at(toks, pos + 2))
+                print("\n")
                 live_compile_block(toks, &pos, stab, src_buf, &jfn, start_bb)
                 print("J\n")
                 expect(toks, &pos, TOK_RBRACE)
