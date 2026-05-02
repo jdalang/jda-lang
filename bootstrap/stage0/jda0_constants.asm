@@ -79,6 +79,7 @@ TOK_I32              equ 46
 TOK_I8               equ 47
 TOK_F64              equ 48
 
+
 ; Type constants
 TYPE_VOID            equ 0
 TYPE_I64             equ 1
@@ -90,6 +91,7 @@ TYPE_PTR_FLAG        equ 65536
 TYPE_PTR_I64         equ 65537
 TYPE_PTR_I32         equ 65538
 TYPE_PTR_I8          equ 65539
+
 
 ; Opcode constants
 OP_CONST             equ 0
@@ -125,18 +127,20 @@ OP_SHL               equ 29
 OP_GADDR             equ 30
 OP_ARGV_BASE         equ 31
 
+
 ; Structure sizes
 BB_SZ                equ 24600
-CST_SZ               equ 12
+CST_SZ               equ 16
 FIXUP_SZ             equ 32
-FLD_SZ               equ 96
-FN_SZ                equ 791873
+FLD_SZ               equ 112
+FN_SZ                equ 6305864
 LOWER_SZ             equ 100464
-NODE_SZ              equ 88
+NODE_SZ              equ 112
 REGALLOC_SZ          equ 49256
 STRUCTTABLE_SZ       equ 199184
 TOK_SZ               equ 40
 PRM_SZ               equ 32
+
 
 ; AST Node type constants
 NODE_FN              equ 0
@@ -161,6 +165,7 @@ NODE_ADDR            equ 18
 NODE_ARRAY_ALLOC     equ 19
 NODE_INDEX_STORE     equ 20
 NODE_DEREF           equ 21
+
 
 ; ============================================================
 ; SYSTEM CONSTANTS - Platform specific (x86-64 Linux)
@@ -188,6 +193,7 @@ MAP_PA               equ 34
 ; String table size
 STR_SZ               equ 3104
 
+
 ; ============================================================
 ; COMPATIBILITY CONSTANTS - Used by jda0, not in jda1 spec
 ; ============================================================
@@ -198,9 +204,6 @@ TOK_BREAK            equ 42
 TOK_CHAR             equ 45
 TOK_LTEQ             equ 46
 TOK_GTEQ             equ 47
-TOK_PIPE             equ 48
-TOK_SHL              equ 49
-TOK_SHR              equ 50
 TOK_ALLOC_PAGES      equ 51
 
 ; Type kind constants
@@ -214,3 +217,4 @@ GLB_SZ               equ 32
 
 ; Pointer type flag
 PTR_FLAG             equ 0x8000000000000000
+
