@@ -168,6 +168,9 @@ struct Token {
     imm:       i64
 }
 
+; Global token buffer - will be allocated at runtime in main()
+let g_toks = 0  ; Will be set to heap allocation in main()
+
 struct Node {
     node_type: i32
     op:        i32
@@ -382,9 +385,41 @@ fn classify_keyword(src: &i8, start: i64, len: i64) -> i32 {
     ret TOK_IDENT
 }
 
+; Helper to store i64 at offset in buffer (little-endian)
+fn store_i64_at(buf: &i8, offset: i64, value: i64) {
+    let p = buf + offset
+    p[0] = value & 0xFF
+    p[1] = (value >> 8) & 0xFF
+    p[2] = (value >> 16) & 0xFF
+    p[3] = (value >> 24) & 0xFF
+    p[4] = (value >> 32) & 0xFF
+    p[5] = (value >> 40) & 0xFF
+    p[6] = (value >> 48) & 0xFF
+    p[7] = (value >> 56) & 0xFF
+}
+
+; Helper to store i32 at offset
+fn store_i32_at(buf: &i8, offset: i64, value: i32) {
+    let p = buf + offset
+    p[0] = value & 0xFF
+    p[1] = (value >> 8) & 0xFF
+    p[2] = (value >> 16) & 0xFF
+    p[3] = (value >> 24) & 0xFF
+}
+
 fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
+    ; Token struct layout (28 bytes per token):
+    ;   offset 0-3:   type (i32)
+    ;   offset 4-7:   padding
+    ;   offset 8-15:  str_start (i64)
+    ;   offset 16-23: str_len (i64)
+    ;   offset 24-31: imm (i64) [but only 24-27 used since it's i64, rest padding]
+    ; Using manual byte offsets to work around jda0 codegen bug
+
+    print("[LEX] Starting tokenization")
     let pos   = 0
     let count = 0
+    let token_size = 28
 
     loop pos < src_len {
         let c = src[pos]
@@ -412,18 +447,18 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
                     break
                 }
                 if sc == 92 {
-                    ; Backslash - skip next character (escape sequence)
                     pos = pos + 2
                 } else {
                     pos = pos + 1
                 }
             }
             let len = pos - start
-            out_toks[count].type      = TOK_STR
-            out_toks[count].str_start = start
-            out_toks[count].str_len   = len
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, TOK_STR)
+            store_i64_at(g_toks, tok_offset + 8, start)
+            store_i64_at(g_toks, tok_offset + 16, len)
             count = count + 1
-            pos = pos + 1  ; skip closing "
+            pos = pos + 1
         }
 
         ; Integer literal
@@ -431,12 +466,12 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
             let val = 0
             loop pos < src_len and src[pos] >= '0' and src[pos] <= '9' {
                 let digit = src[pos] - '0'
-                let tmp = val * 10
-                val = tmp + digit
+                val = val * 10 + digit
                 pos = pos + 1
             }
-            out_toks[count].type = TOK_INT
-            out_toks[count].imm  = val
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, TOK_INT)
+            store_i64_at(g_toks, tok_offset + 24, val)
             count = count + 1
         }
 
@@ -448,40 +483,47 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
             }
             let len = pos - start
             let kw = classify_keyword(src, start, len)
-            out_toks[count].type      = kw
-            out_toks[count].str_start = start
-            out_toks[count].str_len   = len
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, kw)
+            store_i64_at(g_toks, tok_offset + 8, start)
+            store_i64_at(g_toks, tok_offset + 16, len)
             count = count + 1
         }
 
         ; Two-char operators
         else if c == '-' and next_ok and src[pos+1] == '>' {
-            out_toks[count].type = TOK_ARROW
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, TOK_ARROW)
             count = count + 1
             pos = pos + 2
         }
         else if c == '=' and next_ok and src[pos+1] == '=' {
-            out_toks[count].type = TOK_EQEQ
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, TOK_EQEQ)
             count = count + 1
             pos = pos + 2
         }
         else if c == '!' and next_ok and src[pos+1] == '=' {
-            out_toks[count].type = TOK_NEQ
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, TOK_NEQ)
             count = count + 1
             pos = pos + 2
         }
         else if c == '=' and next_ok and src[pos+1] == '>' {
-            out_toks[count].type = TOK_FATARROW
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, TOK_FATARROW)
             count = count + 1
             pos = pos + 2
         }
         else if c == '>' and next_ok and src[pos+1] == '=' {
-            out_toks[count].type = TOK_GTE
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, TOK_GTE)
             count = count + 1
             pos = pos + 2
         }
         else if c == '<' and next_ok and src[pos+1] == '=' {
-            out_toks[count].type = TOK_LTE
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, TOK_LTE)
             count = count + 1
             pos = pos + 2
         }
@@ -489,14 +531,18 @@ fn lex(src: &i8, src_len: i64, out_toks: &Token, out_cnt: &i64) -> i32 {
         ; Single-char operators
         else {
             let ct = char_to_tok(c)
-            out_toks[count].type = ct
+            let tok_offset = count * token_size
+            store_i32_at(g_toks, tok_offset, ct)
             count = count + 1
             pos = pos + 1
         }
     }
 
-    out_toks[count].type = TOK_EOF
+    ; Write EOF token
+    let tok_offset = count * token_size
+    store_i32_at(g_toks, tok_offset, TOK_EOF)
     out_cnt[0] = count
+    print("[LEX] Tokenization complete")
     ret ok(0)
 }
 
@@ -3352,8 +3398,8 @@ fn main() {
 
     let src_buf  = alloc_pages(32)  ; 32 pages = 128KB, enough for jda1.jda (115KB)
     print("[ALLOC] src_buf allocated")
-    let toks     = alloc_pages(16)  ; Token buffer (16 pages = 64KB = ~2280 tokens at 28 bytes each)
-    print("[ALLOC] toks allocated")
+    g_toks = alloc_pages(16)        ; Allocate token buffer on heap (16 pages = 64KB)
+    print("[ALLOC] g_toks allocated")
 
     let src_path = get_argv(argv_ptr, 1)
     print("[ARGS] src_path retrieved")
@@ -3369,12 +3415,9 @@ fn main() {
 
     let tok_cnt = 0
     print("[LEX] calling lex()")
-    ; Sanity check: toks should be non-null
-    if toks == 0 {
-        print("[ERROR] toks is null!")
-    }
-    lex(src_buf, src_len, toks, &tok_cnt)
-    print("[LEX] lex() returned")
+    lex(src_buf, src_len, g_toks, &tok_cnt)  ; Use global token buffer to avoid local array indexing bug
+    print("[LEX] lex() returned, tokens:")
+    print(tok_cnt)
 
     ; ---- Parse/compile functions ----
     let fn_name_off = i64[64]
@@ -3384,8 +3427,8 @@ fn main() {
     let stab = StructTable{}
 
     ; Parse and record top-level structs first.
-    loop toks[pos].type == TOK_STRUCT {
-        parse_struct_decl(toks, &pos, stab)
+    loop g_toks[pos].type == TOK_STRUCT {
+        parse_struct_decl(g_toks, &pos, stab)
     }
 
     ; ---- Prepare output buffers ----
@@ -3416,11 +3459,11 @@ fn main() {
     let jfn = JirFunction{}
 
     ; ---- Parse and compile each function immediately ----
-    loop toks[pos].type == TOK_FN {
+    loop g_toks[pos].type == TOK_FN {
         let fi = fn_cnt
         ; Peek at name token (pos+1) before parse_fn advances pos
-        fn_name_off[fi] = toks[pos + 1].str_start
-        fn_name_len[fi] = toks[pos + 1].str_len
+        fn_name_off[fi] = g_toks[pos + 1].str_start
+        fn_name_len[fi] = g_toks[pos + 1].str_len
 
         ; Reinitialize jfn for the next function
         jfn.var_cnt = 0
@@ -3433,7 +3476,7 @@ fn main() {
         jfn.src_len = src_len
         jfn.stab = stab
 
-        parse_fn(toks, &pos, &jfn, stab, src_buf)
+        parse_fn(g_toks, &pos, &jfn, stab, src_buf)
         fold_constants(&jfn)
         dce(&jfn)
 
