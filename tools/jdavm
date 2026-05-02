@@ -1,0 +1,632 @@
+#!/bin/sh
+# jdavm — Jda Version Manager
+# ============================
+#
+# Install and switch between multiple Jda versions.
+# Inspired by rustup, nvm, and rvm.
+#
+# Install jdavm:
+#   curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/tools/jdavm | sh -s -- install
+#
+# Usage:
+#   jdavm install <version>      Install a specific version (e.g., 0.2.0)
+#   jdavm install latest         Install the latest release
+#   jdavm use <version>          Switch to an installed version
+#   jdavm default <version>      Set the default version (persists across shells)
+#   jdavm list                   List installed versions
+#   jdavm list-remote            List available versions from GitHub
+#   jdavm current                Show the active version
+#   jdavm uninstall <version>    Remove an installed version
+#   jdavm update                 Update jdavm itself
+#   jdavm help                   Show this help
+#
+# Environment:
+#   JDAVM_DIR     Override base directory (default: ~/.jdavm)
+
+set -e
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+REPO="jdalang/jda-lang"
+GITHUB_API="https://api.github.com/repos/$REPO"
+GITHUB_RELEASES="https://github.com/$REPO/releases/download"
+JDAVM_DIR="${JDAVM_DIR:-$HOME/.jdavm}"
+VERSIONS_DIR="$JDAVM_DIR/versions"
+BIN_DIR="$JDAVM_DIR/bin"
+CURRENT_LINK="$JDAVM_DIR/current"
+
+# ── Colors ───────────────────────────────────────────────────────────────────
+
+if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
+    R='\033[0;31m' G='\033[0;32m' Y='\033[0;33m' B='\033[0;34m'
+    BD='\033[1m' DM='\033[2m' RS='\033[0m'
+else
+    R='' G='' Y='' B='' BD='' DM='' RS=''
+fi
+
+info()  { printf "${B}info${RS}  %s\n" "$1"; }
+ok()    { printf "${G}  ok${RS}  %s\n" "$1"; }
+warn()  { printf "${Y}warn${RS}  %s\n" "$1"; }
+err()   { printf "${R}err ${RS}  %s\n" "$1" >&2; }
+die()   { err "$1"; exit 1; }
+
+# ── Platform Detection ───────────────────────────────────────────────────────
+
+detect_platform() {
+    OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    ARCH="$(uname -m)"
+
+    case "$OS" in
+        linux)   OS="linux" ;;
+        darwin)  OS="darwin" ;;
+        *)       OS="linux" ;;
+    esac
+
+    case "$ARCH" in
+        x86_64|amd64)  ARCH="x86_64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+        *)             ARCH="x86_64" ;;
+    esac
+}
+
+# ── Fetch Helpers ────────────────────────────────────────────────────────────
+
+setup_fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        FETCH="curl -fsSL"
+        FETCH_OUT="curl -fsSL -o"
+    elif command -v wget >/dev/null 2>&1; then
+        FETCH="wget -qO-"
+        FETCH_OUT="wget -qO"
+    else
+        die "curl or wget is required"
+    fi
+}
+
+# ── Resolve tarball name for platform ────────────────────────────────────────
+
+tarball_name() {
+    local ver="$1"
+    case "$OS-$ARCH" in
+        linux-x86_64)  echo "jda-${ver}-linux-x86_64.tar.gz" ;;
+        linux-arm64)   echo "jda-${ver}-linux-arm64.tar.gz" ;;
+        darwin-*)      echo "jda-${ver}-macos.tar.gz" ;;
+        *)             echo "jda-${ver}-linux-x86_64.tar.gz" ;;
+    esac
+}
+
+# ── Resolve "latest" to actual version ───────────────────────────────────────
+
+resolve_latest() {
+    TAG=$($FETCH "$GITHUB_API/releases/latest" 2>/dev/null \
+        | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//' || true)
+    [ -z "$TAG" ] && die "Could not fetch latest version from GitHub"
+    echo "${TAG#v}"
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_install() {
+    local version="$1"
+    [ -z "$version" ] && die "Usage: jdavm install <version|latest>"
+
+    if [ "$version" = "latest" ]; then
+        version=$(resolve_latest)
+        info "Latest version: $version"
+    fi
+
+    local dest="$VERSIONS_DIR/$version"
+
+    if [ -d "$dest" ] && [ -f "$dest/bin/jda1" ]; then
+        ok "Jda $version is already installed"
+        cmd_use "$version"
+        return
+    fi
+
+    local tarball
+    tarball=$(tarball_name "$version")
+    local url="$GITHUB_RELEASES/v${version}/${tarball}"
+
+    info "Downloading Jda $version..."
+    TMPDIR=$(mktemp -d)
+    trap 'rm -rf "$TMPDIR"' EXIT
+
+    if ! $FETCH_OUT "$TMPDIR/$tarball" "$url" 2>/dev/null; then
+        # Fallback: try git clone for that tag
+        info "Release tarball not found, trying git clone..."
+        if command -v git >/dev/null 2>&1; then
+            if git clone --depth 1 --branch "v$version" "https://github.com/$REPO.git" "$TMPDIR/src" 2>/dev/null; then
+                install_from_source "$TMPDIR/src" "$version"
+                cmd_use "$version"
+                return
+            fi
+        fi
+        die "Version $version not found. Run 'jdavm list-remote' to see available versions."
+    fi
+
+    ok "Downloaded $tarball"
+
+    # Extract
+    mkdir -p "$dest/bin" "$dest/stdlib" "$dest/tools"
+    tar -xzf "$TMPDIR/$tarball" -C "$TMPDIR/extracted" 2>/dev/null || {
+        mkdir -p "$TMPDIR/extracted"
+        tar -xzf "$TMPDIR/$tarball" -C "$TMPDIR/extracted"
+    }
+
+    # Find extracted content (may be in a subdirectory)
+    local src
+    src=$(find "$TMPDIR/extracted" -name "jda1" -o -name "jda" -type f 2>/dev/null | head -1 || true)
+    if [ -n "$src" ]; then
+        src=$(dirname "$src")
+        # Handle case where binary is in bin/ subdir
+        [ "$(basename "$src")" = "bin" ] && src=$(dirname "$src")
+    else
+        src="$TMPDIR/extracted"
+        # Check for single top-level directory
+        local entries
+        entries=$(ls "$TMPDIR/extracted" 2>/dev/null)
+        local count
+        count=$(echo "$entries" | wc -l | tr -d ' ')
+        if [ "$count" = "1" ] && [ -d "$TMPDIR/extracted/$entries" ]; then
+            src="$TMPDIR/extracted/$entries"
+        fi
+    fi
+
+    # Copy files into versioned directory
+    # Binary
+    for bin in "$src/bin/jda1" "$src/jda1" "$src/jda" "$src/bin/jda"; do
+        if [ -f "$bin" ]; then
+            cp "$bin" "$dest/bin/jda1"
+            chmod +x "$dest/bin/jda1"
+            break
+        fi
+    done
+
+    # Stdlib
+    if [ -d "$src/stdlib" ]; then
+        cp -r "$src/stdlib/"* "$dest/stdlib/" 2>/dev/null || true
+    fi
+
+    # Tools
+    if [ -d "$src/tools" ]; then
+        cp -r "$src/tools/"* "$dest/tools/" 2>/dev/null || true
+        chmod +x "$dest/tools/"*.sh 2>/dev/null || true
+        chmod +x "$dest/tools/jda" 2>/dev/null || true
+    fi
+
+    # VERSION file
+    echo "$version" > "$dest/VERSION"
+
+    ok "Jda $version installed"
+    cmd_use "$version"
+}
+
+install_from_source() {
+    local src="$1"
+    local version="$2"
+    local dest="$VERSIONS_DIR/$version"
+    mkdir -p "$dest/bin" "$dest/stdlib" "$dest/tools"
+
+    # Copy binary
+    if [ -f "$src/bootstrap/stage0/jda1" ]; then
+        cp "$src/bootstrap/stage0/jda1" "$dest/bin/jda1"
+        chmod +x "$dest/bin/jda1"
+    elif [ -f "$src/bootstrap/bin/jda1-bootstrap" ]; then
+        cp "$src/bootstrap/bin/jda1-bootstrap" "$dest/bin/jda1"
+        chmod +x "$dest/bin/jda1"
+    fi
+
+    # Stdlib
+    [ -d "$src/stdlib" ] && cp -r "$src/stdlib/"* "$dest/stdlib/" 2>/dev/null || true
+
+    # Tools
+    if [ -d "$src/tools" ]; then
+        cp -r "$src/tools/"* "$dest/tools/" 2>/dev/null || true
+        chmod +x "$dest/tools/"*.sh 2>/dev/null || true
+        chmod +x "$dest/tools/jda" 2>/dev/null || true
+    fi
+
+    echo "$version" > "$dest/VERSION"
+    ok "Jda $version installed from source"
+}
+
+cmd_use() {
+    local version="$1"
+    [ -z "$version" ] && die "Usage: jdavm use <version>"
+
+    local dest="$VERSIONS_DIR/$version"
+    [ -d "$dest" ] || die "Version $version is not installed. Run 'jdavm install $version'"
+
+    # Update symlink
+    rm -f "$CURRENT_LINK"
+    ln -sf "$dest" "$CURRENT_LINK"
+
+    # Regenerate wrapper
+    create_jda_wrapper
+
+    ok "Now using Jda $version"
+}
+
+cmd_default() {
+    local version="$1"
+    [ -z "$version" ] && die "Usage: jdavm default <version>"
+
+    local dest="$VERSIONS_DIR/$version"
+    [ -d "$dest" ] || die "Version $version is not installed. Run 'jdavm install $version'"
+
+    echo "$version" > "$JDAVM_DIR/default"
+    cmd_use "$version"
+    ok "Default set to Jda $version"
+}
+
+cmd_current() {
+    if [ -L "$CURRENT_LINK" ] && [ -d "$CURRENT_LINK" ]; then
+        local target
+        target=$(readlink "$CURRENT_LINK" 2>/dev/null || ls -l "$CURRENT_LINK" | awk '{print $NF}')
+        local ver
+        ver=$(basename "$target")
+        printf "%s\n" "$ver"
+    elif [ -f "$JDAVM_DIR/default" ]; then
+        cat "$JDAVM_DIR/default"
+    else
+        echo "none"
+    fi
+}
+
+cmd_list() {
+    if [ ! -d "$VERSIONS_DIR" ] || [ -z "$(ls "$VERSIONS_DIR" 2>/dev/null)" ]; then
+        echo "No versions installed."
+        echo "Run 'jdavm install latest' to get started."
+        return
+    fi
+
+    local current
+    current=$(cmd_current)
+    local default_ver=""
+    [ -f "$JDAVM_DIR/default" ] && default_ver=$(cat "$JDAVM_DIR/default")
+
+    printf "${BD}Installed versions:${RS}\n\n"
+
+    for dir in "$VERSIONS_DIR"/*/; do
+        [ -d "$dir" ] || continue
+        local ver
+        ver=$(basename "$dir")
+        local marker=""
+
+        if [ "$ver" = "$current" ] && [ "$ver" = "$default_ver" ]; then
+            marker=" ${G}← current, default${RS}"
+        elif [ "$ver" = "$current" ]; then
+            marker=" ${G}← current${RS}"
+        elif [ "$ver" = "$default_ver" ]; then
+            marker=" ${B}← default${RS}"
+        fi
+
+        local pkg_count
+        pkg_count=$(find "$dir/stdlib" -name "*.jda" 2>/dev/null | wc -l | tr -d ' ')
+
+        printf "  ${BD}%s${RS}%b  ${DM}(%s stdlib packages)${RS}\n" "$ver" "$marker" "$pkg_count"
+    done
+    echo ""
+}
+
+cmd_list_remote() {
+    info "Fetching releases from GitHub..."
+
+    local releases
+    releases=$($FETCH "$GITHUB_API/releases" 2>/dev/null || true)
+
+    if [ -z "$releases" ]; then
+        # Fallback: list git tags
+        if command -v git >/dev/null 2>&1; then
+            info "Fetching tags..."
+            git ls-remote --tags "https://github.com/$REPO.git" 2>/dev/null \
+                | grep 'refs/tags/v' \
+                | sed 's/.*refs\/tags\/v//' \
+                | sort -rV \
+                | while read -r ver; do
+                    local installed=""
+                    [ -d "$VERSIONS_DIR/$ver" ] && installed=" ${G}(installed)${RS}"
+                    printf "  %s%b\n" "$ver" "$installed"
+                done
+        else
+            die "Could not fetch remote versions (need curl/wget or git)"
+        fi
+        return
+    fi
+
+    printf "${BD}Available versions:${RS}\n\n"
+
+    echo "$releases" \
+        | grep '"tag_name"' \
+        | sed 's/.*"tag_name": *"v//;s/".*//' \
+        | sort -rV \
+        | while read -r ver; do
+            local installed=""
+            [ -d "$VERSIONS_DIR/$ver" ] && installed=" ${G}(installed)${RS}"
+            printf "  %s%b\n" "$ver" "$installed"
+        done
+    echo ""
+}
+
+cmd_uninstall() {
+    local version="$1"
+    [ -z "$version" ] && die "Usage: jdavm uninstall <version>"
+
+    local dest="$VERSIONS_DIR/$version"
+    [ -d "$dest" ] || die "Version $version is not installed"
+
+    local current
+    current=$(cmd_current)
+
+    rm -rf "$dest"
+    ok "Uninstalled Jda $version"
+
+    # If we just removed the current version, switch to default or latest
+    if [ "$version" = "$current" ]; then
+        rm -f "$CURRENT_LINK"
+        local default_ver=""
+        [ -f "$JDAVM_DIR/default" ] && default_ver=$(cat "$JDAVM_DIR/default")
+
+        if [ -n "$default_ver" ] && [ -d "$VERSIONS_DIR/$default_ver" ]; then
+            cmd_use "$default_ver"
+        else
+            # Use latest installed
+            local latest
+            latest=$(ls "$VERSIONS_DIR" 2>/dev/null | sort -rV | head -1)
+            if [ -n "$latest" ]; then
+                cmd_use "$latest"
+            else
+                warn "No versions remaining"
+            fi
+        fi
+    fi
+
+    # Clean up default if it was the removed version
+    if [ -f "$JDAVM_DIR/default" ]; then
+        local def
+        def=$(cat "$JDAVM_DIR/default")
+        [ "$def" = "$version" ] && rm -f "$JDAVM_DIR/default"
+    fi
+}
+
+cmd_update() {
+    info "Updating jdavm..."
+    local url="https://raw.githubusercontent.com/$REPO/main/tools/jdavm"
+    local tmp
+    tmp=$(mktemp)
+    if $FETCH_OUT "$tmp" "$url" 2>/dev/null; then
+        local self
+        self=$(command -v jdavm 2>/dev/null || echo "$JDAVM_DIR/bin/jdavm")
+        cp "$tmp" "$self"
+        chmod +x "$self"
+        rm -f "$tmp"
+        ok "jdavm updated"
+    else
+        rm -f "$tmp"
+        die "Failed to download update"
+    fi
+}
+
+# ── Wrapper Script ───────────────────────────────────────────────────────────
+
+create_jda_wrapper() {
+    mkdir -p "$BIN_DIR"
+
+    cat > "$BIN_DIR/jda" << 'WRAPPER'
+#!/bin/sh
+# jda wrapper — delegates to the active jdavm version
+set -e
+
+JDAVM_DIR="${JDAVM_DIR:-$HOME/.jdavm}"
+CURRENT="$JDAVM_DIR/current"
+
+if [ ! -L "$CURRENT" ] && [ ! -d "$CURRENT" ]; then
+    # Try default
+    if [ -f "$JDAVM_DIR/default" ]; then
+        DEF=$(cat "$JDAVM_DIR/default")
+        if [ -d "$JDAVM_DIR/versions/$DEF" ]; then
+            CURRENT="$JDAVM_DIR/versions/$DEF"
+        fi
+    fi
+fi
+
+if [ ! -d "$CURRENT" ]; then
+    echo "error: no Jda version active. Run 'jdavm install latest'" >&2
+    exit 1
+fi
+
+JDA1="$CURRENT/bin/jda1"
+[ -f "$JDA1" ] || { echo "error: jda1 not found in active version" >&2; exit 1; }
+
+# Delegate to tools/jda if available (full CLI)
+if [ -f "$CURRENT/tools/jda" ]; then
+    export JDA="$JDA1"
+    export JDA_HOME="$CURRENT"
+    exec "$CURRENT/tools/jda" "$@"
+fi
+
+# Minimal fallback
+case "${1:-help}" in
+    build)     shift; exec "$JDA1" build "$@" ;;
+    run)
+        shift; TMP=$(mktemp)
+        "$JDA1" build "$@" -o "$TMP" && chmod +x "$TMP" && "$TMP"; RC=$?
+        rm -f "$TMP"; exit $RC ;;
+    version|--version|-v)
+        printf "jda %s\n" "$(cat "$CURRENT/VERSION" 2>/dev/null || echo unknown)" ;;
+    help|--help|-h|"")
+        echo "jda — The Jda Programming Language"
+        echo "Managed by jdavm. Run 'jdavm help' for version management."
+        echo ""
+        echo "Usage: jda <build|run|version|help> [options]" ;;
+    *) exec "$JDA1" "$@" ;;
+esac
+WRAPPER
+    chmod +x "$BIN_DIR/jda"
+}
+
+# ── Self-install (jdavm install) ─────────────────────────────────────────────
+
+cmd_self_install() {
+    info "Installing jdavm..."
+    mkdir -p "$JDAVM_DIR/bin" "$JDAVM_DIR/versions"
+
+    # Copy self to bin
+    local self_path
+    self_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    if [ -f "$self_path" ]; then
+        cp "$self_path" "$JDAVM_DIR/bin/jdavm"
+        chmod +x "$JDAVM_DIR/bin/jdavm"
+    fi
+
+    # Migrate from ~/.jda if it exists
+    if [ -d "$HOME/.jda/bin" ] && [ -f "$HOME/.jda/VERSION" ]; then
+        local old_ver
+        old_ver=$(cat "$HOME/.jda/VERSION" 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$old_ver" ] && [ ! -d "$VERSIONS_DIR/$old_ver" ]; then
+            info "Migrating existing ~/.jda installation (v$old_ver)..."
+            mkdir -p "$VERSIONS_DIR/$old_ver"
+            cp -r "$HOME/.jda/bin" "$VERSIONS_DIR/$old_ver/" 2>/dev/null || true
+            cp -r "$HOME/.jda/stdlib" "$VERSIONS_DIR/$old_ver/" 2>/dev/null || true
+            cp -r "$HOME/.jda/tools" "$VERSIONS_DIR/$old_ver/" 2>/dev/null || true
+            cp "$HOME/.jda/VERSION" "$VERSIONS_DIR/$old_ver/" 2>/dev/null || true
+            echo "$old_ver" > "$JDAVM_DIR/default"
+            cmd_use "$old_ver"
+            ok "Migrated v$old_ver from ~/.jda"
+        fi
+    fi
+
+    # Setup PATH
+    setup_path
+
+    ok "jdavm installed to $JDAVM_DIR"
+    echo ""
+    printf "  ${BD}Quick start:${RS}\n"
+    echo "    jdavm install latest     # install latest Jda"
+    echo "    jdavm list               # see installed versions"
+    echo "    jdavm use 0.2.0          # switch versions"
+    echo ""
+
+    case ":$PATH:" in
+        *":$JDAVM_DIR/bin:"*) ;;
+        *) printf "  Restart your terminal or run:\n    ${BD}export PATH=\"%s/bin:\$PATH\"${RS}\n\n" "$JDAVM_DIR" ;;
+    esac
+}
+
+# ── PATH Setup ───────────────────────────────────────────────────────────────
+
+setup_path() {
+    BIN="$JDAVM_DIR/bin"
+
+    case ":${PATH}:" in
+        *":${BIN}:"*) return 0 ;;
+    esac
+
+    SH=$(basename "${SHELL:-/bin/sh}")
+    case "$SH" in
+        zsh)  RC="$HOME/.zshrc" ;;
+        bash)
+            if [ -f "$HOME/.bash_profile" ]; then RC="$HOME/.bash_profile"
+            elif [ -f "$HOME/.bashrc" ];     then RC="$HOME/.bashrc"
+            else RC="$HOME/.profile"; fi ;;
+        fish)
+            RC="$HOME/.config/fish/config.fish"
+            mkdir -p "$(dirname "$RC")"
+            if ! grep -q "/.jdavm/bin" "$RC" 2>/dev/null; then
+                printf '\n# Jda Version Manager\nset -gx PATH %s $PATH\n' "$BIN" >> "$RC"
+                ok "PATH added to $RC"
+            fi
+            return 0 ;;
+        *) RC="$HOME/.profile" ;;
+    esac
+
+    if [ -n "$RC" ] && ! grep -q "/.jdavm/bin" "$RC" 2>/dev/null; then
+        printf '\n# Jda Version Manager (jdavm)\nexport PATH="%s:$PATH"\n' "$BIN" >> "$RC"
+        ok "PATH added to $RC"
+    fi
+}
+
+# ── Help ─────────────────────────────────────────────────────────────────────
+
+cmd_help() {
+    cat << 'HELP'
+jdavm — Jda Version Manager
+
+Usage: jdavm <command> [args]
+
+Version Management:
+  install <version|latest>   Download and install a Jda version
+  use <version>              Switch to an installed version
+  default <version>          Set the default version (persists across shells)
+  uninstall <version>        Remove an installed version
+
+Information:
+  list                       List installed versions
+  list-remote                List available versions from GitHub
+  current                    Show the active version
+
+Setup:
+  install                    Install jdavm itself (first-time setup)
+  update                     Update jdavm to the latest version
+
+Examples:
+  jdavm install latest       Install the latest Jda release
+  jdavm install 0.2.0        Install a specific version
+  jdavm use 0.2.0            Switch to version 0.2.0
+  jdavm default 0.2.0        Make 0.2.0 the default
+  jdavm list                 See what's installed
+
+Directory structure:
+  ~/.jdavm/
+    bin/                     jdavm + jda wrapper
+    versions/
+      0.1.1/                 Each version has its own directory
+        bin/jda1
+        stdlib/
+        tools/
+      0.2.0/
+        bin/jda1
+        stdlib/
+        tools/
+    current -> versions/0.2.0   Symlink to active version
+    default                  File containing default version name
+HELP
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+main() {
+    detect_platform
+    setup_fetch
+
+    case "${1:-help}" in
+        install)
+            shift
+            if [ $# -eq 0 ]; then
+                # No version specified = self-install
+                cmd_self_install
+            else
+                cmd_install "$1"
+            fi
+            ;;
+        use)        shift; cmd_use "$1" ;;
+        default)    shift; cmd_default "$1" ;;
+        current)    cmd_current ;;
+        list|ls)    cmd_list ;;
+        list-remote|ls-remote|available)
+                    cmd_list_remote ;;
+        uninstall|rm|remove)
+                    shift; cmd_uninstall "$1" ;;
+        update|self-update|upgrade)
+                    cmd_update ;;
+        help|--help|-h)
+                    cmd_help ;;
+        *)
+            err "Unknown command: $1"
+            echo "Run 'jdavm help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
