@@ -46,6 +46,7 @@ const MAX = 100         ; compile-time constant
 | `u16` | 16-bit unsigned integer |
 | `u8` | 8-bit unsigned integer |
 | `f64` | 64-bit floating point |
+| `f32` | 32-bit float (uses f64 precision internally) |
 | `&T` | Pointer/reference to type T |
 | `&i64` | Pointer to i64 array |
 | `&i8` | Byte buffer pointer |
