@@ -33,10 +33,21 @@ jobs:
           ulimit -s unlimited
           bash tools/run_tests.sh
 
-      - name: Package
+      - name: Package tarball
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           bash tools/package-release.sh "$VERSION"
+
+      - name: Build .deb package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash installers/build-deb.sh "$VERSION"
+
+      - name: Build .rpm package
+        run: |
+          sudo apt-get update && sudo apt-get install -y rpm
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash installers/build-rpm.sh "$VERSION"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -62,15 +73,20 @@ jobs:
           path: dist/
 
   build-macos:
-    name: Build (macOS)
+    name: Build (macOS .pkg)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Package macOS
+      - name: Package tarball
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           bash tools/package-release.sh "$VERSION" macos
+
+      - name: Build .pkg installer
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash installers/build-pkg.sh "$VERSION"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -78,9 +94,32 @@ jobs:
           name: macos
           path: dist/
 
+  build-windows:
+    name: Build (Windows .exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build .exe installer
+        shell: cmd
+        run: |
+          set JDA_VERSION=%GITHUB_REF_NAME:~1%
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installers\jda-setup.iss
+        env:
+          JDA_VERSION: ${{ github.ref_name }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/
+
   release:
     name: Create Release
-    needs: [build-linux-x86_64, build-linux-arm64, build-macos]
+    needs: [build-linux-x86_64, build-linux-arm64, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -95,9 +134,12 @@ jobs:
       - name: Merge checksums
         run: |
           cd dist
-          cat */checksums.txt > checksums.txt
+          cat */checksums.txt > checksums.txt 2>/dev/null || true
+          # Generate checksums for all release files
+          find . -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" -o -name "*.pkg" -o -name "*.exe" | \
+            while read f; do sha256sum "$f" >> checksums.txt; done
           echo "=== Release artifacts ==="
-          find . -name "*.tar.gz" -o -name "checksums.txt" | sort
+          find . -type f ! -name "checksums.txt" | sort
 
       - name: Read version
         id: version
@@ -110,34 +152,47 @@ jobs:
           body: |
             ## Jda v${{ steps.version.outputs.version }}
 
-            ### Installation
+            ### Downloads
+
+            | Platform | Installer | File |
+            |----------|-----------|------|
+            | **Windows** | `.exe` installer | `jda-${{ steps.version.outputs.version }}-windows-setup.exe` |
+            | **macOS** | `.pkg` installer | `jda-${{ steps.version.outputs.version }}-macos.pkg` |
+            | **Ubuntu/Debian** | `.deb` package | `jda_${{ steps.version.outputs.version }}_amd64.deb` |
+            | **Fedora/RHEL** | `.rpm` package | `jda-${{ steps.version.outputs.version }}-1.x86_64.rpm` |
+            | **Linux x86-64** | Tarball | `jda-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` |
+            | **Linux ARM64** | Tarball | `jda-${{ steps.version.outputs.version }}-linux-arm64.tar.gz` |
+            | **macOS** | Tarball | `jda-${{ steps.version.outputs.version }}-macos.tar.gz` |
+
+            ### One-line install (all platforms)
 
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | sh
             ```
 
-            Or download the tarball for your platform below and extract manually.
+            ### What's new
 
-            ### Platforms
-
-            | Platform | Architecture | File |
-            |----------|-------------|------|
-            | Linux | x86-64 | `jda-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` |
-            | Linux | ARM64 | `jda-${{ steps.version.outputs.version }}-linux-arm64.tar.gz` |
-            | macOS | Universal | `jda-${{ steps.version.outputs.version }}-macos.tar.gz` |
+            - JSON parse benchmark — Jda beats C (31ms vs 32ms)
+            - Getting Started guides (CLI tool, HTTP server, neural network)
+            - For-loop register fix + ML demo polish
+            - 114 stdlib packages
 
             ### What's included
 
-            - `jda` — the Jda compiler (statically linked)
-            - `stdlib/` — standard library (21 modules)
-            - `tools/` — jda-fmt, jda-doc, jda-lsp, jda-test, jda-pkg, jda-arm64, jda-macos, jda-wasm
+            - `jda` — compiler (static ELF binary, ~1 MB)
+            - `stdlib/` — 114 standard library packages
+            - `tools/` — formatter, doc generator, package manager, LSP, test runner
 
             ### Verify
 
             ```bash
             sha256sum -c checksums.txt
-            jda --version
+            jda version
             ```
           files: |
             dist/*/*.tar.gz
+            dist/*/*.deb
+            dist/*/*.rpm
+            dist/*/*.pkg
+            dist/*/*.exe
             dist/checksums.txt
