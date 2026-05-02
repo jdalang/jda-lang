@@ -47,27 +47,45 @@ jda0 had bugs that appeared unfixable at assembly level:
 
 **Resolution**: Generated code avoids these patterns; validates jda0's core logic works when properly constructed.
 
+## Second Fix: lex() String Escape Bounds Checking
+**Commit**: `9e9a315` - correct lex() string escape handling and bounds checking
+
+### The Bug #2
+- lex() crashed when processing files with escape sequences (especially near EOF)
+- Original code: `pos += 2` unconditionally when encountering backslash in string
+- This could move `pos` past `src_len`, causing out-of-bounds access
+
+### The Fix #2
+- Increment pos by 1, then conditionally increment again if in bounds
+- Check that closing quote exists before skipping it
+- Prevents buffer overrun when escape sequences appear near EOF
+
+### Result
+- ✅ lex() successfully processes large files and jda1.jda without crashing!
+- jda1 can now lex jda1.jda completely
+
 ## Remaining Self-Hosting Blocker
-**Issue**: jda1 still crashes with segfault when compiling jda1.jda (itself)
-- ✅ hello.jda → [jda1] → hello_binary ✅ (NOW WORKS)
-- ❌ jda1.jda → [jda1] → **Segfault in lex() phase** ❌
-- The crash occurs while lexing jda1.jda, not during parsing or codegen
-- Likely causes:
-  - lex() has a bug when processing large files or specific syntax patterns in jda1.jda
-  - lex() may overflow token buffer despite increasing it to 15K tokens
-  - Edge case in string/comment handling or token classification
+**Issue**: jda1's parser doesn't support `const` declarations
+- ✅ hello.jda → [jda1] → hello_binary ✅ (WORKS)
+- ✅ jda1.jda lex phase → [jda1] → completes successfully ✅ (NEWLY FIXED)
+- ❌ jda1.jda parse phase → [jda1] → **Blocked: parser doesn't handle `const` syntax** ❌
+- Root cause: jda1.jda starts with 40+ const declarations, but jda1's parser only looks for `fn` declarations
+- Solution needed: Either (1) implement const declaration parsing in jda1, or (2) move const declarations out of the main syntax
 
 ## Current Compilation Chain
 ```
 hello.jda → [jda0] → hello_binary ✅
 jda1.jda → [jda0] → jda1_binary ✅
 hello.jda → [jda1] → hello_binary ✅ (NEWLY WORKING!)
-jda1.jda → [jda1] → Segfault in lex() ❌ (blocking final self-hosting)
+jda1.jda (lex) → [jda1] → tokens ✅ (NEWLY WORKING!)
+jda1.jda (parse) → [jda1] → AST ❌ (blocked: needs const parsing)
 ```
 
 ## Next Steps
-- **Immediate**: Debug segfault in jda1 codegen phase (GDB + instrumentation)
-- **Phase 4-5**: Token/opcode handler generation (after segfault resolved)
+1. **Implement const declaration parsing in jda1** - allows full self-hosting
+2. **Parse jda1.jda with jda1** - reaches codegen phase
+3. **Debug any remaining codegen issues** - achieve full self-hosting roundtrip
+4. **Phase 4-5**: Token/opcode handler generation for jda0 code generator
 
 ## Impact
 - **Language Development**: Full speed ahead — architecture no longer bottlenecked by hardcoding
