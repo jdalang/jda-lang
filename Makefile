@@ -33,6 +33,15 @@ selfhost-stage1: stage0
 		$(IMAGE) \
 		bash -lc './jda0 ../stage1/jda1.jda /tmp/jda1 && chmod +x /tmp/jda1 && /tmp/jda1 /jda/examples/hello.jda /tmp/hello_from_stage1 && chmod +x /tmp/hello_from_stage1 && /tmp/hello_from_stage1'
 
+test-if: stage0
+	docker run --rm \
+		--platform=$(DOCKER_PLATFORM) \
+		-v $(PWD):/jda \
+		-w /jda/bootstrap/stage0 \
+		$(IMAGE) \
+		bash -lc './jda0 ../stage1/jda1.jda /tmp/jda1 && chmod +x /tmp/jda1 && /tmp/jda1 /jda/examples/test_if.jda /tmp/test_if && chmod +x /tmp/test_if && /tmp/test_if'
+
+
 ci-selfhost-roundtrip: stage0
 	docker run --rm \
 		--platform=$(DOCKER_PLATFORM) \
