@@ -27,7 +27,17 @@ STR_SZ           equ 3104
 FN_SZ            equ 288
 PRM_SZ           equ 32
 LOC_SZ           equ 48
-GLB_SZ           equ 32
+GLB_SZ           equ 48
+TOK_BUF_CAP      equ 8388608
+CST_TBL_CAP      equ 65536
+STT_TBL_CAP      equ 262144
+FN_TBL_CAP       equ 268435456
+LOC_TBL_CAP      equ 65536
+GLB_TBL_CAP      equ 32768
+COD_BUF_CAP      equ 16777216
+SDT_BUF_CAP      equ 4194304
+FIX_BUF_CAP      equ 4194304
+SFX_TBL_CAP      equ 262144
 
 ; Token type constants
 TOK_FN           equ 0
@@ -91,34 +101,38 @@ PTR_FLAG         equ 0x8000000000000000
 
 section .bss
     src_buf resb 1048576
-    tok_buf resb 1048576
+    tok_buf_ptr resb 8
     tok_cnt resb 8
     tok_pos resb 8
-    cst_tbl resb 65536
+    cst_tbl_ptr resb 8
     cst_cnt resb 8
-    stt_tbl resb 262144
+    stt_tbl_ptr resb 8
     stt_cnt resb 8
-    fn_tbl  resb 262144
+    fn_tbl_ptr  resb 8
     fn_cnt  resb 8
-    loc_tbl resb 65536
+    loc_tbl_ptr resb 8
     loc_cnt resb 8
     loc_rbp resb 8
     loc_max_rbp resb 8
     lv_sid resb 8
     lv_esz resb 8
     lv_isptr resb 8
+    lv_glb resb 8
+    p1_glb_tkind resb 8
+    p1_glb_sid   resb 8
+    p1_glb_esz   resb 8
     ga_from_dot resb 8      ; 1 if last .ga_post_loop entry came from .ga_dot
     ga_acnt     resb 8      ; array count from field; >0 means embedded array
-    glb_tbl resb 32768
+    glb_tbl_ptr resb 8
     glb_cnt resb 8
     glb_r15 resb 8
     fix_cnt resb 8
-    cod_buf resb 4194304
+    cod_buf_ptr resb 8
     cod_len resb 8
-    sdt_buf resb 1048576
+    sdt_buf_ptr resb 8
     sdt_len resb 8
-    fix_buf resb 32768
-    sfx_tbl resb 32768
+    fix_buf_ptr resb 8
+    sfx_tbl_ptr resb 8
     sfix_cnt resb 8
     jmp_stk resb 4096
     jmp_top resb 8
@@ -174,6 +188,12 @@ section .data
     dbg_eq_l equ $-dbg_eq-1
     dbg_done db `D`,0
     dbg_done_l equ $-dbg_done-1
+    dbg_main_seen db `m`,0
+    dbg_main_seen_l equ $-dbg_main_seen-1
+    dbg_main_fix db `M`,0
+    dbg_main_fix_l equ $-dbg_main_fix-1
+    dbg_main_miss db `!`,0
+    dbg_main_miss_l equ $-dbg_main_miss-1
 
     ; keywords — order matters for classify_kw()
     kw_fn db "fn",0
@@ -263,7 +283,58 @@ _start:
     lea     rsi, [rsp+8]    ; argv
     cmp     rdi, 3
     jl      .bad_args
+    mov     edi, TOK_BUF_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [tok_buf_ptr], rax
+    mov     edi, CST_TBL_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [cst_tbl_ptr], rax
+    mov     edi, STT_TBL_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [stt_tbl_ptr], rax
+    mov     edi, FN_TBL_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [fn_tbl_ptr], rax
+    mov     edi, LOC_TBL_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [loc_tbl_ptr], rax
+    mov     edi, GLB_TBL_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [glb_tbl_ptr], rax
+    mov     edi, COD_BUF_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [cod_buf_ptr], rax
+    mov     edi, SDT_BUF_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [sdt_buf_ptr], rax
+    mov     edi, FIX_BUF_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [fix_buf_ptr], rax
+    mov     edi, SFX_TBL_CAP
+    call    mmap_anon
+    test    rax, rax
+    js      .bad_oom
+    mov     [sfx_tbl_ptr], rax
     ; argv[1] = source path
+    lea     rsi, [rsp+8]
     mov     rcx, [rsi+8]
     lea     r12, [src_buf]
     ; open source file
@@ -337,6 +408,15 @@ _start:
     mov     edi, 2
     lea     rsi, [m_err]
     mov     edx, m_err_l
+    syscall
+    mov     eax, SYS_EXIT
+    mov     edi, 1
+    syscall
+.bad_oom:
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [m_oom]
+    mov     edx, m_oom_l
     syscall
     mov     eax, SYS_EXIT
     mov     edi, 1
@@ -431,6 +511,33 @@ strncmp_mem:
     ret
 
 ; =============================================================================
+; print_rax: print RAX as decimal integer to stderr
+print_rax:
+    push    rbp
+    mov     rbp, rsp
+    sub     rsp, 32
+    mov     rbx, 10
+    lea     rcx, [rbp-1]
+    mov     byte [rcx], 0
+.pr_loop:
+    xor     rdx, rdx
+    div     rbx
+    add     dl, '0'
+    dec     rcx
+    mov     [rcx], dl
+    test    rax, rax
+    jnz     .pr_loop
+    ; print it
+    mov     rax, SYS_WRITE
+    mov     rsi, rcx
+    mov     rdi, 2          ; stderr
+    ; compute length
+    lea     rdx, [rbp-1]
+    sub     rdx, rsi
+    syscall
+    leave
+    ret
+
 ; mmap_anon: rdi=size -> rax=ptr (PROT_RW MAP_PA fd=-1)
 ; =============================================================================
 mmap_anon:
@@ -449,7 +556,7 @@ mmap_anon:
 ; =============================================================================
 emit1:  ; rdi = byte
     mov     rax, [cod_len]
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, rax
     mov     [rbx], dil
     inc     qword [cod_len]
@@ -457,7 +564,7 @@ emit1:  ; rdi = byte
 
 emit4:  ; rdi = dword
     mov     rax, [cod_len]
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, rax
     mov     [rbx], edi
     add     qword [cod_len], 4
@@ -465,7 +572,7 @@ emit4:  ; rdi = dword
 
 emit8:  ; rdi = qword
     mov     rax, [cod_len]
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, rax
     mov     [rbx], rdi
     add     qword [cod_len], 8
@@ -498,7 +605,7 @@ emit_bytes:
 
 ; patch4 — patch a dword at cod_buf[rdi] with value rsi
 patch4:
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, rdi
     mov     [rbx], esi
     ret
@@ -582,7 +689,7 @@ lex_all:
     ; emit TOK_STR token
     mov     rsi, [rbp-16]       ; count
     imul    rsi, rsi, TOK_SZ
-    lea     rdi, [tok_buf]
+    mov     rdi, [tok_buf_ptr]
     add     rdi, rsi
     mov     qword [rdi], TOK_STR
     mov     rax, [rbp-32]
@@ -639,7 +746,7 @@ lex_all:
     inc     qword [rbp-8]       ; skip closing '
     mov     rsi, [rbp-16]
     imul    rsi, rsi, TOK_SZ
-    lea     rdi, [tok_buf]
+    mov     rdi, [tok_buf_ptr]
     add     rdi, rsi
     mov     qword [rdi], TOK_CHAR
     mov     qword [rdi+8], 0
@@ -725,7 +832,7 @@ lex_all:
 .emit_int:
     mov     rsi, [rbp-16]
     imul    rsi, rsi, TOK_SZ
-    lea     rdi, [tok_buf]
+    mov     rdi, [tok_buf_ptr]
     add     rdi, rsi
     mov     qword [rdi], TOK_INT
     mov     qword [rdi+8], 0
@@ -788,7 +895,7 @@ lex_all:
     ; emit token
     mov     rsi, [rbp-16]
     imul    rsi, rsi, TOK_SZ
-    lea     rdi, [tok_buf]
+    mov     rdi, [tok_buf_ptr]
     add     rdi, rsi
     mov     [rdi], r15          ; type
     mov     [rdi+8], r14        ; start
@@ -890,7 +997,7 @@ lex_all:
 .emit_op2:
     mov     rsi, [rbp-16]
     imul    rsi, rsi, TOK_SZ
-    lea     rdi, [tok_buf]
+    mov     rdi, [tok_buf_ptr]
     add     rdi, rsi
     mov     [rdi], r14
     mov     qword [rdi+8], 0
@@ -907,7 +1014,7 @@ lex_all:
     inc     qword [rbp-8]
     mov     rsi, [rbp-16]
     imul    rsi, rsi, TOK_SZ
-    lea     rdi, [tok_buf]
+    mov     rdi, [tok_buf_ptr]
     add     rdi, rsi
     mov     [rdi], r14
     mov     qword [rdi+8], 0
@@ -919,7 +1026,7 @@ lex_all:
     ; emit TOK_EOF
     mov     rsi, [rbp-16]
     imul    rsi, rsi, TOK_SZ
-    lea     rdi, [tok_buf]
+    mov     rdi, [tok_buf_ptr]
     add     rdi, rsi
     mov     qword [rdi], TOK_EOF
     mov     qword [rdi+8], 0
@@ -1062,7 +1169,7 @@ classify_kw:
 get_cur_tok_ptr:            ; -> rax = ptr to current token (does NOT clobber rbx)
     mov     rax, [tok_pos]
     imul    rax, rax, TOK_SZ
-    lea     r10, [tok_buf]
+    mov     r10, [tok_buf_ptr]
     add     rax, r10
     ret
 
@@ -1123,13 +1230,14 @@ src_name_eq:
 ; lookup_const: r8=name_start, r9=name_len -> rax=value, rdx=1/0 (found)
 ; =============================================================================
 lookup_const:
+    push    rbx
     xor     rcx, rcx
 .lc_lp:
     cmp     rcx, [cst_cnt]
     jge     .lc_no
     mov     rax, rcx
     imul    rax, rax, CST_SZ
-    lea     rbx, [cst_tbl]
+    mov     rbx, [cst_tbl_ptr]
     add     rax, rbx        ; entry ptr in rax
     mov     r10, [rax]      ; entry.name_start
     mov     r11, [rax+8]    ; entry.name_len
@@ -1139,16 +1247,18 @@ lookup_const:
     pop     rcx
     pop     rbx
     cmp     rax, 1
-    jne     .lc_next
+    jne     .lc_nx
     mov     rax, [rbx+16]   ; value
     mov     edx, 1
+    pop     rbx
     ret
-.lc_next:
+.lc_nx:
     inc     rcx
     jmp     .lc_lp
 .lc_no:
     xor     eax, eax
     xor     edx, edx
+    pop     rbx
     ret
 
 ; =============================================================================
@@ -1166,13 +1276,15 @@ lookup_struct:
     jge     .ls_no
     mov     rax, rcx
     imul    rax, rax, STR_SZ
-    lea     rbx, [stt_tbl]
+    mov     rbx, [stt_tbl_ptr]
     add     rax, rbx
     mov     r12, [rax]      ; stored name_start
     mov     r13, [rax+8]    ; stored name_len
     cmp     r9, r13         ; compare lengths first
     jne     .ls_next
     ; compare bytes
+    push    r14
+    push    r15
     mov     r14, r8         ; src offset for lookup name
     mov     r15, r12        ; src offset for stored name
     xor     rdx, rdx        ; index
@@ -1182,10 +1294,12 @@ lookup_struct:
     mov     al, [src_buf + r14 + rdx]
     mov     bl, [src_buf + r15 + rdx]
     cmp     al, bl
-    jne     .ls_next
+    jne     .ls_ne
     inc     rdx
     jmp     .ls_cmp
 .ls_found:
+    pop     r15
+    pop     r14
     mov     rax, rcx
     pop     r15
     pop     r14
@@ -1193,6 +1307,9 @@ lookup_struct:
     pop     r12
     pop     rbx
     ret
+.ls_ne:
+    pop     r15
+    pop     r14
 .ls_next:
     inc     rcx
     jmp     .ls_lp
@@ -1230,7 +1347,7 @@ get_elem_sz:
     jge     .r8
     mov     rax, rcx
     imul    rax, rax, STR_SZ
-    lea     rbx, [stt_tbl]
+    mov     rbx, [stt_tbl_ptr]
     add     rax, rbx
     cmp     [rax], r8       ; name_start match
     jne     .gs_nx
@@ -1303,7 +1420,7 @@ p1_scan:
     ; store in cst_tbl
     mov     rax, [cst_cnt]
     imul    rax, rax, CST_SZ
-    lea     rbx, [cst_tbl]
+    mov     rbx, [cst_tbl_ptr]
     add     rbx, rax
     mov     [rbx],    r12
     mov     [rbx+8],  r13
@@ -1322,13 +1439,152 @@ p1_scan:
     syscall
     call    adv_tok         ; skip 'let'
     call    get_cur_tok_ptr
-    mov     r8,  [rax+8]    ; var name_start
-    mov     r9,  [rax+16]   ; var name_len
+    mov     r14, [rax+8]    ; var name_start
+    mov     r15, [rax+16]   ; var name_len
     call    adv_tok         ; skip NAME
+    mov     qword [p1_glb_tkind], -1 ; type_id / tkind = unknown scalar
+    mov     qword [p1_glb_sid], -1   ; sid = unknown
+    mov     qword [p1_glb_esz], 8    ; esz = qword by default
+    call    cur_tok_type
+    cmp     rax, TOK_COLON
+    jne     .p1_let_find_eq
+    call    adv_tok         ; skip ':'
+    xor     ebx, ebx        ; is_ptr = 0
+    call    cur_tok_type
+    cmp     rax, TOK_AMP
+    jne     .p1_let_type_tok
+    mov     ebx, 1
+    call    adv_tok         ; skip '&'
+.p1_let_type_tok:
+    call    cur_tok_type
+    cmp     rax, TOK_I8
+    jne     .p1_let_type_i32
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     qword [p1_glb_tkind], TK_PTR
+    mov     qword [p1_glb_esz], 1
+    jmp     .p1_let_find_eq
+.p1_let_type_i32:
+    cmp     rax, TOK_I32
+    jne     .p1_let_type_i64
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     qword [p1_glb_tkind], TK_PTR
+    mov     qword [p1_glb_esz], 4
+    jmp     .p1_let_find_eq
+.p1_let_type_i64:
+    cmp     rax, TOK_I64
+    jne     .p1_let_type_f64
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     qword [p1_glb_tkind], TK_PTR
+    mov     qword [p1_glb_esz], 8
+    jmp     .p1_let_find_eq
+.p1_let_type_f64:
+    cmp     rax, TOK_F64
+    jne     .p1_let_type_ident
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     qword [p1_glb_tkind], TK_PTR
+    mov     qword [p1_glb_esz], 8
+    jmp     .p1_let_find_eq
+.p1_let_type_ident:
+    cmp     rax, TOK_IDENT
+    jne     .p1_let_find_eq
+    call    get_cur_tok_ptr
+    mov     r8, [rax+8]
+    mov     r9, [rax+16]
+    call    lookup_struct
+    cmp     rax, -1
+    je      .p1_let_find_eq
+    cmp     ebx, 0
+    je      .p1_let_find_eq
+    mov     [p1_glb_sid], rax
+    mov     qword [p1_glb_tkind], TK_PTR
+    imul    rax, rax, STR_SZ
+    mov     rdx, [stt_tbl_ptr]
+    add     rax, rdx
+    mov     rax, [rax+16]
+    mov     [p1_glb_esz], rax
+.p1_let_find_eq:
+    call    cur_tok_type
+    cmp     rax, TOK_EQ
+    je      .p1_let_got_eq
+    cmp     rax, TOK_EOF
+    je      .p1_let_store
+    call    adv_tok
+    jmp     .p1_let_find_eq
+.p1_let_got_eq:
     call    adv_tok         ; skip '='
-    call    adv_tok         ; skip VALUE
-    ; register as global with type i64
-    mov     r10, -1         ; type_id = i64 (untyped)
+    ; peek at the value token to see if it's a type name
+    call    get_cur_tok_ptr
+    mov     r8, [rax+8]
+    mov     r9, [rax+16]
+    push    r8
+    push    r9
+    call    lookup_struct
+    pop     r9
+    pop     r8
+    cmp     rax, -1
+    je      .p1_let_val_scalar
+    ; it is a struct type!
+    mov     [p1_glb_sid], rax
+    mov     qword [p1_glb_tkind], TK_STRUCT
+    imul    rax, rax, STR_SZ
+    mov     rdx, [stt_tbl_ptr]
+    add     rax, rdx
+    mov     rax, [rax+16]   ; struct size
+    mov     [p1_glb_esz], rax
+.p1_let_val_scalar:
+    call    adv_tok         ; skip the Type name or Value
+    ; handle top-level initializers like Node{} and Node[16]
+    call    cur_tok_type
+    cmp     rax, TOK_LBRACE
+    je      .p1_let_skip_brace_init
+    cmp     rax, TOK_LBRACK
+    je      .p1_let_skip_brack_init
+    jmp     .p1_let_store
+.p1_let_skip_brace_init:
+    call    adv_tok         ; skip '{'
+    mov     rcx, 1
+.p1_let_brace_lp:
+    call    cur_tok_type
+    cmp     rax, TOK_EOF
+    je      .p1_let_store
+    cmp     rax, TOK_LBRACE
+    jne     .p1_let_brace_r
+    inc     rcx
+    jmp     .p1_let_brace_adv
+.p1_let_brace_r:
+    cmp     rax, TOK_RBRACE
+    jne     .p1_let_brace_adv
+    dec     rcx
+    cmp     rcx, 0
+    je      .p1_let_brace_done
+.p1_let_brace_adv:
+    call    adv_tok
+    jmp     .p1_let_brace_lp
+.p1_let_brace_done:
+    call    adv_tok         ; skip final '}'
+    jmp     .p1_let_store
+.p1_let_skip_brack_init:
+    call    adv_tok         ; skip '['
+    call    get_cur_tok_ptr
+    mov     rax, [rax+24]   ; rax = array count (ival)
+    imul    rax, qword [p1_glb_esz]
+    mov     [p1_glb_esz], rax ; p1_glb_esz now holds total size
+    call    adv_tok         ; skip count
+    call    cur_tok_type
+    cmp     rax, TOK_RBRACK
+    jne     .p1_let_store
+    call    adv_tok         ; skip ']'
+    jmp     .p1_let_store
+.p1_let_store:
+    mov     r8, r14
+    mov     r9, r15
+    mov     r10, [p1_glb_tkind]
+    mov     r11, [p1_glb_sid]
+    mov     r12, [p1_glb_esz]
     call    add_global
     jmp     .p1_loop
 
@@ -1363,7 +1619,7 @@ p1_scan:
     ; allocate struct entry
     mov     rax, [stt_cnt]
     imul    rax, rax, STR_SZ
-    lea     r14, [stt_tbl]
+    mov     r14, [stt_tbl_ptr]
     add     r14, rax        ; r14 = struct entry ptr
     mov     [r14],   r12
     mov     [r14+8], r13
@@ -1465,7 +1721,7 @@ p1_scan:
 .p1_type_struct_ok:
     mov     rax, rdi
     imul    rax, rax, STR_SZ
-    lea     rcx, [stt_tbl]
+    mov     rcx, [stt_tbl_ptr]
     add     rax, rcx
     mov     rsi, [rax+16]   ; struct size
     jmp     .p1_type_done
@@ -1571,7 +1827,7 @@ p1_scan:
     ; allocate fn entry
     mov     rax, [rbp-8]
     imul    rax, rax, FN_SZ
-    lea     r14, [fn_tbl]
+    mov     r14, [fn_tbl_ptr]
     add     r14, rax
     mov     [r14],    r12   ; name_start
     mov     [r14+8],  r13   ; name_len
@@ -1582,6 +1838,36 @@ p1_scan:
     mov     qword [r14+32], 0   ; body_tok (fill in later)
     mov     qword [r14+40], -1  ; code_off
     mov     qword [r14+48], 0   ; ret_type
+    cmp     r13, 4
+    jne     .p1_fn_after_dbg
+    lea     rdx, [src_buf]
+    add     rdx, r12
+    cmp     byte [rdx], 'm'
+    jne     .p1_fn_after_dbg
+    cmp     byte [rdx+1], 'a'
+    jne     .p1_fn_after_dbg
+    cmp     byte [rdx+2], 'i'
+    jne     .p1_fn_after_dbg
+    cmp     byte [rdx+3], 'n'
+    jne     .p1_fn_after_dbg
+    push    rax
+    push    rbx
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_main_seen]
+    mov     edx, dbg_main_seen_l
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rax
+.p1_fn_after_dbg:
     ; parse params
     call    adv_tok         ; skip '('
     xor     rbx, rbx        ; param count
@@ -1701,7 +1987,7 @@ p1_scan:
 .p1_p_type_struct_ok:
     mov     rax, rdx
     imul    rax, rax, STR_SZ
-    lea     rcx, [stt_tbl]
+    mov     rcx, [stt_tbl_ptr]
     add     rax, rcx
     mov     rsi, [rax+16]   ; struct size
     jmp     .p1_p_type_done
@@ -1755,10 +2041,16 @@ p1_scan:
     call    cur_tok_type
     cmp     rax, TOK_LBRACE
     je      .p1_no_ret      ; found '{', stop
+    cmp     rax, TOK_SEMI
+    je      .p1_proto       ; forward declaration
     cmp     rax, TOK_EOF
     je      .p1_no_ret
     call    adv_tok
     jmp     .p1_skip_ret
+.p1_proto:
+    call    adv_tok         ; skip ';'
+    inc     qword [rbp-8]   ; must count the prototype too!
+    jmp     .p1_loop
 .p1_no_ret:
     ; expect '{', record body start
     mov     rax, [tok_pos]
@@ -1804,13 +2096,15 @@ p1_scan:
 ; lookup_fn: r8=ns, r9=nl -> rax=fn entry ptr, or 0 if not found
 ; =============================================================================
 lookup_fn:
-    xor     rcx, rcx
+    push    rbx
+    mov     rcx, [fn_cnt]
+    dec     rcx
 .lf_lp:
-    cmp     rcx, [fn_cnt]
-    jge     .lf_no
+    cmp     rcx, 0
+    jl      .lf_no
     mov     rax, rcx
     imul    rax, rax, FN_SZ
-    lea     rbx, [fn_tbl]
+    mov     rbx, [fn_tbl_ptr]
     add     rax, rbx
     mov     r10, [rax]
     mov     r11, [rax+8]
@@ -1822,12 +2116,14 @@ lookup_fn:
     cmp     rax, 1
     jne     .lf_nx
     mov     rax, rbx
+    pop     rbx
     ret
 .lf_nx:
-    inc     rcx
+    dec     rcx
     jmp     .lf_lp
 .lf_no:
     xor     eax, eax
+    pop     rbx
     ret
 
 ; =============================================================================
@@ -1836,7 +2132,7 @@ lookup_fn:
 find_field:
     mov     rax, rdi
     imul    rax, rax, STR_SZ
-    lea     rbx, [stt_tbl]
+    mov     rbx, [stt_tbl_ptr]
     add     rax, rbx        ; struct entry ptr
     mov     rcx, [rax+24]   ; field_count
     lea     r12, [rax+32]   ; fields start
@@ -1893,7 +2189,7 @@ add_local:
 .al_skip_max:
     mov     rcx, [loc_cnt]
     imul    rcx, rcx, LOC_SZ
-    lea     rbx, [loc_tbl]
+    mov     rbx, [loc_tbl_ptr]
     add     rbx, rcx
     mov     [rbx],    r8
     mov     [rbx+8],  r9
@@ -1914,7 +2210,7 @@ lookup_local:
     jge     .ll_no
     mov     rax, rcx
     imul    rax, rax, LOC_SZ
-    lea     rbx, [loc_tbl]
+    mov     rbx, [loc_tbl_ptr]
     add     rax, rbx
     mov     r10, [rax]
     mov     r11, [rax+8]
@@ -1935,19 +2231,26 @@ lookup_local:
     ret
 
 ; =============================================================================
-; add_global: r8=ns, r9=nl, r10=tkind -> rax=r15_offset
+; add_global: r8=ns, r9=nl, r10=tkind, r11=sid, r12=esz -> rax=r15_offset
 ; =============================================================================
 add_global:
     mov     rax, [glb_r15]
     mov     rcx, [glb_cnt]
     imul    rcx, rcx, GLB_SZ
-    lea     rbx, [glb_tbl]
+    mov     rbx, [glb_tbl_ptr]
     add     rbx, rcx
     mov     [rbx],    r8
     mov     [rbx+8],  r9
     mov     [rbx+16], rax
     mov     [rbx+24], r10
-    add     qword [glb_r15], 8
+    mov     [rbx+32], r11
+    mov     [rbx+40], r12
+    mov     r13, r12
+    cmp     r10, TK_PTR
+    jne     .ag_not_ptr
+    mov     r13, 8          ; all pointers allocate 8 bytes
+.ag_not_ptr:
+    add     qword [glb_r15], r13
     inc     qword [glb_cnt]
     ret
 
@@ -1961,7 +2264,7 @@ lookup_global:
     jge     .lg_no
     mov     rax, rcx
     imul    rax, rax, GLB_SZ
-    lea     rbx, [glb_tbl]
+    mov     rbx, [glb_tbl_ptr]
     add     rax, rbx
     mov     r10, [rax]
     mov     r11, [rax+8]
@@ -2143,6 +2446,7 @@ gen_expr:
     mov     qword [lv_sid], -1
     mov     qword [lv_esz], 8
     mov     qword [lv_isptr], 0
+    mov     qword [lv_glb], 0
     call    gen_expr_and
 .lp:
     call    cur_tok_type
@@ -2168,7 +2472,7 @@ gen_expr:
     mov     rax, [cod_len]
     sub     rax, r14
     sub     rax, 4
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, r14
     mov     [rbx], eax
     ; normalize result to 0/1
@@ -2230,7 +2534,7 @@ gen_expr_and:
     mov     rax, [cod_len]
     sub     rax, r14
     sub     rax, 4
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, r14
     mov     [rbx], eax
     ; normalize result to 0/1
@@ -2409,7 +2713,7 @@ gen_expr_base:
     ; copy src[r12..r12+r13] to sdt_buf[sdt_len..]
     lea     rbx, [src_buf]
     add     rbx, r12
-    lea     rcx, [sdt_buf]
+    mov     rcx, [sdt_buf_ptr]
     add     rcx, [sdt_len]
     push    r13
 .sdt_cp:
@@ -2469,7 +2773,7 @@ gen_expr_base:
     ; Store as string fixup: {cod_off, sdt_off} in sfx_tbl, indexed by sfix_cnt
     mov     rax, [sfix_cnt]
     imul    rax, rax, 16
-    lea     rbx, [sfx_tbl]
+    mov     rbx, [sfx_tbl_ptr]
     add     rbx, rax
     mov     rax, [cod_len]
     mov     [rbx], rax      ; code offset of rel32
@@ -2737,8 +3041,19 @@ gen_expr_base:
     jmp     .call_arg_loop
 .call_done_args:
     call    adv_tok         ; skip ')'
+    ; --- FIX: Resolve fn target BEFORE popping r8/r9 arg registers ---
+    push    r12
+    push    r13
+    mov     r8, r12
+    mov     r9, r13
+    call    lookup_fn
+    mov     r11, rax        ; save fn entry ptr in r11
     pop     r13
     pop     r12
+    ; restore fn name saved by .do_call push r12/r13 (lines 3024-3025)
+    pop     r13
+    pop     r12
+    ; -----------------------------------------------------------------
     ; pop into arg regs (rdi, rsi, rdx, rcx, r8, r9)
     cmp     r14, 6
     jl      .cpop5
@@ -2774,16 +3089,10 @@ gen_expr_base:
     mov     rdi, 0x5F
     call    emit1 ; pop rdi
 .call_emit_done:
+    ; we already have fn in r11, just need to push/pop name info for the fixup if needed
     push    r12
     push    r13
     push    r14
-    mov     r8, r12
-    mov     r9, r13
-    call    lookup_fn
-    mov     r11, rax
-    pop     r14
-    pop     r13
-    pop     r12
     mov     rdi, 0xE8
     call    emit1
     cmp     r11, 0
@@ -2801,7 +3110,8 @@ gen_expr_base:
 .call_unknown:
     mov     rax, [fix_cnt]
     imul    rax, rax, 32
-    lea     rbx, [fix_buf+8192]
+    mov     rbx, [fix_buf_ptr]
+    add     rbx, 8192
     add     rbx, rax
     mov     rax, [cod_len]
     mov     [rbx], rax
@@ -2812,6 +3122,9 @@ gen_expr_base:
     mov     rdi, 0
     call    emit4
 .call_emit_ret:
+    pop     r14
+    pop     r13
+    pop     r12
     jmp     .maybe_binary
 
 .do_syscall_expr:
@@ -3157,7 +3470,7 @@ gen_expr_base:
     mov     rax, [cod_len]
     sub     rax, r14
     sub     rax, 4
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, r14
     mov     [rbx], eax     ; store 32-bit offset
     jmp     .maybe_binary
@@ -3188,7 +3501,7 @@ gen_expr_base:
     mov     rax, [cod_len]
     sub     rax, r14
     sub     rax, 4
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, r14
     mov     [rbx], eax     ; store 32-bit offset
     jmp     .maybe_binary
@@ -3324,10 +3637,13 @@ gen_addr:
     call    lookup_global
     cmp     rax, 0
     je      .ga_done
+    mov     [lv_glb], rax
     mov     r14, [rax+16]
     mov     r15, [rax+24]
-    mov     qword [lv_sid], -1
-    mov     qword [lv_esz], 8
+    mov     rdx, [rax+32]
+    mov     rcx, [rax+40]
+    mov     [lv_sid], rdx
+    mov     [lv_esz], rcx
     cmp     r15, TK_PTR
     jne     .ga_glb_addr
     mov     qword [lv_isptr], 1
@@ -3357,13 +3673,14 @@ gen_addr:
     jne     .ga_post_loop       ; struct local
     jmp     .ga_post_loop       ; scalar/pointer: caller (.do_lvalue) loads the value
 .ga_post_nav:
-    ; Navigation follows: pointers must be derefed to get the heap address.
-    ; Struct locals stored on stack navigate from the stack address (no deref).
     cmp     qword [lv_isptr], 0
-    jne     .ga_post_do_deref   ; pointer → deref to load heap address
+    jne     .ga_post_do_deref   ; pointer -> deref
     cmp     qword [lv_sid], -1
-    jne     .ga_post_loop       ; struct local → navigate from stack addr
-    ; scalar with navigation (e.g. int used as pointer) → deref
+    je      .ga_post_do_deref   ; scalar -> deref
+    ; it is a struct or array. Is it global or local?
+    cmp     qword [lv_glb], 0
+    jne     .ga_post_loop       ; global struct is inline -> NO deref
+    ; local struct is an mmap pointer on the stack -> MUST deref!
     jmp     .ga_post_do_deref
 .ga_post_do_deref:
     ; emit: mov rax, [rax]
@@ -3468,7 +3785,7 @@ gen_addr:
     mov     [lv_sid], rdx
     mov     rax, rdx
     imul    rax, rax, STR_SZ
-    lea     r15, [stt_tbl]
+    mov     r15, [stt_tbl_ptr]
     add     rax, r15
     mov     r15, [rax+16]
     mov     [lv_esz], r15
@@ -3600,44 +3917,58 @@ gen_syscall:
     jmp     .gs_arg_loop
 .gs_done_args:
     call    adv_tok         ; skip ')'
+    ; Syscall arguments are pushed in order: arg0, arg1, ..., argN
+    ; We must pop them in REVERSE order into the syscall registers:
+    ; arg5 -> r9
+    ; arg4 -> r8
+    ; arg3 -> r10
+    ; arg2 -> rdx
+    ; arg1 -> rsi
+    ; arg0 -> rdi
+    ; Syscall number (rax) is ALREADY pushed by the caller of gen_syscall. Wait.
+    ; gen_syscall caller (gen_stmt) calls gen_expr for the syscall number first.
+    ; So rax is the LAST thing pushed? No, the arg loop pushes them.
+    ; r14 = total arg count including syscall number.
+    ; We emit (r14-1) pops for arg regs, then always pop rax for the nr.
+    ; So each threshold is one higher than for regular calls.
     cmp     r14, 7
     jl      .gs_pop_r8
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x59
-    call    emit1           ; pop r9
+    call    emit1           ; pop r9 (arg5)
 .gs_pop_r8:
     cmp     r14, 6
     jl      .gs_pop_r10
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x58
-    call    emit1           ; pop r8
+    call    emit1           ; pop r8 (arg4)
 .gs_pop_r10:
     cmp     r14, 5
     jl      .gs_pop_rdx
     mov     rdi, 0x41
     call    emit1
     mov     rdi, 0x5A
-    call    emit1           ; pop r10
+    call    emit1           ; pop r10 (arg3)
 .gs_pop_rdx:
     cmp     r14, 4
     jl      .gs_pop_rsi
     mov     rdi, 0x5A
-    call    emit1           ; pop rdx
+    call    emit1           ; pop rdx (arg2)
 .gs_pop_rsi:
     cmp     r14, 3
     jl      .gs_pop_rdi
     mov     rdi, 0x5E
-    call    emit1           ; pop rsi
+    call    emit1           ; pop rsi (arg1)
 .gs_pop_rdi:
     cmp     r14, 2
     jl      .gs_pop_rax
     mov     rdi, 0x5F
-    call    emit1           ; pop rdi
+    call    emit1           ; pop rdi (arg0)
 .gs_pop_rax:
-    cmp     r14, 1
-    jl      .gs_emit_sys
+    ; The syscall number was the VERY FIRST thing pushed in gen_syscall.
+    ; So it's at the BOTTOM of the stack. We must pop it LAST into rax.
     mov     rdi, 0x58
     call    emit1           ; pop rax
 .gs_emit_sys:
@@ -3705,7 +4036,7 @@ gen_stmt:
     mov     rax, r14
     inc     rax
     imul    rax, rax, TOK_SZ
-    lea     rbx, [tok_buf]
+    mov     rbx, [tok_buf_ptr]
     add     rax, rbx
     mov     rax, [rax]      ; next tok_type
     cmp     rax, TOK_LBRACE
@@ -3738,7 +4069,7 @@ gen_stmt:
     je      .gs_let_expr
     mov     rax, r11
     imul    rax, rax, STR_SZ
-    lea     rbx, [stt_tbl]
+    mov     rbx, [stt_tbl_ptr]
     add     rax, rbx
     mov     r15, [rax+16]   ; struct size
     ; allocate local (structs stored as pointers)
@@ -3853,7 +4184,7 @@ gen_stmt:
     je      .gs_let_expr
     mov     rax, r11
     imul    rax, rax, STR_SZ
-    lea     rdx, [stt_tbl]
+    mov     rdx, [stt_tbl_ptr]
     add     rax, rdx
     mov     rcx, [rax+16]   ; rcx = elem_size (use rcx, not r15 which we need)
     imul    rbx, rcx        ; rbx = count * elem_size = total_size
@@ -4075,7 +4406,7 @@ gen_stmt:
     mov     rax, [cod_len]
     sub     rax, r14
     sub     rax, 4
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, r14
     mov     [rbx], eax
     ; check for else
@@ -4100,7 +4431,7 @@ gen_stmt:
     mov     rax, [cod_len]
     sub     rax, r15
     sub     rax, 4
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, r15
     mov     [rbx], eax
     jmp     .gs_done
@@ -4171,7 +4502,7 @@ gen_stmt:
     mov     rax, [cod_len]  ; loop_end
     sub     rax, rcx
     sub     rax, 4          ; rel32 = loop_end - (placeholder + 4)
-    lea     rdx, [cod_buf]
+    mov     rdx, [cod_buf_ptr]
     add     rdx, rcx
     mov     [rdx], eax      ; patch break's jmp rel32
     inc     rbx
@@ -4383,7 +4714,7 @@ gen_stmt:
     je      .gs_asm_out_global
     dec     rax
     imul    rax, rax, LOC_SZ
-    lea     rbx, [loc_tbl]
+    mov     rbx, [loc_tbl_ptr]
     add     rbx, rax
     mov     r12, [rbx+16]   ; rbp_offset
     ; parse register name from r14 (src_buf offset) and asm_reglen
@@ -4462,6 +4793,7 @@ gen_stmt:
     jmp     .gs_done
 
 .gs_done:
+    pop     r15
     pop     r14
     pop     r13
     pop     r12
@@ -4499,7 +4831,7 @@ gen_expr_stmt:
     ; Retrieve name from previous token (at r14)
     mov     rax, r14
     imul    rax, rax, TOK_SZ
-    lea     rbx, [tok_buf]
+    mov     rbx, [tok_buf_ptr]
     add     rax, rbx
     mov     r12, [rax+8]    ; name_start
     mov     r13, [rax+16]   ; name_len
@@ -4522,6 +4854,16 @@ gen_expr_stmt:
     jmp     .ges_arg_loop
 .ges_args_done:
     call    adv_tok
+    ; --- FIX: Resolve fn target BEFORE popping r8/r9 arg registers ---
+    push    r12
+    push    r13
+    mov     r8, r12
+    mov     r9, r13
+    call    lookup_fn
+    mov     r11, rax        ; save fn entry ptr in r11
+    pop     r13
+    pop     r12
+    ; -----------------------------------------------------------------
     ; pop into arg regs (descending: rcx/rdx/rsi/rdi so arg0→rdi, arg1→rsi, ...)
     cmp     r14, 6
     jl      .ges_pop5
@@ -4558,17 +4900,12 @@ gen_expr_stmt:
     call    emit1
 .ges_call:
     ; emit call with fixup
-    mov     rdi, 0xE8
-    call    emit1
     push    r12
     push    r13
     push    r14
-    mov     r8, r12
-    mov     r9, r13
-    call    lookup_fn
-    pop     r14
-    pop     r13
-    pop     r12
+    mov     rdi, 0xE8
+    call    emit1
+    mov     rax, r11        ; use pre-resolved fn in r11
     cmp     rax, 0
     je      .ges_fixup
     cmp     qword [rax+40], -1
@@ -4579,11 +4916,12 @@ gen_expr_stmt:
     sub     r15, rax
     mov     rdi, r15
     call    emit4
-    jmp     .ges_done
+    jmp     .ges_call_done
 .ges_fixup:
     mov     rax, [fix_cnt]
     imul    rax, rax, 32
-    lea     rbx, [fix_buf+8192]
+    mov     rbx, [fix_buf_ptr]
+    add     rbx, 8192
     add     rbx, rax
     mov     rax, [cod_len]
     mov     [rbx], rax
@@ -4593,6 +4931,10 @@ gen_expr_stmt:
     inc     qword [fix_cnt]
     mov     rdi, 0
     call    emit4
+.ges_call_done:
+    pop     r14
+    pop     r13
+    pop     r12
     jmp     .ges_done
 
 .assign_lvalue:
@@ -4605,14 +4947,33 @@ gen_expr_stmt:
     ; push address
     mov     rdi, 0x50
     call    emit1
+    push    qword [lv_glb]
     ; rhs expr -> rax
     push    qword [lv_sid]
     push    qword [lv_esz]
     push    qword [lv_isptr]
     call    gen_expr
+    mov     r11, [lv_sid]
+    mov     r12, [lv_esz]
+    mov     r13, [lv_isptr]
     pop     qword [lv_isptr]
     pop     qword [lv_esz]
     pop     qword [lv_sid]
+    pop     rbx             ; lhs global entry, if any
+    mov     qword [lv_glb], 0
+    cmp     rbx, 0
+    je      .ges_assign_pop_addr
+    cmp     r13, 0
+    je      .ges_clear_glb_meta
+    mov     qword [rbx+24], TK_PTR
+    mov     [rbx+32], r11
+    mov     [rbx+40], r12
+    jmp     .ges_assign_pop_addr
+.ges_clear_glb_meta:
+    mov     qword [rbx+24], -1
+    mov     qword [rbx+32], -1
+    mov     qword [rbx+40], 8
+.ges_assign_pop_addr:
     ; pop address into r10
     mov     rdi, 0x41
     call    emit1
@@ -4760,11 +5121,11 @@ gen_fn:
     mov     r10, TK_SCALAR
     mov     r11, -1
     mov     r12, [r13+16]   ; elem_size
-    mov     r15, [r13+24]   ; type_id
-    bt      r15, 63         ; test PTR_FLAG (bit 63) — test r15,imm64 broken in x86
+    mov     rax, [r13+24]   ; type_id (Use rax, NOT r15!)
+    bt      rax, 63         ; test PTR_FLAG (bit 63)
     jnc     .gf_param_type_done
     mov     r10, TK_PTR
-    mov     rax, r15
+    ; rax already has type_id
     shl     rax, 1
     shr     rax, 1          ; clear PTR_FLAG
     ; if scalar pointer, keep sid=-1
@@ -4901,6 +5262,13 @@ gen_fn:
     mov     [tok_pos], rax
     ; generate body
     call    gen_block_body
+    ; patch frame size before the epilogue so the body layout is finalized.
+    mov     rax, [loc_max_rbp]
+    add     rax, 15
+    and     rax, -16
+    mov     rbx, [cod_buf_ptr]
+    add     rbx, [frm_patch_off]
+    mov     [rbx], eax
     ; epilogue
     mov     rdi, 0x41
     call    emit1
@@ -4921,14 +5289,6 @@ gen_fn:
     call    emit1           ; leave
     mov     rdi, 0xC3
     call    emit1           ; ret
-
-    ; patch frame size: loc_max_rbp rounded up to 16
-    mov     rax, [loc_max_rbp]
-    add     rax, 15
-    and     rax, -16
-    lea     rbx, [cod_buf]
-    add     rbx, [frm_patch_off]    ; use BSS-saved placeholder offset (r15 was clobbered)
-    mov     [rbx], eax
 
     pop     r14
     pop     r13
@@ -4960,8 +5320,8 @@ p2_gen:
     ; emit: mov eax,9 (mmap); xor edi,edi; mov esi,GLB_SIZE; mov edx,3; mov r10d,0x22; mov r8d,-1; xor r9d,r9d; syscall; mov r15,rax
     ; GLB_SIZE = [glb_r15] (total globals allocated so far + some headroom)
     mov     rax, [glb_r15]
-    add     rax, 4096       ; headroom
-    mov     r15, rax        ; save glb_size (emit1 clobbers rax)
+    add     rax, 1048576    ; 1MB headroom
+    push    rax             ; save glb_size on stack
     ; emit _start preamble
     ; mov eax, 9
     mov     rdi, 0xB8
@@ -4976,7 +5336,9 @@ p2_gen:
     ; mov esi, glb_size (imm32)
     mov     rdi, 0xBE
     call    emit1
-    mov     rdi, r15        ; restore glb_size
+    pop     rax
+    push    rax
+    mov     rdi, rax
     call    emit4
     ; mov edx, 3
     mov     rdi, 0xBA
@@ -5016,6 +5378,7 @@ p2_gen:
     call    emit1
     mov     rdi, 0xC7
     call    emit1
+    pop     rax             ; glb_size no longer needed on stack
     ; pass argv to main: lea rsi, [rsp+8]  (rsi = pointer to argv array)
     mov     rdi, 0x48
     call    emit1
@@ -5032,7 +5395,8 @@ p2_gen:
     call    emit1
     mov     rax, [fix_cnt]
     imul    rax, rax, 32
-    lea     rbx, [fix_buf+8192]
+    mov     rbx, [fix_buf_ptr]
+    add     rbx, 8192
     add     rbx, rax
     mov     rax, [cod_len]
     mov     [rbx], rax
@@ -5062,11 +5426,11 @@ p2_gen:
 
     ; now compile each function
 .p2_loop:
-    mov     r12, [rbp-8]
-    cmp     r12, [rbp-16]
+    mov     rax, [rbp-8]
+    cmp     rax, [rbp-16]
     jge     .p2_done
-    ; debug: print function index as '0'-'9' then '+'
-    mov     rax, r12
+    mov     r12, rax        ; r12 = current index
+    ; debug: print index
     cmp     rax, 9
     jg      .p2_dbg_plus
     add     rax, '0'
@@ -5081,17 +5445,40 @@ p2_gen:
     mov     edx, 1
     syscall
     pop     rax
+
     mov     rax, r12
     imul    rax, rax, FN_SZ
-    lea     rbx, [fn_tbl]
+    mov     rbx, [fn_tbl_ptr]
     add     rbx, rax
+    ; Skip if no body (prototype)
+    cmp     qword [rbx+32], 0
+    je      .p2_skip_fn
     mov     rdi, rbx
     call    gen_fn
-    mov     r12, [rbp-8]
-    inc     r12
-    mov     [rbp-8], r12
+.p2_skip_fn:
+    inc     qword [rbp-8]
     jmp     .p2_loop
 .p2_done:
+    ; debug: print total code length
+    mov     rax, [cod_len]
+    call    print_rax
+    push    10
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    mov     rsi, rsp
+    mov     edx, 1
+    syscall
+    pop     rax
+    ; debug: print sdt_len
+    mov     rax, [sdt_len]
+    call    print_rax
+    push    10
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    mov     rsi, rsp
+    mov     edx, 1
+    syscall
+    pop     rax
     ; Patch call fixups
     xor     r12, r12
 .p2_fix_loop:
@@ -5099,7 +5486,8 @@ p2_gen:
     jge     .p2_fix_done
     mov     rax, r12
     imul    rax, rax, 32
-    lea     rbx, [fix_buf+8192]
+    mov     rbx, [fix_buf_ptr]
+    add     rbx, 8192
     add     rbx, rax
     mov     r13, [rbx]      ; patch_off
     mov     r14, [rbx+24]   ; type
@@ -5122,10 +5510,10 @@ p2_gen:
     xor     rcx, rcx
 .p2_find_main:
     cmp     rcx, [fn_cnt]
-    jge     .p2_fix_next
+    jge     .p2_fix_main_miss
     mov     rax, rcx
     imul    rax, rax, FN_SZ
-    lea     r14, [fn_tbl]
+    mov     r14, [fn_tbl_ptr]
     add     r14, rax
     ; compare fn name with "main" (4 chars)
     mov     r8,  [r14]
@@ -5143,17 +5531,53 @@ p2_gen:
     cmp     byte [rdx+3], 'n'
     jne     .p2_find_main_next
     ; found main — r14=fn_tbl entry, r13=patch_off, r12=outer idx (all intact)
+    push    rax
+    push    rbx
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_main_fix]
+    mov     edx, dbg_main_fix_l
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rax
     mov     r15, [r14+40]  ; code_off
     jmp     .p2_fix_patch
 .p2_find_main_next:
     inc     rcx
     jmp     .p2_find_main
+.p2_fix_main_miss:
+    push    rax
+    push    rbx
+    push    rcx
+    push    rdx
+    push    rsi
+    push    rdi
+    mov     eax, SYS_WRITE
+    mov     edi, 2
+    lea     rsi, [dbg_main_miss]
+    mov     edx, dbg_main_miss_l
+    syscall
+    pop     rdi
+    pop     rsi
+    pop     rdx
+    pop     rcx
+    pop     rbx
+    pop     rax
+    jmp     .p2_fix_next
 .p2_fix_patch:
     ; patch cod_buf[r13] = r15 - (r13 + 4)
     mov     rax, r13
     add     rax, 4
     sub     r15, rax
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, r13
     mov     [rbx], r15d
 .p2_fix_next:
@@ -5170,7 +5594,7 @@ p2_gen:
     jge     .p2_done2
     mov     rax, r12
     imul    rax, rax, 16
-    lea     rbx, [sfx_tbl]
+    mov     rbx, [sfx_tbl_ptr]
     add     rbx, rax
     mov     r13, [rbx]      ; cod_off
     mov     r14, [rbx+8]    ; sdt_off
@@ -5178,7 +5602,7 @@ p2_gen:
     add     r15, r14
     sub     r15, r13
     sub     r15, 4
-    lea     rbx, [cod_buf]
+    mov     rbx, [cod_buf_ptr]
     add     rbx, r13
     mov     [rbx], r15d
     inc     r12
@@ -5266,7 +5690,7 @@ write_elf:
     ; Write code_buf
     mov     eax, SYS_WRITE
     mov     edi, r12d
-    lea     rsi, [cod_buf]
+    mov     rsi, [cod_buf_ptr]
     mov     rdx, r13
     syscall
 
@@ -5275,7 +5699,7 @@ write_elf:
     je      .we_done
     mov     eax, SYS_WRITE
     mov     edi, r12d
-    lea     rsi, [sdt_buf]
+    mov     rsi, [sdt_buf_ptr]
     mov     rdx, r14
     syscall
 
@@ -5331,9 +5755,9 @@ main_compile:
     syscall
     ; write ELF
     mov     rdi, [out_fd]
-    lea     rsi, [cod_buf]
+    mov     rsi, [cod_buf_ptr]
     mov     rdx, [cod_len]
-    lea     rcx, [sdt_buf]
+    mov     rcx, [sdt_buf_ptr]
     mov     r8,  [sdt_len]
     call    write_elf
     leave
