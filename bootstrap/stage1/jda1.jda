@@ -460,6 +460,7 @@ let g_trait_cnt: i64 = 0
 let g_trait_copy_pos: i64 = 0
 let g_unsafe_depth: i64 = 0
 let g_check_unsafe: i64 = 0
+let g_sc_extra: &i64 = 0
 let g_derive_cnt = 0
 let g_dbg_main_steps = 0
 let g_small_err_loop = 0
@@ -4181,6 +4182,7 @@ fn prime_small_scan_count() {
 fn init_large_post_lex_state() {
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
+    g_sc_extra = alloc_pages(1)
     g_const_name_off_tbl = alloc_pages(8)
     g_const_name_len_tbl = alloc_pages(8)
     g_const_val_tbl = alloc_pages(8)
@@ -8950,19 +8952,24 @@ fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     expect(TOK_SYSCALL)
     expect(TOK_LPAREN)
     let nr = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
-    let a0 = -1 let a1 = -1 let a2 = -1
     let count = 0
+    let idx = 0
+    loop idx < 7 { g_sc_extra[idx] = -1 idx = idx + 1 }
+    g_sc_extra[3] = nr
     loop tok_type_at(toks, pos[0]) == TOK_COMMA {
         pos[0] = pos[0] + 1
         let arg = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
-        if count == 0 { a0 = arg }
-        if count == 1 { a1 = arg }
-        if count == 2 { a2 = arg }
+        if count == 0 { g_sc_extra[4] = arg }
+        if count == 1 { g_sc_extra[5] = arg }
+        if count == 2 { g_sc_extra[6] = arg }
+        if count == 3 { g_sc_extra[0] = arg }
+        if count == 4 { g_sc_extra[1] = arg }
+        if count == 5 { g_sc_extra[2] = arg }
         count = count + 1
-        if count > 3 { report_error("syscall takes at most 4 arguments") }
+        if count > 6 { report_error("syscall takes at most 7 arguments (nr + 6 args)") }
     }
     expect(TOK_RPAREN)
-    ret emit_syscall_raw(jfn, bb, nr, a0, a1, a2)
+    ret emit_syscall_full(jfn, bb, count)
 }
 
 fn emit_print_int(jfn: &JirFunction, bb: i64, val_id: i64) {
@@ -8985,6 +8992,20 @@ fn emit_syscall_raw(jfn: &JirFunction, bb: i64, nr: i64, a0: i64, a1: i64, a2: i
     ins.operand2   = a1
     ins.bb_target0 = a2
     ins.operand3   = 3
+    ret emit(jfn, bb, &ins)
+}
+
+fn emit_syscall_full(jfn: &JirFunction, bb: i64, count: i64) -> i64 {
+    let ins = Instr{}
+    ins.op         = OP_SYSCALL
+    ins.operand0   = g_sc_extra[3]
+    ins.operand1   = g_sc_extra[4]
+    ins.operand2   = g_sc_extra[5]
+    ins.bb_target0 = g_sc_extra[6]
+    ins.bb_target1 = g_sc_extra[0]
+    ins.imm        = g_sc_extra[1]
+    ins.itype      = g_sc_extra[2]
+    ins.operand3   = count
     ret emit(jfn, bb, &ins)
 }
 
@@ -11971,6 +11992,13 @@ fn dce_mark_float(op: i64, o0: i64, o1: i64, used: &i32) {
     }
 }
 
+fn dce_mark_syscall_extra(jfn: &JirFunction, bi: i64, ii: i64, used: &i32) {
+    let bt1 = jfn.blocks[bi].instrs[ii].bb_target1
+    let imm0 = jfn.blocks[bi].instrs[ii].imm
+    if bt1 >= 0 { used[bt1] = 1 }
+    if imm0 >= 0 { used[imm0] = 1 }
+}
+
 fn dce(jfn: &JirFunction) {
     let used = i32[8192]
     let bi = 0
@@ -12014,6 +12042,7 @@ fn dce(jfn: &JirFunction) {
                 if o2 >= 0 { used[o2] = 1 }
                 if bt0 >= 0 { used[bt0] = 1 }
             }
+            if op == OP_SYSCALL { dce_mark_syscall_extra(jfn, bi, ii, used) }
             if op == OP_ALLOC {
                 if o0 >= 0 { used[o0] = 1 }
             }
