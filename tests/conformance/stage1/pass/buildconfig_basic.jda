@@ -1,0 +1,61 @@
+; Test stdlib/buildconfig — jda.toml build configuration
+
+let g_toml: &i64 = 0
+
+fn test_parse() {
+    let toml: &i8 = "[package]\nname = \"my-app\"\nversion = \"1.2.3\"\nauthor = \"Alice\"\n\n[build]\nentry = \"src/main.jda\"\noutput = \"bin/my-app\"\nsafe = true\n\n[dependencies]\njda-http = \"2.1.0\"\njda-json = \"1.0.0\"\n"
+    g_toml = bc_parse(toml, 178)
+    let count = toml_count(g_toml)
+    print("entries: ")
+    print("{count}")
+    print("\n")
+}
+
+fn test_name() {
+    let buf: &i8 = alloc_pages(1)
+    let nlen = bc_name(g_toml, buf)
+    print("name: ")
+    _bc_write(buf, nlen)
+    print("\n")
+}
+
+fn test_version() {
+    let buf: &i8 = alloc_pages(1)
+    let vlen = bc_version(g_toml, buf)
+    print("version: ")
+    _bc_write(buf, vlen)
+    print("\n")
+}
+
+fn test_entry() {
+    let buf: &i8 = alloc_pages(1)
+    let elen = bc_entry(g_toml, buf)
+    print("entry: ")
+    _bc_write(buf, elen)
+    print("\n")
+}
+
+fn test_safe() {
+    let safe = bc_is_safe(g_toml)
+    print("safe: ")
+    print("{safe}")
+    print("\n")
+}
+
+fn test_deps() {
+    let deps = bc_dep_count(g_toml)
+    print("deps: ")
+    print("{deps}")
+    print("\n")
+}
+
+fn main() -> i64 {
+    test_parse()
+    test_name()
+    test_version()
+    test_entry()
+    test_safe()
+    test_deps()
+    print("PASS\n")
+    ret 0
+}

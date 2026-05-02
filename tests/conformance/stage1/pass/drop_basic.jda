@@ -1,0 +1,97 @@
+; Test stdlib/drop — destructors / finalizers / deterministic cleanup
+
+fn main() -> i64 {
+    drop_init()
+
+    ; --- Basic register and count ---
+    print("count: ")
+    let c0 = drop_count()
+    print("{c0}")
+    print("\n")
+
+    drop_register(100, 0, 0)
+    drop_register(200, 1, 0)
+    drop_register(300, 0, 0)
+    let c1 = drop_count()
+    print("after register: ")
+    print("{c1}")
+    print("\n")
+
+    ; --- is_registered ---
+    let r1 = drop_is_registered(200)
+    print("is_registered(200): ")
+    print("{r1}")
+    print("\n")
+    let r2 = drop_is_registered(999)
+    print("is_registered(999): ")
+    print("{r2}")
+    print("\n")
+
+    ; --- unregister (remove without cleanup) ---
+    drop_unregister(200)
+    let c2 = drop_count()
+    print("after unregister: ")
+    print("{c2}")
+    print("\n")
+    let r3 = drop_is_registered(200)
+    print("is_registered(200): ")
+    print("{r3}")
+    print("\n")
+
+    ; --- drop (execute + remove) ---
+    drop(100)
+    let c3 = drop_count()
+    print("after drop(100): ")
+    print("{c3}")
+    print("\n")
+
+    ; --- drop_all ---
+    drop_register(400, 0, 0)
+    drop_register(500, 0, 0)
+    drop_all()
+    let c4 = drop_count()
+    print("after drop_all: ")
+    print("{c4}")
+    print("\n")
+
+    ; --- scope-based cleanup ---
+    drop_register(10, 0, 0)
+    drop_scope_begin()
+    drop_register(20, 0, 0)
+    drop_register(30, 0, 0)
+    let c5 = drop_count()
+    print("in scope: ")
+    print("{c5}")
+    print("\n")
+    drop_scope_end()
+    let c6 = drop_count()
+    print("after scope_end: ")
+    print("{c6}")
+    print("\n")
+
+    ; --- nested scopes ---
+    drop_scope_begin()
+    drop_register(40, 0, 0)
+    drop_scope_begin()
+    drop_register(50, 0, 0)
+    drop_register(60, 0, 0)
+    let c7 = drop_count()
+    print("inner scope: ")
+    print("{c7}")
+    print("\n")
+    drop_scope_end()
+    let c8 = drop_count()
+    print("after inner end: ")
+    print("{c8}")
+    print("\n")
+    drop_scope_end()
+    let c9 = drop_count()
+    print("after outer end: ")
+    print("{c9}")
+    print("\n")
+
+    ; cleanup
+    drop_all()
+    print("PASS\n")
+    ret 0
+}

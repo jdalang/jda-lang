@@ -60,8 +60,22 @@ for test_file in "$TEST_DIR"/*.jda; do
     include_file="$TEST_DIR/${test_name}.include"
     include_flag=""
     if [ -f "$include_file" ]; then
-        inc_path="$PROJECT_ROOT/$(cat "$include_file" | tr -d '[:space:]')"
-        include_flag="--include $inc_path"
+        # Count non-empty lines
+        inc_lines=()
+        while IFS= read -r inc_line || [ -n "$inc_line" ]; do
+            inc_line=$(echo "$inc_line" | tr -d '[:space:]')
+            if [ -n "$inc_line" ]; then
+                inc_lines+=("$PROJECT_ROOT/$inc_line")
+            fi
+        done < "$include_file"
+        if [ ${#inc_lines[@]} -eq 1 ]; then
+            include_flag="--include ${inc_lines[0]}"
+        elif [ ${#inc_lines[@]} -gt 1 ]; then
+            # Compiler only supports one --include; concatenate into temp file
+            merged="$TMP_DIR/${test_name}_merged.jda"
+            cat "${inc_lines[@]}" > "$merged"
+            include_flag="--include $merged"
+        fi
     fi
 
     # Compile

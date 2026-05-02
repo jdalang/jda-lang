@@ -1,0 +1,71 @@
+; Test stdlib/stacktrace — call stack tracking
+
+fn helper_c() {
+    st_enter("helper_c")
+    let d = st_depth()
+    print("depth in c: ")
+    print("{d}")
+    print("\n")
+    st_leave()
+}
+
+fn helper_b() {
+    st_enter("helper_b")
+    helper_c()
+    st_leave()
+}
+
+fn helper_a() {
+    st_enter("helper_a")
+    helper_b()
+    st_leave()
+}
+
+fn main() -> i64 {
+    st_init()
+
+    ; --- Basic enter/leave ---
+    let d0 = st_depth()
+    print("initial depth: ")
+    print("{d0}")
+    print("\n")
+
+    st_enter("main")
+    let d1 = st_depth()
+    print("after enter: ")
+    print("{d1}")
+    print("\n")
+
+    ; --- Nested calls ---
+    helper_a()
+
+    ; back to just main
+    let d2 = st_depth()
+    print("back in main: ")
+    print("{d2}")
+    print("\n")
+
+    ; --- Enter/leave multiple ---
+    st_enter("foo")
+    st_enter("bar")
+    let d3 = st_depth()
+    print("nested 3: ")
+    print("{d3}")
+    print("\n")
+    st_leave()
+    st_leave()
+    let d4 = st_depth()
+    print("after leaves: ")
+    print("{d4}")
+    print("\n")
+
+    ; --- clear ---
+    st_clear()
+    let d5 = st_depth()
+    print("after clear: ")
+    print("{d5}")
+    print("\n")
+
+    print("PASS\n")
+    ret 0
+}

@@ -27,6 +27,25 @@ String Type
 | `str_to_upper` | ASCII uppercase copy. |
 | `str_to_lower` | ASCII lowercase copy. |
 | `str_print` | Write string to stdout. |
+| `str_println` | Write string to stdout followed by newline. |
+| `str_from_cstr` | Create string from null-terminated C string (no manual length needed). |
+| `str_is_empty` | Check if string is empty. |
+| `str_cmp` | Lexicographic comparison. Returns -1, 0, or 1. |
+| `str_trim` | Trim leading and trailing ASCII whitespace. |
+| `str_trim_end` | Internal helper: trim trailing whitespace given a known start. |
+| `str_trim_left` | Trim leading whitespace. |
+| `str_trim_right` | Trim trailing whitespace. |
+| `str_replace` | Replace all occurrences of old with new_s. Returns new string. |
+| `str_repeat` | Repeat string n times. |
+| `str_reverse` | Reverse a string. |
+| `str_i64_digits` | Internal: count decimal digits in a positive number. |
+| `str_from_i64` | Convert i64 to string (decimal representation). |
+| `str_split` | Split string by single-char delimiter. Returns array of string pointers. Writ... |
+| `str_join` | Join array of strings with separator. |
+| `str_insert` | Insert string at position. |
+| `str_remove` | Remove range [start, end) from string. |
+| `str_pad_left` | Pad string on the left to given width. |
+| `str_pad_right` | Pad string on the right to given width. |
 
 ### Details
 
@@ -197,6 +216,159 @@ fn str_print(s: &i64)
 ```
 
 Write string to stdout.
+
+#### `str_println`
+
+```jda
+fn str_println(s: &i64)
+```
+
+Write string to stdout followed by newline.
+
+#### `str_from_cstr`
+
+```jda
+fn str_from_cstr(src: &i8) -> &i64
+```
+
+Create string from null-terminated C string (no manual length needed).
+
+#### `str_is_empty`
+
+```jda
+fn str_is_empty(s: &i64) -> i64
+```
+
+Check if string is empty.
+
+#### `str_cmp`
+
+```jda
+fn str_cmp(a: &i64, b: &i64) -> i64
+```
+
+Lexicographic comparison. Returns -1, 0, or 1.
+
+#### `str_trim`
+
+```jda
+fn str_trim(s: &i64) -> &i64
+```
+
+Trim leading and trailing ASCII whitespace.
+
+#### `str_trim_end`
+
+```jda
+fn str_trim_end(s: &i64, start: i64) -> &i64
+```
+
+Internal helper: trim trailing whitespace given a known start.
+
+#### `str_trim_left`
+
+```jda
+fn str_trim_left(s: &i64) -> &i64
+```
+
+Trim leading whitespace.
+
+#### `str_trim_right`
+
+```jda
+fn str_trim_right(s: &i64) -> &i64
+```
+
+Trim trailing whitespace.
+
+#### `str_replace`
+
+```jda
+fn str_replace(s: &i64, old: &i64, new_s: &i64) -> &i64
+```
+
+Replace all occurrences of old with new_s. Returns new string.
+
+#### `str_repeat`
+
+```jda
+fn str_repeat(s: &i64, n: i64) -> &i64
+```
+
+Repeat string n times.
+
+#### `str_reverse`
+
+```jda
+fn str_reverse(s: &i64) -> &i64
+```
+
+Reverse a string.
+
+#### `str_i64_digits`
+
+```jda
+fn str_i64_digits(val: i64) -> i64
+```
+
+Internal: count decimal digits in a positive number.
+
+#### `str_from_i64`
+
+```jda
+fn str_from_i64(n: i64) -> &i64
+```
+
+Convert i64 to string (decimal representation).
+
+#### `str_split`
+
+```jda
+fn str_split(s: &i64, delim: i64, result: &i64, out_count: &i64)
+```
+
+Split string by single-char delimiter. Returns array of string pointers.
+Writes count to out_count. Caller provides result buffer.
+
+#### `str_join`
+
+```jda
+fn str_join(parts: &i64, count: i64, sep: &i64) -> &i64
+```
+
+Join array of strings with separator.
+
+#### `str_insert`
+
+```jda
+fn str_insert(s: &i64, pos: i64, ins: &i64) -> &i64
+```
+
+Insert string at position.
+
+#### `str_remove`
+
+```jda
+fn str_remove(s: &i64, start: i64, end: i64) -> &i64
+```
+
+Remove range [start, end) from string.
+
+#### `str_pad_left`
+
+```jda
+fn str_pad_left(s: &i64, width: i64, ch: i64) -> &i64
+```
+
+Pad string on the left to given width.
+
+#### `str_pad_right`
+
+```jda
+fn str_pad_right(s: &i64, width: i64, ch: i64) -> &i64
+```
+
+Pad string on the right to given width.
 
 ---
 

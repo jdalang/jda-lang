@@ -1,0 +1,107 @@
+; Test stdlib/debug — assertions, inspection, watchpoints, counters
+
+fn test_init() {
+    dbg_init()
+    let en = dbg_is_enabled()
+    print("enabled: ")
+    print("{en}")
+    print("\n")
+}
+
+fn test_inspect() {
+    dbg_inspect_int("x", 42)
+    dbg_inspect_int("neg", 0)
+    dbg_inspect_bool("flag", 1)
+    dbg_inspect_bool("off", 0)
+}
+
+fn test_println() {
+    dbg_println("hello debug")
+}
+
+fn test_disable_enable() {
+    dbg_disable()
+    let en0 = dbg_is_enabled()
+    print("after disable: ")
+    print("{en0}")
+    print("\n")
+
+    ; This should produce no output (disabled)
+    dbg_println("should not appear")
+    dbg_inspect_int("hidden", 999)
+
+    dbg_enable()
+    let en1 = dbg_is_enabled()
+    print("after enable: ")
+    print("{en1}")
+    print("\n")
+}
+
+fn test_assertions() {
+    ; These should all pass (no output, no abort)
+    dbg_assert(1, "1 is true")
+    dbg_assert_eq(5, 5, "5 == 5")
+    dbg_assert_ne(3, 4, "3 != 4")
+    dbg_assert_gt(10, 5, "10 > 5")
+    dbg_assert_lt(2, 7, "2 < 7")
+    print("assertions: ok\n")
+}
+
+fn test_watch() {
+    let val: &i64 = alloc_pages(1)
+    val[0] = 100
+    dbg_watch(0, "val", val)
+    let wc = dbg_watch_count()
+    print("watches: ")
+    print("{wc}")
+    print("\n")
+
+    ; No change yet
+    let c0 = dbg_check()
+    print("changed: ")
+    print("{c0}")
+    print("\n")
+
+    ; Change the value
+    val[0] = 200
+    let c1 = dbg_check()
+    print("changed: ")
+    print("{c1}")
+    print("\n")
+
+    ; No change now
+    let c2 = dbg_check()
+    print("changed: ")
+    print("{c2}")
+    print("\n")
+
+    dbg_unwatch(0)
+    let wc2 = dbg_watch_count()
+    print("watches after unwatch: ")
+    print("{wc2}")
+    print("\n")
+}
+
+fn test_counter() {
+    dbg_counter_reset()
+    dbg_counter_inc()
+    dbg_counter_inc()
+    dbg_counter_inc()
+    let c = dbg_counter_get()
+    print("counter: ")
+    print("{c}")
+    print("\n")
+    dbg_counter_print("hits")
+}
+
+fn main() -> i64 {
+    test_init()
+    test_inspect()
+    test_println()
+    test_disable_enable()
+    test_assertions()
+    test_watch()
+    test_counter()
+    print("PASS\n")
+    ret 0
+}

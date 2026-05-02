@@ -1,0 +1,375 @@
+; =============================================================================
+; jda::debug -- Software Debugger Toolkit
+; =============================================================================
+; In-process debugging utilities for Jda programs. Since the compiler does
+; not emit DWARF info, this provides a convention-based software debugger:
+; breakpoints (pause via stdin), watchpoints (detect value changes),
+; assertions with messages, and variable inspection.
+;
+; Combine with stdlib/stacktrace for call-stack traces at breakpoints.
+;
+; Functions:
+;   dbg_init()                         initialize debugger (call once)
+;   dbg_enable()                       enable debug output
+;   dbg_disable()                      disable debug output (no-op mode)
+;   dbg_is_enabled()       -> i64      1 if enabled, 0 if not
+;
+;   dbg_break(label)                   print label + pause (waits for Enter)
+;   dbg_print(msg)                     print debug message (if enabled)
+;   dbg_println(msg)                   print debug message + newline
+;
+;   dbg_inspect_int(name, val)         print "name = val"
+;   dbg_inspect_hex(name, val)         print "name = 0xval"
+;   dbg_inspect_ptr(name, ptr)         print "name = @0xaddr"
+;   dbg_inspect_bool(name, val)        print "name = true/false"
+;
+;   dbg_assert(cond, msg)              if cond==0, print msg + abort
+;   dbg_assert_eq(a, b, msg)           assert a == b
+;   dbg_assert_ne(a, b, msg)           assert a != b
+;   dbg_assert_gt(a, b, msg)           assert a > b
+;   dbg_assert_lt(a, b, msg)           assert a < b
+;
+;   dbg_watch(slot, name, ptr)         register watchpoint (slot 0-15)
+;   dbg_check()            -> i64      check all watches, returns # changed
+;   dbg_unwatch(slot)                  remove watchpoint
+;   dbg_watch_count()      -> i64      number of active watches
+;
+;   dbg_counter_reset()                reset hit counter
+;   dbg_counter_inc()                  increment hit counter
+;   dbg_counter_get()      -> i64      get hit counter value
+;   dbg_counter_print(label)           print "label: N"
+; =============================================================================
+
+const _DBG_MAX_WATCH = 16
+
+; State
+let _dbg_enabled: i64 = 1
+let _dbg_inited: i64 = 0
+
+; Watchpoint arrays: name_ptr, data_ptr, last_value, active
+let _dbg_w_name: &i64 = 0
+let _dbg_w_ptr: &i64 = 0
+let _dbg_w_last: &i64 = 0
+let _dbg_w_active: &i64 = 0
+let _dbg_w_count: i64 = 0
+
+; Hit counter
+let _dbg_counter: i64 = 0
+
+; --- Internal helpers ---
+
+fn _dbg_cstr_len(s: &i8) -> i64 {
+    let n = 0
+    loop n < 512 {
+        if s[n] == 0 { ret n }
+        n = n + 1
+    }
+    ret 512
+}
+
+fn _dbg_write_out(s: &i8, len: i64) {
+    syscall(1, 1, s, len)
+}
+
+fn _dbg_write_err(s: &i8, len: i64) {
+    syscall(1, 2, s, len)
+}
+
+fn _dbg_exit_fail() {
+    syscall(60, 1, 0, 0)
+}
+
+fn _dbg_print_str(s: &i8) {
+    let n = _dbg_cstr_len(s)
+    _dbg_write_out(s, n)
+}
+
+fn _dbg_print_str_err(s: &i8) {
+    let n = _dbg_cstr_len(s)
+    _dbg_write_err(s, n)
+}
+
+fn _dbg_print_int(val: i64) {
+    ; Use print builtin for simplicity
+    print("{val}")
+}
+
+fn _dbg_print_hex(val: i64) {
+    let buf: &i8 = alloc_pages(1)
+    _dbg_write_out("0x", 2)
+    let v = val
+    if v == 0 {
+        _dbg_write_out("0", 1)
+        ret
+    }
+    let pos = 0
+    let tmp = v
+    loop tmp > 0 {
+        let nibble = tmp - (tmp / 16) * 16
+        if nibble < 10 {
+            poke_byte(buf, pos, nibble + 48)
+        } else {
+            let ch = nibble - 10 + 97
+            poke_byte(buf, pos, ch)
+        }
+        pos = pos + 1
+        tmp = tmp / 16
+    }
+    ; Reverse
+    let lo = 0
+    let hi = pos - 1
+    loop lo < hi {
+        let a = _dbg_byte_at(buf, lo)
+        let b = _dbg_byte_at(buf, hi)
+        poke_byte(buf, lo, b)
+        poke_byte(buf, hi, a)
+        lo = lo + 1
+        hi = hi - 1
+    }
+    _dbg_write_out(buf, pos)
+}
+
+fn _dbg_byte_at(buf: &i8, idx: i64) -> i64 {
+    ret buf[idx]
+}
+
+fn _dbg_read_stdin_byte() {
+    ; Read 1 byte from stdin to pause execution
+    let buf: &i8 = alloc_pages(1)
+    syscall(0, 0, buf, 1)
+}
+
+; --- Initialization ---
+
+;; Initialize the debugger. Call once at program start.
+fn dbg_init() {
+    if _dbg_inited == 1 { ret }
+    _dbg_w_name = alloc_pages(1)
+    _dbg_w_ptr = alloc_pages(1)
+    _dbg_w_last = alloc_pages(1)
+    _dbg_w_active = alloc_pages(1)
+    _dbg_w_count = 0
+    _dbg_counter = 0
+    _dbg_enabled = 1
+    _dbg_inited = 1
+}
+
+; --- Enable / Disable ---
+
+;; Enable debug output.
+fn dbg_enable() {
+    _dbg_enabled = 1
+}
+
+;; Disable debug output (all dbg_ calls become no-ops except assertions).
+fn dbg_disable() {
+    _dbg_enabled = 0
+}
+
+;; Check if debugger is enabled.
+fn dbg_is_enabled() -> i64 {
+    ret _dbg_enabled
+}
+
+; --- Output ---
+
+;; Print a debug message (if enabled).
+fn dbg_print(msg: &i8) {
+    if _dbg_enabled == 0 { ret }
+    _dbg_write_out("[DBG] ", 6)
+    _dbg_print_str(msg)
+}
+
+;; Print a debug message with newline (if enabled).
+fn dbg_println(msg: &i8) {
+    if _dbg_enabled == 0 { ret }
+    _dbg_write_out("[DBG] ", 6)
+    _dbg_print_str(msg)
+    _dbg_write_out("\n", 1)
+}
+
+; --- Breakpoints ---
+
+;; Software breakpoint: print label and pause until Enter is pressed.
+fn dbg_break(label: &i8) {
+    if _dbg_enabled == 0 { ret }
+    _dbg_write_out("[BREAK] ", 8)
+    _dbg_print_str(label)
+    _dbg_write_out(" -- press Enter to continue --\n", 31)
+    _dbg_read_stdin_byte()
+}
+
+; --- Inspection ---
+
+;; Print "name = val\n"
+fn dbg_inspect_int(name: &i8, val: i64) {
+    if _dbg_enabled == 0 { ret }
+    _dbg_write_out("[DBG] ", 6)
+    _dbg_print_str(name)
+    _dbg_write_out(" = ", 3)
+    _dbg_print_int(val)
+    _dbg_write_out("\n", 1)
+}
+
+;; Print "name = 0xval\n"
+fn dbg_inspect_hex(name: &i8, val: i64) {
+    if _dbg_enabled == 0 { ret }
+    _dbg_write_out("[DBG] ", 6)
+    _dbg_print_str(name)
+    _dbg_write_out(" = ", 3)
+    _dbg_print_hex(val)
+    _dbg_write_out("\n", 1)
+}
+
+;; Print "name = @0xaddr\n"
+fn dbg_inspect_ptr(name: &i8, ptr: i64) {
+    if _dbg_enabled == 0 { ret }
+    _dbg_write_out("[DBG] ", 6)
+    _dbg_print_str(name)
+    _dbg_write_out(" = @", 4)
+    _dbg_print_hex(ptr)
+    _dbg_write_out("\n", 1)
+}
+
+;; Print "name = true/false\n"
+fn dbg_inspect_bool(name: &i8, val: i64) {
+    if _dbg_enabled == 0 { ret }
+    _dbg_write_out("[DBG] ", 6)
+    _dbg_print_str(name)
+    if val != 0 {
+        _dbg_write_out(" = true\n", 8)
+    } else {
+        _dbg_write_out(" = false\n", 9)
+    }
+}
+
+; --- Assertions ---
+
+fn _dbg_assert_fail(msg: &i8) {
+    _dbg_write_err("[ASSERT FAILED] ", 17)
+    _dbg_print_str_err(msg)
+    _dbg_write_err("\n", 1)
+    _dbg_exit_fail()
+}
+
+;; Assert condition is true (non-zero). Aborts with msg if false.
+fn dbg_assert(cond: i64, msg: &i8) {
+    if cond == 0 {
+        _dbg_assert_fail(msg)
+    }
+}
+
+;; Assert a == b. Aborts with msg if not equal.
+fn dbg_assert_eq(a: i64, b: i64, msg: &i8) {
+    if a != b {
+        _dbg_assert_fail(msg)
+    }
+}
+
+;; Assert a != b. Aborts with msg if equal.
+fn dbg_assert_ne(a: i64, b: i64, msg: &i8) {
+    if a == b {
+        _dbg_assert_fail(msg)
+    }
+}
+
+;; Assert a > b. Aborts with msg if not.
+fn dbg_assert_gt(a: i64, b: i64, msg: &i8) {
+    if a <= b {
+        _dbg_assert_fail(msg)
+    }
+}
+
+;; Assert a < b. Aborts with msg if not.
+fn dbg_assert_lt(a: i64, b: i64, msg: &i8) {
+    if a >= b {
+        _dbg_assert_fail(msg)
+    }
+}
+
+; --- Watchpoints ---
+
+;; Register a watchpoint on slot (0-15). Watches the i64 at *ptr.
+fn dbg_watch(slot: i64, name: &i8, ptr: &i64) {
+    if slot >= 16 { ret }
+    if slot < 0 { ret }
+    _dbg_w_name[slot] = name
+    _dbg_w_ptr[slot] = ptr
+    _dbg_w_last[slot] = ptr[0]
+    _dbg_w_active[slot] = 1
+    _dbg_w_count = _dbg_w_count + 1
+}
+
+;; Remove watchpoint from slot.
+fn dbg_unwatch(slot: i64) {
+    if slot >= 16 { ret }
+    if slot < 0 { ret }
+    if _dbg_w_active[slot] == 0 { ret }
+    _dbg_w_active[slot] = 0
+    _dbg_w_count = _dbg_w_count - 1
+}
+
+;; Get number of active watchpoints.
+fn dbg_watch_count() -> i64 {
+    ret _dbg_w_count
+}
+
+fn _dbg_check_one(slot: i64) -> i64 {
+    if _dbg_w_active[slot] == 0 { ret 0 }
+    let ptr: &i64 = _dbg_w_ptr[slot]
+    let cur = ptr[0]
+    let old = _dbg_w_last[slot]
+    if cur == old { ret 0 }
+    ; Value changed — report
+    _dbg_w_last[slot] = cur
+    _dbg_write_out("[WATCH] ", 8)
+    let name: &i8 = _dbg_w_name[slot]
+    _dbg_print_str(name)
+    _dbg_write_out(": ", 2)
+    _dbg_print_int(old)
+    _dbg_write_out(" -> ", 4)
+    _dbg_print_int(cur)
+    _dbg_write_out("\n", 1)
+    ret 1
+}
+
+;; Check all watchpoints. Returns number of values that changed.
+fn dbg_check() -> i64 {
+    if _dbg_enabled == 0 { ret 0 }
+    let changed = 0
+    let i = 0
+    loop i < 16 {
+        let c = _dbg_check_one(i)
+        changed = changed + c
+        i = i + 1
+    }
+    ret changed
+}
+
+; --- Hit Counter ---
+
+;; Reset the hit counter to 0.
+fn dbg_counter_reset() {
+    _dbg_counter = 0
+}
+
+;; Increment the hit counter.
+fn dbg_counter_inc() {
+    _dbg_counter = _dbg_counter + 1
+}
+
+;; Get the current hit counter value.
+fn dbg_counter_get() -> i64 {
+    ret _dbg_counter
+}
+
+;; Print "label: N\n"
+fn dbg_counter_print(label: &i8) {
+    if _dbg_enabled == 0 { ret }
+    _dbg_write_out("[DBG] ", 6)
+    _dbg_print_str(label)
+    _dbg_write_out(": ", 2)
+    let c = _dbg_counter
+    _dbg_print_int(c)
+    _dbg_write_out("\n", 1)
+}

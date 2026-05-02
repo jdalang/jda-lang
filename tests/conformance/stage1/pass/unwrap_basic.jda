@@ -1,0 +1,61 @@
+; Test unwrap/expect on option and result types
+
+fn main() -> i64 {
+    ; --- Option unwrap (Some) ---
+    let s = some(42)
+    let v1 = opt_unwrap(s)
+    print("opt_unwrap Some: ")
+    print("{v1}")
+    print("\n")
+
+    ; --- Option expect (Some) ---
+    let s2 = some(99)
+    let v2 = opt_expect(s2, "should not panic")
+    print("opt_expect Some: ")
+    print("{v2}")
+    print("\n")
+
+    ; --- Option unwrap_or (None) ---
+    let n = none()
+    let v3 = opt_unwrap_or(n, 7)
+    print("opt_unwrap_or None: ")
+    print("{v3}")
+    print("\n")
+
+    ; --- Result unwrap (Ok) ---
+    let r1 = ok(100)
+    let v4 = res_unwrap(r1)
+    print("res_unwrap Ok: ")
+    print("{v4}")
+    print("\n")
+
+    ; --- Result expect (Ok) ---
+    let r2 = ok(200)
+    let v5 = res_expect(r2, "should not panic")
+    print("res_expect Ok: ")
+    print("{v5}")
+    print("\n")
+
+    ; --- Result unwrap_or (Err) ---
+    let r3 = err(3)
+    let v6 = res_unwrap_or(r3, 55)
+    print("res_unwrap_or Err: ")
+    print("{v6}")
+    print("\n")
+
+    ; --- Verify panic would happen (don't actually call) ---
+    let n2 = none()
+    let is_n = opt_is_none(n2)
+    print("None would panic: ")
+    print("{is_n}")
+    print("\n")
+
+    let r4 = err(5)
+    let is_e = res_is_err(r4)
+    print("Err would panic: ")
+    print("{is_e}")
+    print("\n")
+
+    print("PASS\n")
+    ret 0
+}

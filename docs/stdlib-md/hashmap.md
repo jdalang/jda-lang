@@ -21,6 +21,17 @@ Hash Map (i64 -> i64)
 | `map_puts` | String-keyed insert: hash string, use hash as key. |
 | `map_gets` | String-keyed lookup. |
 | `map_hass` | String-keyed existence check. |
+| `map_of1` | Create map with 1 entry. Usage: map_of1(k1, v1) |
+| `map_of2` | Create map with 2 entries. Usage: map_of2(k1, v1, k2, v2) |
+| `map_of3` | Create map with 3 entries. Usage: map_of3(k1, v1, k2, v2, k3, v3) |
+| `map_get_or` | Lookup with default value. |
+| `map_clear` | Remove all entries (reset size, clear state array). |
+| `map_keys` | Copy all occupied keys into out array. Returns count. |
+| `map_values` | Copy all occupied values into out array. Returns count. |
+| `map_copy` | Shallow copy of map. |
+| `map_merge` | Merge all entries from src into dst (overwrites on conflict). |
+| `map_print` | Print map as {k1: v1, k2: v2}. |
+| `map_println` | Print map followed by newline. |
 
 ### Details
 
@@ -145,6 +156,94 @@ fn map_hass(m: &i64, key: &i8, klen: i64) -> i64
 ```
 
 String-keyed existence check.
+
+#### `map_of1`
+
+```jda
+fn map_of1(k1: i64, v1: i64) -> &i64
+```
+
+Create map with 1 entry. Usage: map_of1(k1, v1)
+
+#### `map_of2`
+
+```jda
+fn map_of2(k1: i64, v1: i64, k2: i64, v2: i64) -> &i64
+```
+
+Create map with 2 entries. Usage: map_of2(k1, v1, k2, v2)
+
+#### `map_of3`
+
+```jda
+fn map_of3(k1: i64, v1: i64, k2: i64, v2: i64, k3: i64, v3: i64) -> &i64
+```
+
+Create map with 3 entries. Usage: map_of3(k1, v1, k2, v2, k3, v3)
+
+#### `map_get_or`
+
+```jda
+fn map_get_or(m: &i64, key: i64, def: i64) -> i64
+```
+
+Lookup with default value.
+
+#### `map_clear`
+
+```jda
+fn map_clear(m: &i64)
+```
+
+Remove all entries (reset size, clear state array).
+
+#### `map_keys`
+
+```jda
+fn map_keys(m: &i64, out: &i64) -> i64
+```
+
+Copy all occupied keys into out array. Returns count.
+
+#### `map_values`
+
+```jda
+fn map_values(m: &i64, out: &i64) -> i64
+```
+
+Copy all occupied values into out array. Returns count.
+
+#### `map_copy`
+
+```jda
+fn map_copy(m: &i64) -> &i64
+```
+
+Shallow copy of map.
+
+#### `map_merge`
+
+```jda
+fn map_merge(dst: &i64, src: &i64)
+```
+
+Merge all entries from src into dst (overwrites on conflict).
+
+#### `map_print`
+
+```jda
+fn map_print(m: &i64)
+```
+
+Print map as {k1: v1, k2: v2}.
+
+#### `map_println`
+
+```jda
+fn map_println(m: &i64)
+```
+
+Print map followed by newline.
 
 ---
 

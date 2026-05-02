@@ -1,0 +1,225 @@
+; =============================================================================
+; jda::drop -- Destructors / Finalizers / Deterministic Cleanup
+; =============================================================================
+; Convention-based resource cleanup for Jda. Since the compiler has no
+; RAII, GC, or automatic destructors, this module provides a registry
+; where resources are associated with cleanup actions, then cleaned up
+; explicitly via drop() or scope-based drop_scope_end().
+;
+; Destructor kinds (what cleanup action to perform):
+;   DROP_NOOP     = 0    no-op (placeholder)
+;   DROP_FREE     = 1    free memory (currently no-op — no free syscall)
+;   DROP_CLOSE_FD = 2    close a file descriptor via syscall(3, fd)
+;   DROP_CUSTOM   = 3    call a user-registered cleanup address
+;
+; Memory layout:
+;   Registry is a flat array of (ptr, kind, aux) triples:
+;     [i*3 + 0] = resource pointer/handle
+;     [i*3 + 1] = destructor kind
+;     [i*3 + 2] = aux data (e.g., fd number, or custom fn pointer)
+;   Scope stack tracks indices for nested scope cleanup.
+;
+; Functions:
+;   drop_init()                        initialize the registry (call once)
+;   drop_register(ptr, kind, aux)      register a resource for cleanup
+;   drop_register_fd(fd)               shorthand: register a file descriptor
+;   drop_register_mem(ptr)             shorthand: register allocated memory
+;   drop(ptr)                          find and execute cleanup for ptr
+;   drop_scope_begin()                 mark current registry depth
+;   drop_scope_end()                   drop all resources registered since begin
+;   drop_all()                         drop everything in registry
+;   drop_count()              -> i64   number of registered resources
+;   drop_is_registered(ptr)  -> i64   1 if ptr is in registry
+;   drop_unregister(ptr)               remove without executing cleanup
+;   drop_print()                       print registry contents
+; =============================================================================
+
+; --- Registry storage ---
+; Max 256 entries, each is 3 i64s (ptr, kind, aux) = 768 i64s
+; Plus scope stack: max 32 nested scopes
+
+const DROP_NOOP     = 0
+const DROP_FREE     = 1
+const DROP_CLOSE_FD = 2
+const DROP_CUSTOM   = 3
+
+const _DROP_MAX_ENTRIES = 256
+const _DROP_MAX_SCOPES  = 32
+
+let _drop_registry: &i64 = 0
+let _drop_count: i64 = 0
+let _drop_scopes: &i64 = 0
+let _drop_scope_depth: i64 = 0
+let _drop_inited: i64 = 0
+
+;; Initialize the drop registry. Call once at program start.
+fn drop_init() {
+    if _drop_inited == 1 { ret }
+    _drop_registry = alloc_pages(1)
+    _drop_scopes = alloc_pages(1)
+    _drop_count = 0
+    _drop_scope_depth = 0
+    _drop_inited = 1
+}
+
+;; Register a resource for cleanup.
+;; ptr: the resource pointer or handle
+;; kind: DROP_NOOP, DROP_FREE, DROP_CLOSE_FD, or DROP_CUSTOM
+;; aux: extra data (fd for CLOSE_FD, fn ptr for CUSTOM, 0 otherwise)
+fn drop_register(ptr: i64, kind: i64, aux: i64) {
+    if _drop_count >= 256 { ret }
+    let base = _drop_count * 3
+    _drop_registry[base] = ptr
+    let ki = base + 1
+    _drop_registry[ki] = kind
+    let ai = base + 2
+    _drop_registry[ai] = aux
+    _drop_count = _drop_count + 1
+}
+
+;; Shorthand: register a file descriptor for close-on-drop.
+fn drop_register_fd(fd: i64) {
+    drop_register(fd, 2, fd)
+}
+
+;; Shorthand: register allocated memory for free-on-drop.
+fn drop_register_mem(ptr: i64) {
+    drop_register(ptr, 1, 0)
+}
+
+;; Internal: close a file descriptor (single syscall wrapper).
+fn _drop_close_fd(fd: i64) -> i64 {
+    ret syscall(3, fd, 0, 0)
+}
+
+;; Internal: execute cleanup for one entry by index.
+fn _drop_execute(idx: i64) {
+    let base = idx * 3
+    let ki = base + 1
+    let kind = _drop_registry[ki]
+    let ai = base + 2
+    let aux = _drop_registry[ai]
+    if kind == 2 {
+        _drop_close_fd(aux)
+    }
+    ; kind 0 (NOOP) and kind 1 (FREE) are no-ops currently
+    ; kind 3 (CUSTOM) would need function pointer calls — future work
+}
+
+;; Internal: remove entry at index by swapping with last.
+fn _drop_remove_at(idx: i64) {
+    let last = _drop_count - 1
+    if idx != last {
+        let dst = idx * 3
+        let src = last * 3
+        _drop_registry[dst] = _drop_registry[src]
+        let d1 = dst + 1
+        let s1 = src + 1
+        _drop_registry[d1] = _drop_registry[s1]
+        let d2 = dst + 2
+        let s2 = src + 2
+        _drop_registry[d2] = _drop_registry[s2]
+    }
+    _drop_count = _drop_count - 1
+}
+
+;; Find and execute cleanup for a resource, then remove it.
+fn drop(ptr: i64) {
+    let i = 0
+    loop i < _drop_count {
+        let base = i * 3
+        if _drop_registry[base] == ptr {
+            _drop_execute(i)
+            _drop_remove_at(i)
+            ret
+        }
+        i = i + 1
+    }
+}
+
+;; Mark the current registry depth for scope-based cleanup.
+fn drop_scope_begin() {
+    if _drop_scope_depth >= 32 { ret }
+    _drop_scopes[_drop_scope_depth] = _drop_count
+    _drop_scope_depth = _drop_scope_depth + 1
+}
+
+;; Drop all resources registered since the matching scope_begin.
+fn drop_scope_end() {
+    if _drop_scope_depth <= 0 { ret }
+    _drop_scope_depth = _drop_scope_depth - 1
+    let target = _drop_scopes[_drop_scope_depth]
+    loop _drop_count > target {
+        let idx = _drop_count - 1
+        _drop_execute(idx)
+        _drop_count = _drop_count - 1
+    }
+}
+
+;; Drop everything in the registry (LIFO order).
+fn drop_all() {
+    loop _drop_count > 0 {
+        let idx = _drop_count - 1
+        _drop_execute(idx)
+        _drop_count = _drop_count - 1
+    }
+    _drop_scope_depth = 0
+}
+
+;; Return number of registered resources.
+fn drop_count() -> i64 {
+    ret _drop_count
+}
+
+;; Check if a resource is registered.
+fn drop_is_registered(ptr: i64) -> i64 {
+    let i = 0
+    loop i < _drop_count {
+        let base = i * 3
+        if _drop_registry[base] == ptr {
+            ret 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Remove a resource from the registry without executing cleanup.
+fn drop_unregister(ptr: i64) {
+    let i = 0
+    loop i < _drop_count {
+        let base = i * 3
+        if _drop_registry[base] == ptr {
+            _drop_remove_at(i)
+            ret
+        }
+        i = i + 1
+    }
+}
+
+;; Print registry contents for debugging.
+fn drop_print() {
+    print("DropRegistry(")
+    let c = _drop_count
+    print("{c}")
+    print(" entries)\n")
+    let i = 0
+    loop i < _drop_count {
+        let base = i * 3
+        let p = _drop_registry[base]
+        let ki = base + 1
+        let k = _drop_registry[ki]
+        let ai = base + 2
+        let a = _drop_registry[ai]
+        print("  [")
+        print("{i}")
+        print("] ptr=")
+        print("{p}")
+        print(" kind=")
+        print("{k}")
+        print(" aux=")
+        print("{a}")
+        print("\n")
+        i = i + 1
+    }
+}
