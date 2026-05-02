@@ -173,12 +173,22 @@ jda-lang/
 │   ├── json.jda         # Zero-copy JSON parser + compact/pretty serialiser
 │   ├── fmt.jda          # String formatting (fmt!) + coloured compiler diagnostics
 │   └── ml/
-│       └── nn.jda       # Neural network layers: Linear, ReLU, Adam, SGD
+│       ├── nn.jda       # Neural network layers: Linear, ReLU, Adam, SGD
+│       ├── data.jda     # DataLoader, Dataset, shuffle, split, CSV loader
+│       └── metrics.jda  # Accuracy, F1, AUC-ROC, confusion matrix, MAE, R²
+│
+├── ml/
+│   ├── tensor.jda       # Native tensor primitives & compile-time shape checking
+│   ├── autograd.jda     # Compile-time automatic differentiation (JIR pass)
+│   ├── ptx.jda          # JIR → NVIDIA PTX GPU backend (no CUDA runtime)
+│   ├── avx512.jda       # AVX-512 loop tiling & vectorization JIR pass
+│   └── rocm.jda         # AMD ROCm GPU backend (/dev/kfd ioctl, RDNA2 ISA)
 │
 ├── examples/
 │   ├── hello.jda        # Hello world (compiled by Stage 0)
 │   ├── web_server.jda   # 10,000-connection concurrent HTTP server
-│   └── mlp.jda          # 10-line MLP training (vs 30-line PyTorch)
+│   ├── mlp.jda          # 10-line MLP training (vs 30-line PyTorch)
+│   └── transformer.jda  # Decoder-only transformer / tiny language model
 │
 └── docker/
     └── Dockerfile       # Linux x86-64 build environment (NASM + binutils)
@@ -274,6 +284,10 @@ Tensors, autograd, and GPU execution as language primitives. No Python. No C++.
 | AVX-512 Pass | `ml/avx512.jda` | Loop tiling (16×16) + `VFMADD213PS` emission. ~115 GFLOPS/core |
 | Neural Net lib | `stdlib/ml/nn.jda` | Linear, ReLU, Sigmoid, Tanh, Softmax, MSELoss, Adam, SGD |
 | MLP Demo | `examples/mlp.jda` | 10-line XOR MLP training. No Python. No C++. Single binary |
+| ROCm Backend | `ml/rocm.jda` | AMD GPU via `/dev/kfd` ioctl. RDNA2 ISA SGEMM kernel. No ROCm runtime |
+| DataLoader | `stdlib/ml/data.jda` | Dataset, mini-batch sampling, shuffle, train/val split, CSV loader |
+| Metrics | `stdlib/ml/metrics.jda` | Accuracy, F1 (macro/micro/weighted), AUC-ROC, MAE, RMSE, R², Huber |
+| Transformer | `examples/transformer.jda` | Decoder-only transformer: MHA, GELU FFN, LayerNorm, char-level LM |
 
 ---
 
