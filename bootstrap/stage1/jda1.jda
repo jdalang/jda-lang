@@ -2753,7 +2753,6 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
         }
         g_main_pos = g_main_pos + 1
     }
-    expect(TOK_EQ)
     if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
     if gidx >= 200 { panic("Too many globals") }
@@ -2763,7 +2762,15 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     g_tmp_let_gidx = gidx
     g_tmp_let_stype = decl_stype
     g_tmp_let_is_addr = decl_is_addr
-    skip_top_level_let_rhs(toks, stab, src)
+    let eq_tok = tok_type_at_raw(toks, g_main_pos)
+    if eq_tok == TOK_EQ {
+        g_main_pos = g_main_pos + 1
+        skip_top_level_let_rhs(toks, stab, src)
+    } else {
+        g_glob_size[gidx] = 8
+        g_glob_stype[gidx] = decl_stype
+        g_glob_is_addr[gidx] = decl_is_addr
+    }
     let glob_sz = load_i64_at(g_glob_size, gidx)
     
     g_glob_total_sz = g_glob_total_sz + glob_sz
@@ -6029,25 +6036,27 @@ fn parse_postfix(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node 
 }
 
 ; Pratt-style precedence climbing
-fn parse_binop_rhs(left: Node, toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: &i8) -> Node {
-    let op   = toks[pos[0]].type
-    let prec = op_precedence(op)
-    if prec < min_prec {
-        ret left
-    }
-    pos[0] = pos[0] + 1
-    let right = parse_binop(toks, pos, prec + 1, stab, src)
-    let n = Node{}
-    n.node_type = NODE_BINOP
-    n.op        = op
-    n.child0    = left
-    n.child1    = right
-    ret parse_binop_rhs(n, toks, pos, min_prec, stab, src)
-}
-
 fn parse_binop(toks: &Token, pos: &i64, min_prec: i32, stab: &StructTable, src: &i8) -> Node {
     let left = parse_postfix(toks, pos, stab, src)
-    ret parse_binop_rhs(left, toks, pos, min_prec, stab, src)
+    let keep = 1
+    loop keep == 1 {
+        let op   = toks[pos[0]].type
+        let prec = op_precedence(op)
+        if prec < min_prec {
+            keep = 0
+        } else {
+            pos[0] = pos[0] + 1
+            let next_prec = prec + 1
+            let right = parse_binop(toks, pos, next_prec, stab, src)
+            let n = Node{}
+            n.node_type = NODE_BINOP
+            n.op        = op
+            n.child0    = left
+            n.child1    = right
+            left = n
+        }
+    }
+    ret left
 }
 
 fn op_precedence(op: i32) -> i32 {
@@ -7907,7 +7916,7 @@ fn fold_add_chain_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, 
     let add_like = is_add_like_op(op)
     loop add_like == 1 {
         pos[0] = pos[0] + 1
-        let right_id = fold_add_chain_inline(toks, pos, stab, src, jfn, bb)
+        let right_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
         let right_bad = right_id < 0
         if right_bad {
             ret left_id
@@ -7915,7 +7924,9 @@ fn fold_add_chain_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, 
         let jir_op = tok_to_jir_op(op)
         if left_stype == TYPE_F64 or left_stype == TYPE_F32 { jir_op = tok_to_jir_op_f64(op) }
         g_codegen_stype = left_stype
-        ret emit_binop(jfn, bb, jir_op, left_id, right_id)
+        left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
+        op = tok_type_at(toks, pos[0])
+        add_like = is_add_like_op(op)
     }
     ret left_id
 }
