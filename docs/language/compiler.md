@@ -78,6 +78,8 @@ Converts AST to SSA-based intermediate representation:
 - **Peephole optimization**: Strength-reduce mul/div by powers of 2 to shifts
 - **Loop register promotion**: Hoist loop variables into callee-saved registers (R13/R14/R15)
 - **Single-arg call optimization**: Direct MOV to RDI instead of push/pop for 1-argument calls
+- **NOP fallthrough pass**: Post-fixup pass replaces JMP rel32 with displacement 0 with 5-byte NOP
+- **ADD imm8 encoding**: 4-byte immediate encoding for small constants vs 7-byte imm32
 - Applied per-function on the JIR
 
 ### 6. Register Allocation

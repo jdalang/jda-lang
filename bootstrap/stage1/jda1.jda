@@ -12616,6 +12616,16 @@ fn emit_add_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
 }
 
 ; ADD r/m64, imm32:  REX.W 81 /0 id
+; ADD r/m64, imm8: REX.W 83 /0 ib
+fn emit_add_imm8(out: &i8, pos: &i64, dst: i32, imm: i64) {
+    let b = 0
+    if dst >= 8 { b = 1 }
+    emit_byte(out, pos, 0x48 + b)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC0 + mod8(dst))
+    emit_byte(out, pos, mod256(imm))
+}
+
 fn emit_add_imm32(out: &i8, pos: &i64, dst: i32, imm: i64) {
     let b = 0
     if dst >= 8 { b = 1 }
@@ -13667,8 +13677,12 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
                 }
             }
             if ab_const == 1 {
-                ; Promoted + immediate: ADD promo_a, imm32
-                emit_add_imm32(out, pos, add_promo, ab_imm)
+                ; Promoted + immediate: ADD promo_a, imm
+                if ab_imm >= 0 and ab_imm < 128 {
+                    emit_add_imm8(out, pos, add_promo, ab_imm)
+                } else {
+                    emit_add_imm32(out, pos, add_promo, ab_imm)
+                }
                 consume_use(ctx, ins.operand0)
                 consume_use(ctx, ins.operand1)
                 ret 1
@@ -13695,7 +13709,11 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         if imm_fits == 1 {
             let a = get_or_load(ctx.ra, out, pos, ins.operand0)
             emit_mov_rr(out, pos, PHYS_R12, a)
-            emit_add_imm32(out, pos, PHYS_R12, b_imm)
+            if b_imm >= 0 and b_imm < 128 {
+                emit_add_imm8(out, pos, PHYS_R12, b_imm)
+            } else {
+                emit_add_imm32(out, pos, PHYS_R12, b_imm)
+            }
             consume_use(ctx, ins.operand0)
             consume_use(ctx, ins.operand1)
             let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
@@ -20070,6 +20088,42 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     lower_fn_emit_epilogue(out, pos, is_main)
     g_lower_is_main = 0
     lower_fn_patch_fixups(jfn, ctx, out, pos)
+    nop_fallthrough_jmps(out, fn_start, pos[0])
+}
+
+; Post-fixup: replace JMP rel32 with disp=0 (jumps to next instr) with NOPs
+fn nop_fallthrough_jmps(out: &i8, start: i64, end_pos: i64) {
+    let i = start
+    let lim = end_pos - 4
+    loop i < lim {
+        let b = out[i]
+        if b < 0 { b = b + 256 }
+        if b == 0xE9 {
+            ; Check if the 4-byte displacement is 0
+            let d0 = out[i + 1]
+            let d1 = out[i + 2]
+            let d2 = out[i + 3]
+            let d3 = out[i + 4]
+            if d0 < 0 { d0 = d0 + 256 }
+            if d1 < 0 { d1 = d1 + 256 }
+            if d2 < 0 { d2 = d2 + 256 }
+            if d3 < 0 { d3 = d3 + 256 }
+            let disp = d0 + d1 * 256 + d2 * 65536 + d3 * 16777216
+            if disp == 0 {
+                ; Replace 5-byte JMP with 5-byte NOP (0F 1F 44 00 00)
+                poke_byte(out, i, 0x0F)
+                poke_byte(out, i + 1, 0x1F)
+                poke_byte(out, i + 2, 0x44)
+                poke_byte(out, i + 3, 0x00)
+                poke_byte(out, i + 4, 0x00)
+                i = i + 5
+            } else {
+                i = i + 1
+            }
+        } else {
+            i = i + 1
+        }
+    }
 }
 
 fn write_elf(out_fd: i64, code: &i8, code_len: i64,
