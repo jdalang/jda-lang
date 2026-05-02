@@ -1056,6 +1056,130 @@ fn eprint_i64(val: i64) {
     ret 0
 }
 
+; ============================================================
+; Error reporting with source context
+; ============================================================
+
+; Find start of line containing byte offset `pos` in source
+fn find_line_start(src: &i8, pos: i64) -> i64 {
+    let p = pos
+    let searching = 1
+    loop searching == 1 {
+        if p <= 0 {
+            searching = 0
+        } else {
+            let c = load_i8_at(src, p - 1)
+            if c == 10 {
+                searching = 0
+            } else {
+                p = p - 1
+            }
+        }
+    }
+    ret p
+}
+
+; Find end of line containing byte offset `pos` in source
+fn find_line_end(src: &i8, src_len: i64, pos: i64) -> i64 {
+    let p = pos
+    loop p < src_len {
+        let c = load_i8_at(src, p)
+        if c == 10 { ret p }
+        p = p + 1
+    }
+    ret p
+}
+
+; Print N spaces to stderr
+fn eprint_spaces(n: i64) {
+    let i = 0
+    loop i < n {
+        syscall(1, 2, " ", 1)
+        i = i + 1
+    }
+}
+
+; Print N characters from src starting at offset to stderr
+fn eprint_src_range(src: &i8, start: i64, len: i64) {
+    if len > 0 {
+        let buf_ptr = src + start
+        syscall(1, 2, buf_ptr, len)
+    }
+}
+
+; Print N caret (^) characters to stderr
+fn eprint_carets(n: i64) {
+    let i = 0
+    let cnt = n
+    if cnt < 1 { cnt = 1 }
+    loop i < cnt {
+        syscall(1, 2, "^", 1)
+        i = i + 1
+    }
+}
+
+; Report an error at the given token index with a message.
+; Output format:
+;   error: <message>
+;     --> <line>:<col>
+;      |
+;   NN | <source line>
+;      |  ^^^
+fn report_error_at(tok_idx: i64, msg: &i8) {
+    let toks = g_dbg_toks_init
+    let src = g_src_buf_ptr
+    let src_len = g_runtime_src_len
+
+    ; Get token location
+    let line = tok_line_at(toks, tok_idx)
+    let str_start = tok_str_start_at_raw(toks, tok_idx)
+    let str_len = tok_str_len_at_raw(toks, tok_idx)
+
+    ; Compute column from str_start
+    let line_start = find_line_start(src, str_start)
+    let line_end = find_line_end(src, src_len, str_start)
+    let col = str_start - line_start + 1
+    let line_len = line_end - line_start
+
+    ; Clamp line_len to avoid huge output
+    if line_len > 200 { line_len = 200 }
+
+    ; error: <message>
+    eprint("error: ")
+    eprint(msg)
+    eprint("\n")
+
+    ; --> <line>:<col>
+    eprint("  --> ")
+    eprint_i64(line)
+    eprint(":")
+    eprint_i64(col)
+    eprint("\n")
+
+    ; line number gutter
+    eprint("   |\n")
+
+    ; NN | <source line>
+    eprint_i64(line)
+    eprint(" | ")
+    eprint_src_range(src, line_start, line_len)
+    eprint("\n")
+
+    ;    |  ^^^
+    eprint("   | ")
+    eprint_spaces(col - 1)
+    eprint_carets(str_len)
+    eprint("\n")
+
+    ; Exit with error
+    syscall(60, 1, 0, 0)
+}
+
+; Report error at current parser position (g_main_pos)
+fn report_error(msg: &i8) {
+    report_error_at(g_main_pos, msg)
+}
+
 fn live_codegen_expr_inline(bb: i64) -> i64 {
     let r = live_codegen_binop_inline(0, bb)
     ret r
@@ -5449,7 +5573,7 @@ fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         if count == 1 { a1 = arg }
         if count == 2 { a2 = arg }
         count = count + 1
-        if count > 3 { panic("syscall arg overflow") }
+        if count > 3 { report_error("syscall takes at most 4 arguments") }
     }
     expect(toks, TOK_RPAREN)
     ret emit_syscall_raw(jfn, bb, nr, a0, a1, a2)
@@ -6473,7 +6597,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
             arg5 = a_id
         }
         arg_cnt = arg_cnt + 1
-        if arg_cnt > 6 { panic("call arg overflow") }
+        if arg_cnt > 6 { report_error("function call takes at most 6 arguments") }
         if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
             g_main_pos = g_main_pos + 1
         }
@@ -9280,7 +9404,7 @@ fn try_small_ret_tokens_fast(toks: &Token, tok_cnt: i64, out_path: &i8) -> i64 {
 }
 
 fn live_compile_if(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_IF { panic("if: expected if") }
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_IF { report_error("expected 'if'") }
     g_main_pos = g_main_pos + 1
     let cond_id = live_codegen_expr_inline(bb)
     let then_bb = create_block_live(jfn)
@@ -9288,12 +9412,12 @@ fn live_compile_if(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction
     let merge_bb = create_block_live(jfn)
     emit_br(jfn, bb, cond_id, then_bb, else_bb)
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE {
-        panic("if: expected {")
+        report_error("expected '{' after if condition")
     }
     g_main_pos = g_main_pos + 1
     let then_end = live_compile_block(g_dbg_toks_init, stab, src, jfn, then_bb)
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RBRACE {
-        panic("if: expected }")
+        report_error("expected '}' to close if block")
     }
     g_main_pos = g_main_pos + 1
     emit_jmp(jfn, then_end, merge_bb)
@@ -9307,17 +9431,17 @@ fn live_compile_if(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction
         emit_jmp(jfn, else_end, merge_bb)
         ret merge_bb
     }
-    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE { panic("if: expected else {") }
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE { report_error("expected '{' after else") }
     g_main_pos = g_main_pos + 1
     let else_end = live_compile_block(g_dbg_toks_init, stab, src, jfn, else_bb)
-    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RBRACE { panic("if: expected else }") }
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RBRACE { report_error("expected '}' to close else block") }
     g_main_pos = g_main_pos + 1
     emit_jmp(jfn, else_end, merge_bb)
     ret merge_bb
 }
 
 fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LOOP { panic("loop: expected loop") }
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LOOP { report_error("expected 'loop'") }
     g_main_pos = g_main_pos + 1
     let start_bb = create_block_live(jfn)
     emit_jmp(jfn, bb, start_bb)
@@ -9340,7 +9464,7 @@ fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFuncti
         emit_jmp(jfn, body_end, start_bb)
         ret merge_bb
     } else {
-        panic("loop: expected }")
+        report_error("expected '}' to close loop block")
     }
     emit_jmp(jfn, body_end, start_bb)
     ret merge_bb
@@ -9826,7 +9950,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 print("fn_end_fail=")
                 print_span(src_buf, cur_name_off, cur_name_len)
                 print("\n")
-                panic("could not find end of function")
+                report_error("could not find end of function")
             }
             g_cur_fn_end = fn_rbrace_scan
             print("COMPILE ")
