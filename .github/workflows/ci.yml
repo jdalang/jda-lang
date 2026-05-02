@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build jda1 from bootstrap
+        run: |
+          ulimit -s unlimited
+          bootstrap/bin/jda1-bootstrap bootstrap/stage1/jda1.jda bootstrap/stage0/jda1
+          chmod +x bootstrap/stage0/jda1
+          echo "jda1 built: $(wc -c < bootstrap/stage0/jda1) bytes"
+
+      - name: Run conformance tests
+        run: |
+          ulimit -s unlimited
+          bash tools/run_tests.sh
+
+      - name: Self-host convergence
+        run: |
+          ulimit -s unlimited
+          echo "=== Stage 2: jda1 → jda1_a ==="
+          bootstrap/stage0/jda1 bootstrap/stage1/jda1.jda /tmp/jda1_a 2>/dev/null
+          chmod +x /tmp/jda1_a
+          echo "=== Stage 3: jda1_a → jda1_b ==="
+          /tmp/jda1_a bootstrap/stage1/jda1.jda /tmp/jda1_b 2>/dev/null
+          chmod +x /tmp/jda1_b
+          echo "=== Convergence check ==="
+          cmp /tmp/jda1_a /tmp/jda1_b
+          echo "CONVERGED — jda1_a == jda1_b ($(wc -c < /tmp/jda1_a) bytes)"
