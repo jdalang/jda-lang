@@ -11,6 +11,7 @@
   <a href="docs/language/syntax.md">Docs</a> &bull;
   <a href="docs/language/stdlib.md">Stdlib</a> &bull;
   <a href="benchmarks/RESULTS.md">Benchmarks</a> &bull;
+  <a href="benchmarks/COMPLEX_BENCHMARKS.md">Complex Benchmarks</a> &bull;
   <a href="examples/">Examples</a> &bull;
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
@@ -282,6 +283,21 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 | **Deps** | gcc + libc | Rust toolchain | Go toolchain | CPython | CRuby |
 
 Jda: **zero external dependencies** — bootstrapped from assembly, single static binary.
+
+### Complex Benchmarks (Full Source Code)
+
+Real-world problems with complete source in all 6 languages — [full analysis with code](benchmarks/COMPLEX_BENCHMARKS.md):
+
+| Problem | C | Jda | Rust | Go | Python | Ruby |
+|---------|----:|--------:|------:|----:|-------:|-----:|
+| JSON parse+filter 100K | 18 | **16** | 19 | 42 | 189 | 312 |
+| Sieve 10M | 38 | **34** | 42 | 48 | 4,820 | 3,910 |
+| Levenshtein 5Kx5K | 42 | 45 | 40 | 58 | 12,400 | 8,900 |
+| SHA-256 chain 100K | 85 | 92 | 82 | 110 | 38,500 | 22,100 |
+| N-Queens N=14 | 210 | 245 | 195 | 320 | 82,000 | 41,500 |
+| HTTP parse 50K | 12 | 14 | 11 | 28 | 420 | 680 |
+
+**Jda wins 2/6 vs C**, **6/6 vs Go**, **208x faster than Python**, **116x faster than Ruby**. Within 8-17% of C on all problems.
 
 <details>
 <summary>Reproduce</summary>
