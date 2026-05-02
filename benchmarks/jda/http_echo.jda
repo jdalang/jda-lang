@@ -1,0 +1,83 @@
+; HTTP echo server benchmark — respond with fixed JSON to every request
+; Same as C: raw syscalls, single-threaded accept loop
+; Measure with: wrk -t2 -c100 -d5s http://localhost:8080/
+
+fn he_byte_at(buf: &i8, idx: i64) -> i64 {
+    ret buf[idx]
+}
+
+fn copy_str(dst: &i8, pos: i64, src: &i8, len: i64) -> i64 {
+    let i = 0
+    loop i < len {
+        let b = he_byte_at(src, i)
+        poke_byte(dst, pos, b)
+        pos = pos + 1
+        i = i + 1
+    }
+    ret pos
+}
+
+fn build_response(buf: &i8) -> i64 {
+    let pos = 0
+    let hdr: &i8 = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\nConnection: keep-alive\r\n\r\n"
+    pos = copy_str(buf, pos, hdr, 95)
+    let body: &i8 = "{\"status\":\"ok\",\"count\":42}"
+    pos = copy_str(buf, pos, body, 27)
+    ret pos
+}
+
+fn main() -> i64 {
+    ; socket(AF_INET=2, SOCK_STREAM=1, 0) = syscall 41
+    let sock = syscall(41, 2, 1, 0)
+    if sock < 0 {
+        print("socket failed\n")
+        ret 1
+    }
+
+    ; setsockopt SO_REUSEADDR
+    let optval: &i64 = alloc_pages(1)
+    optval[0] = 1
+    syscall(54, sock, 1, 2, optval, 4)
+
+    ; sockaddr_in: AF_INET, port 8080, INADDR_ANY
+    let addr: &i8 = alloc_pages(1)
+    poke_byte(addr, 0, 2)    ; AF_INET
+    poke_byte(addr, 1, 0)
+    poke_byte(addr, 2, 31)   ; port 8080 big-endian: 0x1F90
+    poke_byte(addr, 3, 144)
+    poke_byte(addr, 4, 0)    ; 0.0.0.0
+    poke_byte(addr, 5, 0)
+    poke_byte(addr, 6, 0)
+    poke_byte(addr, 7, 0)
+
+    ; bind
+    let br = syscall(49, sock, addr, 16)
+    if br < 0 {
+        print("bind failed\n")
+        ret 1
+    }
+
+    ; listen
+    syscall(50, sock, 128)
+
+    ; Pre-build response
+    let resp: &i8 = alloc_pages(1)
+    let resp_len = build_response(resp)
+
+    let req_buf: &i8 = alloc_pages(1)
+
+    print("Jda http_echo listening on :8080\n")
+
+    ; Accept loop
+    let running = 1
+    loop running == 1 {
+        let cli = syscall(43, sock, 0, 0)
+        if cli >= 0 {
+            read(cli, req_buf, 4096)
+            write(cli, resp, resp_len)
+            close(cli)
+        }
+    }
+
+    ret 0
+}
