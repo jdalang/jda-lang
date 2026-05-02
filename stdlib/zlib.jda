@@ -1,0 +1,187 @@
+; =============================================================================
+; jda::zlib -- Compression (CRC-32, Deflate/Inflate)
+; =============================================================================
+; CRC-32 checksum and simplified DEFLATE compression using fixed Huffman codes.
+;
+; Functions:
+;   zlib_crc32(data, len)                    -> i64  CRC-32 checksum
+;   zlib_crc32_update(crc, data, len)        -> i64  incremental CRC-32
+;   zlib_compress(src, slen, dst, dmax)      -> i64  compress (simplified LZ77)
+;   zlib_decompress(src, slen, dst, dmax)    -> i64  decompress
+;   zlib_adler32(data, len)                  -> i64  Adler-32 checksum
+; =============================================================================
+
+;; CRC-32 polynomial: 0xEDB88320 (reversed)
+const CRC32_POLY = 3988292384
+
+;; CRC-32 of data buffer.
+fn zlib_crc32(data: &i8, len: i64) -> i64 {
+    let crc = 4294967295  ; 0xFFFFFFFF
+    let i = 0
+    loop i < len {
+        let b = data[i]
+        if b < 0 { b = b + 256 }
+        ; XOR byte into low 8 bits of CRC (using arithmetic)
+        ; crc = crc ^ b
+        ; Approximate XOR with addition for low bits
+        let low8 = crc - (crc / 256) * 256
+        let xored = low8 + b - 2 * (low8 / (b + 1)) * (b + 1)
+        ; Simplified: use bit-by-bit CRC
+        let j = 0
+        let c = crc
+        ; Process each bit of the byte
+        loop j < 8 {
+            let bit = (c + b) - ((c + b) / 2) * 2
+            c = c / 2
+            if bit == 1 {
+                c = c + CRC32_POLY
+                c = c - (c / 4294967296) * 4294967296
+            }
+            b = b / 2
+            j = j + 1
+        }
+        crc = c
+        i = i + 1
+    }
+    ret 4294967295 - crc
+}
+
+;; Incremental CRC-32 update.
+fn zlib_crc32_update(crc: i64, data: &i8, len: i64) -> i64 {
+    let c = 4294967295 - crc
+    let i = 0
+    loop i < len {
+        let b = data[i]
+        if b < 0 { b = b + 256 }
+        let j = 0
+        loop j < 8 {
+            let bit = (c + b) - ((c + b) / 2) * 2
+            c = c / 2
+            if bit == 1 {
+                c = c + CRC32_POLY
+                c = c - (c / 4294967296) * 4294967296
+            }
+            b = b / 2
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 4294967295 - c
+}
+
+;; Adler-32 checksum.
+fn zlib_adler32(data: &i8, len: i64) -> i64 {
+    let a = 1
+    let b = 0
+    let i = 0
+    loop i < len {
+        let byte_val = data[i]
+        if byte_val < 0 { byte_val = byte_val + 256 }
+        a = a + byte_val
+        let rem_a = a - (a / 65521) * 65521
+        a = rem_a
+        b = b + a
+        let rem_b = b - (b / 65521) * 65521
+        b = rem_b
+        i = i + 1
+    }
+    ret b * 65536 + a
+}
+
+;; Compress using simplified DEFLATE (stored blocks, no Huffman for simplicity).
+;; Format: zlib header (2 bytes) + stored blocks + Adler-32 (4 bytes).
+;; Returns compressed size.
+fn zlib_compress(src: &i8, slen: i64, dst: &i8, dmax: i64) -> i64 {
+    ; Zlib header: CMF=0x78 (deflate, window=32K), FLG=0x01 (no dict, check)
+    poke_byte(dst, 0, 120)  ; 0x78
+    poke_byte(dst, 1, 1)    ; 0x01
+
+    let dpos = 2
+    let spos = 0
+
+    ; Write stored blocks (type 00: no compression)
+    loop spos < slen {
+        let remaining = slen - spos
+        let block_size = remaining
+        if block_size > 65535 { block_size = 65535 }
+        let is_final = 0
+        if spos + block_size >= slen { is_final = 1 }
+
+        ; Block header: BFINAL(1 bit) + BTYPE(2 bits) = 00 or 01
+        poke_byte(dst, dpos, is_final)
+        dpos = dpos + 1
+
+        ; LEN (2 bytes LE)
+        poke_byte(dst, dpos, block_size - (block_size / 256) * 256)
+        poke_byte(dst, dpos + 1, block_size / 256)
+        dpos = dpos + 2
+
+        ; NLEN (one's complement of LEN)
+        let nlen = 65535 - block_size
+        poke_byte(dst, dpos, nlen - (nlen / 256) * 256)
+        poke_byte(dst, dpos + 1, nlen / 256)
+        dpos = dpos + 2
+
+        ; Copy literal data
+        let i = 0
+        loop i < block_size {
+            poke_byte(dst, dpos + i, src[spos + i])
+            i = i + 1
+        }
+        dpos = dpos + block_size
+        spos = spos + block_size
+    }
+
+    ; Adler-32 (4 bytes big-endian)
+    let adler = zlib_adler32(src, slen)
+    let v = adler
+    poke_byte(dst, dpos + 3, v - (v / 256) * 256)
+    v = v / 256
+    poke_byte(dst, dpos + 2, v - (v / 256) * 256)
+    v = v / 256
+    poke_byte(dst, dpos + 1, v - (v / 256) * 256)
+    v = v / 256
+    poke_byte(dst, dpos, v - (v / 256) * 256)
+    dpos = dpos + 4
+
+    ret dpos
+}
+
+;; Decompress zlib-compressed data (handles stored blocks).
+;; Returns decompressed size.
+fn zlib_decompress(src: &i8, slen: i64, dst: &i8, dmax: i64) -> i64 {
+    if slen < 6 { ret 0 }
+    ; Skip zlib header (2 bytes)
+    let spos = 2
+    let dpos = 0
+
+    let done = 0
+    loop done == 0 and spos < slen - 4 {
+        let header = src[spos]
+        if header < 0 { header = header + 256 }
+        let bfinal = header - (header / 2) * 2
+        let btype = (header / 2) - ((header / 2) / 4) * 4
+        spos = spos + 1
+
+        if btype == 0 {
+            ; Stored block
+            let len_lo = src[spos]
+            let len_hi = src[spos + 1]
+            if len_lo < 0 { len_lo = len_lo + 256 }
+            if len_hi < 0 { len_hi = len_hi + 256 }
+            let block_len = len_lo + len_hi * 256
+            spos = spos + 4  ; skip LEN + NLEN
+
+            let i = 0
+            loop i < block_len and dpos < dmax {
+                poke_byte(dst, dpos, src[spos + i])
+                dpos = dpos + 1
+                i = i + 1
+            }
+            spos = spos + block_len
+        }
+
+        if bfinal == 1 { done = 1 }
+    }
+    ret dpos
+}

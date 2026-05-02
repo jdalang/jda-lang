@@ -1,0 +1,18 @@
+fn main() -> i64 {
+    let vars = erb_vars_new()
+    erb_vars_set(vars, "name", 4, "World", 5)
+    erb_vars_set(vars, "lang", 4, "Jda", 3)
+
+    let out: &i8 = alloc_pages(1)
+    let n = erb_render("Hello <%= name %>! Welcome to <%= lang %>.", 42, vars, out, 4096)
+    syscall(1, 1, out, n)
+    print("\n")
+
+    ; HTML escape
+    let esc: &i8 = alloc_pages(1)
+    let en = erb_escape_html("<b>hi</b>", 9, esc)
+    syscall(1, 1, esc, en)
+    print("\n")
+
+    ret 0
+}

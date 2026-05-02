@@ -1,0 +1,346 @@
+; =============================================================================
+; jda::optparse -- Rich CLI Option Parser
+; =============================================================================
+; Declarative option parsing with short/long flags, required args, help text.
+; Richer than args.jda — supports named options, validation, help generation.
+;
+; Memory layout per OptParser (&i64):
+;   [0] max_opts
+;   [1] num_opts
+;   [2] names_ptr    (&i8 — option long names, packed)
+;   [3] shorts_ptr   (&i8 — single-char short flags)
+;   [4] has_val_ptr  (&i64 — 1 if option takes a value)
+;   [5] required_ptr (&i64 — 1 if required)
+;   [6] found_ptr    (&i64 — 1 if found during parse)
+;   [7] val_ptr      (&i8 — value strings, packed)
+;   [8] desc_ptr     (&i8 — descriptions, packed)
+;   [9] name_offs    (&i64 — offset of each name)
+;   [10] name_lens   (&i64 — length of each name)
+;   [11] val_offs    (&i64 — offset of each value)
+;   [12] val_lens    (&i64 — length of each value)
+;   [13] desc_offs   (&i64 — offset of each description)
+;   [14] desc_lens   (&i64 — length of each description)
+;   [15] npos        (number of positional args found)
+;   [16] pos_ptr     (&i8 — positional args, packed)
+;   [17] pos_offs    (&i64)
+;   [18] pos_lens    (&i64)
+;
+; Functions:
+;   opt_new(max)                                    -> &i64
+;   opt_add(p, name, nlen, short, has_val, required, desc, dlen)
+;   opt_parse(p, argc, argv)                        -> i64
+;   opt_get(p, name, nlen, out)                     -> i64
+;   opt_has(p, name, nlen)                          -> i64
+;   opt_positional(p, idx, out)                     -> i64
+;   opt_npos(p)                                     -> i64
+;   opt_help(p)
+; =============================================================================
+
+fn _opt_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
+    let i = 0
+    loop i < n {
+        poke_byte(dst, doff + i, src[soff + i])
+        i = i + 1
+    }
+}
+
+fn _opt_streq(a: &i8, aoff: i64, alen: i64, b: &i8, boff: i64, blen: i64) -> i64 {
+    if alen != blen { ret 0 }
+    let i = 0
+    loop i < alen {
+        if a[aoff + i] != b[boff + i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+fn _opt_strlen(s: &i8) -> i64 {
+    let i = 0
+    loop s[i] != 0 { i = i + 1 }
+    ret i
+}
+
+;; Create new option parser with max options.
+fn opt_new(max: i64) -> &i64 {
+    let p: &i64 = alloc_pages(2)
+    p[0] = max
+    p[1] = 0
+    p[2] = alloc_pages(2)   ; names
+    p[3] = alloc_pages(1)   ; shorts
+    p[4] = alloc_pages(1)   ; has_val
+    p[5] = alloc_pages(1)   ; required
+    p[6] = alloc_pages(1)   ; found
+    p[7] = alloc_pages(2)   ; values
+    p[8] = alloc_pages(2)   ; descriptions
+    p[9] = alloc_pages(1)   ; name_offs
+    p[10] = alloc_pages(1)  ; name_lens
+    p[11] = alloc_pages(1)  ; val_offs
+    p[12] = alloc_pages(1)  ; val_lens
+    p[13] = alloc_pages(1)  ; desc_offs
+    p[14] = alloc_pages(1)  ; desc_lens
+    p[15] = 0               ; npos
+    p[16] = alloc_pages(2)  ; positional args
+    p[17] = alloc_pages(1)  ; pos_offs
+    p[18] = alloc_pages(1)  ; pos_lens
+    ret p
+}
+
+;; Add an option. short=0 for no short flag. has_val=1 if takes value.
+fn opt_add(p: &i64, name: &i8, nlen: i64, short: i64, has_val: i64, required: i64, desc: &i8, dlen: i64) {
+    let idx = p[1]
+    let names: &i8 = p[2]
+    let shorts: &i8 = p[3]
+    let has_val_arr: &i64 = p[4]
+    let req_arr: &i64 = p[5]
+    let found_arr: &i64 = p[6]
+    let descs: &i8 = p[8]
+    let n_offs: &i64 = p[9]
+    let n_lens: &i64 = p[10]
+    let d_offs: &i64 = p[13]
+    let d_lens: &i64 = p[14]
+
+    ; Calculate name offset
+    let name_pos = 0
+    if idx > 0 {
+        let prev = idx - 1
+        name_pos = n_offs[prev] + n_lens[prev]
+    }
+    _opt_copy(names, name_pos, name, 0, nlen)
+    n_offs[idx] = name_pos
+    n_lens[idx] = nlen
+
+    ; Description
+    let desc_pos = 0
+    if idx > 0 {
+        let prev = idx - 1
+        desc_pos = d_offs[prev] + d_lens[prev]
+    }
+    _opt_copy(descs, desc_pos, desc, 0, dlen)
+    d_offs[idx] = desc_pos
+    d_lens[idx] = dlen
+
+    poke_byte(shorts, idx, short)
+    has_val_arr[idx] = has_val
+    req_arr[idx] = required
+    found_arr[idx] = 0
+    p[1] = idx + 1
+}
+
+;; Internal: find option by long name. Returns index or -1.
+fn _opt_find_long(p: &i64, name: &i8, nlen: i64) -> i64 {
+    let n = p[1]
+    let names: &i8 = p[2]
+    let n_offs: &i64 = p[9]
+    let n_lens: &i64 = p[10]
+    let i = 0
+    loop i < n {
+        if _opt_streq(names, n_offs[i], n_lens[i], name, 0, nlen) == 1 { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Internal: find option by short flag. Returns index or -1.
+fn _opt_find_short(p: &i64, ch: i64) -> i64 {
+    let n = p[1]
+    let shorts: &i8 = p[3]
+    let i = 0
+    loop i < n {
+        if shorts[i] == ch { ret i }
+        i = i + 1
+    }
+    ret 0 - 1
+}
+
+;; Parse command-line arguments. argc/argv from os_argv().
+;; Returns 0 on success, -1 if required option missing.
+fn opt_parse(p: &i64, argc: i64, argv: &i64) -> i64 {
+    let vals: &i8 = p[7]
+    let has_val_arr: &i64 = p[4]
+    let found_arr: &i64 = p[6]
+    let v_offs: &i64 = p[11]
+    let v_lens: &i64 = p[12]
+    let pos_buf: &i8 = p[16]
+    let pos_offs: &i64 = p[17]
+    let pos_lens: &i64 = p[18]
+    let val_pos = 0
+    let pos_pos = 0
+
+    let ai = 1  ; skip program name
+    loop ai < argc {
+        let arg: &i8 = argv[ai]
+        let alen = _opt_strlen(arg)
+
+        if alen >= 2 {
+            if arg[0] == 45 {
+                if arg[1] == 45 {
+                    ; Long option: --name or --name=value
+                    let eq_pos = 0 - 1
+                    let ki = 2
+                    loop ki < alen {
+                        if arg[ki] == 61 {
+                            if eq_pos < 0 { eq_pos = ki }
+                        }
+                        ki = ki + 1
+                    }
+                    let name_start = 2
+                    let name_len = alen - 2
+                    if eq_pos >= 0 { name_len = eq_pos - 2 }
+                    let idx = _opt_find_long(p, arg + name_start, name_len)
+                    if idx >= 0 {
+                        found_arr[idx] = 1
+                        if has_val_arr[idx] == 1 {
+                            if eq_pos >= 0 {
+                                ; Value after =
+                                let vlen = alen - eq_pos - 1
+                                _opt_copy(vals, val_pos, arg, eq_pos + 1, vlen)
+                                v_offs[idx] = val_pos
+                                v_lens[idx] = vlen
+                                val_pos = val_pos + vlen
+                            } else {
+                                ; Value is next arg
+                                ai = ai + 1
+                                if ai < argc {
+                                    let val: &i8 = argv[ai]
+                                    let vlen = _opt_strlen(val)
+                                    _opt_copy(vals, val_pos, val, 0, vlen)
+                                    v_offs[idx] = val_pos
+                                    v_lens[idx] = vlen
+                                    val_pos = val_pos + vlen
+                                }
+                            }
+                        }
+                    }
+                    ai = ai + 1
+                } else {
+                    ; Short option: -v or -f value
+                    let ch = arg[1]
+                    let idx = _opt_find_short(p, ch)
+                    if idx >= 0 {
+                        found_arr[idx] = 1
+                        if has_val_arr[idx] == 1 {
+                            ai = ai + 1
+                            if ai < argc {
+                                let val: &i8 = argv[ai]
+                                let vlen = _opt_strlen(val)
+                                _opt_copy(vals, val_pos, val, 0, vlen)
+                                v_offs[idx] = val_pos
+                                v_lens[idx] = vlen
+                                val_pos = val_pos + vlen
+                            }
+                        }
+                    }
+                    ai = ai + 1
+                }
+            } else {
+                ; Positional argument
+                let npos = p[15]
+                _opt_copy(pos_buf, pos_pos, arg, 0, alen)
+                pos_offs[npos] = pos_pos
+                pos_lens[npos] = alen
+                p[15] = npos + 1
+                pos_pos = pos_pos + alen
+                ai = ai + 1
+            }
+        } else {
+            ; Single char positional
+            let npos = p[15]
+            _opt_copy(pos_buf, pos_pos, arg, 0, alen)
+            pos_offs[npos] = pos_pos
+            pos_lens[npos] = alen
+            p[15] = npos + 1
+            pos_pos = pos_pos + alen
+            ai = ai + 1
+        }
+    }
+
+    ; Check required options
+    let req_arr: &i64 = p[5]
+    let n = p[1]
+    let i = 0
+    loop i < n {
+        if req_arr[i] == 1 {
+            if found_arr[i] == 0 { ret 0 - 1 }
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+;; Get option value. Copies value to out, returns length. 0 if not found.
+fn opt_get(p: &i64, name: &i8, nlen: i64, out: &i8) -> i64 {
+    let idx = _opt_find_long(p, name, nlen)
+    if idx < 0 { ret 0 }
+    let found_arr: &i64 = p[6]
+    if found_arr[idx] == 0 { ret 0 }
+    let vals: &i8 = p[7]
+    let v_offs: &i64 = p[11]
+    let v_lens: &i64 = p[12]
+    let vlen = v_lens[idx]
+    _opt_copy(out, 0, vals, v_offs[idx], vlen)
+    ret vlen
+}
+
+;; Check if option was provided. Returns 1 or 0.
+fn opt_has(p: &i64, name: &i8, nlen: i64) -> i64 {
+    let idx = _opt_find_long(p, name, nlen)
+    if idx < 0 { ret 0 }
+    let found_arr: &i64 = p[6]
+    ret found_arr[idx]
+}
+
+;; Get positional argument at index. Copies to out, returns length.
+fn opt_positional(p: &i64, idx: i64, out: &i8) -> i64 {
+    if idx >= p[15] { ret 0 }
+    let pos_buf: &i8 = p[16]
+    let pos_offs: &i64 = p[17]
+    let pos_lens: &i64 = p[18]
+    let plen = pos_lens[idx]
+    _opt_copy(out, 0, pos_buf, pos_offs[idx], plen)
+    ret plen
+}
+
+;; Number of positional arguments found.
+fn opt_npos(p: &i64) -> i64 {
+    ret p[15]
+}
+
+;; Print help message to stdout.
+fn opt_help(p: &i64) {
+    let n = p[1]
+    let names: &i8 = p[2]
+    let shorts: &i8 = p[3]
+    let has_val_arr: &i64 = p[4]
+    let req_arr: &i64 = p[5]
+    let descs: &i8 = p[8]
+    let n_offs: &i64 = p[9]
+    let n_lens: &i64 = p[10]
+    let d_offs: &i64 = p[13]
+    let d_lens: &i64 = p[14]
+
+    print("Options:\n")
+    let i = 0
+    loop i < n {
+        print("  ")
+        let sh = shorts[i]
+        if sh != 0 {
+            print("-")
+            let sb: &i8 = alloc_pages(1)
+            poke_byte(sb, 0, sh)
+            syscall(1, 1, sb, 1)
+            print(", ")
+        }
+        print("--")
+        let nb: &i8 = alloc_pages(1)
+        _opt_copy(nb, 0, names, n_offs[i], n_lens[i])
+        syscall(1, 1, nb, n_lens[i])
+        if has_val_arr[i] == 1 { print(" <val>") }
+        print("  ")
+        let db: &i8 = alloc_pages(1)
+        _opt_copy(db, 0, descs, d_offs[i], d_lens[i])
+        syscall(1, 1, db, d_lens[i])
+        if req_arr[i] == 1 { print(" (required)") }
+        print("\n")
+        i = i + 1
+    }
+}

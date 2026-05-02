@@ -1,0 +1,186 @@
+; =============================================================================
+; jda::pathname -- Path Manipulation Utilities
+; =============================================================================
+; Pure string operations on file paths. No syscalls.
+; Extends file_io.jda's path_join/path_basename/path_ext.
+;
+; Functions:
+;   pn_dirname(path, len, out)         -> i64  directory portion
+;   pn_extname(path, len, out)         -> i64  file extension with dot
+;   pn_is_absolute(path)              -> i64  1 if starts with /
+;   pn_normalize(path, len, out)       -> i64  resolve . and ..
+;   pn_split_ext(path, len, stem, ext) -> i64  split into stem + ext
+;   pn_join3(a, al, b, bl, c, cl, out) -> i64  join 3 path segments
+;   pn_has_ext(path, len, ext, elen)  -> i64  check extension match
+; =============================================================================
+
+;; Internal: copy bytes from src to dst.
+fn pn_copy(dst: &i8, doff: i64, src: &i8, soff: i64, n: i64) {
+    let i = 0
+    loop i < n {
+        poke_byte(dst, doff + i, src[soff + i])
+        i = i + 1
+    }
+}
+
+;; Get directory portion of path. Returns length written to out.
+;; "/usr/bin/gcc" -> "/usr/bin", "foo.txt" -> ".", "/" -> "/"
+fn pn_dirname(path: &i8, len: i64, out: &i8) -> i64 {
+    if len == 0 {
+        poke_byte(out, 0, 46)  ; "."
+        ret 1
+    }
+    ; Find last /
+    let last = 0 - 1
+    let i = 0
+    loop i < len {
+        if path[i] == 47 { last = i }
+        i = i + 1
+    }
+    if last < 0 {
+        poke_byte(out, 0, 46)  ; "."
+        ret 1
+    }
+    if last == 0 {
+        poke_byte(out, 0, 47)  ; "/"
+        ret 1
+    }
+    pn_copy(out, 0, path, 0, last)
+    ret last
+}
+
+;; Get file extension including dot. Returns length written to out.
+;; "foo.tar.gz" -> ".gz", "Makefile" -> "" (returns 0)
+fn pn_extname(path: &i8, len: i64, out: &i8) -> i64 {
+    ; Find last dot after last slash
+    let last_slash = 0 - 1
+    let last_dot = 0 - 1
+    let i = 0
+    loop i < len {
+        let c = path[i]
+        if c == 47 { last_slash = i }
+        if c == 46 { last_dot = i }
+        i = i + 1
+    }
+    if last_dot <= last_slash + 1 { ret 0 }
+    if last_dot < 0 { ret 0 }
+    let elen = len - last_dot
+    pn_copy(out, 0, path, last_dot, elen)
+    ret elen
+}
+
+;; Check if path is absolute (starts with /).
+fn pn_is_absolute(path: &i8) -> i64 {
+    if path[0] == 47 { ret 1 }
+    ret 0
+}
+
+;; Normalize path: resolve . and .. components, collapse multiple slashes.
+;; Returns length written to out.
+fn pn_normalize(path: &i8, len: i64, out: &i8) -> i64 {
+    ; Split into components, process . and ..
+    let parts: &i64 = alloc_pages(1)   ; offsets
+    let plens: &i64 = alloc_pages(1)   ; lengths
+    let nparts = 0
+    let is_abs = 0
+    if len > 0 {
+        if path[0] == 47 { is_abs = 1 }
+    }
+
+    ; Tokenize on /
+    let start = 0
+    let i = 0
+    loop i <= len {
+        let at_sep = 0
+        if i == len { at_sep = 1 }
+        if i < len {
+            if path[i] == 47 { at_sep = 1 }
+        }
+        if at_sep == 1 {
+            let plen = i - start
+            if plen > 0 {
+                ; Check for . and ..
+                let is_dot = 0
+                let is_dotdot = 0
+                if plen == 1 {
+                    if path[start] == 46 { is_dot = 1 }
+                }
+                if plen == 2 {
+                    if path[start] == 46 {
+                        if path[start + 1] == 46 { is_dotdot = 1 }
+                    }
+                }
+                if is_dot == 0 {
+                    if is_dotdot == 1 {
+                        if nparts > 0 { nparts = nparts - 1 }
+                    } else {
+                        parts[nparts] = start
+                        plens[nparts] = plen
+                        nparts = nparts + 1
+                    }
+                }
+            }
+            start = i + 1
+        }
+        i = i + 1
+    }
+
+    ; Reconstruct
+    let opos = 0
+    if is_abs == 1 {
+        poke_byte(out, 0, 47)
+        opos = 1
+    }
+    i = 0
+    loop i < nparts {
+        if i > 0 {
+            poke_byte(out, opos, 47)
+            opos = opos + 1
+        }
+        pn_copy(out, opos, path, parts[i], plens[i])
+        opos = opos + plens[i]
+        i = i + 1
+    }
+    if opos == 0 {
+        poke_byte(out, 0, 46)
+        opos = 1
+    }
+    ret opos
+}
+
+;; Split path into stem and extension. Returns stem length.
+;; "archive.tar.gz" -> stem="archive.tar", ext=".gz"
+fn pn_split_ext(path: &i8, len: i64, stem: &i8, ext: &i8) -> i64 {
+    let elen = pn_extname(path, len, ext)
+    let slen = len - elen
+    pn_copy(stem, 0, path, 0, slen)
+    ret slen
+}
+
+;; Join 3 path segments: a/b/c. Returns length written to out.
+fn pn_join3(a: &i8, al: i64, b: &i8, bl: i64, c: &i8, cl: i64, out: &i8) -> i64 {
+    let pos = 0
+    pn_copy(out, 0, a, 0, al)
+    pos = al
+    poke_byte(out, pos, 47)
+    pos = pos + 1
+    pn_copy(out, pos, b, 0, bl)
+    pos = pos + bl
+    poke_byte(out, pos, 47)
+    pos = pos + 1
+    pn_copy(out, pos, c, 0, cl)
+    pos = pos + cl
+    ret pos
+}
+
+;; Check if path has given extension. Case-sensitive.
+fn pn_has_ext(path: &i8, len: i64, ext: &i8, elen: i64) -> i64 {
+    if len < elen { ret 0 }
+    let off = len - elen
+    let i = 0
+    loop i < elen {
+        if path[off + i] != ext[i] { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}

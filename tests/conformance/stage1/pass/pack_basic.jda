@@ -1,0 +1,30 @@
+fn main() -> i64 {
+    let buf: &i8 = alloc_pages(1)
+
+    ; Pack and unpack i32 LE
+    let off = pack_i32_le(buf, 0, 305419896)  ; 0x12345678
+    print("{off}\n")
+    let val = unpack_i32_le(buf, 0)
+    print("{val}\n")
+
+    ; Pack and unpack i16 BE
+    off = pack_i16_be(buf, 0, 258)  ; 0x0102
+    let v16 = unpack_i16_be(buf, 0)
+    print("{v16}\n")
+
+    ; Pack and unpack string
+    off = pack_str(buf, 0, "hello", 5)
+    let out: &i8 = alloc_pages(1)
+    let new_off = unpack_str(buf, 0, out)
+    let slen = unpack_str_len(buf, 0)
+    print("{slen}\n")
+    syscall(1, 1, out, slen)
+    print("\n")
+
+    ; Pack i8
+    pack_i8(buf, 0, 42)
+    let v8 = unpack_i8(buf, 0)
+    print("{v8}\n")
+
+    ret 0
+}
