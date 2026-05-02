@@ -1,0 +1,185 @@
+; Compile-time autograd — gradient operations for reverse-mode AD
+; All gradient rules are statically compiled Jda functions (no runtime graph).
+; Each function computes the analytical derivative per the standard AD rules.
+
+; ── Scalar gradient operations (f64 bit-pattern values) ──────────────
+
+; c = a + b → grad_a += grad_c, grad_b += grad_c
+fn grad_add_a(grad_c: i64) -> i64 { ret grad_c }
+fn grad_add_b(grad_c: i64) -> i64 { ret grad_c }
+
+; c = a - b → grad_a += grad_c, grad_b -= grad_c
+fn grad_sub_a(grad_c: i64) -> i64 { ret grad_c }
+fn grad_sub_b(grad_c: i64) -> i64 { ret f64_neg(grad_c) }
+
+; c = a * b → grad_a += grad_c * b, grad_b += grad_c * a
+fn grad_mul_a(b: i64, grad_c: i64) -> i64 { ret f64_mul(grad_c, b) }
+fn grad_mul_b(a: i64, grad_c: i64) -> i64 { ret f64_mul(grad_c, a) }
+
+; c = a / b → grad_a += grad_c / b, grad_b -= grad_c * a / (b*b)
+fn grad_div_a(b: i64, grad_c: i64) -> i64 { ret f64_div(grad_c, b) }
+fn grad_div_b(a: i64, b: i64, grad_c: i64) -> i64 {
+    let num = f64_mul(grad_c, a)
+    let b2 = f64_mul(b, b)
+    let r = f64_div(num, b2)
+    ret f64_neg(r)
+}
+
+; c = relu(a) → grad_a += grad_c * (a > 0 ? 1 : 0)
+fn grad_relu(a: i64, grad_c: i64) -> i64 {
+    let zero = f64_from_int(0)
+    if f64_gt(a, zero) == 1 { ret grad_c }
+    ret zero
+}
+
+; c = exp(a) → grad_a += grad_c * c
+fn grad_exp(c: i64, grad_c: i64) -> i64 { ret f64_mul(grad_c, c) }
+
+; c = log(a) → grad_a += grad_c / a
+fn grad_log(a: i64, grad_c: i64) -> i64 { ret f64_div(grad_c, a) }
+
+; c = tanh(a) → grad_a += grad_c * (1 - c*c)
+fn grad_tanh(c: i64, grad_c: i64) -> i64 {
+    let one = f64_from_int(1)
+    let c2 = f64_mul(c, c)
+    let t = f64_sub(one, c2)
+    ret f64_mul(grad_c, t)
+}
+
+; ── Tensor gradient operations ───────────────────────────────────────
+
+; c = a + b (elementwise) → grad_a += grad_c, grad_b += grad_c
+fn grad_tensor_add(grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
+    let n = tensor_len(grad_c)
+    let i = 0
+    loop i < n {
+        let gc = tensor_get(grad_c, i)
+        let ga = tensor_get(grad_a, i)
+        let gb = tensor_get(grad_b, i)
+        let new_ga = f64_add(ga, gc)
+        let new_gb = f64_add(gb, gc)
+        tensor_set(grad_a, i, new_ga)
+        tensor_set(grad_b, i, new_gb)
+        i = i + 1
+    }
+    ret 0
+}
+
+; c = a * b (elementwise) → grad_a += grad_c * b, grad_b += grad_c * a
+fn grad_tensor_mul(a: i64, b: i64, grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
+    let n = tensor_len(a)
+    let i = 0
+    loop i < n {
+        let ai = tensor_get(a, i)
+        let bi = tensor_get(b, i)
+        let gc = tensor_get(grad_c, i)
+        let ga = tensor_get(grad_a, i)
+        let gb = tensor_get(grad_b, i)
+        let da = f64_mul(gc, bi)
+        let db = f64_mul(gc, ai)
+        let new_ga = f64_add(ga, da)
+        let new_gb = f64_add(gb, db)
+        tensor_set(grad_a, i, new_ga)
+        tensor_set(grad_b, i, new_gb)
+        i = i + 1
+    }
+    ret 0
+}
+
+; c = relu(a) → grad_a += grad_c * (a > 0)
+fn grad_tensor_relu(a: i64, grad_c: i64, grad_a: i64) -> i64 {
+    let n = tensor_len(a)
+    let zero = f64_from_int(0)
+    let i = 0
+    loop i < n {
+        let ai = tensor_get(a, i)
+        let gc = tensor_get(grad_c, i)
+        let ga = tensor_get(grad_a, i)
+        if f64_gt(ai, zero) == 1 {
+            let new_ga = f64_add(ga, gc)
+            tensor_set(grad_a, i, new_ga)
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+; c = sum(a) → grad_a += broadcast(grad_c_scalar)
+fn grad_tensor_sum(grad_c_scalar: i64, grad_a: i64) -> i64 {
+    let n = tensor_len(grad_a)
+    let i = 0
+    loop i < n {
+        let ga = tensor_get(grad_a, i)
+        let new_ga = f64_add(ga, grad_c_scalar)
+        tensor_set(grad_a, i, new_ga)
+        i = i + 1
+    }
+    ret 0
+}
+
+; c = matmul(a[M,K], b[K,N]) → grad_a += matmul(grad_c, bT), grad_b += matmul(aT, grad_c)
+fn grad_matmul(a: i64, b: i64, grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
+    let M = tensor_shape(a, 0)
+    let K = tensor_shape(a, 1)
+    let N = tensor_shape(b, 1)
+    ; grad_a[M,K] += grad_c[M,N] @ bT[N,K]
+    let i = 0
+    loop i < M {
+        let j = 0
+        loop j < K {
+            let acc = f64_from_int(0)
+            let p = 0
+            loop p < N {
+                let gc_idx = i * N + p
+                let gc_val = tensor_get(grad_c, gc_idx)
+                let b_idx = j * N + p
+                let b_val = tensor_get(b, b_idx)
+                let prod = f64_mul(gc_val, b_val)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let ga_idx = i * K + j
+            let old_ga = tensor_get(grad_a, ga_idx)
+            let new_ga = f64_add(old_ga, acc)
+            tensor_set(grad_a, ga_idx, new_ga)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ; grad_b[K,N] += aT[K,M] @ grad_c[M,N]
+    let k = 0
+    loop k < K {
+        let n2 = 0
+        loop n2 < N {
+            let acc2 = f64_from_int(0)
+            let m = 0
+            loop m < M {
+                let a_idx = m * K + k
+                let a_val = tensor_get(a, a_idx)
+                let gc_idx2 = m * N + n2
+                let gc_val2 = tensor_get(grad_c, gc_idx2)
+                let prod2 = f64_mul(a_val, gc_val2)
+                acc2 = f64_add(acc2, prod2)
+                m = m + 1
+            }
+            let gb_idx = k * N + n2
+            let old_gb = tensor_get(grad_b, gb_idx)
+            let new_gb = f64_add(old_gb, acc2)
+            tensor_set(grad_b, gb_idx, new_gb)
+            n2 = n2 + 1
+        }
+        k = k + 1
+    }
+    ret 0
+}
+
+; ── Numerical gradient checking ──────────────────────────────────────
+
+; Check |analytical - numerical| < epsilon
+; Returns 1 if gradient is correct, 0 otherwise
+fn grad_check_close(analytical: i64, numerical: i64, eps: i64) -> i64 {
+    let diff = f64_sub(analytical, numerical)
+    let abs_diff = f64_abs(diff)
+    if f64_gt(eps, abs_diff) == 1 { ret 1 }
+    ret 0
+}

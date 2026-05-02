@@ -1,0 +1,149 @@
+; Test autograd: matmul gradient — grad_a = grad_c @ bT, grad_b = aT @ grad_c
+; Forward: C[2,2] = A[2,2] @ B[2,2]
+; Backward: grad_A = grad_C @ B^T, grad_B = A^T @ grad_C
+
+fn matmul_fwd(a: i64, b: i64, out: i64) -> i64 {
+    let M = tensor_shape(a, 0)
+    let K = tensor_shape(a, 1)
+    let N = tensor_shape(b, 1)
+    let i = 0
+    loop i < M {
+        let j = 0
+        loop j < N {
+            let acc = f64_from_int(0)
+            let k = 0
+            loop k < K {
+                let idx_a = i * K + k
+                let av = tensor_get(a, idx_a)
+                let idx_b = k * N + j
+                let bv = tensor_get(b, idx_b)
+                let prod = f64_mul(av, bv)
+                acc = f64_add(acc, prod)
+                k = k + 1
+            }
+            let idx_o = i * N + j
+            tensor_set(out, idx_o, acc)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn grad_matmul_fn(a: i64, b: i64, grad_c: i64, grad_a: i64, grad_b: i64) -> i64 {
+    let M = tensor_shape(a, 0)
+    let K = tensor_shape(a, 1)
+    let N = tensor_shape(b, 1)
+    ; grad_a[M,K] += grad_c[M,N] @ bT[N,K]
+    let i = 0
+    loop i < M {
+        let j = 0
+        loop j < K {
+            let acc = f64_from_int(0)
+            let p = 0
+            loop p < N {
+                let gc_idx = i * N + p
+                let gc_val = tensor_get(grad_c, gc_idx)
+                let b_idx = j * N + p
+                let b_val = tensor_get(b, b_idx)
+                let prod = f64_mul(gc_val, b_val)
+                acc = f64_add(acc, prod)
+                p = p + 1
+            }
+            let ga_idx = i * K + j
+            let old_ga = tensor_get(grad_a, ga_idx)
+            let new_ga = f64_add(old_ga, acc)
+            tensor_set(grad_a, ga_idx, new_ga)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    ; grad_b[K,N] += aT[K,M] @ grad_c[M,N]
+    let k = 0
+    loop k < K {
+        let n2 = 0
+        loop n2 < N {
+            let acc2 = f64_from_int(0)
+            let m = 0
+            loop m < M {
+                let a_idx = m * K + k
+                let a_val = tensor_get(a, a_idx)
+                let gc_idx2 = m * N + n2
+                let gc_val2 = tensor_get(grad_c, gc_idx2)
+                let prod2 = f64_mul(a_val, gc_val2)
+                acc2 = f64_add(acc2, prod2)
+                m = m + 1
+            }
+            let gb_idx = k * N + n2
+            let old_gb = tensor_get(grad_b, gb_idx)
+            let new_gb = f64_add(old_gb, acc2)
+            tensor_set(grad_b, gb_idx, new_gb)
+            n2 = n2 + 1
+        }
+        k = k + 1
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    ; A = [[1,2],[3,4]], B = [[5,6],[7,8]]
+    let a = tensor_new2(2, 2)
+    let b = tensor_new2(2, 2)
+    let c = tensor_new2(2, 2)
+    let va0 = f64_from_int(1)
+    tensor_set(a, 0, va0)
+    let va1 = f64_from_int(2)
+    tensor_set(a, 1, va1)
+    let va2 = f64_from_int(3)
+    tensor_set(a, 2, va2)
+    let va3 = f64_from_int(4)
+    tensor_set(a, 3, va3)
+    let vb0 = f64_from_int(5)
+    tensor_set(b, 0, vb0)
+    let vb1 = f64_from_int(6)
+    tensor_set(b, 1, vb1)
+    let vb2 = f64_from_int(7)
+    tensor_set(b, 2, vb2)
+    let vb3 = f64_from_int(8)
+    tensor_set(b, 3, vb3)
+    matmul_fwd(a, b, c)
+
+    ; grad_C = [[1,0],[0,1]] (identity — gradient of each output element)
+    ; Use grad_C = all ones for a sum-of-outputs loss
+    let grad_c = tensor_new2(2, 2)
+    let one = f64_from_int(1)
+    tensor_fill(grad_c, one)
+    let zero = f64_from_int(0)
+    let grad_a = tensor_new2(2, 2)
+    let grad_b = tensor_new2(2, 2)
+    tensor_fill(grad_a, zero)
+    tensor_fill(grad_b, zero)
+
+    grad_matmul_fn(a, b, grad_c, grad_a, grad_b)
+
+    ; grad_A = grad_C @ B^T = [[1,1],[1,1]] @ [[5,7],[6,8]] = [[11,15],[11,15]]
+    let ga00 = f64_to_int(tensor_get(grad_a, 0))
+    let ga01 = f64_to_int(tensor_get(grad_a, 1))
+    let ga10 = f64_to_int(tensor_get(grad_a, 2))
+    let ga11 = f64_to_int(tensor_get(grad_a, 3))
+    if ga00 == 11 and ga01 == 15 and ga10 == 11 and ga11 == 15 {
+        print "grad matmul A ok"
+    }
+
+    ; grad_B = A^T @ grad_C = [[1,3],[2,4]] @ [[1,1],[1,1]] = [[4,4],[6,6]]
+    let gb00 = f64_to_int(tensor_get(grad_b, 0))
+    let gb01 = f64_to_int(tensor_get(grad_b, 1))
+    let gb10 = f64_to_int(tensor_get(grad_b, 2))
+    let gb11 = f64_to_int(tensor_get(grad_b, 3))
+    if gb00 == 4 and gb01 == 4 and gb10 == 6 and gb11 == 6 {
+        print "grad matmul B ok"
+    }
+
+    tensor_free(a)
+    tensor_free(b)
+    tensor_free(c)
+    tensor_free(grad_c)
+    tensor_free(grad_a)
+    tensor_free(grad_b)
+    ret 0
+}
