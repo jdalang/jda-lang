@@ -515,7 +515,7 @@ fn expect(toks: &Token, pos: &i64, expected: i32) {
     let idx = pos[0]
     let t = toks[idx].type
     if t != expected {
-        print("Parse error: unexpected token\n")
+        print("Parse error: unexpected token at position\n")
     }
     pos[0] = pos[0] + 1
 }
@@ -1259,6 +1259,20 @@ fn op_precedence(op: i32) -> i32 {
 
 fn parse_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> Node {
     let t = toks[pos[0]]
+    if t.type == TOK_MINUS {
+        ; Unary minus: -expr
+        pos[0] = pos[0] + 1
+        let inner = parse_primary(toks, pos, stab, src)
+        let zero = Node{}
+        zero.node_type = NODE_INT
+        zero.imm = 0
+        let n = Node{}
+        n.node_type = NODE_BINOP
+        n.op = TOK_MINUS
+        n.child0 = zero
+        n.child1 = inner
+        ret n
+    }
     if t.type == TOK_AMP {
         pos[0] = pos[0] + 1
         let inner = parse_primary(toks, pos, stab, src)
@@ -3518,8 +3532,11 @@ fn main() {
         jfn.stab = stab
 
         parse_fn(toks, &pos, &jfn, stab, src_buf)
+        print("[PARSE] function parsed\n")
         fold_constants(&jfn)
+        print("[PARSE] constants folded\n")
         dce(&jfn)
+        print("[PARSE] dce done\n")
 
         ; Check if this is main
         let is_main = streq(src_buf, fn_name_off[fi], fn_name_len[fi], "main")
