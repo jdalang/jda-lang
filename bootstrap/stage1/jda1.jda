@@ -14123,9 +14123,15 @@ fn lower_instr_call_args(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     vals[3] = ins.bb_target0
     vals[4] = ins.bb_target1
     vals[5] = ins.imm
-    let push_idx = 0
     let push_lim = ins.operand3
     if push_lim > 6 { push_lim = 6 }
+    ; Single-arg: direct MOV to RDI, skip push/pop
+    if push_lim == 1 {
+        let r = get_or_load(ctx.ra, out, pos, vals[0])
+        if r != PHYS_RDI { emit_mov_rr(out, pos, PHYS_RDI, r) }
+        ret
+    }
+    let push_idx = 0
     loop push_idx < push_lim {
         let r = get_or_load(ctx.ra, out, pos, vals[push_idx])
         emit_push_r(out, pos, r)
