@@ -1,0 +1,66 @@
+fn main() {
+    // Allocate memory: state stack buffer + working data
+    let mem = alloc_pages(4)
+    let ss = mem
+    let data = mem + 1024
+
+    // Initialize: slot_size=4, max_depth=8
+    ss_init(ss, 4, 8)
+    let d0 = ss_depth(ss)
+    print("{d0}")
+
+    // Set initial data: [10, 20, 30, 40]
+    data[0] = 10; data[1] = 20; data[2] = 30; data[3] = 40
+
+    // Push level 1
+    ss_push(ss, data, 4)
+    let d1 = ss_depth(ss)
+    print("{d1}")
+
+    // Modify data: [100, 200, 300, 400]
+    data[0] = 100; data[1] = 200; data[2] = 300; data[3] = 400
+
+    // Push level 2
+    ss_push(ss, data, 4)
+    let d2 = ss_depth(ss)
+    print("{d2}")
+
+    // Modify data again: [999, 888, 777, 666]
+    data[0] = 999; data[1] = 888; data[2] = 777; data[3] = 666
+
+    // Pop level 2 — should restore [100, 200, 300, 400]
+    ss_pop(ss, data, 4)
+    let a = data[0]; let b = data[1]; let c = data[2]; let dd = data[3]
+    print("{a}")
+    print("{b}")
+    print("{c}")
+    print("{dd}")
+
+    // Pop level 1 — should restore [10, 20, 30, 40]
+    ss_pop(ss, data, 4)
+    let e = data[0]; let f = data[1]; let g = data[2]; let h = data[3]
+    print("{e}")
+    print("{f}")
+    print("{g}")
+    print("{h}")
+
+    let d3 = ss_depth(ss)
+    print("{d3}")
+
+    // Test recursive pattern: push 5 levels
+    let i = 0
+    loop i < 5 {
+        data[0] = i * 10
+        ss_push(ss, data, 4)
+        i = i + 1
+    }
+    let d4 = ss_depth(ss)
+    print("{d4}")
+
+    // Pop all 5 — last pushed was i=4 (data[0]=40)
+    ss_pop(ss, data, 4)
+    let last = data[0]
+    print("{last}")
+
+    ret 0
+}

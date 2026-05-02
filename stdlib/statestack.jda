@@ -1,0 +1,88 @@
+// =============================================================================
+// jda::statestack -- Recursive State Save/Restore Stack
+// =============================================================================
+// Provides a depth-indexed stack for saving and restoring memory regions.
+// Designed for recursive backtracking algorithms (e.g., sudoku solvers)
+// where each recursion level needs its own saved state.
+//
+// The caller provides a pre-allocated buffer (&i64). Layout:
+//   [0] depth       (current stack depth, starts at 0)
+//   [1] slot_size   (number of i64 values per save frame)
+//   [2] max_depth   (maximum recursion depth)
+//   [3..] frames    (slot_size * max_depth i64 values)
+//
+// Functions:
+//   ss_init(buf, slot_size, max_depth)          initialize state stack
+//   ss_push(buf, src, count)                    save count i64s from src
+//   ss_pop(buf, dst, count)                     restore count i64s to dst
+//   ss_depth(buf)                    -> i64     current depth
+//   ss_max_depth(buf)                -> i64     max depth
+//   ss_slot_size(buf)                -> i64     slot size
+//   ss_clear(buf)                               reset depth to 0
+// =============================================================================
+
+fn _ss_byte_at(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
+
+// Initialize a state stack in the given buffer.
+// slot_size: number of i64 values saved per push.
+// max_depth: maximum number of nested pushes.
+// Buffer must have room for (3 + slot_size * max_depth) i64 values.
+fn ss_init(buf: &i64, slot_size: i64, max_depth: i64) {
+    buf[0] = 0
+    buf[1] = slot_size
+    buf[2] = max_depth
+}
+
+// Push: save count i64 values from src onto the stack.
+// count must be <= slot_size. Returns 1 on success, 0 if stack full.
+fn ss_push(buf: &i64, src: &i64, count: i64) -> i64 {
+    let depth = buf[0]
+    let max_d = buf[2]
+    if depth >= max_d { ret 0 }
+    let slot_sz = buf[1]
+    let base = 3 + depth * slot_sz
+    let i = 0
+    loop i < count {
+        buf[base + i] = src[i]
+        i = i + 1
+    }
+    buf[0] = depth + 1
+    ret 1
+}
+
+// Pop: restore count i64 values from the stack into dst.
+// count must be <= slot_size. Returns 1 on success, 0 if stack empty.
+fn ss_pop(buf: &i64, dst: &i64, count: i64) -> i64 {
+    let depth = buf[0]
+    if depth <= 0 { ret 0 }
+    let new_depth = depth - 1
+    buf[0] = new_depth
+    let slot_sz = buf[1]
+    let base = 3 + new_depth * slot_sz
+    let i = 0
+    loop i < count {
+        dst[i] = buf[base + i]
+        i = i + 1
+    }
+    ret 1
+}
+
+// Return current stack depth.
+fn ss_depth(buf: &i64) -> i64 {
+    ret buf[0]
+}
+
+// Return maximum depth.
+fn ss_max_depth(buf: &i64) -> i64 {
+    ret buf[2]
+}
+
+// Return slot size.
+fn ss_slot_size(buf: &i64) -> i64 {
+    ret buf[1]
+}
+
+// Reset depth to 0 (clear the stack).
+fn ss_clear(buf: &i64) {
+    buf[0] = 0
+}
