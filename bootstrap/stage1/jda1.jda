@@ -89,6 +89,8 @@ const TOK_FOR     = 61
 const TOK_FLOAT   = 62
 const TOK_NOT     = 63
 const TOK_RAW_STR = 64
+const TOK_TRUE    = 65
+const TOK_FALSE   = 66
 
 ; Derive trait IDs
 const DERIVE_DEBUG = 1
@@ -555,6 +557,8 @@ let g_main_str_dbg: i64 = 0
 let g_stab_ptr: &StructTable = 0
 let g_loop_ctrl: i64 = 0
 let g_loop_head: i64 = 0
+let g_defer_pos: &i64 = 0
+let g_defer_count: i64 = 0
 let g_raw_str_mode: i64 = 0
 let g_fix_merged_pos: i64 = 0
 let g_argv_base: &i64 = 0
@@ -578,6 +582,11 @@ let g_repl_stmt_buf: &i8 = 0
 let g_repl_stmt_len = 0
 let g_repl_line_buf: &i8 = 0
 let g_repl_src_buf: &i8 = 0
+
+; Import processing state
+let g_import_path_buf: &i8 = 0   ; Buffer for building "stdlib/<name>.jda" paths
+let g_import_names: &i8 = 0      ; Track imported package names (64 entries × 64 bytes)
+let g_import_count = 0            ; Number of imported packages
 
 ; ============================================================
 ; 2. LEXER
@@ -3216,6 +3225,22 @@ fn classify_keyword_len3(src: &i8, start: i64, len: i64) {
     ret tok + (tok == 0) * TOK_IDENT
 }
 
+fn char_escape_val(esc_c: i64) -> i64 {
+    ; Map escape character to value using branchless multiply
+    ; \n=10, \t=9, \r=13, \0=0, \\=92, \'=39
+    let is_n = (esc_c == 110)
+    let is_t = (esc_c == 116)
+    let is_r = (esc_c == 114)
+    let is_0 = (esc_c == 48)
+    let is_bs = (esc_c == 92)
+    let is_sq = (esc_c == 39)
+    let known = is_n + is_t + is_r + is_0 + is_bs + is_sq
+    let val = is_n * 10 + is_t * 9 + is_r * 13 + is_bs * 92 + is_sq * 39
+    ; If not a known escape, use the char itself
+    if known == 0 { val = esc_c }
+    ret val
+}
+
 fn classify_keyword_len4(src: &i8, start: i64, len: i64) {
     let c0 = load_i8_at(src, start)
     let c1 = load_i8_at(src, start + 1)
@@ -3233,7 +3258,10 @@ fn classify_keyword_len4(src: &i8, start: i64, len: i64) {
     let impl_ok = 0
     if c0 == 105 { if c1 == 109 { if c2 == 112 { if c3 == 108 { impl_ok = 1 } } } }
     let m_impl = impl_ok * TOK_IMPL
-    let tok = m_else + m_loop + m_enum + m_impl
+    let true_ok = 0
+    if c0 == 116 { if c1 == 114 { if c2 == 117 { if c3 == 101 { true_ok = 1 } } } }
+    let m_true = true_ok * TOK_TRUE
+    let tok = m_else + m_loop + m_enum + m_impl + m_true
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -3258,7 +3286,10 @@ fn classify_keyword_len5(src: &i8, start: i64, len: i64) {
     let trait_ok = 0
     if c0 == 116 { if c1 == 114 { if c2 == 97 { if c3 == 105 { if c4 == 116 { trait_ok = 1 } } } } }
     let m_trait = trait_ok * TOK_TRAIT
-    let tok = m_match + m_print + m_const + m_spawn + m_trait
+    let false_ok = 0
+    if c0 == 102 { if c1 == 97 { if c2 == 108 { if c3 == 115 { if c4 == 101 { false_ok = 1 } } } } }
+    let m_false = false_ok * TOK_FALSE
+    let tok = m_match + m_print + m_const + m_spawn + m_trait + m_false
     ret tok + (tok == 0) * TOK_IDENT
 }
 
@@ -3547,6 +3578,25 @@ fn lex_small(src: &i8, src_len: i64, toks: &Token) -> i32 {
             toks[count].line = g_lex_line
             count = count + 1
             if p < src_len and src[p] == 34 { p = p + 1 }
+        } else if c == 39 {
+            ; Char literal: 'x' or '\n'
+            p = p + 1
+            let ch_val = 0
+            if p < src_len {
+                if src[p] == 92 and (p + 1) < src_len {
+                    let esc_c = src[p + 1]
+                    ch_val = char_escape_val(esc_c)
+                    p = p + 2
+                } else {
+                    ch_val = src[p]
+                    p = p + 1
+                }
+            }
+            if p < src_len and src[p] == 39 { p = p + 1 }
+            toks[count].type = TOK_INT
+            toks[count].imm = ch_val
+            toks[count].line = g_lex_line
+            count = count + 1
         } else if c == 45 {
             if p + 1 < src_len and src[p + 1] == 62 {
                 toks[count].type = TOK_ARROW
@@ -3761,6 +3811,26 @@ fn lex_small_fast(src: &i8, src_len: i64, toks: &Token) -> i32 {
             if p < src_len and load_i8_at(src, p) == 34 {
                 p = p + 1
             }
+        } else if c == 39 {
+            p = p + 1
+            let ch_val = 0
+            if p < src_len {
+                if load_i8_at(src, p) == 92 and (p + 1) < src_len {
+                    let esc_c = load_i8_at(src, p + 1)
+                    ch_val = char_escape_val(esc_c)
+                    p = p + 2
+                } else {
+                    ch_val = load_i8_at(src, p)
+                    p = p + 1
+                }
+            }
+            if p < src_len and load_i8_at(src, p) == 39 { p = p + 1 }
+            toks[count].type = TOK_INT
+            toks[count].imm = ch_val
+            toks[count].line = g_lex_line
+            count = count + 1
+            g_lex_count = count
+            g_scan_tok_cnt = count
         } else if c == 45 {
             if p + 1 < src_len and load_i8_at(src, p + 1) == 62 {
                 toks[count].type = TOK_ARROW
@@ -4040,6 +4110,30 @@ fn lex_global_fast() -> i32 {
             if g_lex_pos_i < g_lex_src_len {
                 g_lex_pos_i = g_lex_pos_i + 1
             }
+            g_lex_handled = 1
+        }
+        if g_lex_handled == 0 and g_lex_cur_char == 39 {
+            g_lex_pos_i = g_lex_pos_i + 1
+            let ch_val = 0
+            if g_lex_pos_i < g_lex_src_len {
+                let ch_b = load_i8_at(g_lex_src_ptr, g_lex_pos_i)
+                if ch_b == 92 and (g_lex_pos_i + 1) < g_lex_src_len {
+                    let esc_c = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+                    ch_val = char_escape_val(esc_c)
+                    g_lex_pos_i = g_lex_pos_i + 2
+                } else {
+                    ch_val = ch_b
+                    g_lex_pos_i = g_lex_pos_i + 1
+                }
+            }
+            if g_lex_pos_i < g_lex_src_len and load_i8_at(g_lex_src_ptr, g_lex_pos_i) == 39 {
+                g_lex_pos_i = g_lex_pos_i + 1
+            }
+            if g_lex_count >= 262143 { panic("Token buffer overflow") }
+            tok_set_type(g_dbg_toks_init, g_lex_count, TOK_INT)
+            tok_set_imm(g_dbg_toks_init, g_lex_count, ch_val)
+            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+            g_lex_count = g_lex_count + 1
             g_lex_handled = 1
         }
         if g_lex_handled == 0 and is_ident_start(g_lex_cur_char) == 1 {
@@ -4438,6 +4532,7 @@ fn init_large_post_lex_state() {
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
     g_sc_extra = alloc_pages(1)
+    g_defer_pos = alloc_pages(1)
     g_const_name_off_tbl = alloc_pages(8)
     g_const_name_len_tbl = alloc_pages(8)
     g_const_val_tbl = alloc_pages(8)
@@ -4610,6 +4705,7 @@ fn init_top_jfn(jfn: &JirFunction, src: &i8, src_len: i64, stab: &StructTable) {
     jfn.strtab_pos = 0
     jfn.next_slot_off = 4096
     jfn.next_id = 0
+    g_defer_count = 0
     clear_owned_flags(jfn)
     ret ok(0)
 }
@@ -7495,7 +7591,7 @@ fn compile_stmts_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
             pos[0] = pos[0] + 1
             let val_id = emit_const(jfn, cur, TYPE_I64, 0)
             let rt = tok_type_at0(toks, pos)
-            if rt == TOK_INT or rt == TOK_FLOAT or rt == TOK_IDENT or rt == TOK_LPAREN or rt == TOK_MINUS or rt == TOK_TILDE or rt == TOK_NOT or rt == TOK_AMP or rt == TOK_SYSCALL {
+            if rt == TOK_INT or rt == TOK_FLOAT or rt == TOK_IDENT or rt == TOK_LPAREN or rt == TOK_MINUS or rt == TOK_TILDE or rt == TOK_NOT or rt == TOK_AMP or rt == TOK_SYSCALL or rt == TOK_TRUE or rt == TOK_FALSE or rt == TOK_STR or rt == TOK_RAW_STR {
                 val_id = codegen_expr_inline(toks, pos, stab, src, jfn, cur)
             }
             let rins = Instr{}
@@ -8454,6 +8550,14 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         let t_imm = tok_imm_at(toks, pos[0])
         pos[0] = pos[0] + 1
         ret emit_const(jfn, bb, TYPE_I64, t_imm)
+    }
+    if t_type == TOK_TRUE {
+        pos[0] = pos[0] + 1
+        ret emit_const(jfn, bb, TYPE_I64, 1)
+    }
+    if t_type == TOK_FALSE {
+        pos[0] = pos[0] + 1
+        ret emit_const(jfn, bb, TYPE_I64, 0)
     }
     if t_type == TOK_FLOAT {
         let t_fimm = tok_imm_at(toks, pos[0])
@@ -11100,6 +11204,14 @@ fn live_codegen_primary_small_inline(tt: i64, bb: i64) -> i64 {
         let imm = tok_imm_at(g_dbg_toks_init, g_main_pos)
         g_main_pos = g_main_pos + 1
         ret emit_const(g_jfn, bb, TYPE_I64, imm)
+    }
+    if tt == TOK_TRUE {
+        g_main_pos = g_main_pos + 1
+        ret emit_const(g_jfn, bb, TYPE_I64, 1)
+    }
+    if tt == TOK_FALSE {
+        g_main_pos = g_main_pos + 1
+        ret emit_const(g_jfn, bb, TYPE_I64, 0)
     }
     if tt == TOK_FLOAT {
         let fimm = tok_imm_at(g_dbg_toks_init, g_main_pos)
@@ -19545,9 +19657,10 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         g_main_pos = g_main_pos + 1
                         let val_id = emit_const(jfn, cur, TYPE_I64, 0)
                         let rt = tok_type_at_raw(toks0, g_main_pos)
-                        if rt == TOK_INT or rt == TOK_FLOAT or rt == TOK_IDENT or rt == TOK_LPAREN or rt == TOK_MINUS or rt == TOK_TILDE or rt == TOK_NOT or rt == TOK_AMP or rt == TOK_SYSCALL {
+                        if rt == TOK_INT or rt == TOK_FLOAT or rt == TOK_IDENT or rt == TOK_LPAREN or rt == TOK_MINUS or rt == TOK_TILDE or rt == TOK_NOT or rt == TOK_AMP or rt == TOK_SYSCALL or rt == TOK_TRUE or rt == TOK_FALSE or rt == TOK_STR or rt == TOK_RAW_STR {
                             val_id = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
                         }
+                        defer_emit_calls(toks0, stab, src, jfn, cur)
                         let rins = Instr{}
                         rins.op = OP_RET
                         rins.operand0 = val_id
@@ -19605,9 +19718,20 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                                 }
                             }
                         }
+                        ; defer statement: save token position, skip the call
+                        let is_defer_stmt = 0
+                        if name_len == 5 and is_break_stmt == 0 {
+                            if streq(src, name_start, 5, "defer") == 1 {
+                                is_defer_stmt = 1
+                                g_main_pos = g_main_pos + 1
+                                store_i64_at(g_defer_pos, g_defer_count, g_main_pos)
+                                g_defer_count = g_defer_count + 1
+                                g_main_pos = defer_skip_call(toks0, g_main_pos)
+                            }
+                        }
                         ; Check for compound assignment early to avoid deep nesting
                         let is_compound_assign = 0
-                        if is_break_stmt == 0 and is_continue_stmt == 0 and is_consume_stmt == 0 {
+                        if is_break_stmt == 0 and is_continue_stmt == 0 and is_consume_stmt == 0 and is_defer_stmt == 0 {
                             let t1_ca = tok_type_at(toks0, g_main_pos + 1)
                             if t1_ca == TOK_PLUS_EQ { is_compound_assign = 1 }
                             if t1_ca == TOK_MINUS_EQ { is_compound_assign = 1 }
@@ -19617,7 +19741,7 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         }
                         if is_compound_assign == 1 {
                             cur = live_compile_compound_assign(stab, src, jfn, cur, name_start, name_len)
-                        } else if is_break_stmt == 0 and is_continue_stmt == 0 and is_consume_stmt == 0 {
+                        } else if is_break_stmt == 0 and is_continue_stmt == 0 and is_consume_stmt == 0 and is_defer_stmt == 0 {
                         let fs_has_dot = tok_type_at(toks0, g_main_pos + 1) == TOK_DOT
                         let fs_has_eq = tok_type_at(toks0, g_main_pos + 3) == TOK_EQ
                         if fs_has_dot and fs_has_eq {
@@ -21346,6 +21470,326 @@ fn repl_run(argv_ptr: &i64) {
     syscall(60, 0, 0, 0)
 }
 
+; ============================================================
+; IMPORT PROCESSING
+; ============================================================
+; Scans user source for `import "pkg"` lines and prepends stdlib files.
+
+fn import_open_file(path: &i8) -> i64 {
+    let fd = syscall(2, path, 0, 0)
+    ret fd
+}
+
+fn import_read_file(fd: i64, dest: &i8, max_len: i64) -> i64 {
+    let n = syscall(0, fd, dest, max_len)
+    ret n
+}
+
+fn import_close_file(fd: i64) {
+    syscall(3, fd, 0, 0)
+}
+
+fn import_build_path(src: &i8, name_start: i64, name_len: i64, path_buf: &i8) -> i64 {
+    ; Build "stdlib/<name>.jda" in path_buf
+    ; "stdlib/" = 7 bytes
+    poke_byte(path_buf, 0, 115)  ; s
+    poke_byte(path_buf, 1, 116)  ; t
+    poke_byte(path_buf, 2, 100)  ; d
+    poke_byte(path_buf, 3, 108)  ; l
+    poke_byte(path_buf, 4, 105)  ; i
+    poke_byte(path_buf, 5, 98)   ; b
+    poke_byte(path_buf, 6, 47)   ; /
+    let i = 0
+    loop i < name_len {
+        let ch = src[name_start + i]
+        poke_byte(path_buf, 7 + i, ch)
+        i = i + 1
+    }
+    ; ".jda" = 4 bytes
+    let off = 7 + name_len
+    poke_byte(path_buf, off, 46)      ; .
+    poke_byte(path_buf, off + 1, 106) ; j
+    poke_byte(path_buf, off + 2, 100) ; d
+    poke_byte(path_buf, off + 3, 97)  ; a
+    poke_byte(path_buf, off + 4, 0)   ; null terminator
+    ret off + 4
+}
+
+fn import_already_loaded(src: &i8, name_start: i64, name_len: i64) -> i64 {
+    ; Check if this package name is already in g_import_names
+    let i = 0
+    loop i < g_import_count {
+        let base = i * 64
+        let j = 0
+        let eq = 1
+        let stored_len = g_import_names[base + 63]
+        if stored_len != name_len { eq = 0 }
+        if eq == 1 {
+            loop j < name_len {
+                if g_import_names[base + j] != src[name_start + j] {
+                    eq = 0
+                }
+                j = j + 1
+            }
+        }
+        if eq == 1 { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn import_record_name(src: &i8, name_start: i64, name_len: i64) {
+    ; Store package name in g_import_names for dedup
+    if g_import_count >= 64 { ret 0 }
+    let base = g_import_count * 64
+    let i = 0
+    let cpy_len = name_len
+    if cpy_len > 62 { cpy_len = 62 }
+    loop i < cpy_len {
+        poke_byte(g_import_names, base + i, src[name_start + i])
+        i = i + 1
+    }
+    poke_byte(g_import_names, base + 63, cpy_len)  ; store length
+    g_import_count = g_import_count + 1
+}
+
+fn import_is_line_start(src: &i8, p: i64) -> i64 {
+    if p == 0 { ret 1 }
+    let prev = p - 1
+    if src[prev] == 10 { ret 1 }
+    ret 0
+}
+
+fn import_check_keyword(src: &i8, ws: i64) -> i64 {
+    ; Check if src[ws..ws+7] is "import "
+    if src[ws] != 105 { ret 0 }
+    if src[ws+1] != 109 { ret 0 }
+    if src[ws+2] != 112 { ret 0 }
+    if src[ws+3] != 111 { ret 0 }
+    if src[ws+4] != 114 { ret 0 }
+    if src[ws+5] != 116 { ret 0 }
+    if src[ws+6] != 32 { ret 0 }
+    ret 1
+}
+
+fn import_find_next(src: &i8, src_len: i64, start: i64) -> i64 {
+    let p = start
+    loop p < src_len {
+        let at_sol = import_is_line_start(src, p)
+        if at_sol == 1 {
+            ; Skip leading whitespace
+            let ws = p
+            loop ws < src_len {
+                if src[ws] != 32 and src[ws] != 9 {
+                    ws = src_len  ; break
+                }
+                if src[ws] == 32 or src[ws] == 9 {
+                    ws = ws + 1
+                }
+            }
+            ; ws now might be past whitespace — recalculate
+            ; Actually, just redo with a simpler skip
+        }
+        ; Actually let me simplify: just check each position
+        if at_sol == 1 {
+            let ws2 = p
+            let ws_done = 0
+            loop ws_done == 0 {
+                if ws2 >= src_len { ws_done = 1 }
+                if ws_done == 0 {
+                    if src[ws2] == 32 or src[ws2] == 9 {
+                        ws2 = ws2 + 1
+                    } else {
+                        ws_done = 1
+                    }
+                }
+            }
+            if ws2 + 7 < src_len {
+                if import_check_keyword(src, ws2) == 1 {
+                    ret ws2
+                }
+            }
+        }
+        ; Advance to next line
+        let line_done = 0
+        loop line_done == 0 {
+            if p >= src_len { line_done = 1 }
+            if line_done == 0 {
+                if src[p] == 10 { line_done = 1 }
+                p = p + 1
+            }
+        }
+    }
+    ret 0 - 1
+}
+
+fn import_extract_name(src: &i8, src_len: i64, import_pos: i64) -> i64 {
+    ; Given position of "import", extract the quoted package name
+    ; Returns packed: (name_start << 32) | name_len, or 0 on error
+    let p = import_pos + 7  ; skip "import "
+    ; Skip whitespace
+    let sk_done = 0
+    loop sk_done == 0 {
+        if p >= src_len { sk_done = 1 }
+        if sk_done == 0 {
+            if src[p] == 32 or src[p] == 9 {
+                p = p + 1
+            } else {
+                sk_done = 1
+            }
+        }
+    }
+    ; Expect opening quote (34 = ")
+    if p >= src_len { ret 0 }
+    if src[p] != 34 { ret 0 }
+    p = p + 1
+    let name_start = p
+    ; Find closing quote
+    let q_done = 0
+    loop q_done == 0 {
+        if p >= src_len { q_done = 1 }
+        if q_done == 0 {
+            if src[p] == 34 or src[p] == 10 {
+                q_done = 1
+            } else {
+                p = p + 1
+            }
+        }
+    }
+    if p >= src_len { ret 0 }
+    if src[p] != 34 { ret 0 }
+    let name_len = p - name_start
+    if name_len == 0 { ret 0 }
+    let result = (name_start << 32) | name_len
+    ret result
+}
+
+fn import_blank_line(src: &i8, src_len: i64, pos: i64) {
+    ; Replace the import line with semicolons (comment chars) so lexer skips it
+    let p = pos
+    loop p < src_len and src[p] != 10 {
+        poke_byte(src, p, 32)  ; space
+        p = p + 1
+    }
+}
+
+fn import_read_one(src: &i8, name_start: i64, name_len: i64, dest: &i8, max_len: i64) -> i64 {
+    ; Build path, open, read, close. Returns bytes read or -1 on error.
+    import_build_path(src, name_start, name_len, g_import_path_buf)
+    let fd = import_open_file(g_import_path_buf)
+    if fd < 0 { ret 0 - 1 }
+    let n = import_read_file(fd, dest, max_len)
+    import_close_file(fd)
+    ret n
+}
+
+fn process_imports(src: &i8, src_len: i64, prepend_buf: &i8) -> i64 {
+    ; Scan src for import lines, read each stdlib file into prepend_buf.
+    ; Returns total bytes written to prepend_buf.
+    ; Blanks out import lines in src.
+    g_import_count = 0
+    let out_off = 0
+    let max_prepend = 2097152  ; 2MB max for all imports
+    let search_pos = 0
+    let running = 1
+    loop running == 1 {
+        let imp_pos = import_find_next(src, src_len, search_pos)
+        if imp_pos < 0 { running = 0 }
+        if running == 1 {
+            let packed = import_extract_name(src, src_len, imp_pos)
+            if packed == 0 {
+                ; Invalid import syntax, skip this line
+                search_pos = imp_pos + 1
+            } else {
+                let name_start = packed >> 32
+                let name_len = packed & 65535
+                if import_already_loaded(src, name_start, name_len) == 1 {
+                    import_blank_line(src, src_len, imp_pos)
+                    search_pos = imp_pos + 1
+                } else {
+                    import_record_name(src, name_start, name_len)
+                    let space = max_prepend - out_off
+                    let n = import_read_one(src, name_start, name_len, prepend_buf + out_off, space)
+                    if n < 0 {
+                        eprint("warning: import file not found: ")
+                        import_build_path(src, name_start, name_len, g_import_path_buf)
+                        eprint(g_import_path_buf)
+                        eprint("\n")
+                    }
+                    if n > 0 {
+                        out_off = out_off + n
+                        ; Add newline separator
+                        poke_byte(prepend_buf, out_off, 10)
+                        out_off = out_off + 1
+                    }
+                    import_blank_line(src, src_len, imp_pos)
+                    search_pos = imp_pos + 1
+                }
+            }
+        }
+    }
+    ret out_off
+}
+
+fn import_shift_and_copy(src_buf: &i8, buf_off: i64, user_len: i64, import_buf: &i8, import_len: i64) {
+    ; Shift user source right and copy import content into the gap
+    let user_src = src_buf + buf_off
+    let new_start = buf_off + import_len
+    let si = user_len - 1
+    loop si >= 0 {
+        poke_byte(src_buf, new_start + si, user_src[si])
+        si = si - 1
+    }
+    let di = 0
+    loop di < import_len {
+        poke_byte(src_buf, buf_off + di, import_buf[di])
+        di = di + 1
+    }
+}
+
+fn do_imports(src_buf: &i8, buf_off: i64, read_len: i64) -> i64 {
+    ; Process import statements in user source. Returns total src_len.
+    g_import_path_buf = alloc_pages(1)
+    g_import_names = alloc_pages(1)
+    let import_buf = alloc_pages(256)     ; 1MB for import content
+    let user_src = src_buf + buf_off
+    let import_len = process_imports(user_src, read_len, import_buf)
+    if import_len > 0 {
+        import_shift_and_copy(src_buf, buf_off, read_len, import_buf, import_len)
+    }
+    let total = buf_off + import_len + read_len
+    ret total
+}
+
+fn defer_skip_call(toks0: &Token, pos: i64) -> i64 {
+    ; Skip past a function call expression: name ( ... )
+    ; Returns position after the closing paren.
+    pos = pos + 1  ; skip function name
+    if tok_type_at_raw(toks0, pos) == TOK_LPAREN {
+        let dd = 1
+        pos = pos + 1
+        loop dd > 0 {
+            let dtt = tok_type_at_raw(toks0, pos)
+            if dtt == TOK_LPAREN { dd = dd + 1 }
+            if dtt == TOK_RPAREN { dd = dd - 1 }
+            pos = pos + 1
+        }
+    }
+    ret pos
+}
+
+fn defer_emit_calls(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) {
+    ; Emit all deferred calls in LIFO order.
+    if g_defer_count > 0 {
+        let di = g_defer_count - 1
+        loop di >= 0 {
+            let dp = load_i64_at(g_defer_pos, di)
+            codegen_expr_inline(toks0, &dp, stab, src, jfn, cur)
+            di = di - 1
+        }
+    }
+}
+
 fn main(argc: i64, argv_ptr: &i64) {
     let src_path: &i8 = 0
     let out_path: &i8 = 0
@@ -21445,7 +21889,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_out_path_ptr = out_path
     g_src_filename = src_path
 
-    let src_buf = alloc_pages(256)  ; 1MB (supports --include prepend)
+    let src_buf = alloc_pages(256)  ; 1MB
     g_src_buf_ptr = src_buf
     let buf_off = 0
 
@@ -21468,6 +21912,10 @@ fn main(argc: i64, argv_ptr: &i64) {
     if read_len < 0 { panic("read src failed") }
     syscall(3, src_fd, 0, 0)
     let src_len = buf_off + read_len
+
+    ; Process import statements (all in separate function to avoid local overflow)
+    src_len = do_imports(src_buf, buf_off, read_len)
+
     g_runtime_src_len = src_len
     let toks = alloc_pages(2048) ; 8MiB
     g_dbg_toks = toks
@@ -21828,6 +22276,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 ctx.fix_cnt = 0
                 let cb = create_block_live(jfn)
                 let final_bb = live_compile_block(toks, g_stab_ptr, src_buf, jfn, cb)
+                defer_emit_calls(toks, g_stab_ptr, src_buf, jfn, final_bb)
                 let impl_rv2 = emit_const(jfn, final_bb, TYPE_I64, 0)
                 let impl_ri2 = Instr{}
                 impl_ri2.op = OP_RET
