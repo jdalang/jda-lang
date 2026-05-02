@@ -309,3 +309,62 @@ Status: BREAKTHROUGH - All parsing layers now working! (lex, const, struct) - Fu
 1. Continue analyzing parse errors and implementing missing operators/syntax
 2. Eventually achieve full parsing of jda1.jda
 3. Then fix code generation to properly handle block bodies
+
+
+
+
+
+
+
+
+Current Status                                            
+                                                                                                                            
+  What's working 
+  - jda0 → jda1_new: Compiles perfectly (jda0 handles everything correctly)
+  - jda1_new → jda1_sh2: Exits 0, produces 7184-byte binary
+  - Block limit: Fixed (64 → 256 blocks per function)
+  - compile_if_inline / compile_loop_inline / compile_stmts_inline: Added and running
+
+  What's broken (2 root bugs)
+
+  Bug 1 — Dangling AST pointers in conditions (critical)
+  parse_expr builds a tree where child0/child1 are pointers INTO its own stack frames. The struct-copy trick copies the
+  top-level node but NOT its children. When new_block / emit_br are called between parse_expr and codegen_expr, they
+  overwrite the stack where child nodes lived → codegen_expr dereferences garbage.
+
+  Fix: Write codegen_expr_inline — a Pratt parser that emits JIR directly, no AST ever built. Replace parse_expr +
+  codegen_expr in compile_if_inline / compile_loop_inline.
+
+  Bug 2 — Constants never resolved (critical)
+  parse_const_decl (line 671) just skips tokens — never records TOK_IF=19, TOK_STRUCT=27 etc. So when jda1_sh2 codegens if t
+   == TOK_IF, TOK_IF gets lookup slot=-1 → OP_LOAD(-1) → nonsense value → ALL constant comparisons fail.
+
+  Fix: Add a global const table (g_const_names, g_const_values, g_const_cnt) and update parse_const_decl to record values.
+  Check this table in codegen_expr_inline when an IDENT has no slot.
+
+  Both bugs are documented in memory/bootstrap-debug.md with full implementation plans.
+
+
+Two root bugs blocking self-hosting
+                                                                                                                            
+  Bug 1 — Dangling AST pointers                             
+
+  compile_if_inline calls parse_expr to get the condition, then calls new_block a few times, then calls codegen_expr. The
+  problem: parse_expr builds a tree where the child nodes (child0, child1) are pointers into its own stack frames. Those
+  stack frames are overwritten by new_block before codegen_expr ever reads them. Result: codegen reads garbage and either
+  crashes or emits wrong instructions.
+
+  Fix: write codegen_expr_inline — a Pratt parser that emits JIR opcodes directly as it parses, never building a tree. No
+  dangling pointers possible.
+
+  Bug 2 — Constants never stored
+
+  parse_const_decl just skips past const TOK_IF = 19 without recording anything. So when jda1_sh2 runs and hits if t ==
+  TOK_IF, it tries to load TOK_IF as a local variable, gets slot=-1, loads nonsense from the stack. Every single if
+  condition that compares against a constant produces the wrong result — meaning lex(), parse_stmt(), basically everything
+  is broken.
+
+  Fix: add a global const table (g_const_names_start/len, g_const_values, g_const_cnt), record values in parse_const_decl,
+  and look them up in codegen_expr_inline when an identifier has no slot.
+
+  Both fixes are needed together before jda1_sh2 can do anything useful.
