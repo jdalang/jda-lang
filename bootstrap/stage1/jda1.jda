@@ -1052,7 +1052,14 @@ fn parse_print(toks: &Token, pos: &i64) -> Node {
     expect(toks, pos, TOK_RPAREN)
     let n = Node{}
     n.node_type = NODE_PRINT
-    n.child0    = arg
+    ; For integer literals, store the value in token field (i64) and mark with op=7 (NODE_INT)
+    ; For strings, store the reference in child0 and mark with op=8 (NODE_STR)
+    n.op = arg.node_type
+    if arg.node_type == 7 {
+        n.token = arg.imm
+    } else {
+        n.child0 = arg
+    }
     ret n
 }
 
@@ -1876,10 +1883,12 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         ret bb
     }
     if nt == NODE_PRINT {
-        ; Check if argument is integer or string
-        if node.child0.node_type == NODE_INT {
+        ; Check op field to determine argument type
+        ; op=7 (NODE_INT) -> integer literal stored in node.token
+        ; op=8 (NODE_STR) -> string stored in node.child0
+        if node.op == 7 {
             ; print(int_literal) -> emit print_int with immediate value
-            let val_id = emit_const(jfn, bb, TYPE_I64, node.child0.imm)
+            let val_id = emit_const(jfn, bb, TYPE_I64, node.token)
             emit_print_int(jfn, bb, val_id)
         } else {
             ; print(str) or print(variable) -> SYS_WRITE(1, str_ptr, str_len)
