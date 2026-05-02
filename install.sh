@@ -12,6 +12,7 @@ REPO="jdalang/jda-lang"
 INSTALL_DIR="${JDA_INSTALL_DIR:-$HOME/.jda}"
 BIN_DIR="$INSTALL_DIR/bin"
 STDLIB_DIR="$INSTALL_DIR/stdlib"
+TOOLS_DIR="$INSTALL_DIR/tools"
 
 # Colors (disabled if not a terminal)
 if [ -t 1 ]; then
@@ -27,18 +28,29 @@ info()  { echo -e "${BOLD}==> $1${RESET}"; }
 ok()    { echo -e "${GREEN}==> $1${RESET}"; }
 err()   { echo -e "${RED}error: $1${RESET}" >&2; exit 1; }
 
-# --- Platform checks ---
+# --- Platform detection ---
 
 ARCH="$(uname -m)"
 OS="$(uname -s)"
 
-if [ "$OS" != "Linux" ]; then
-    err "Jda currently supports Linux only. Got: $OS"
-fi
+case "$OS" in
+    Linux)
+        case "$ARCH" in
+            x86_64)  PLATFORM="linux-x86_64" ;;
+            aarch64) PLATFORM="linux-arm64" ;;
+            arm64)   PLATFORM="linux-arm64" ;;
+            *)       err "Unsupported architecture: $ARCH" ;;
+        esac
+        ;;
+    Darwin)
+        PLATFORM="macos"
+        ;;
+    *)
+        err "Unsupported OS: $OS. Jda supports Linux and macOS."
+        ;;
+esac
 
-if [ "$ARCH" != "x86_64" ]; then
-    err "Jda currently supports x86-64 only. Got: $ARCH"
-fi
+info "Detected platform: $PLATFORM ($OS $ARCH)"
 
 # --- Determine version ---
 
@@ -66,7 +78,7 @@ info "Installing Jda v$VERSION"
 # --- Download ---
 
 RELEASE_URL="https://github.com/$REPO/releases/download/$TAG"
-TARBALL="jda-$VERSION-linux-x86_64.tar.gz"
+TARBALL="jda-$VERSION-$PLATFORM.tar.gz"
 DOWNLOAD_URL="$RELEASE_URL/$TARBALL"
 
 TMPDIR="$(mktemp -d)"
@@ -88,27 +100,47 @@ elif command -v wget &>/dev/null; then
     wget -q "$CHECKSUM_URL" -O "$TMPDIR/checksums.txt" 2>/dev/null || true
 fi
 
-if [ -f "$TMPDIR/checksums.txt" ] && command -v sha256sum &>/dev/null; then
+if [ -f "$TMPDIR/checksums.txt" ]; then
     EXPECTED="$(grep "$TARBALL" "$TMPDIR/checksums.txt" | awk '{print $1}')"
-    ACTUAL="$(sha256sum "$TMPDIR/$TARBALL" | awk '{print $1}')"
-    if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
-        err "Checksum mismatch!\n  expected: $EXPECTED\n  actual:   $ACTUAL"
+    if [ -n "$EXPECTED" ]; then
+        if command -v sha256sum &>/dev/null; then
+            ACTUAL="$(sha256sum "$TMPDIR/$TARBALL" | awk '{print $1}')"
+        elif command -v shasum &>/dev/null; then
+            ACTUAL="$(shasum -a 256 "$TMPDIR/$TARBALL" | awk '{print $1}')"
+        else
+            ACTUAL=""
+        fi
+        if [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
+            err "Checksum mismatch!\n  expected: $EXPECTED\n  actual:   $ACTUAL"
+        fi
+        if [ -n "$ACTUAL" ]; then
+            ok "Checksum verified"
+        fi
     fi
-    ok "Checksum verified"
 fi
 
 # --- Install ---
 
 info "Installing to $INSTALL_DIR..."
-mkdir -p "$BIN_DIR" "$STDLIB_DIR"
+mkdir -p "$BIN_DIR" "$STDLIB_DIR" "$TOOLS_DIR"
 
 tar -xzf "$TMPDIR/$TARBALL" -C "$TMPDIR"
-cp "$TMPDIR/jda" "$BIN_DIR/jda"
-chmod +x "$BIN_DIR/jda"
 
-# Install stdlib if present in tarball
+# Install binary
+if [ -f "$TMPDIR/jda" ]; then
+    cp "$TMPDIR/jda" "$BIN_DIR/jda"
+    chmod +x "$BIN_DIR/jda"
+fi
+
+# Install stdlib
 if [ -d "$TMPDIR/stdlib" ]; then
-    cp -r "$TMPDIR/stdlib/"* "$STDLIB_DIR/"
+    cp -r "$TMPDIR/stdlib/"* "$STDLIB_DIR/" 2>/dev/null || true
+fi
+
+# Install tools
+if [ -d "$TMPDIR/tools" ]; then
+    cp -r "$TMPDIR/tools/"* "$TOOLS_DIR/" 2>/dev/null || true
+    chmod +x "$TOOLS_DIR/"*.sh 2>/dev/null || true
 fi
 
 # Write version marker
@@ -148,6 +180,7 @@ ok "Jda v$VERSION installed successfully!"
 echo ""
 echo "  Binary:  $BIN_DIR/jda"
 echo "  Stdlib:  $STDLIB_DIR/"
+echo "  Tools:   $TOOLS_DIR/"
 echo ""
 
 if echo "$PATH" | grep -q "$BIN_DIR"; then
