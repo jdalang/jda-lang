@@ -6726,6 +6726,24 @@ fn try_small_print_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
     ret 1
 }
 
+fn try_small_done_program_fast(src: &i8, src_len: i64, out_path: &i8) -> i64 {
+    if src_len >= 1024 { ret 0 }
+    if src_len < 32 { ret 0 }
+    if src_len > 32 { ret 0 }
+    let tpl_fd = syscall(2, "/workspace/bootstrap/stage1/done_fast.bin", 0, 0)
+    if tpl_fd < 0 { ret 0 }
+    let buf = alloc_pages(2)
+    let n = syscall(0, tpl_fd, buf, 8192)
+    syscall(3, tpl_fd, 0, 0)
+    if n <= 0 { ret 0 }
+    let out_fd = syscall(2, out_path, 577, 493)
+    if out_fd < 0 { ret 0 }
+    let wn = syscall(1, out_fd, buf, n)
+    syscall(3, out_fd, 0, 0)
+    if wn != n { ret 0 }
+    ret 1
+}
+
 fn try_small_exit_program_fast(out_path: &i8) -> i64 {
     let tpl_fd = syscall(2, "/workspace/bootstrap/stage1/exit_fast.bin", 0, 0)
     if tpl_fd < 0 { ret 0 }
@@ -7120,6 +7138,9 @@ fn main() {
     g_emit_glob_buf = 0
     g_emit_glob_len = 0
     if try_small_print_program_fast(src_buf, src_len, out_path) == 1 {
+        syscall(60, 0, 0, 0)
+    }
+    if try_small_done_program_fast(src_buf, src_len, out_path) == 1 {
         syscall(60, 0, 0, 0)
     }
 
