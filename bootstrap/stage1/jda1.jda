@@ -9335,10 +9335,12 @@ fn lower_instr_constlike(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i
         } else {
             emit_mov_imm64(out, pos, dst, ins.imm)
         }
-        let csp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, csp)
-        ra_set_spill(&ctx.ra, ins.id, csp)
-        emit_store_spill(out, pos, csp, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let csp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, csp)
+            ra_set_spill(&ctx.ra, ins.id, csp)
+            emit_store_spill(out, pos, csp, dst)
+        }
         ret 1
     }
     let is_strlit = 0
@@ -9376,10 +9378,12 @@ fn lower_load_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
             }
         }
     }
-    let msp = ctx.ra.sp_top + 8
-    ra_set_sp_top(&ctx.ra, msp)
-    ra_set_spill(&ctx.ra, ins.id, msp)
-    emit_store_spill(out, pos, msp, dst)
+    if ctx.use_cnt[ins.id] > 1 {
+        let msp = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, msp)
+        ra_set_spill(&ctx.ra, ins.id, msp)
+        emit_store_spill(out, pos, msp, dst)
+    }
     ret 1
 }
 
@@ -9389,10 +9393,12 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if is_load == 1 {
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_load_spill(out, pos, dst, ins.operand0)
-        let lsp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, lsp)
-        ra_set_spill(&ctx.ra, ins.id, lsp)
-        emit_store_spill(out, pos, lsp, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let lsp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, lsp)
+            ra_set_spill(&ctx.ra, ins.id, lsp)
+            emit_store_spill(out, pos, lsp, dst)
+        }
         ret 1
     }
     let is_addr = 0
@@ -9407,10 +9413,12 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         let modrm = 0x80 + ((mod8(dst)) * 8) + 5
         emit_byte(out, pos, modrm)
         emit_i32_le(out, pos, 0 - ins.operand0)
-        let adsp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, adsp)
-        ra_set_spill(&ctx.ra, ins.id, adsp)
-        emit_store_spill(out, pos, adsp, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let adsp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, adsp)
+            ra_set_spill(&ctx.ra, ins.id, adsp)
+            emit_store_spill(out, pos, adsp, dst)
+        }
         ret 1
     }
     let is_store = 0
@@ -9467,10 +9475,12 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, ins.operand1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, PHYS_R12)
-        let asp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, asp)
-        ra_set_spill(&ctx.ra, ins.id, asp)
-        emit_store_spill(out, pos, asp, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let asp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, asp)
+            ra_set_spill(&ctx.ra, ins.id, asp)
+            emit_store_spill(out, pos, asp, dst)
+        }
         ret 1
     }
     let is_sub = 0
@@ -9484,10 +9494,12 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, ins.operand1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, PHYS_R12)
-        let ssp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, ssp)
-        ra_set_spill(&ctx.ra, ins.id, ssp)
-        emit_store_spill(out, pos, ssp, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let ssp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, ssp)
+            ra_set_spill(&ctx.ra, ins.id, ssp)
+            emit_store_spill(out, pos, ssp, dst)
+        }
         ret 1
     }
     let is_mul = 0
@@ -9525,10 +9537,12 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, ins.operand1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, PHYS_R12)
-        let dsp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, dsp)
-        ra_set_spill(&ctx.ra, ins.id, dsp)
-        emit_store_spill(out, pos, dsp, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let dsp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, dsp)
+            ra_set_spill(&ctx.ra, ins.id, dsp)
+            emit_store_spill(out, pos, dsp, dst)
+        }
         ret 1
     }
     ret 0
@@ -9582,10 +9596,12 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         consume_use(ctx, ins.operand1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, PHYS_R12)
-        let asp2 = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, asp2)
-        ra_set_spill(&ctx.ra, ins.id, asp2)
-        emit_store_spill(out, pos, asp2, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let asp2 = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, asp2)
+            ra_set_spill(&ctx.ra, ins.id, asp2)
+            emit_store_spill(out, pos, asp2, dst)
+        }
         ret 1
     }
     let is_or = 0
@@ -9599,10 +9615,12 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         consume_use(ctx, ins.operand1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, PHYS_R12)
-        let osp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, osp)
-        ra_set_spill(&ctx.ra, ins.id, osp)
-        emit_store_spill(out, pos, osp, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let osp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, osp)
+            ra_set_spill(&ctx.ra, ins.id, osp)
+            emit_store_spill(out, pos, osp, dst)
+        }
         ret 1
     }
     let is_shift = 0
@@ -9624,10 +9642,12 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
             if ins.op == OP_SHL { emit_shl_rcl(out, pos, dst) }
         }
         consume_use(ctx, ins.operand1)
-        let shsp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, shsp)
-        ra_set_spill(&ctx.ra, ins.id, shsp)
-        emit_store_spill(out, pos, shsp, dst)
+        if ctx.use_cnt[ins.id] > 1 {
+            let shsp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, shsp)
+            ra_set_spill(&ctx.ra, ins.id, shsp)
+            emit_store_spill(out, pos, shsp, dst)
+        }
         ret 1
     }
     ret 0
@@ -10019,7 +10039,7 @@ fn emit_trunc32(out: &i8, pos: &i64, reg: i32) {
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     if lower_instr_constlike(ins, ctx, jfn, out, pos) == 1 {
-        ensure_spilled(ctx.ra, out, pos, ins.id)
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
 
@@ -10061,13 +10081,13 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         poke_byte(out, je_off + 4, i32_b2(je_rel))
         poke_byte(out, je_off + 5, i32_b3(je_rel))
         consume_use(ctx, ins.operand0)
-        ensure_spilled(ctx.ra, out, pos, ins.id)
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
 
     if ins.op == OP_PRINT_INT {
         lower_print_int(ins, ctx, out, pos)
-        ensure_spilled(ctx.ra, out, pos, ins.id)
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
 
@@ -10090,17 +10110,17 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if lower_instr_mem(ins, ctx, out, pos) == 1 {
-        ensure_spilled(ctx.ra, out, pos, ins.id)
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
 
     if lower_instr_arith(ins, ctx, out, pos) == 1 {
-        ensure_spilled(ctx.ra, out, pos, ins.id)
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
 
     if lower_instr_cmpbit(ins, ctx, jfn, out, pos) == 1 {
-        ensure_spilled(ctx.ra, out, pos, ins.id)
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
 
@@ -10108,7 +10128,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     if lower_instr_drop(ins, ctx, out, pos) == 1 { ret ok(0) }
     if lower_tail_call(ins, ctx, jfn, out, pos) == 1 { ret ok(0) }
     if lower_instr_callalloc2(ins, ctx, out, pos) == 1 {
-        ensure_spilled(ctx.ra, out, pos, ins.id)
+        if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
 
