@@ -50,7 +50,7 @@ EOF
 
 echo "Benchmark: fib35"
 timeout 30 "$JDA" "$TMP/fib35.jda" "$TMP/fib35" 2>/dev/null || true
-chmod +x "$TMP/fib35"
+chmod +x "$TMP/fib35" 2>/dev/null || true
 start=$(date +%s%N)
 timeout 60 "$TMP/fib35" > /dev/null 2>&1 || true
 end=$(date +%s%N)
@@ -74,7 +74,7 @@ EOF
 
 echo "Benchmark: sum_loop"
 timeout 30 "$JDA" "$TMP/sum_loop.jda" "$TMP/sum_loop" 2>/dev/null || true
-chmod +x "$TMP/sum_loop"
+chmod +x "$TMP/sum_loop" 2>/dev/null || true
 start=$(date +%s%N)
 timeout 30 "$TMP/sum_loop" > /dev/null 2>&1 || true
 end=$(date +%s%N)
