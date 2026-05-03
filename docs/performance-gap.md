@@ -74,15 +74,19 @@ reflection vectors — all trivially vectorizable. Jda emits one scalar
   Emits MOVUPD + UNPCKLPD (broadcast) + MULPD.
 - **Fundamental limit for raytracer:** all sphere data goes through `I2F(LOAD_MEM)` 
   (integers stored scaled by 0001, converted via CVTSI2SD). MOVUPD loads raw bits —
-  it cannot substitute for CVTSI2SD. Closing this gap requires AVX-512 VCVTQQ2PD
-  or explicit scalar+pack sequences.
+  it cannot substitute for CVTSI2SD.
+- **Phase 4 (I2F pair, May 2026):** OP_I2FX2_BIN = 102 extends SLP to detect
+  `FMUL(I2F(LOAD_MEM[base,off]), const)` + `FMUL(I2F(LOAD_MEM[base,off+8]), const)`
+  pairs. Emits: CVTSI2SD xmm0,[base+off]; CVTSI2SD xmm1,[base+off+8]; MOVLHPS xmm0,xmm1
+  (pack); broadcast scalar const; MULPD. Fires for integer sphere data in raytracer.jda.
+  `slp_resolve_load` now threads through OP_I2F in addition to OP_BITCAST.
 
 **Remaining tasks:**
 - Task A: Detect reduction loops (`acc = acc OP a[i]`) and emit
   horizontal SIMD (vhaddps / vpermilps).
 - Task B: Add AVX2 f64×4 and f32×8 loop patterns to the peephole /
   lowering pipeline.
-- Task C: AVX-512 VCVTQQ2PD to vectorize I2F(LOAD_MEM) pairs (closes raytracer gap).
+- Task C: AVX-512 VCVTQQ2PD — out of scope for Rosetta 2; replaced by I2FX2 SSE2 pair.
 
 ---
 
