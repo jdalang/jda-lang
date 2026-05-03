@@ -12020,6 +12020,10 @@ fn live_codegen_call_fn_inline(bb: i64) -> i64 {
     ret emit(g_jfn, bb, &cf_ins)
 }
 
+fn live_codegen_set_call_arg6(ins: &Instr, cnt: i64, a6: i64) {
+    if cnt >= 7 { ins.itype = a6 }
+}
+
 fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     expect(TOK_LPAREN)
     // fn_addr(name) — argument is function name identifier, not expression
@@ -12064,6 +12068,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     let arg3 = -1
     let arg4 = -1
     let arg5 = -1
+    let arg6_tmp = -1
     loop tok_type_at(g_dbg_toks_init, g_main_pos) != TOK_RPAREN and tok_type_at(g_dbg_toks_init, g_main_pos) != TOK_EOF {
         let pos_before = g_main_pos
         let a_id = live_codegen_expr_inline(bb)
@@ -12084,8 +12089,9 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         } else if arg_cnt == 5 {
             arg5 = a_id
         }
+        if arg_cnt == 6 { arg6_tmp = a_id }
         arg_cnt = arg_cnt + 1
-        if arg_cnt > 6 { report_error("function call takes at most 6 arguments") }
+        if arg_cnt > 7 { report_error("function call takes at most 7 arguments") }
         if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
             g_main_pos = g_main_pos + 1
         }
@@ -12576,6 +12582,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     ins.imm        = arg5
     ins.str_start = name.str_start
     ins.str_len   = name.str_len
+    live_codegen_set_call_arg6(&ins, arg_cnt, arg6_tmp)
     ret emit(g_jfn, bb, &ins)
 }
 
@@ -15278,6 +15285,26 @@ fn lower_tail_call(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos
     ret 1
 }
 
+fn lower_call_push_arg7(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+    if ins.operand3 < 7 { ret ok(0) }
+    let r6 = get_or_load(ctx.ra, out, pos, ins.itype)
+    emit_push_r(out, pos, r6)
+}
+
+fn lower_call_cleanup_arg7(ins: &Instr, out: &i8, pos: &i64) {
+    if ins.operand3 < 7 { ret ok(0) }
+    // ADD RSP, 8
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x83)
+    emit_byte(out, pos, 0xC4)
+    emit_byte(out, pos, 8)
+}
+
+fn lower_call_consume_arg7(ins: &Instr, ctx: &LowerCtx) {
+    if ins.operand3 < 7 { ret ok(0) }
+    consume_use(ctx, ins.itype)
+}
+
 fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_call = 0
     if ins.op == OP_CALL { is_call = 1 }
@@ -15291,8 +15318,10 @@ fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let inlined = try_inline_call(ins, ctx, out, pos)
     if inlined == 1 { ret 1 }
     emit_save_pool(ctx.ra, out, pos)
+    lower_call_push_arg7(ins, ctx, out, pos)
     lower_instr_call_args(ins, ctx, out, pos)
     lower_instr_call_emit(ins, ctx, out, pos)
+    lower_call_cleanup_arg7(ins, out, pos)
     let argc_vals = i64[6]
     argc_vals[0] = ins.operand0
     argc_vals[1] = ins.operand1
@@ -15307,6 +15336,7 @@ fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         consume_use(ctx, argc_vals[ci])
         ci = ci + 1
     }
+    lower_call_consume_arg7(ins, ctx)
     ret 1
 }
 
@@ -20898,6 +20928,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         if o3 >= 4 { mark_use(ctx, ins.bb_target0) }
         if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
         if o3 >= 6 { mark_use(ctx, ins.imm) }
+        if o3 >= 7 { mark_use(ctx, ins.itype) }
     }
     if op == OP_TAIL_CALL {
         if o3 >= 1 { mark_use(ctx, o0) }
@@ -20906,6 +20937,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         if o3 >= 4 { mark_use(ctx, ins.bb_target0) }
         if o3 >= 5 { mark_use(ctx, ins.bb_target1) }
         if o3 >= 6 { mark_use(ctx, ins.imm) }
+        if o3 >= 7 { mark_use(ctx, ins.itype) }
     }
     if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID or op == OP_EPOLL_CREATE {
         mark_use(ctx, o0)
@@ -21016,8 +21048,17 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0x1B)
 }
 
+fn lower_fn_store_param7(jfn: &JirFunction, out: &i8, pos: &i64) {
+    if jfn.param_cnt < 7 { ret ok(0) }
+    // 7th param passed on stack at [rbp+16] by caller
+    let pslot = jfn.param_slots[6]
+    emit_load_spill(out, pos, PHYS_RAX, -16)
+    emit_store_spill(out, pos, pslot, PHYS_RAX)
+}
+
 fn lower_fn_store_params(jfn: &JirFunction, out: &i8, pos: &i64) {
     let pcnt = jfn.param_cnt
+    if pcnt > 6 { pcnt = 6 }
     let pi = 0
     loop pi < pcnt {
         let pr = PHYS_RDI
@@ -21030,6 +21071,7 @@ fn lower_fn_store_params(jfn: &JirFunction, out: &i8, pos: &i64) {
         emit_store_spill(out, pos, pslot, pr)
         pi = pi + 1
     }
+    lower_fn_store_param7(jfn, out, pos)
 }
 
 fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
