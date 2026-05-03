@@ -1,0 +1,75 @@
+// Hash map benchmark: open addressing, linear probing
+// 600K inserts into 2^20-slot table, 600K known lookups, 600K random lookups
+// macOS-compatible: alloc_pages, rdtsc timing
+
+fn lcg_next(rng: &i64) -> i64 {
+    rng[0] = (rng[0] * 1103515245 + 12345) & 2147483647
+    ret rng[0]
+}
+
+fn ht_hash(k: i64, mask: i64) -> i64 {
+    ret (k * 2654435761) & mask
+}
+
+fn ht_insert(tbl: &i64, mask: i64, k: i64, v: i64) {
+    let h = ht_hash(k, mask)
+    loop tbl[h * 2] != 0 {
+        if tbl[h * 2] == k { tbl[h * 2 + 1] = v; ret }
+        h = (h + 1) & mask
+    }
+    tbl[h * 2] = k
+    tbl[h * 2 + 1] = v
+}
+
+fn ht_find(tbl: &i64, mask: i64, k: i64) -> i64 {
+    let h = ht_hash(k, mask)
+    loop tbl[h * 2] != 0 {
+        if tbl[h * 2] == k { ret 1 }
+        h = (h + 1) & mask
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    // 2^20 = 1M slots, each 2 i64s = 16MB = 4096 pages
+    let tbl  = alloc_pages(4096) as &i64
+    let rng  = alloc_pages(1)    as &i64
+    let mask: i64 = 1048575   // 2^20 - 1
+    let N: i64 = 600000
+
+    let t0 = rdtsc()
+
+    // Insert N keys (ensure nonzero: use rng | 1 to set bit0)
+    rng[0] = 12345
+    let i: i64 = 0
+    loop i < N {
+        let k = lcg_next(rng) | 1
+        ht_insert(tbl, mask, k, k + 7)
+        i = i + 1
+    }
+
+    // Lookup known keys (same seed)
+    rng[0] = 12345
+    let found_known: i64 = 0
+    i = 0
+    loop i < N {
+        let k = lcg_next(rng) | 1
+        found_known = found_known + ht_find(tbl, mask, k)
+        i = i + 1
+    }
+
+    // Lookup random keys (different seed)
+    rng[0] = 99999
+    let found_rand: i64 = 0
+    i = 0
+    loop i < N {
+        let k = lcg_next(rng) | 1
+        found_rand = found_rand + ht_find(tbl, mask, k)
+        i = i + 1
+    }
+
+    let t1 = rdtsc()
+    let ms = (t1 - t0) / 1000000
+    print("inserted: {N}\nfound_known: {found_known}\nfound_rand: {found_rand}\ntime: {ms} ms\n")
+    ret 0
+}

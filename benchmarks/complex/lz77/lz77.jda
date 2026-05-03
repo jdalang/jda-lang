@@ -5,14 +5,13 @@ let g_rng = 42
 let g_data: &i8
 let g_comp: &i8
 let g_decomp: &i8
+let g_aux: &i64
 
 fn _sb(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
-fn _clk(buf: &i8) -> i64 { ret syscall(228, 1, buf, 0, 0) }
-
-fn now_ms(ts: &i8) -> i64 {
-    _clk(ts)
-    let s = ts[0]; let ptr = ts + 8; let ns = ptr[0]
+fn now_ms(ts: &i64) -> i64 {
+    syscall(228, 1, ts, 0, 0)
+    let s = ts[0]; let ns = ts[1]
     ret s * 1000 + ns / 1000000
 }
 
@@ -60,29 +59,37 @@ fn gen_data(size: i64) {
     }
 }
 
+// Hash chain compress: g_aux[0..255]=head, g_aux[256..4351]=chain
+// head[b] = most recent position with first byte b (-1 if none)
+// chain[i%4096] = previous position with same first byte as i (-1 if end)
 fn lz77_compress(slen: i64) -> i64 {
     let sp = 0; let dp = 0
     let WINDOW = 4096; let AHEAD = 258
+    let j = 0
+    loop j < 256 { g_aux[j] = 0 - 1; j = j + 1 }
+    loop j < 4096 { g_aux[256 + j] = 0 - 1; j = j + 1 }
     loop sp < slen {
         let best_off = 0; let best_len = 0
         let ws = sp - WINDOW
         if ws < 0 { ws = 0 }
-        let i = ws
-        loop i < sp {
-            let l = 0
-            let tmp = slen - sp; let ml = tmp - 1
-            if ml > AHEAD { ml = AHEAD }
-            let go = 1
-            loop go == 1 {
-                if l >= ml { go = 0 }
-                if go == 1 {
-                    if _sb(g_data, i + l) != _sb(g_data, sp + l) { go = 0 }
-                    if go == 1 { l = l + 1 }
+        let tmp = slen - sp; let ml = tmp - 1
+        if ml > AHEAD { ml = AHEAD }
+        let ch_sp = _sb(g_data, sp)
+        let ch_sp1 = _sb(g_data, sp + 1)
+        let i = g_aux[ch_sp]
+        loop i >= ws {
+            if _sb(g_data, i + 1) == ch_sp1 {
+                let l = 2
+                loop l < ml {
+                    if _sb(g_data, i + l) != _sb(g_data, sp + l) { break }
+                    l = l + 1
                 }
+                if l > best_len { best_len = l; best_off = sp - i }
             }
-            if l > best_len { best_len = l; best_off = sp - i }
-            i = i + 1
+            i = g_aux[256 + (i & 4095)]
         }
+        g_aux[256 + (sp & 4095)] = g_aux[ch_sp]
+        g_aux[ch_sp] = sp
         if best_len >= 3 {
             poke_byte(g_comp, dp, 1); dp = dp + 1
             poke_byte(g_comp, dp, best_off / 256); dp = dp + 1
@@ -134,6 +141,7 @@ fn main() -> i64 {
     g_data = pages
     g_comp = pages + 1048576
     g_decomp = pages + 3145728
+    g_aux = alloc_pages(10)
 
     let DSIZE = 1048576
     g_rng = 42
@@ -148,13 +156,10 @@ fn main() -> i64 {
     let ok = 1
     if dsz != DSIZE { ok = 0 }
     if ok == 1 {
-        let i = 0; let go = 1
-        loop go == 1 {
-            if i >= DSIZE { go = 0 }
-            if go == 1 {
-                if _sb(g_data, i) != _sb(g_decomp, i) { ok = 0; go = 0 }
-                i = i + 1
-            }
+        let i = 0
+        loop i < DSIZE {
+            if _sb(g_data, i) != _sb(g_decomp, i) { ok = 0; break }
+            i = i + 1
         }
     }
 

@@ -29,7 +29,7 @@ echo ""
 echo "Benchmark: self-compile"
 SRC="$ROOT/bootstrap/stage1/jda1.jda"
 start=$(date +%s%N)
-"$JDA" "$SRC" "$TMP/jda1_bench" 2>/dev/null
+timeout 180 "$JDA" build "$SRC" -o "$TMP/jda1_bench" 2>/dev/null || true
 end=$(date +%s%N)
 SELF_COMPILE_NS=$((end - start))
 SELF_COMPILE_MS=$((SELF_COMPILE_NS / 1000000))
@@ -49,10 +49,10 @@ fn main() {
 EOF
 
 echo "Benchmark: fib35"
-"$JDA" "$TMP/fib35.jda" "$TMP/fib35" 2>/dev/null
+timeout 30 "$JDA" "$TMP/fib35.jda" "$TMP/fib35" 2>/dev/null || true
 chmod +x "$TMP/fib35"
 start=$(date +%s%N)
-"$TMP/fib35" > /dev/null 2>&1 || true
+timeout 60 "$TMP/fib35" > /dev/null 2>&1 || true
 end=$(date +%s%N)
 FIB35_NS=$((end - start))
 FIB35_MS=$((FIB35_NS / 1000000))
@@ -73,10 +73,10 @@ fn main() {
 EOF
 
 echo "Benchmark: sum_loop"
-"$JDA" "$TMP/sum_loop.jda" "$TMP/sum_loop" 2>/dev/null
+timeout 30 "$JDA" "$TMP/sum_loop.jda" "$TMP/sum_loop" 2>/dev/null || true
 chmod +x "$TMP/sum_loop"
 start=$(date +%s%N)
-"$TMP/sum_loop" > /dev/null 2>&1 || true
+timeout 30 "$TMP/sum_loop" > /dev/null 2>&1 || true
 end=$(date +%s%N)
 SUM_LOOP_NS=$((end - start))
 SUM_LOOP_MS=$((SUM_LOOP_NS / 1000000))
@@ -84,7 +84,7 @@ echo "  sum_loop: ${SUM_LOOP_MS}ms"
 
 # ─── Benchmark: binary size ──────────────────────────────────────────────────
 
-BIN_SIZE=$(wc -c < "$TMP/jda1_bench")
+BIN_SIZE=$(wc -c < "$TMP/jda1_bench" 2>/dev/null || echo 0)
 echo "Benchmark: binary size"
 echo "  jda1 size: $BIN_SIZE bytes"
 

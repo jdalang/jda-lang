@@ -1,0 +1,78 @@
+// Hash map benchmark: open addressing, linear probing
+// ARM64 native via AWK compiler; mmap for heap, clock_gettime for timing
+// macOS ARM64: mmap=197, clock_gettime=116, CLOCK_MONOTONIC=1, MAP_ANON|MAP_PRIVATE=0x1002
+
+fn now_ms(ts: &i64) -> i64 {
+    syscall(116, ts, 0)
+    ret ts[0] * 1000 + ts[1] / 1000
+}
+
+fn lcg_next(rng: &i64) -> i64 {
+    rng[0] = (rng[0] * 1103515245 + 12345) & 2147483647
+    ret rng[0]
+}
+
+fn ht_hash(k: i64, mask: i64) -> i64 {
+    ret (k * 2654435761) & mask
+}
+
+fn ht_insert(tbl: &i64, mask: i64, k: i64, v: i64) {
+    let h = ht_hash(k, mask)
+    loop tbl[h * 2] != 0 {
+        if tbl[h * 2] == k { tbl[h * 2 + 1] = v; ret }
+        h = (h + 1) & mask
+    }
+    tbl[h * 2] = k
+    tbl[h * 2 + 1] = v
+}
+
+fn ht_find(tbl: &i64, mask: i64, k: i64) -> i64 {
+    let h = ht_hash(k, mask)
+    loop tbl[h * 2] != 0 {
+        if tbl[h * 2] == k { ret 1 }
+        h = (h + 1) & mask
+    }
+    ret 0
+}
+
+fn main() -> i64 {
+    let ts: [2]i64
+    // 2^20 slots * 2 i64s * 8 bytes = 16MB
+    let tbl = syscall(197, 0, 16777216, 3, 0x1002, -1, 0)
+    let rng = syscall(197, 0, 4096, 3, 0x1002, -1, 0)
+    let mask: i64 = 1048575
+    let N: i64 = 600000
+
+    let t0 = now_ms(ts)
+
+    rng[0] = 12345
+    let i: i64 = 0
+    loop i < N {
+        let k = lcg_next(rng) | 1
+        ht_insert(tbl, mask, k, k + 7)
+        i = i + 1
+    }
+
+    rng[0] = 12345
+    let found_known: i64 = 0
+    i = 0
+    loop i < N {
+        let k = lcg_next(rng) | 1
+        found_known = found_known + ht_find(tbl, mask, k)
+        i = i + 1
+    }
+
+    rng[0] = 99999
+    let found_rand: i64 = 0
+    i = 0
+    loop i < N {
+        let k = lcg_next(rng) | 1
+        found_rand = found_rand + ht_find(tbl, mask, k)
+        i = i + 1
+    }
+
+    let t1 = now_ms(ts)
+    let ms = t1 - t0
+    print("inserted: {N}\nfound_known: {found_known}\nfound_rand: {found_rand}\ntime: {ms} ms\n")
+    ret 0
+}

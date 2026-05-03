@@ -253,36 +253,37 @@ fn _mul_u64_lo(a: i64, b: i64) -> i64 {
     ret a * b
 }
 
-fn _mul_u64_hi(a: i64, b: i64) -> i64 {
-    // Get high 64 bits of a*b using 32-bit half multiplication
-    // a = a_hi*2^32 + a_lo, b = b_hi*2^32 + b_lo
+fn _i128_lo32(x: i64) -> i64 {
     let mask32 = 4294967295
-    let a_lo = a & mask32
-    let a_hi = (a >> 32) & mask32
-    let b_lo = b & mask32
-    let b_hi = (b >> 32) & mask32
+    ret x & mask32
+}
 
-    // p0 = a_lo * b_lo (fits in 64 bits)
+fn _i128_hi32(x: i64) -> i64 {
+    let mask32 = 4294967295
+    let s = x >> 32
+    ret s & mask32
+}
+
+fn _mul_u64_hi(a: i64, b: i64) -> i64 {
+    let a_lo = _i128_lo32(a)
+    let a_hi = _i128_hi32(a)
+    let b_lo = _i128_lo32(b)
+    let b_hi = _i128_hi32(b)
+
     let p0 = a_lo * b_lo
-    // p1 = a_lo * b_hi
     let p1 = a_lo * b_hi
-    // p2 = a_hi * b_lo
     let p2 = a_hi * b_lo
-    // p3 = a_hi * b_hi
     let p3 = a_hi * b_hi
 
-    // mid = (p0 >> 32) + (p1 & mask32) + (p2 & mask32)
-    let p0_hi = (p0 >> 32) & mask32
-    let p1_lo = p1 & mask32
-    let p2_lo = p2 & mask32
+    let p0_hi = _i128_hi32(p0)
+    let p1_lo = _i128_lo32(p1)
+    let p2_lo = _i128_lo32(p2)
     let mid = p0_hi + p1_lo + p2_lo
 
-    // result_hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32)
-    let p1_hi = (p1 >> 32) & mask32
-    let p2_hi = (p2 >> 32) & mask32
-    let mid_hi = (mid >> 32) & mask32
-    let result = p3 + p1_hi + p2_hi + mid_hi
-    ret result
+    let p1_hi = _i128_hi32(p1)
+    let p2_hi = _i128_hi32(p2)
+    let mid_hi = _i128_hi32(mid)
+    ret p3 + p1_hi + p2_hi + mid_hi
 }
 
 fn i128_mul(a: &i64, b: &i64) -> &i64 {

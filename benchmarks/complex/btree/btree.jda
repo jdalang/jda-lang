@@ -1,135 +1,117 @@
-// B-tree benchmark — order 64, insert 1M keys, query 2M
-// Reports insert count, query hits, node count, and timing.
-
 let mem: &i64
 let g_nn = 0
 let g_root = 0
-let g_rng = 12345
 
-fn _clk(buf: &i8) -> i64 { ret syscall(228, 1, buf, 0, 0) }
-
-fn now_ms(ts: &i8) -> i64 {
-    _clk(ts)
-    let s = ts[0]; let ptr = ts + 8; let ns = ptr[0]
+fn now_ms(ts: &i64) -> i64 {
+    syscall(228, 1, ts, 0, 0)
+    let s = ts[0]; let ns = ts[1]
     ret s * 1000 + ns / 1000000
 }
 
-fn nrand() -> i64 {
-    g_rng = (g_rng * 1103515245 + 12345) & 2147483647
-    ret g_rng
-}
-
-// Node layout: 129 i64 slots per node
-//   [0..62]   keys (63 max)
-//   [63..126] children (64 max)
-//   [127]     n (key count)
-//   [128]     is_leaf
-
-fn nk(id: i64, i: i64) -> i64 { ret mem[id * 129 + i] }
-fn nk_s(id: i64, i: i64, v: i64) { mem[id * 129 + i] = v }
-fn nc(id: i64, i: i64) -> i64 { ret mem[id * 129 + 63 + i] }
-fn nc_s(id: i64, i: i64, v: i64) { mem[id * 129 + 63 + i] = v }
-fn nd_n(id: i64) -> i64 { ret mem[id * 129 + 127] }
-fn nd_n_s(id: i64, v: i64) { mem[id * 129 + 127] = v }
-fn nd_lf(id: i64) -> i64 { ret mem[id * 129 + 128] }
-fn nd_lf_s(id: i64, v: i64) { mem[id * 129 + 128] = v }
+// Order-32 B-tree: 31 keys, 32 children per node
+// Node layout (66 i64 slots, 528 bytes):
+//   [0..30]  = 31 keys
+//   [31]     = sentinel slot (always MAX_INT)
+//   [32..63] = 32 children
+//   [64]     = n (key count)
+//   [65]     = leaf flag
+//
+// IMPORTANT: jda `ptr + X` adds X BYTES (not elements).
+// To step by 66 elements, use byte stride 66*8=528:
+//   kptr = mem + id * 528  →  kptr[k] = element id*66+k  ✓
 
 fn new_nd(leaf: i64) -> i64 {
     let id = g_nn; g_nn = g_nn + 1
-    nd_n_s(id, 0); nd_lf_s(id, leaf)
+    let kptr = mem + id * 528
+    kptr[64] = 0; kptr[65] = leaf
+    kptr[31] = 2147483647
     let i = 0
-    loop i < 64 { nc_s(id, i, 0 - 1); i = i + 1 }
+    loop i < 32 { kptr[32 + i] = 0 - 1; i = i + 1 }
     ret id
 }
 
 fn search(id: i64, key: i64) -> i64 {
-    if id < 0 { ret 0 }
-    let n = nd_n(id); let i = 0
-    loop i < n {
-        if key <= nk(id, i) { i = n } else { i = i + 1 }
+    loop id >= 0 {
+        let kptr = mem + id * 528
+        let n = kptr[64]
+        kptr[n] = 2147483647
+        let pos = 0
+        loop kptr[pos] < key { pos = pos + 1 }
+        if kptr[pos] == key { ret 1 }
+        if kptr[65] == 1 { ret 0 }
+        id = kptr[32 + pos]
     }
-    // If i was forced to n by break, restore actual position
-    let pos = 0; let done = 0
-    loop done == 0 {
-        if pos >= nd_n(id) { done = 1 }
-        if done == 0 {
-            if key <= nk(id, pos) { done = 1 } else { pos = pos + 1 }
-        }
-    }
-    if pos < nd_n(id) {
-        if nk(id, pos) == key { ret 1 }
-    }
-    if nd_lf(id) == 1 { ret 0 }
-    ret search(nc(id, pos), key)
+    ret 0
 }
 
 fn split_ch(par: i64, idx: i64) {
-    let full = nc(par, idx)
-    let mid = 31; let leaf = nd_lf(full)
+    let pptr = mem + par * 528
+    let full = pptr[32 + idx]
+    let fptr = mem + full * 528
+    let mid = 15; let leaf = fptr[65]
     let right = new_nd(leaf)
-    let rn = 31; let j = 0
+    let rptr = mem + right * 528
+    let rn = 15; let j = 0
     loop j < rn {
-        nk_s(right, j, nk(full, mid + 1 + j))
+        rptr[j] = fptr[mid + 1 + j]
         j = j + 1
     }
     if leaf == 0 {
         j = 0
         loop j < rn + 1 {
-            nc_s(right, j, nc(full, mid + 1 + j))
+            rptr[32 + j] = fptr[32 + mid + 1 + j]
             j = j + 1
         }
     }
-    let pk = nk(full, mid)
-    nd_n_s(full, mid); nd_n_s(right, rn)
-    let pn = nd_n(par)
+    let pk = fptr[mid]
+    fptr[64] = mid; rptr[64] = rn
+    let pn = pptr[64]
     j = pn
     loop j > idx {
-        nk_s(par, j, nk(par, j - 1))
-        nc_s(par, j + 1, nc(par, j))
+        pptr[j] = pptr[j - 1]
+        pptr[32 + j + 1] = pptr[32 + j]
         j = j - 1
     }
-    nk_s(par, idx, pk)
-    nc_s(par, idx + 1, right)
-    nd_n_s(par, pn + 1)
+    pptr[idx] = pk
+    pptr[32 + idx + 1] = right
+    pptr[64] = pn + 1
 }
 
 fn ins_leaf(id: i64, key: i64) {
-    let n = nd_n(id); let i = n - 1; let go = 1
-    loop go == 1 {
-        if i < 0 { go = 0 }
-        if go == 1 {
-            if key >= nk(id, i) { go = 0 }
-            if go == 1 { nk_s(id, i + 1, nk(id, i)); i = i - 1 }
-        }
+    let kptr = mem + id * 528
+    let n = kptr[64]; let i = n - 1
+    loop i >= 0 {
+        if key >= kptr[i] { break }
+        kptr[i + 1] = kptr[i]; i = i - 1
     }
-    if i >= 0 { if nk(id, i) == key { ret } }
-    nk_s(id, i + 1, key); nd_n_s(id, n + 1)
+    if i >= 0 { if kptr[i] == key { ret } }
+    kptr[i + 1] = key; kptr[64] = n + 1
 }
 
 fn ins_nf(id: i64, key: i64) {
-    if nd_lf(id) == 1 { ins_leaf(id, key); ret }
-    let n = nd_n(id); let i = n - 1; let go = 1
-    loop go == 1 {
-        if i < 0 { go = 0 }
-        if go == 1 {
-            if key >= nk(id, i) { go = 0 }
-            if go == 1 { i = i - 1 }
-        }
-    }
-    if i >= 0 { if nk(id, i) == key { ret } }
-    i = i + 1
-    if nd_n(nc(id, i)) == 63 {
+    let kptr = mem + id * 528
+    if kptr[65] == 1 { ins_leaf(id, key); ret }
+    let n = kptr[64]
+    kptr[n] = 2147483647
+    let i = 0
+    loop kptr[i] < key { i = i + 1 }
+    if i < n { if kptr[i] == key { ret } }
+    let child = kptr[32 + i]
+    let cptr = mem + child * 528
+    if cptr[64] == 31 {
         split_ch(id, i)
-        if key > nk(id, i) { i = i + 1 }
-        if i < nd_n(id) { if nk(id, i) == key { ret } }
+        if key > kptr[i] { i = i + 1 }
+        if i < kptr[64] { if kptr[i] == key { ret } }
     }
-    ins_nf(nc(id, i), key)
+    ins_nf(kptr[32 + i], key)
 }
 
 fn bt_ins(key: i64) {
-    if nd_n(g_root) == 63 {
+    let rptr = mem + g_root * 528
+    if rptr[64] == 31 {
         let s = new_nd(0)
-        nc_s(s, 0, g_root); g_root = s
+        let sptr = mem + s * 528
+        sptr[32] = g_root; g_root = s
         split_ch(s, 0)
         ins_nf(s, key)
     } else {
@@ -138,32 +120,24 @@ fn bt_ins(key: i64) {
 }
 
 fn main() -> i64 {
-    mem = alloc_pages(6000)
+    mem = alloc_pages(10000)
     g_root = new_nd(1)
-
     let N = 1000000; let N10 = 10000000
-    let ts = mem + 24000000
+    let ts = mem + 4700000
     let t0 = now_ms(ts)
-
-    // Insert 1M keys
-    g_rng = 12345
+    let rng = 12345
     let i = 0
-    loop i < N { bt_ins(nrand() % N10); i = i + 1 }
-
-    // Query known keys (same RNG sequence)
-    g_rng = 12345
+    loop i < N { rng = (rng * 1103515245 + 12345) & 2147483647; bt_ins(rng % N10); i = i + 1 }
+    let root = g_root
+    rng = 12345
     let found = 0; i = 0
-    loop i < N { found = found + search(g_root, nrand() % N10); i = i + 1 }
-
-    // Query random keys (different seed)
-    g_rng = 99999
+    loop i < N { rng = (rng * 1103515245 + 12345) & 2147483647; found = found + search(root, rng % N10); i = i + 1 }
+    rng = 99999
     let found2 = 0; i = 0
-    loop i < N { found2 = found2 + search(g_root, nrand() % N10); i = i + 1 }
-
+    loop i < N { rng = (rng * 1103515245 + 12345) & 2147483647; found2 = found2 + search(root, rng % N10); i = i + 1 }
     let t1 = now_ms(ts)
     let elapsed = t1 - t0
     let nn = g_nn
-
     print("inserted: {N}\nfound (known): {found}\nfound (random): {found2}\nnodes: {nn}\ntime: {elapsed} ms\n")
     ret 0
 }

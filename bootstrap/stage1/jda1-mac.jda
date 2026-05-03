@@ -261,9 +261,7 @@ const OP_ROCM_MATMUL = 93
 const OP_ROCM_VECADD = 94
 const OP_CALL_IND = 95
 const OP_MOD      = 96
-const OP_LOAD_MEM_SIB  = 97
-const OP_STORE_MEM_SIB = 98
-const OP_COPY          = 99
+const OP_COPY     = 99
 
 // x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -432,6 +430,7 @@ let g_field_type:     &i64 = 0
 let g_field_is_arr:    &i64 = 0
 let g_field_is_struct: &i64 = 0
 let g_field_total_cnt = 0
+let g_dbg_fi = 0
 let g_dbg_toks: &Token = 0
 let g_dbg_toks_init: &Token = 0
 let g_dbg_tok_cnt = 0
@@ -525,48 +524,17 @@ let g_lex_pos_i = 0
 let g_lex_cur_char: i64 = 0
 let g_lex_handled: i64 = 0
 let g_lower_is_main = 0
-let g_inline_tbl: &i64 = 0
 // Loop register promotion state
 let g_promo_cnt = 0
 let g_promo_slot0 = -1
 let g_promo_slot1 = -1
 let g_promo_slot2 = -1
-let g_promo_slot3 = -1
 let g_promo_header = -1
 let g_promo_body_end = -1
 let g_promo_exit = -1
 let g_cur_block_idx = -1
 let g_cur_instr_idx = -1
 let g_fused_cmp_cc = -1
-let g_flags_live = 0
-let g_last_cmp_v0 = -1
-let g_last_cmp_v1 = -1
-// Two-slot pending flag-reuse table: (target_block, v0, v1)
-// Slot 0 = most recent fused CMP, slot 1 = older fused CMP
-let g_cfuse_t0 = -1
-let g_cfuse_v0a = -1
-let g_cfuse_v0b = -1
-let g_cfuse_t1 = -1
-let g_cfuse_v1a = -1
-let g_cfuse_v1b = -1
-// Set to 1 at block-start when block is a flag-reuse target with no code yet run
-let g_fre_pass_ok = 0
-// Slot-based pending flag-reuse (for cross-block: operands reloaded from same slots)
-let g_last_cmp_s0 = -1
-let g_last_cmp_s1 = -1
-let g_cfuse_s0a = -1
-let g_cfuse_s0b = -1
-let g_cfuse_s1a = -1
-let g_cfuse_s1b = -1
-// Per-block in-degree (# predecessors) for flag-reuse safety gate; size 256 i64s
-let g_block_indeg: &i64 = 0
-// JIR pointer set before lower_fn_emit_blocks for then-body termination check
-let g_lower_jfn: &JirFunction = 0
-// Per-cfuse-slot: 1 if then-body terminates (dead JMP doesn't inflate in-degree)
-let g_cfuse_can_prop0 = 0
-let g_cfuse_can_prop1 = 0
-// Active can_prop for the current cfuse-target block
-let g_cfuse_cur_can_prop = 0
 // Value metadata for ADD/CMP immediate + promoted register opts
 let g_val_op: &i32 = 0
 let g_val_imm: &i64 = 0
@@ -576,21 +544,10 @@ let g_val_last_use: &i64 = 0
 let g_cand_slots: &i64 = 0
 let g_cand_load: &i64 = 0
 let g_cand_store: &i64 = 0
-let g_cand_first_ld: &i64 = 0
 let g_cand_cnt = 0
-let g_promo_ro_mask = 0
 let g_save_mask: i64 = 0
 // Copy propagation globals
 let g_cp_slot_val: &i64 = 0
-// LEA peephole: per-value-id defining-instr tracking (populated per function in lea_fuse)
-let g_lea_vop: &i32 = 0
-let g_lea_vimm: &i64 = 0
-let g_lea_vo0: &i64 = 0
-let g_lea_vo1: &i64 = 0
-let g_lea_uses: &i32 = 0
-// XMM handoff cache: value_id currently in XMM0/XMM1 (-1 = unknown)
-let g_xmm0_id: i64 = -1
-let g_xmm1_id: i64 = -1
 // Token write cursor (avoids 5-arg calls and local-ptr bugs)
 let g_ltw_base: &i64 = 0
 let g_ltw_off: i64 = 0
@@ -612,7 +569,7 @@ let g_il_det_gi = 0
 let g_skip_fn_body_compile_tmp = 0
 let g_small_work_jfn: &JirFunction = 0
 let g_small_work_bb = 0
-let g_target_macos = 0
+let g_target_macos = 1
 let g_fn_name_off_tbl: &i64 = 0
 let g_fn_name_len_tbl: &i64 = 0
 let g_fn_code_off_tbl: &i64 = 0
@@ -660,8 +617,6 @@ let g_repl_src_buf: &i8 = 0
 let g_import_path_buf: &i8 = 0   // Buffer for building "stdlib/<name>.jda" paths
 let g_import_names: &i8 = 0      // Track imported package names (64 entries × 64 bytes)
 let g_import_count = 0            // Number of imported packages
-let g_import_cur_name: &i8 = 0   // Current package name (null-terminated, copied here)
-let g_import_cur_len = 0          // Length of current package name
 
 // ============================================================
 // 2. LEXER
@@ -2867,7 +2822,7 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     }
     if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
-    if gidx >= 256 { panic("Too many globals") }
+    if gidx >= 200 { panic("Too many globals") }
     g_glob_name_off[gidx] = name_start
     g_glob_name_len[gidx] = name_len
     g_glob_off[gidx] = g_glob_total_sz
@@ -4739,8 +4694,6 @@ fn init_large_post_lex_state() {
     g_glob_size     = alloc_pages(8)
     g_glob_stype    = alloc_pages(8)
     g_glob_is_addr  = alloc_pages(8)
-    g_inline_tbl    = alloc_pages(64) as &i64
-    g_inline_tbl[0] = 0
 
     g_glob_cnt = 0
     g_glob_total_sz = 0
@@ -6681,9 +6634,8 @@ fn emit_binop(jfn: &JirFunction, bb: i64, op: i32, a: i64, b: i64) -> i64 {
     ret emit(jfn, bb, &ins)
 }
 
-// Emit index * elem_sz — skip MUL for &i8 (elem_sz==1 is identity)
+// Emit index * elem_sz — just emit MUL (SHL optimization deferred)
 fn emit_index_scale(bb: i64, idx_id: i64, elem_sz_val: i64) -> i64 {
-    if elem_sz_val == 1 { ret idx_id }
     let jfn = g_jfn
     let sz_c = emit_const(jfn, bb, TYPE_I64, elem_sz_val)
     ret emit_binop(jfn, bb, OP_MUL, idx_id, sz_c)
@@ -6907,6 +6859,7 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
             // String interpolation: split on {ident} and emit segments
             let seg_start = s_start
             let ii = 0
+            let fd_id = emit_const(jfn, bb, TYPE_I64, 1)
             loop ii < s_len {
                 let c = load_i8_at(src, s_start + ii)
                 if c == 92 and ii + 1 < s_len {
@@ -6922,8 +6875,7 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
                         sl.op = OP_STRLEN
                         sl.operand0 = sv
                         let slen = emit(jfn, bb, &sl)
-                        let fd_seg = emit_const(jfn, bb, TYPE_I64, 1)
-                        emit_syscall3(jfn, bb, p_sys_write(), fd_seg, sv, slen)
+                        emit_syscall3(jfn, bb, p_sys_write(), fd_id, sv, slen)
                     }
                     // Find matching }
                     ii = ii + 1
@@ -6972,8 +6924,7 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
                 tl.op = OP_STRLEN
                 tl.operand0 = tv
                 let tlen = emit(jfn, bb, &tl)
-                let fd_tail = emit_const(jfn, bb, TYPE_I64, 1)
-                emit_syscall3(jfn, bb, p_sys_write(), fd_tail, tv, tlen)
+                emit_syscall3(jfn, bb, p_sys_write(), fd_id, tv, tlen)
             }
             let close_t2 = tok_type_at0(toks, pos)
             pos[0] = pos[0] + (close_t2 == TOK_RPAREN)
@@ -8430,7 +8381,6 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
             if sid >= 1000 and is_pointer_type(cur_stype) == 0 { sid = sid - 1000 }
             let fi = lookup_field_idx_any(stab, src, sid, field_start, field_len)
             if fi == -1 {
-                let did_method = 0
                 // Method call dispatch: .method(args) → StructName_method(&self, args)
                 if tok_type_at(toks, pos[0]) == TOK_LPAREN and g_genfn_buf[200] > 0 {
                     let mi = lookup_impl_method(src, field_start, field_len)
@@ -8446,15 +8396,11 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                         let mc_result = live_codegen_method_call(&mt, bb, expr_id)
                         pos[0] = g_main_pos
                         g_main_pos = save_pos
-                        expr_id = mc_result
-                        cur_stype = TYPE_I64
-                        cur_is_struct = 0
-                        g_codegen_stype = TYPE_I64
-                        did_method = 1
+                        ret mc_result
                     }
                 }
                 // Primitive method dispatch: i64/f64 method syntax
-                if did_method == 0 and tok_type_at(toks, pos[0]) == TOK_LPAREN {
+                if tok_type_at(toks, pos[0]) == TOK_LPAREN {
                     let prim_r = -1
                     if cur_stype == TYPE_I64 {
                         let sp = g_main_pos
@@ -8470,38 +8416,30 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                         pos[0] = g_main_pos
                         g_main_pos = sp2
                     }
-                    if prim_r != -1 {
-                        expr_id = prim_r
-                        cur_stype = TYPE_I64
-                        cur_is_struct = 0
-                        g_codegen_stype = TYPE_I64
-                        did_method = 1
-                    }
+                    if prim_r != -1 { ret prim_r }
                 }
-                if did_method == 0 { ret expr_id }
+                ret expr_id
             }
-            if fi != -1 {
-                let off_id = emit_const(jfn, bb, TYPE_I64, g_field_byte_off[fi])
-                let addr = emit_binop(jfn, bb, OP_ADD, expr_id, off_id)
-                cur_stype = g_field_type[fi]
-                cur_is_struct = g_field_is_struct[fi]
-                let is_embedded_struct = 0
-                if g_field_is_arr[fi] == 0 {
-                    if cur_is_struct == 1 { is_embedded_struct = 1 }
-                }
-                if g_field_is_arr[fi] == 1 or is_embedded_struct == 1 {
-                    expr_id = addr
-                } else {
-                    cur_is_struct = 0
-                    let ld = Instr{}
-                    ld.op = OP_LOAD_MEM
-                    ld.operand0 = addr
-                    let raw_stype = cur_stype
-                    let load_itype = base_type(raw_stype)
-                    if is_pointer_type(raw_stype) { load_itype = TYPE_I64 }
-                    ld.itype = load_itype
-                    expr_id = emit(jfn, bb, &ld)
-                }
+            let off_id = emit_const(jfn, bb, TYPE_I64, g_field_byte_off[fi])
+            let addr = emit_binop(jfn, bb, OP_ADD, expr_id, off_id)
+            cur_stype = g_field_type[fi]
+            cur_is_struct = g_field_is_struct[fi]
+            let is_embedded_struct = 0
+            if g_field_is_arr[fi] == 0 {
+                if cur_is_struct == 1 { is_embedded_struct = 1 }
+            }
+            if g_field_is_arr[fi] == 1 or is_embedded_struct == 1 {
+                expr_id = addr
+            } else {
+                cur_is_struct = 0
+                let ld = Instr{}
+                ld.op = OP_LOAD_MEM
+                ld.operand0 = addr
+                let raw_stype = cur_stype
+                let load_itype = base_type(raw_stype)
+                if is_pointer_type(raw_stype) { load_itype = TYPE_I64 }
+                ld.itype = load_itype
+                expr_id = emit(jfn, bb, &ld)
             }
         } else if tok_type == TOK_LBRACK {
             pos[0] = pos[0] + 1
@@ -9330,7 +9268,7 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     }
 
     if name_len == 9 and streq(src, name_start, 9, "print_int") == 1 {
-        emit_print_i64(jfn, bb, arg0)
+        emit_print_int(jfn, bb, arg0)
         ret arg0
     }
 
@@ -9806,7 +9744,7 @@ fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     ret emit_syscall_full(jfn, bb, count)
 }
 
-fn emit_print_i64(jfn: &JirFunction, bb: i64, val_id: i64) {
+fn emit_print_int(jfn: &JirFunction, bb: i64, val_id: i64) {
     let ins = Instr{}
     ins.op       = OP_PRINT_INT
     ins.operand0 = val_id
@@ -11123,7 +11061,7 @@ fn codegen_stmt(node: &Node, jfn: &JirFunction, bb: i64) -> i64 {
         if node.op == 7 {
             //  -> emit print_int with immediate value
             let val_id = emit_const(jfn, bb, TYPE_I64, node.imm)
-            emit_print_i64(jfn, bb, val_id)
+            emit_print_int(jfn, bb, val_id)
         } else {
             //  or  -> SYS_WRITE(1, str_ptr, str_len)
             let str_id = codegen_expr(node.child0, jfn, bb)
@@ -12762,7 +12700,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     }
 
     if name.str_len == 9 and streq(g_src_buf_ptr, name.str_start, 9, "print_int") == 1 {
-        emit_print_i64(g_jfn, bb, arg0)
+        emit_print_int(g_jfn, bb, arg0)
         ret arg0
     }
 
@@ -13172,7 +13110,6 @@ fn cp_init_slots() {
     }
 }
 
-
 fn cp_scan_block(jfn: &JirFunction, bi: i64) {
     cp_init_slots()
     let base_id = -1
@@ -13191,8 +13128,8 @@ fn cp_scan_block(jfn: &JirFunction, bi: i64) {
                 g_cp_slot_val[idx] = val
             }
         }
-        // OP_ADDR takes address of a local slot — must flush the cache entry for that
-        // slot so future LOADs after a CALL cannot serve a stale OP_COPY.
+        // OP_ADDR takes address of a local slot — flush cache entry so future LOADs
+        // after a CALL cannot serve a stale OP_COPY.
         if dead == 0 and op == OP_ADDR {
             let addr_slot = jfn.blocks[bi].instrs[ii].operand0
             let addr_idx = addr_slot / 8
@@ -13213,7 +13150,6 @@ fn cp_scan_block(jfn: &JirFunction, bi: i64) {
                         instr_set_imm(&jfn.blocks[bi].instrs[ii], cv.val)
                     } else {
                         // Non-const LOAD-after-STORE: convert to OP_COPY(prev_val)
-                        // Keeps the id alive; lowering coalesces to zero instructions when possible
                         instr_set_op(&jfn.blocks[bi].instrs[ii], OP_COPY)
                         jfn.blocks[bi].instrs[ii].operand0 = prev_val
                         update_slot = 0
@@ -13224,85 +13160,6 @@ fn cp_scan_block(jfn: &JirFunction, bi: i64) {
                     if this_id >= 0 and this_id < 2048 {
                         g_cp_slot_val[idx] = this_id
                     }
-                }
-            }
-        }
-        // GADDR dedup: use local_id = (value_id - base_id) to stay in [0..127]
-        // gaddr_cache[0..127]=global_imm→local_id, is_gaddr[128..255]=local_id→1
-        // rename[384..511]=local_id→canonical_local_id
-        // NOTE: GADDR stores global_idx in imm (not operand0) per emit_gaddr
-        if dead == 0 and op == OP_GADDR and base_id >= 0 {
-            let g_idx = jfn.blocks[bi].instrs[ii].imm
-            let this_vid = jfn.blocks[bi].instrs[ii].id
-            let local_id = this_vid - base_id
-            if g_idx >= 0 and g_idx < 128 and local_id >= 0 and local_id < 128 {
-                let prev = g_cp_slot_val[g_idx]
-                if prev >= 0 {
-                    g_cp_slot_val[384 + local_id] = prev
-                } else {
-                    g_cp_slot_val[g_idx] = local_id
-                    g_cp_slot_val[128 + local_id] = 1
-                }
-            }
-        }
-        // LOAD_MEM dedup: resolve base via rename, check is_gaddr, cache LM result
-        if dead == 0 and op == OP_LOAD_MEM and base_id >= 0 {
-            let lm_src = jfn.blocks[bi].instrs[ii].operand0
-            let lm_id = jfn.blocks[bi].instrs[ii].id
-            let local_lm_src = lm_src - base_id
-            let local_lm_id = lm_id - base_id
-            let rsrc = local_lm_src
-            if local_lm_src >= 0 and local_lm_src < 128 {
-                let r = g_cp_slot_val[384 + local_lm_src]
-                if r >= 0 { rsrc = r }
-            }
-            if rsrc >= 0 and rsrc < 128 {
-                if g_cp_slot_val[128 + rsrc] == 1 {
-                    let prev_lm = g_cp_slot_val[256 + rsrc]
-                    if prev_lm >= 0 {
-                        if local_lm_id >= 0 and local_lm_id < 128 { g_cp_slot_val[384 + local_lm_id] = prev_lm }
-                    } else {
-                        if local_lm_id >= 0 and local_lm_id < 128 { g_cp_slot_val[256 + rsrc] = local_lm_id }
-                    }
-                }
-            }
-        }
-        // STORE_MEM through a GADDR ptr invalidates its LOAD_MEM cache
-        if dead == 0 and op == OP_STORE_MEM and base_id >= 0 {
-            let sm_ptr = jfn.blocks[bi].instrs[ii].operand1
-            let local_sm_ptr = sm_ptr - base_id
-            if local_sm_ptr >= 0 and local_sm_ptr < 128 {
-                let rp = local_sm_ptr
-                let r = g_cp_slot_val[384 + local_sm_ptr]
-                if r >= 0 { rp = r }
-                if rp >= 0 and rp < 128 {
-                    if g_cp_slot_val[128 + rp] == 1 { g_cp_slot_val[256 + rp] = -1 }
-                }
-            }
-        }
-        // Tensor builtins use inline emit_save_pool/restore_pool. A caller-save
-        // register holding a STORE'd slot value can be evicted without spilling
-        // during the inline sequence. Flush local-var slot cache so OP_LOADs
-        // after a tensor op stay as OP_LOAD (read from the stack slot safely).
-        // OP_TGET uses inline save_pool/restore_pool — flush local-var slot cache
-        if dead == 0 and op == OP_TGET {
-            let tf = 512
-            loop tf < 2048 { g_cp_slot_val[tf] = -1; tf = tf + 1 }
-        }
-        // Any CALL may modify globals — flush GADDR and LM caches
-        // _sb is a pure read-only function; skip flush to allow GADDR/LM dedup across calls
-        if dead == 0 and op == OP_CALL {
-            let is_sb = 0
-            let cns = jfn.blocks[bi].instrs[ii].str_start
-            let cnl = jfn.blocks[bi].instrs[ii].str_len
-            if cnl == 3 {
-                if streq(g_src_buf_ptr, cns, 3, "_sb") == 1 { is_sb = 1 }
-            }
-            if is_sb == 0 {
-                let cf = 0
-                loop cf < 512 {
-                    g_cp_slot_val[cf] = -1
-                    cf = cf + 1
                 }
             }
         }
@@ -13353,7 +13210,6 @@ fn cp_apply_renames(jfn: &JirFunction, bi: i64) {
     }
 }
 
-// Resolve v through value-rename table (g_cp_slot_val[512..639], local ids 0..127)
 fn copy_prop(jfn: &JirFunction) {
     let bi = 0
     loop bi < jfn.block_cnt {
@@ -13363,21 +13219,13 @@ fn copy_prop(jfn: &JirFunction) {
     }
 }
 
-// ============================================================
-// 7b. DEAD STORE ELIMINATION
-// ============================================================
-// Within each basic block, if slot X is stored twice with no
-// intervening LOAD of X, the first store is dead.
-
 fn dse_scan_block(jfn: &JirFunction, bi: i64) {
-    // Reuse g_cp_slot_val: slot/8 → index of last STORE instruction
     cp_init_slots()
     let ii = 0
     loop ii < jfn.blocks[bi].instr_cnt {
         let op = jfn.blocks[bi].instrs[ii].op
         let dead = jfn.blocks[bi].instrs[ii].dead
         if dead == 0 and op == OP_LOAD {
-            // A load invalidates the tracked store for this slot
             let slot = jfn.blocks[bi].instrs[ii].operand0
             let idx = slot / 8
             if idx >= 0 and idx < 2048 {
@@ -13390,7 +13238,6 @@ fn dse_scan_block(jfn: &JirFunction, bi: i64) {
             if idx >= 0 and idx < 2048 {
                 let prev = g_cp_slot_val[idx]
                 if prev >= 0 and prev < 2048 {
-                    // Previous store is dead — overwritten before read
                     instr_set_dead(&jfn.blocks[bi].instrs[prev], 1)
                 }
                 g_cp_slot_val[idx] = ii
@@ -13700,527 +13547,6 @@ fn set_const_imm(jfn: &JirFunction, val_id: i64, new_imm: i64) {
     }
 }
 
-fn inline_op_arith_ok(op: i64) -> i64 {
-    if op == OP_CONST { ret 1 }
-    if op == OP_ADD { ret 1 }
-    if op == OP_SUB { ret 1 }
-    if op == OP_MUL { ret 1 }
-    // OP_DIV excluded: IDIV implicit RDX:RAX regalloc causes sh3 corruption.
-    ret 0
-}
-
-fn inline_op_bit_ok(op: i64) -> i64 {
-    if op == OP_AND { ret 1 }
-    if op == OP_OR { ret 1 }
-    if op == OP_SHL { ret 1 }
-    if op == OP_SHR { ret 1 }
-    ret 0
-}
-
-fn inline_op_mem_ok(op: i64) -> i64 {
-    if op == OP_LOAD { ret 1 }
-    if op == OP_STORE { ret 1 }
-    if op == OP_GADDR { ret 1 }
-    if op == OP_LOAD_MEM { ret 1 }
-    if op == OP_STORE_MEM { ret 1 }
-    ret 0
-}
-
-fn inline_op_cmp_ok(op: i64) -> i64 {
-    if op == OP_CMP_EQ { ret 1 }
-    if op == OP_CMP_NE { ret 1 }
-    if op == OP_CMP_LT { ret 1 }
-    if op == OP_CMP_GT { ret 1 }
-    ret 0
-}
-
-fn inline_op_is_allowed(op: i64) -> i64 {
-    if inline_op_arith_ok(op) == 1 { ret 1 }
-    if inline_op_bit_ok(op) == 1 { ret 1 }
-    if inline_op_mem_ok(op) == 1 { ret 1 }
-    if inline_op_cmp_ok(op) == 1 { ret 1 }
-    ret 0
-}
-
-fn inline_slot_is_param(jfn: &JirFunction, slot: i64) -> i64 {
-    let p = 0
-    loop p < jfn.param_cnt {
-        if p < 7 {
-            if jfn.param_slots[p] == slot { ret 1 }
-        }
-        p = p + 1
-    }
-    ret 0
-}
-
-fn inline_is_candidate(jfn: &JirFunction) -> i64 {
-    if jfn.block_cnt != 1 { ret 0 }
-    let bi = 0
-    let live_cnt = 0
-    let has_ret = 0
-    let ret_id = 0 - 1
-    let has_load_mem = 0
-    let has_gaddr = 0
-    let has_store_mem = 0
-    let has_mul = 0
-    let ii = 0
-    loop ii < jfn.blocks[bi].instr_cnt {
-        if has_ret == 0 {
-            if jfn.blocks[bi].instrs[ii].dead == 0 {
-                let op = jfn.blocks[bi].instrs[ii].op
-                if op == OP_RET {
-                    has_ret = 1
-                    ret_id = jfn.blocks[bi].instrs[ii].operand0
-                } else {
-                    if inline_op_is_allowed(op) == 0 { ret 0 }
-                    if op == OP_LOAD {
-                        if inline_slot_is_param(jfn, jfn.blocks[bi].instrs[ii].operand0) == 0 { ret 0 }
-                    }
-                    if op == OP_STORE {
-                        if inline_slot_is_param(jfn, jfn.blocks[bi].instrs[ii].operand1) == 0 { ret 0 }
-                    }
-                    if op == OP_LOAD_MEM { has_load_mem = 1 }
-                    if op == OP_GADDR { has_gaddr = 1 }
-                    if op == OP_STORE_MEM { has_store_mem = 1 }
-                    if op == OP_MUL { has_mul = 1 }
-                    live_cnt = live_cnt + 1
-                }
-            }
-        }
-        ii = ii + 1
-    }
-    if live_cnt < 1 { ret 0 }
-    if live_cnt > 16 { ret 0 }
-    if has_ret != 1 { ret 0 }
-    if has_load_mem == 1 {
-        if has_gaddr == 0 { ret 0 }
-    }
-    if has_store_mem == 1 {
-        if has_gaddr == 0 { ret 0 }
-        if jfn.param_cnt == 0 { ret 0 }
-    }
-    ret inline_check_ret_not_passthrough(jfn, bi, ret_id)
-}
-
-fn inline_check_ret_not_passthrough(jfn: &JirFunction, bi: i64, ret_id: i64) -> i64 {
-    let jj = 0
-    loop jj < jfn.blocks[bi].instr_cnt {
-        if jfn.blocks[bi].instrs[jj].dead == 0 {
-            if jfn.blocks[bi].instrs[jj].op == OP_LOAD {
-                if jfn.blocks[bi].instrs[jj].id == ret_id { ret 0 }
-            }
-        }
-        jj = jj + 1
-    }
-    ret 1
-}
-
-fn inline_capture_meta(jfn: &JirFunction) {
-    let cnt = g_inline_tbl[0]
-    if cnt >= 16 { ret }
-    let fi = resolve_top_fn_index(g_src_buf_ptr, g_cur_fn_name_start, g_cur_fn_name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
-    let base = 16 + cnt * 256
-    let op_slot = base + 16
-    let bi = 0
-    let op_cnt = 0
-    let ret_id = -1
-    let saw_ret = 0
-    let cap_has_sm = 0
-    let cap_has_mul = 0
-    let ii = 0
-    loop ii < jfn.blocks[bi].instr_cnt {
-        if saw_ret == 0 and jfn.blocks[bi].instrs[ii].dead == 0 {
-            let op = jfn.blocks[bi].instrs[ii].op
-            if op == OP_RET {
-                ret_id = jfn.blocks[bi].instrs[ii].operand0
-                saw_ret = 1
-            } else {
-                let k = op_slot + op_cnt * 13
-                g_inline_tbl[k + 0] = op
-                g_inline_tbl[k + 1] = jfn.blocks[bi].instrs[ii].itype
-                g_inline_tbl[k + 2] = jfn.blocks[bi].instrs[ii].id
-                g_inline_tbl[k + 3] = jfn.blocks[bi].instrs[ii].operand0
-                g_inline_tbl[k + 4] = jfn.blocks[bi].instrs[ii].operand1
-                g_inline_tbl[k + 5] = jfn.blocks[bi].instrs[ii].operand2
-                g_inline_tbl[k + 6] = jfn.blocks[bi].instrs[ii].operand3
-                g_inline_tbl[k + 7] = jfn.blocks[bi].instrs[ii].imm
-                g_inline_tbl[k + 8] = jfn.blocks[bi].instrs[ii].str_start
-                g_inline_tbl[k + 9] = jfn.blocks[bi].instrs[ii].str_len
-                g_inline_tbl[k + 10] = jfn.blocks[bi].instrs[ii].bb_target0
-                g_inline_tbl[k + 11] = jfn.blocks[bi].instrs[ii].bb_target1
-                op_cnt = op_cnt + 1
-                if op == OP_STORE_MEM { cap_has_sm = 1 }
-                if op == OP_MUL { cap_has_mul = 1 }
-            }
-        }
-        ii = ii + 1
-    }
-    g_inline_tbl[base + 12] = cap_has_sm * cap_has_mul
-    g_inline_tbl[base + 0] = fi
-    g_inline_tbl[base + 1] = jfn.param_cnt
-    g_inline_tbl[base + 2] = op_cnt
-    g_inline_tbl[base + 3] = ret_id
-    g_inline_tbl[base + 4] = jfn.next_id
-    let p = 0
-    loop p < jfn.param_cnt {
-        if p < 7 {
-            g_inline_tbl[base + 5 + p] = jfn.param_slots[p]
-        }
-        p = p + 1
-    }
-    g_inline_tbl[0] = cnt + 1
-}
-
-fn inline_find_slot(fi: i64) -> i64 {
-    let cnt = g_inline_tbl[0]
-    let i = 0
-    let found = -1
-    loop i < cnt {
-        let base = 16 + i * 256
-        if g_inline_tbl[base + 0] == fi {
-            found = i
-            i = cnt
-        }
-        i = i + 1
-    }
-    ret found
-}
-
-fn inline_get_call_arg(ins: &Instr, p: i64) -> i64 {
-    if p == 0 { ret ins.operand0 }
-    if p == 1 { ret ins.operand1 }
-    if p == 2 { ret ins.operand2 }
-    if p == 3 { ret ins.bb_target0 }
-    if p == 4 { ret ins.bb_target1 }
-    if p == 5 { ret ins.imm }
-    if p == 6 { ret ins.itype }
-    ret -1
-}
-
-fn inline_match_param_slot(slot: i64, base: i64) -> i64 {
-    let pc = g_inline_tbl[base + 1]
-    let p = 0
-    let found = -1
-    loop p < pc {
-        if p < 7 {
-            if g_inline_tbl[base + 5 + p] == slot {
-                found = p
-                p = pc
-            }
-        }
-        p = p + 1
-    }
-    ret found
-}
-
-fn inline_rename_val(old: i64) -> i64 {
-    if old < 0 { ret old }
-    if old >= 256 { ret old }
-    let mapped = g_inline_tbl[4112 + old]
-    if mapped < 0 { ret old }
-    ret mapped
-}
-
-fn inline_remap_op(ins: &Instr) {
-    let op = ins.op
-    if op == OP_ADD { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_SUB { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_MUL { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_DIV { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_AND { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_OR  { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_SHL { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_SHR { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_CMP_EQ { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_CMP_NE { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_CMP_LT { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_CMP_GT { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-    if op == OP_STORE      { ins.operand0 = inline_rename_val(ins.operand0) }
-    if op == OP_LOAD_MEM   { ins.operand0 = inline_rename_val(ins.operand0) }
-    if op == OP_STORE_MEM  { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
-}
-
-fn inline_splice_scratch_read(i: i64, dst: &Instr) {
-    let k = 4368 + i * 13
-    dst.op = g_inline_tbl[k + 0]
-    dst.itype = g_inline_tbl[k + 1]
-    dst.id = g_inline_tbl[k + 2]
-    dst.dead = g_inline_tbl[k + 3]
-    dst.operand0 = g_inline_tbl[k + 4]
-    dst.operand1 = g_inline_tbl[k + 5]
-    dst.operand2 = g_inline_tbl[k + 6]
-    dst.operand3 = g_inline_tbl[k + 7]
-    dst.imm = g_inline_tbl[k + 8]
-    dst.str_start = g_inline_tbl[k + 9]
-    dst.str_len = g_inline_tbl[k + 10]
-    dst.bb_target0 = g_inline_tbl[k + 11]
-    dst.bb_target1 = g_inline_tbl[k + 12]
-}
-
-fn inline_splice_scratch_write(i: i64, src: &Instr) {
-    let k = 4368 + i * 13
-    g_inline_tbl[k + 0] = src.op
-    g_inline_tbl[k + 1] = src.itype
-    g_inline_tbl[k + 2] = src.id
-    g_inline_tbl[k + 3] = src.dead
-    g_inline_tbl[k + 4] = src.operand0
-    g_inline_tbl[k + 5] = src.operand1
-    g_inline_tbl[k + 6] = src.operand2
-    g_inline_tbl[k + 7] = src.operand3
-    g_inline_tbl[k + 8] = src.imm
-    g_inline_tbl[k + 9] = src.str_start
-    g_inline_tbl[k + 10] = src.str_len
-    g_inline_tbl[k + 11] = src.bb_target0
-    g_inline_tbl[k + 12] = src.bb_target1
-}
-
-fn inline_splice_save_block(jfn: &JirFunction, bi: i64, n: i64) {
-    let i = 0
-    loop i < n {
-        let k = 4368 + i * 13
-        g_inline_tbl[k + 0] = jfn.blocks[bi].instrs[i].op
-        g_inline_tbl[k + 1] = jfn.blocks[bi].instrs[i].itype
-        g_inline_tbl[k + 2] = jfn.blocks[bi].instrs[i].id
-        g_inline_tbl[k + 3] = jfn.blocks[bi].instrs[i].dead
-        g_inline_tbl[k + 4] = jfn.blocks[bi].instrs[i].operand0
-        g_inline_tbl[k + 5] = jfn.blocks[bi].instrs[i].operand1
-        g_inline_tbl[k + 6] = jfn.blocks[bi].instrs[i].operand2
-        g_inline_tbl[k + 7] = jfn.blocks[bi].instrs[i].operand3
-        g_inline_tbl[k + 8] = jfn.blocks[bi].instrs[i].imm
-        g_inline_tbl[k + 9] = jfn.blocks[bi].instrs[i].str_start
-        g_inline_tbl[k + 10] = jfn.blocks[bi].instrs[i].str_len
-        g_inline_tbl[k + 11] = jfn.blocks[bi].instrs[i].bb_target0
-        g_inline_tbl[k + 12] = jfn.blocks[bi].instrs[i].bb_target1
-        i = i + 1
-    }
-}
-
-fn inline_op_renames_o1(op: i64) -> i64 {
-    if inline_op_arith_ok(op) == 1 { ret 1 }
-    if inline_op_bit_ok(op) == 1 { ret 1 }
-    if inline_op_cmp_ok(op) == 1 { ret 1 }
-    if op == OP_STORE_MEM { ret 1 }
-    ret 0
-}
-
-fn inline_op_renames_o0(op: i64) -> i64 {
-    if inline_op_renames_o1(op) == 1 { ret 1 }
-    if op == OP_STORE { ret 1 }
-    if op == OP_LOAD_MEM { ret 1 }
-    ret 0
-}
-
-fn inline_splice_bind_params(call_ins: &Instr, base: i64, oc: i64) {
-    let r = 0
-    loop r < 256 {
-        g_inline_tbl[4112 + r] = -1
-        r = r + 1
-    }
-    let i = 0
-    loop i < oc {
-        let k = base + 16 + i * 13
-        let op = g_inline_tbl[k + 0]
-        if op == OP_LOAD {
-            let slot_val = g_inline_tbl[k + 3]
-            let def_id = g_inline_tbl[k + 2]
-            let p = inline_match_param_slot(slot_val, base)
-            if p >= 0 {
-                g_inline_tbl[4112 + def_id] = inline_get_call_arg(call_ins, p)
-            }
-        }
-        i = i + 1
-    }
-}
-
-fn inline_splice_is_param_load(base: i64, k: i64) -> i64 {
-    if g_inline_tbl[k + 0] != OP_LOAD { ret 0 }
-    let slot_val = g_inline_tbl[k + 3]
-    if inline_match_param_slot(slot_val, base) >= 0 { ret 1 }
-    ret 0
-}
-
-fn inline_splice_emit_one(jfn: &JirFunction, bi: i64, k: i64, new_id: i64) {
-    let op = g_inline_tbl[k + 0]
-    let o0 = g_inline_tbl[k + 3]
-    let o1 = g_inline_tbl[k + 4]
-    if inline_op_renames_o0(op) == 1 { o0 = inline_rename_val(o0) }
-    if inline_op_renames_o1(op) == 1 { o1 = inline_rename_val(o1) }
-    let ti = jfn.blocks[bi].instr_cnt
-    jfn.blocks[bi].instrs[ti].op = op
-    jfn.blocks[bi].instrs[ti].itype = g_inline_tbl[k + 1]
-    jfn.blocks[bi].instrs[ti].id = new_id
-    jfn.blocks[bi].instrs[ti].dead = 0
-    jfn.blocks[bi].instrs[ti].operand0 = o0
-    jfn.blocks[bi].instrs[ti].operand1 = o1
-    jfn.blocks[bi].instrs[ti].operand2 = g_inline_tbl[k + 5]
-    jfn.blocks[bi].instrs[ti].operand3 = g_inline_tbl[k + 6]
-    jfn.blocks[bi].instrs[ti].imm = g_inline_tbl[k + 7]
-    jfn.blocks[bi].instrs[ti].str_start = g_inline_tbl[k + 8]
-    jfn.blocks[bi].instrs[ti].str_len = g_inline_tbl[k + 9]
-    jfn.blocks[bi].instrs[ti].bb_target0 = g_inline_tbl[k + 10]
-    jfn.blocks[bi].instrs[ti].bb_target1 = g_inline_tbl[k + 11]
-    jfn.blocks[bi].instr_cnt = ti + 1
-}
-
-fn inline_splice_emit_body(jfn: &JirFunction, bi: i64, call_ins: &Instr, slot: i64) {
-    let base = 16 + slot * 256
-    let oc = g_inline_tbl[base + 2]
-    let ret_id = g_inline_tbl[base + 3]
-    let callee_next_id = g_inline_tbl[base + 4]
-    let id_offset = jfn.next_id
-    let call_dest_id = call_ins.id
-    inline_splice_bind_params(call_ins, base, oc)
-    let j = 0
-    loop j < oc {
-        let k = base + 16 + j * 13
-        if inline_splice_is_param_load(base, k) == 0 {
-            let def_id = g_inline_tbl[k + 2]
-            let new_id = id_offset + def_id
-            if def_id == ret_id { new_id = call_dest_id }
-            g_inline_tbl[4112 + def_id] = new_id
-            inline_splice_emit_one(jfn, bi, k, new_id)
-        }
-        j = j + 1
-    }
-    jfn.next_id = id_offset + callee_next_id
-}
-
-fn inline_splice_scratch_to_block(jfn: &JirFunction, bi: i64, si: i64) {
-    let k = 4368 + si * 13
-    let ti = jfn.blocks[bi].instr_cnt
-    jfn.blocks[bi].instrs[ti].op = g_inline_tbl[k + 0]
-    jfn.blocks[bi].instrs[ti].itype = g_inline_tbl[k + 1]
-    jfn.blocks[bi].instrs[ti].id = g_inline_tbl[k + 2]
-    jfn.blocks[bi].instrs[ti].dead = g_inline_tbl[k + 3]
-    jfn.blocks[bi].instrs[ti].operand0 = g_inline_tbl[k + 4]
-    jfn.blocks[bi].instrs[ti].operand1 = g_inline_tbl[k + 5]
-    jfn.blocks[bi].instrs[ti].operand2 = g_inline_tbl[k + 6]
-    jfn.blocks[bi].instrs[ti].operand3 = g_inline_tbl[k + 7]
-    jfn.blocks[bi].instrs[ti].imm = g_inline_tbl[k + 8]
-    jfn.blocks[bi].instrs[ti].str_start = g_inline_tbl[k + 9]
-    jfn.blocks[bi].instrs[ti].str_len = g_inline_tbl[k + 10]
-    jfn.blocks[bi].instrs[ti].bb_target0 = g_inline_tbl[k + 11]
-    jfn.blocks[bi].instrs[ti].bb_target1 = g_inline_tbl[k + 12]
-    jfn.blocks[bi].instr_cnt = ti + 1
-}
-
-fn inline_splice_block_has_candidate(jfn: &JirFunction, bi: i64, orig_cnt: i64) -> i64 {
-    let ii = 0
-    loop ii < orig_cnt {
-        if jfn.blocks[bi].instrs[ii].op == OP_CALL {
-            let ns = jfn.blocks[bi].instrs[ii].str_start
-            let nl = jfn.blocks[bi].instrs[ii].str_len
-            let fi = resolve_top_fn_index(g_src_buf_ptr, ns, nl, g_fn_name_off_tbl, g_fn_name_len_tbl)
-            if fi >= 0 {
-                if inline_find_slot(fi) >= 0 { ret 1 }
-            }
-        }
-        ii = ii + 1
-    }
-    ret 0
-}
-
-fn inline_block_has_non_mul_setter(orig_cnt: i64) -> i64 {
-    let ii = 0
-    loop ii < orig_cnt {
-        let k = 4368 + ii * 13
-        if g_inline_tbl[k + 0] == OP_CALL {
-            let ns = g_inline_tbl[k + 9]
-            let nl = g_inline_tbl[k + 10]
-            let fi = resolve_top_fn_index(g_src_buf_ptr, ns, nl, g_fn_name_off_tbl, g_fn_name_len_tbl)
-            if fi >= 0 {
-                let s = inline_find_slot(fi)
-                if s >= 0 {
-                    if g_inline_tbl[16 + s * 256 + 12] == 0 { ret 1 }
-                }
-            }
-        }
-        ii = ii + 1
-    }
-    ret 0
-}
-
-// Returns 1 if any CALL in the block is to a function NOT in the inline table.
-// If 0, all calls in the block are inlinable — safe to inline mul-setters.
-fn inline_block_has_non_inline_call(orig_cnt: i64) -> i64 {
-    let ii = 0
-    loop ii < orig_cnt {
-        let k = 4368 + ii * 13
-        if g_inline_tbl[k + 0] == OP_CALL {
-            let ns = g_inline_tbl[k + 9]
-            let nl = g_inline_tbl[k + 10]
-            let fi = resolve_top_fn_index(g_src_buf_ptr, ns, nl, g_fn_name_off_tbl, g_fn_name_len_tbl)
-            if fi < 0 { ret 1 }
-            let s = inline_find_slot(fi)
-            if s < 0 { ret 1 }
-        }
-        ii = ii + 1
-    }
-    ret 0
-}
-
-fn inline_splice_block(jfn: &JirFunction, bi: i64) {
-    // PARKED: splicer infrastructure is here (phases 1a/1b captured bodies), but
-    // unparking exposes two bugs not yet debugged:
-    //   1. OP_DIV: IDIV's implicit RDX:RAX regalloc not handled → corrupts sh3.
-    //      Mitigation: DIV excluded from inline_op_arith_ok.
-    //   2. OP_MUL: fp_from_int(n) = n * 10000 inlines cleanly into small tests,
-    //      but the full fixedpoint_basic sequence (4 inlines + intervening
-    //      non-inlined calls + syscalls) produces a bad code path that leaves
-    //      `out` pointer invalid at the final syscall — ~5-line output becomes
-    //      4 lines with one blank. Root cause TBD; likely regalloc state drift.
-    // OP_MUL and OP_DIV excluded from arith_ok; OP_LOAD_MEM/OP_STORE_MEM added to mem_ok.
-    let orig_cnt = jfn.blocks[bi].instr_cnt
-    if orig_cnt == 0 { ret }
-    if orig_cnt > 2000 { ret }
-    if inline_splice_block_has_candidate(jfn, bi, orig_cnt) == 0 { ret }
-    inline_splice_save_block(jfn, bi, orig_cnt)
-    jfn.blocks[bi].instr_cnt = 0
-    let si = 0
-    loop si < orig_cnt {
-        let k = 4368 + si * 13
-        let op = g_inline_tbl[k + 0]
-        let handled = 0
-        if op == OP_CALL {
-            let ns = g_inline_tbl[k + 9]
-            let nl = g_inline_tbl[k + 10]
-            let fi = resolve_top_fn_index(g_src_buf_ptr, ns, nl, g_fn_name_off_tbl, g_fn_name_len_tbl)
-            if fi >= 0 {
-                let slot = inline_find_slot(fi)
-                if slot >= 0 {
-                    let call_ac = g_inline_tbl[k + 7]
-                    let callee_pc = g_inline_tbl[16 + slot * 256 + 1]
-                    let is_mul_setter = g_inline_tbl[16 + slot * 256 + 12]
-                    let do_inline = 1
-                    if is_mul_setter == 1 {
-                        if inline_block_has_non_mul_setter(orig_cnt) == 1 { do_inline = 0 }
-                    }
-                    if do_inline == 1 {
-                        if call_ac >= callee_pc {
-                            let call_ins = Instr{}
-                            inline_splice_scratch_read(si, &call_ins)
-                            inline_splice_emit_body(jfn, bi, &call_ins, slot)
-                            handled = 1
-                        }
-                    }
-                }
-            }
-        }
-        if handled == 0 {
-            inline_splice_scratch_to_block(jfn, bi, si)
-        }
-        si = si + 1
-    }
-}
-
-fn inline_splice_fn(jfn: &JirFunction) {
-    let bi = 0
-    loop bi < jfn.block_cnt {
-        inline_splice_block(jfn, bi)
-        bi = bi + 1
-    }
-}
-
 fn peephole(jfn: &JirFunction) {
     let bi = 0
     loop bi < jfn.block_cnt {
@@ -14233,7 +13559,7 @@ fn peephole(jfn: &JirFunction) {
                 if cv.found == 1 {
                     let lg = log2_of_pow2(cv.val)
                     if lg >= 1 {
-                        instr_set_op(&jfn.blocks[bi].instrs[ii], OP_SHL)
+                        jfn.blocks[bi].instrs[ii].op = OP_SHL
                         set_const_imm(jfn, jfn.blocks[bi].instrs[ii].operand1, lg)
                     }
                 }
@@ -14244,7 +13570,7 @@ fn peephole(jfn: &JirFunction) {
                 if cv.found == 1 {
                     let lg = log2_of_pow2(cv.val)
                     if lg >= 1 {
-                        instr_set_op(&jfn.blocks[bi].instrs[ii], OP_SHR)
+                        jfn.blocks[bi].instrs[ii].op = OP_SHR
                         set_const_imm(jfn, jfn.blocks[bi].instrs[ii].operand1, lg)
                     }
                 }
@@ -14255,261 +13581,10 @@ fn peephole(jfn: &JirFunction) {
                 if cv.found == 1 {
                     let lg = log2_of_pow2(cv.val)
                     if lg >= 1 {
-                        instr_set_op(&jfn.blocks[bi].instrs[ii], OP_AND)
+                        jfn.blocks[bi].instrs[ii].op = OP_AND
                         set_const_imm(jfn, jfn.blocks[bi].instrs[ii].operand1, cv.val - 1)
                     }
                 }
-            }
-            ii = ii + 1
-        }
-        bi = bi + 1
-    }
-    if g_inline_tbl != 0 {
-        if inline_is_candidate(jfn) == 1 {
-            inline_capture_meta(jfn)
-        }
-        inline_splice_fn(jfn)
-        let gd_bi = 0
-        loop gd_bi < jfn.block_cnt {
-            cp_scan_block(jfn, gd_bi)
-            cp_apply_renames(jfn, gd_bi)
-            gd_bi = gd_bi + 1
-        }
-        dce(jfn)
-    }
-}
-
-// ============================================================
-// LEA peephole: fuse SHL(idx,k) + ADD(base,_) + LOAD_MEM/STORE_MEM
-// into a single x86 SIB-mode memory access [base + idx*2^k + disp]
-// ============================================================
-
-fn lea_reset_tables() {
-    let i = 0
-    loop i < 8192 {
-        g_lea_vop[i] = 0
-        g_lea_vimm[i] = 0
-        g_lea_vo0[i] = -1
-        g_lea_vo1[i] = -1
-        g_lea_uses[i] = 0
-        i = i + 1
-    }
-}
-
-fn lea_populate_producers(jfn: &JirFunction) {
-    let bi = 0
-    loop bi < jfn.block_cnt {
-        let ii = 0
-        loop ii < jfn.blocks[bi].instr_cnt {
-            if jfn.blocks[bi].instrs[ii].dead == 0 {
-                let id = jfn.blocks[bi].instrs[ii].id
-                if id >= 0 and id < 8192 {
-                    g_lea_vop[id] = jfn.blocks[bi].instrs[ii].op
-                    g_lea_vimm[id] = jfn.blocks[bi].instrs[ii].imm
-                    g_lea_vo0[id] = jfn.blocks[bi].instrs[ii].operand0
-                    g_lea_vo1[id] = jfn.blocks[bi].instrs[ii].operand1
-                }
-            }
-            ii = ii + 1
-        }
-        bi = bi + 1
-    }
-}
-
-fn lea_mark_use(v: i64) {
-    if v >= 0 and v < 8192 { g_lea_uses[v] = g_lea_uses[v] + 1 }
-}
-
-fn lea_count_instr_uses(ins: &Instr) {
-    let op = ins.op
-    let is_bin = 0
-    if op == OP_ADD { is_bin = 1 }
-    if op == OP_SUB { is_bin = 1 }
-    if op == OP_MUL { is_bin = 1 }
-    if op == OP_DIV { is_bin = 1 }
-    if op == OP_MOD { is_bin = 1 }
-    if op == OP_AND { is_bin = 1 }
-    if op == OP_OR  { is_bin = 1 }
-    if op == OP_SHR { is_bin = 1 }
-    if op == OP_SHL { is_bin = 1 }
-    if op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or op == OP_CMP_LTE or op == OP_CMP_GTE { is_bin = 1 }
-    if op == OP_FADD or op == OP_FSUB or op == OP_FMUL or op == OP_FDIV or op == OP_FPOW { is_bin = 1 }
-    if op == OP_FCMP_LT or op == OP_FCMP_GT or op == OP_FCMP_EQ { is_bin = 1 }
-    if is_bin == 1 { lea_mark_use(ins.operand0); lea_mark_use(ins.operand1); ret ok(0) }
-    if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_PRINT_INT or op == OP_STORE or op == OP_LOAD_MEM or op == OP_ALLOC or op == OP_DROP {
-        lea_mark_use(ins.operand0)
-    }
-    if op == OP_DROP { lea_mark_use(ins.operand1) }
-    if op == OP_STORE_MEM {
-        lea_mark_use(ins.operand0)
-        lea_mark_use(ins.operand1)
-    }
-    if op == OP_FNEG or op == OP_FSQRT or op == OP_I2F or op == OP_F2I or op == OP_FABS or op == OP_FEXP or op == OP_FLOG or op == OP_FSIN or op == OP_FCOS or op == OP_FTANH or op == OP_PRINT_FLOAT {
-        lea_mark_use(ins.operand0)
-    }
-    if op == OP_TNEW1 or op == OP_TLEN or op == OP_TDATA or op == OP_TFREE { lea_mark_use(ins.operand0) }
-    if op == OP_TNEW2 or op == OP_TGET or op == OP_TFILL or op == OP_TSHAPE {
-        lea_mark_use(ins.operand0)
-        lea_mark_use(ins.operand1)
-    }
-    if op == OP_TSET or op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK {
-        lea_mark_use(ins.operand0)
-        lea_mark_use(ins.operand1)
-        lea_mark_use(ins.operand2)
-    }
-    lea_count_instr_uses_more(ins)
-}
-
-fn lea_count_instr_uses_more(ins: &Instr) {
-    let op = ins.op
-    if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE {
-        lea_mark_use(ins.operand0)
-    }
-    if op == OP_ATOMIC_STORE or op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE {
-        lea_mark_use(ins.operand0)
-        lea_mark_use(ins.operand1)
-    }
-    if op == OP_CALL or op == OP_CALL_IND or op == OP_TAIL_CALL {
-        let ac = ins.operand3
-        if ac >= 1 { lea_mark_use(ins.operand0) }
-        if ac >= 2 { lea_mark_use(ins.operand1) }
-        if ac >= 3 { lea_mark_use(ins.operand2) }
-        if ac >= 4 { lea_mark_use(ins.bb_target0) }
-        if ac >= 5 { lea_mark_use(ins.bb_target1) }
-        if ac >= 6 { lea_mark_use(ins.imm) }
-        if ac >= 7 { lea_mark_use(ins.itype) }
-    }
-    if op == OP_SYSCALL or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT {
-        lea_mark_use(ins.operand0)
-        lea_mark_use(ins.operand1)
-        lea_mark_use(ins.operand2)
-        lea_mark_use(ins.bb_target0)
-    }
-    if op == OP_LOAD_MEM_SIB {
-        lea_mark_use(ins.operand0)
-        lea_mark_use(ins.operand1)
-    }
-    if op == OP_STORE_MEM_SIB {
-        lea_mark_use(ins.operand0)
-        lea_mark_use(ins.operand1)
-        lea_mark_use(ins.operand2)
-    }
-}
-
-fn lea_count_all_uses(jfn: &JirFunction) {
-    let bi = 0
-    loop bi < jfn.block_cnt {
-        let ii = 0
-        loop ii < jfn.blocks[bi].instr_cnt {
-            if jfn.blocks[bi].instrs[ii].dead == 0 {
-                lea_count_instr_uses(&jfn.blocks[bi].instrs[ii])
-            }
-            ii = ii + 1
-        }
-        bi = bi + 1
-    }
-}
-
-fn lea_match_pattern(addr: i64) -> i64 {
-    // Returns scale (0..3) if addr = ADD(base, SHL(idx, k_const)) or ADD(base, MUL(idx, pow2_const)),
-    //   k in {0..3}, and inner op is single-use. Returns -1 otherwise.
-    if addr < 0 or addr >= 8192 { ret -1 }
-    if g_lea_vop[addr] != OP_ADD { ret -1 }
-    if g_lea_uses[addr] != 1 { ret -1 }
-    let shl_v = g_lea_vo1[addr]
-    if shl_v < 0 or shl_v >= 8192 { ret -1 }
-    let inner_op = g_lea_vop[shl_v]
-    let is_shl = inner_op == OP_SHL
-    let is_mul = inner_op == OP_MUL
-    if is_shl == 0 and is_mul == 0 { ret -1 }
-    if g_lea_uses[shl_v] != 1 { ret -1 }
-    let k_v = g_lea_vo1[shl_v]
-    if k_v < 0 or k_v >= 8192 { ret -1 }
-    if g_lea_vop[k_v] != OP_CONST { ret -1 }
-    let raw = g_lea_vimm[k_v]
-    let k = 0 - 1
-    if is_shl == 1 { k = raw }
-    if is_mul == 1 {
-        if raw == 1 { k = 0 }
-        if raw == 2 { k = 1 }
-        if raw == 4 { k = 2 }
-        if raw == 8 { k = 3 }
-    }
-    if k < 0 { ret -1 }
-    if k > 3 { ret -1 }
-    ret k
-}
-
-fn lea_mark_dead_by_id(jfn: &JirFunction, vid: i64) {
-    let bi = 0
-    loop bi < jfn.block_cnt {
-        let ii = 0
-        loop ii < jfn.blocks[bi].instr_cnt {
-            if jfn.blocks[bi].instrs[ii].id == vid and jfn.blocks[bi].instrs[ii].dead == 0 {
-                jfn.blocks[bi].instrs[ii].dead = 1
-                ret ok(0)
-            }
-            ii = ii + 1
-        }
-        bi = bi + 1
-    }
-}
-
-fn lea_fuse_load(jfn: &JirFunction, bi: i64, ii: i64) {
-    let addr = jfn.blocks[bi].instrs[ii].operand0
-    let k = lea_match_pattern(addr)
-    if k < 0 { ret ok(0) }
-    let base = g_lea_vo0[addr]
-    let shl_v = g_lea_vo1[addr]
-    let idx = g_lea_vo0[shl_v]
-    let k_v = g_lea_vo1[shl_v]
-    // Rewrite: LOAD_MEM → LOAD_MEM_SIB(base, idx, k, disp=imm)
-    jfn.blocks[bi].instrs[ii].op = OP_LOAD_MEM_SIB
-    jfn.blocks[bi].instrs[ii].operand0 = base
-    jfn.blocks[bi].instrs[ii].operand1 = idx
-    jfn.blocks[bi].instrs[ii].operand2 = k
-    // itype and imm preserved (element size + disp)
-    // Mark SHL and ADD dead (both guaranteed single-use by lea_match_pattern).
-    // CONST k_v: only dead if its only user was this SHL.
-    lea_mark_dead_by_id(jfn, addr)
-    lea_mark_dead_by_id(jfn, shl_v)
-    if g_lea_uses[k_v] == 1 { lea_mark_dead_by_id(jfn, k_v) }
-}
-
-fn lea_fuse_store(jfn: &JirFunction, bi: i64, ii: i64) {
-    // STORE_MEM: operand0=val, operand1=addr
-    let addr = jfn.blocks[bi].instrs[ii].operand1
-    let k = lea_match_pattern(addr)
-    if k < 0 { ret ok(0) }
-    let base = g_lea_vo0[addr]
-    let shl_v = g_lea_vo1[addr]
-    let idx = g_lea_vo0[shl_v]
-    let k_v = g_lea_vo1[shl_v]
-    // Rewrite: STORE_MEM(val, addr) → STORE_MEM_SIB(val, base, idx, k)
-    let val = jfn.blocks[bi].instrs[ii].operand0
-    jfn.blocks[bi].instrs[ii].op = OP_STORE_MEM_SIB
-    jfn.blocks[bi].instrs[ii].operand0 = val
-    jfn.blocks[bi].instrs[ii].operand1 = base
-    jfn.blocks[bi].instrs[ii].operand2 = idx
-    jfn.blocks[bi].instrs[ii].operand3 = k
-    lea_mark_dead_by_id(jfn, addr)
-    lea_mark_dead_by_id(jfn, shl_v)
-    if g_lea_uses[k_v] == 1 { lea_mark_dead_by_id(jfn, k_v) }
-}
-
-fn lea_fuse(jfn: &JirFunction) {
-    if g_lea_vop == 0 { ret ok(0) }
-    lea_reset_tables()
-    lea_populate_producers(jfn)
-    lea_count_all_uses(jfn)
-    let bi = 0
-    loop bi < jfn.block_cnt {
-        let ii = 0
-        loop ii < jfn.blocks[bi].instr_cnt {
-            if jfn.blocks[bi].instrs[ii].dead == 0 {
-                let op = jfn.blocks[bi].instrs[ii].op
-                if op == OP_LOAD_MEM { lea_fuse_load(jfn, bi, ii) }
-                if op == OP_STORE_MEM { lea_fuse_store(jfn, bi, ii) }
             }
             ii = ii + 1
         }
@@ -14523,11 +13598,9 @@ fn loop_promote_scan(jfn: &JirFunction) {
     g_promo_slot0 = -1
     g_promo_slot1 = -1
     g_promo_slot2 = -1
-    g_promo_slot3 = -1
     g_promo_header = -1
     g_promo_exit = -1
     g_cand_cnt = 0
-    g_promo_ro_mask = 0
     // Find innermost loop: a JMP whose target is an earlier block (back-edge)
     let best_header = -1
     let best_body_end = -1
@@ -14597,7 +13670,6 @@ fn loop_promote_scan(jfn: &JirFunction) {
                         g_cand_slots[cc] = lslot
                         g_cand_load[cc] = is_ld
                         g_cand_store[cc] = is_st
-                        g_cand_first_ld[cc] = is_ld
                         g_cand_cnt = cc + 1
                     }
                 }
@@ -14627,46 +13699,20 @@ fn loop_promote_scan(jfn: &JirFunction) {
             if lop == OP_SYSCALL { has_call = 1 }
             if lop == OP_PRINT_INT or lop == OP_PRINT_FLOAT { has_call = 1 }
             if lop == OP_ALLOC { has_call = 1 }
-        li = li + 1
+            li = li + 1
         }
         lb = lb + 1
     }
     if has_call == 1 { ret ok(0) }
-    // Only promote simple loops (header + 1 body block) — multi-block promotion
-    // is unsafe: promoted slots in loops with conditional branches or nested loops
-    // corrupt closure/DFA data (compute_closure_for, bdf_acc_check, bdf_find).
-    let loop_span = best_body_end - best_header
-    if loop_span != 1 { ret ok(0) }
-    // Select RW slots where first occurrence was a LOAD (truly carried state).
-    // Requiring first-is-load avoids promoting loop-local temps (write-before-read each iter).
-    g_promo_ro_mask = 0
+    // Select slots that are both loaded AND stored (up to 3, for R13/R14/R15)
     let pi = 0
     let ci = 0
     loop ci < g_cand_cnt {
-        if pi < 3 {
-            if g_cand_load[ci] == 1 and g_cand_store[ci] == 1 and g_cand_first_ld[ci] == 1 {
-                if pi == 0 { g_promo_slot0 = g_cand_slots[ci] }
-                if pi == 1 { g_promo_slot1 = g_cand_slots[ci] }
-                if pi == 2 { g_promo_slot2 = g_cand_slots[ci] }
-                pi = pi + 1
-            }
-        }
-        ci = ci + 1
-    }
-    // Fill remaining register slots with RO-only slots (loop-invariant loads)
-    ci = 0
-    loop ci < g_cand_cnt {
-        if pi < 3 {
-            if g_cand_load[ci] == 1 and g_cand_store[ci] == 0 {
-                if pi == 0 { g_promo_slot0 = g_cand_slots[ci] }
-                if pi == 1 { g_promo_slot1 = g_cand_slots[ci] }
-                if pi == 2 { g_promo_slot2 = g_cand_slots[ci] }
-                // Mark this slot as RO in the mask (bit pi)
-                if pi == 0 { g_promo_ro_mask = g_promo_ro_mask + 1 }
-                if pi == 1 { g_promo_ro_mask = g_promo_ro_mask + 2 }
-                if pi == 2 { g_promo_ro_mask = g_promo_ro_mask + 4 }
-                pi = pi + 1
-            }
+        if g_cand_load[ci] == 1 and g_cand_store[ci] == 1 {
+            if pi == 0 { g_promo_slot0 = g_cand_slots[ci] }
+            if pi == 1 { g_promo_slot1 = g_cand_slots[ci] }
+            if pi == 2 { g_promo_slot2 = g_cand_slots[ci] }
+            pi = pi + 1
         }
         ci = ci + 1
     }
@@ -14680,7 +13726,6 @@ fn promo_reg_for_slot(slot: i64) -> i32 {
     if slot == g_promo_slot0 { ret PHYS_R13 }
     if slot == g_promo_slot1 { ret PHYS_R14 }
     if slot == g_promo_slot2 { ret PHYS_R15 }
-    if slot == g_promo_slot3 { ret PHYS_RBX }
     ret -1
 }
 
@@ -14754,16 +13799,14 @@ fn reg_pool_at(idx: i64) -> i32 {
     ret tbl[idx]
 }
 
-// Find a register holding a dead value (last_use strictly before current position).
-// Use < not <=: a value whose last_use == cur_pos is still needed by the current
-// instruction and must not be evicted without spilling.
+// Find a register holding a dead value (last_use already passed)
 fn ra_find_dead_reg(ra: &RegAlloc) -> i64 {
     let j = 0
     loop j < N_ALLOC_REGS {
         let rv = ra.reg2val[j]
         if rv >= 0 and rv < 8192 {
             let cur_pos = g_cur_block_idx * 128 + g_cur_instr_idx
-            if g_val_last_use[rv] < cur_pos {
+            if g_val_last_use[rv] <= cur_pos {
                 ret j
             }
         }
@@ -14807,7 +13850,6 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
             if i == 10 and g_promo_cnt >= 1 { is_pinned = 1 }
             if i == 11 and g_promo_cnt >= 2 { is_pinned = 1 }
             if i == 12 and g_promo_cnt >= 3 { is_pinned = 1 }
-            if i == 7  and g_promo_cnt >= 4 { is_pinned = 1 }
             if is_pinned == 0 {
                 ra.reg2val[i] = val_id
                 ra.val2reg[val_id] = i
@@ -14827,7 +13869,7 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     if victim >= 8192 { do_spill = 0 }
     if do_spill == 1 {
         let cp = g_cur_block_idx * 128 + g_cur_instr_idx
-        if g_val_last_use[victim] < cp { do_spill = 0 }
+        if g_val_last_use[victim] <= cp { do_spill = 0 }
     }
     // Skip spill for constants (rematerializable)
     if do_spill == 1 {
@@ -14846,10 +13888,6 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     ret spill_reg
 }
 
-// regalloc_alloc_hint: like regalloc_alloc, but prefers hint_reg if free.
-// Used for register coalescing — when operand0 has just been consumed and its
-// physical reg is now free, passing hint=a makes the allocator return the same
-// register, which enables `if dst == a` in-place fast paths in the emitter.
 fn regalloc_alloc_hint(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64, hint_reg: i32) -> i32 {
     let valid = 1
     if val_id < 0 { valid = 0 }
@@ -14864,7 +13902,6 @@ fn regalloc_alloc_hint(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64, hint_reg
                 if hi == 10 and g_promo_cnt >= 1 { is_pinned = 1 }
                 if hi == 11 and g_promo_cnt >= 2 { is_pinned = 1 }
                 if hi == 12 and g_promo_cnt >= 3 { is_pinned = 1 }
-                if hi == 7  and g_promo_cnt >= 4 { is_pinned = 1 }
                 if is_pinned == 0 {
                     ra.tick = ra.tick + 1
                     ra.reg2val[hi] = val_id
@@ -15107,14 +14144,6 @@ fn emit_or_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
     emit_byte(out, pos, modrm_rr(src, dst))
 }
 
-// NEG r/m64:  REX.W F7 /3  (two's complement negate)
-fn emit_neg_r(out: &i8, pos: &i64, reg: i32) {
-    let rex = 0x48 + (reg / 8)
-    emit_byte(out, pos, rex)
-    emit_byte(out, pos, 0xF7)
-    emit_byte(out, pos, 0xD8 + mod8(reg))
-}
-
 // SHR r64, imm8:  REX.W C1 /5 imm8  (logical right shift by immediate)
 fn emit_shr_imm8(out: &i8, pos: &i64, dst: i32, imm: i32) {
     let rex = 0x48 + (dst / 8)
@@ -15293,28 +14322,22 @@ fn emit_syscall_instr(out: &i8, pos: &i64) {
     emit_byte(out, pos, 0x05)
 }
 
+// macOS BSD syscall error convention: carry set on failure, RAX = positive errno.
+// Emit syscall + carry-flag check so failures return negative errno (like Linux).
+// jnc +3 skips the NEG on success; NEG RAX converts positive errno to negative.
+fn emit_syscall_checked(out: &i8, pos: &i64) {
+    emit_syscall_instr(out, pos)
+    emit_byte(out, pos, 0x73)   // jnc +3
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x48)   // neg rax  (REX.W F7 /3)
+    emit_byte(out, pos, 0xF7)
+    emit_byte(out, pos, 0xD8)
+}
+
 // CALL rel32  (E8 rel32)
 fn emit_call_rel32(out: &i8, pos: &i64, rel: i64) {
     emit_byte(out, pos, 0xE8)
     emit_i32_le(out, pos, rel)
-}
-
-// LEA r64, [base + idx]  (SIB, scale=1, disp=0; uses mod=01 disp8=0 to handle RBP/R13 base)
-fn emit_lea_rrr(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32) {
-    let dst_hi = dst / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 72 + dst_hi * 4 + idx_hi * 2 + base_hi
-    emit_byte(out, pos, rex)
-    emit_byte(out, pos, 0x8D)
-    let dst3 = mod8(dst)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x44 + (dst3 * 8)
-    emit_byte(out, pos, modrm)
-    let sib = (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_byte(out, pos, 0)
 }
 
 // LEA r64, [rip + rel32]  (RIP-relative load of address)
@@ -15507,147 +14530,6 @@ fn emit_load_mem_disp_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, disp: i64
     emit_i32_le(out, pos, disp)
 }
 
-// MOV r64, [base + idx*scale + disp32] — SIB addressing
-fn emit_load_mem_sib_reg(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
-    let dst_hi = dst / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 72 + dst_hi * 4 + idx_hi * 2 + base_hi
-    emit_byte(out, pos, rex)
-    emit_byte(out, pos, 0x8B)
-    let dst3 = mod8(dst)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x80 + (dst3 * 8) + 4
-    emit_byte(out, pos, modrm)
-    let sib = (scale * 64) + (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_i32_le(out, pos, disp)
-}
-
-fn emit_load_mem_sib_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
-    let dst_hi = dst / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 64 + dst_hi * 4 + idx_hi * 2 + base_hi
-    emit_byte(out, pos, rex)
-    emit_byte(out, pos, 0x0F)
-    emit_byte(out, pos, 0xB6)
-    let dst3 = mod8(dst)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x80 + (dst3 * 8) + 4
-    emit_byte(out, pos, modrm)
-    let sib = (scale * 64) + (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_i32_le(out, pos, disp)
-}
-
-fn emit_load_mem_sib_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
-    emit_byte(out, pos, 0x66)
-    let dst_hi = dst / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 64 + dst_hi * 4 + idx_hi * 2 + base_hi
-    emit_byte(out, pos, rex)
-    emit_byte(out, pos, 0x8B)
-    let dst3 = mod8(dst)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x80 + (dst3 * 8) + 4
-    emit_byte(out, pos, modrm)
-    let sib = (scale * 64) + (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_i32_le(out, pos, disp)
-}
-
-fn emit_load_mem_sib_reg32zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
-    let dst_hi = dst / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 64 + dst_hi * 4 + idx_hi * 2 + base_hi
-    emit_byte(out, pos, rex)
-    emit_byte(out, pos, 0x8B)
-    let dst3 = mod8(dst)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x80 + (dst3 * 8) + 4
-    emit_byte(out, pos, modrm)
-    let sib = (scale * 64) + (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_i32_le(out, pos, disp)
-}
-
-// MOV [base + idx*scale + disp32], r64
-fn emit_store_mem_sib_reg(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
-    let src_hi = src / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 72 + src_hi * 4 + idx_hi * 2 + base_hi
-    emit_byte(out, pos, rex)
-    emit_byte(out, pos, 0x89)
-    let src3 = mod8(src)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x80 + (src3 * 8) + 4
-    emit_byte(out, pos, modrm)
-    let sib = (scale * 64) + (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_i32_le(out, pos, disp)
-}
-
-fn emit_store_mem_sib_reg8(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
-    let src_hi = src / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 64 + src_hi * 4 + idx_hi * 2 + base_hi
-    if rex != 64 { emit_byte(out, pos, rex) }
-    emit_byte(out, pos, 0x88)
-    let src3 = mod8(src)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x80 + (src3 * 8) + 4
-    emit_byte(out, pos, modrm)
-    let sib = (scale * 64) + (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_i32_le(out, pos, disp)
-}
-
-fn emit_store_mem_sib_reg16(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
-    emit_byte(out, pos, 0x66)
-    let src_hi = src / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 64 + src_hi * 4 + idx_hi * 2 + base_hi
-    if rex != 64 { emit_byte(out, pos, rex) }
-    emit_byte(out, pos, 0x89)
-    let src3 = mod8(src)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x80 + (src3 * 8) + 4
-    emit_byte(out, pos, modrm)
-    let sib = (scale * 64) + (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_i32_le(out, pos, disp)
-}
-
-fn emit_store_mem_sib_reg32(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
-    let src_hi = src / 8
-    let base_hi = base / 8
-    let idx_hi = idx / 8
-    let rex = 64 + src_hi * 4 + idx_hi * 2 + base_hi
-    if rex != 64 { emit_byte(out, pos, rex) }
-    emit_byte(out, pos, 0x89)
-    let src3 = mod8(src)
-    let idx3 = mod8(idx)
-    let base3 = mod8(base)
-    let modrm = 0x80 + (src3 * 8) + 4
-    emit_byte(out, pos, modrm)
-    let sib = (scale * 64) + (idx3 * 8) + base3
-    emit_byte(out, pos, sib)
-    emit_i32_le(out, pos, disp)
-}
-
 fn emit_store_mem_reg32(out: &i8, pos: &i64, base: i32, src: i32) {
     let need_rex = 0
     if src >= 8 { need_rex = 1 }
@@ -15819,9 +14701,6 @@ fn emit_setcc_r12(out: &i8, pos: &i64, cc: i32) {
 
 fn emit_save_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
     // P3: Only save registers that hold live values
-    // RBX (idx 7) is callee-save in Jda's ABI — every function preserves it
-    // (prologue push, epilogue pop). Linux syscall ABI also preserves RBX.
-    // So the pre-call save is redundant; skip bit 128.
     let mask = 0
     if ra.reg2val[0] != -1 { emit_push_r(out, pos, PHYS_RAX)  mask = mask + 1 }
     if ra.reg2val[1] != -1 { emit_push_r(out, pos, PHYS_RCX)  mask = mask + 2 }
@@ -15830,6 +14709,7 @@ fn emit_save_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
     if ra.reg2val[4] != -1 { emit_push_r(out, pos, PHYS_RDI)  mask = mask + 16 }
     if ra.reg2val[5] != -1 { emit_push_r(out, pos, PHYS_R8)   mask = mask + 32 }
     if ra.reg2val[6] != -1 { emit_push_r(out, pos, PHYS_R9)   mask = mask + 64 }
+    if ra.reg2val[7] != -1 { emit_push_r(out, pos, PHYS_RBX)  mask = mask + 128 }
     if ra.reg2val[8] != -1 { emit_push_r(out, pos, PHYS_R10)  mask = mask + 256 }
     if ra.reg2val[9] != -1 { emit_push_r(out, pos, PHYS_R11)  mask = mask + 512 }
     g_save_mask = mask
@@ -15842,10 +14722,10 @@ fn mask_bit(mask: i64, pow: i64) -> i64 {
 
 fn emit_restore_pool(ra: &RegAlloc, out: &i8, pos: &i64) {
     // P3: Only restore registers that were saved (reverse order)
-    // Bit 128 (RBX) is never set by emit_save_pool — skip
     let mask = g_save_mask
     if mask_bit(mask, 512) != 0 { emit_pop_r(out, pos, PHYS_R11) }
     if mask_bit(mask, 256) != 0 { emit_pop_r(out, pos, PHYS_R10) }
+    if mask_bit(mask, 128) != 0 { emit_pop_r(out, pos, PHYS_RBX) }
     if mask_bit(mask, 64) != 0  { emit_pop_r(out, pos, PHYS_R9) }
     if mask_bit(mask, 32) != 0  { emit_pop_r(out, pos, PHYS_R8) }
     if mask_bit(mask, 16) != 0  { emit_pop_r(out, pos, PHYS_RDI) }
@@ -15907,7 +14787,7 @@ fn get_or_load(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
     ret new_r
 }
 
-fn lower_print_i64(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
+fn lower_print_int(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     // Save caller state
     emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
@@ -16101,9 +14981,9 @@ fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
         pop_idx = pop_idx - 1
     }
     lower_syscall_pop_arg(out, pos, 0)
-    
-    emit_syscall_instr(out, pos)
-    
+
+    emit_syscall_checked(out, pos)
+
     if ins.id >= 0 and ins.id < 8192 and ctx.use_cnt[ins.id] > 0 {
         emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
         emit_restore_pool(ctx.ra, out, pos)
@@ -16192,34 +15072,35 @@ fn lower_instr_constlike(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i
 
 fn lower_load_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let base_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_mov_rr(out, pos, PHYS_R12, base_r)
     consume_use(ctx, ins.operand0)
     let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
     let ld_sz = type_sizeof(ins.itype)
     if ld_sz == 1 {
         if ins.imm != 0 {
-            emit_load_mem_disp_reg8zx(out, pos, dst, base_r, ins.imm)
+            emit_load_mem_disp_reg8zx(out, pos, dst, PHYS_R12, ins.imm)
         } else {
-            emit_load_mem_reg8zx(out, pos, dst, base_r)
+            emit_load_mem_reg8zx(out, pos, dst, PHYS_R12)
         }
     } else {
         if ld_sz == 2 {
             if ins.imm != 0 {
-                emit_load_mem_disp_reg16zx(out, pos, dst, base_r, ins.imm)
+                emit_load_mem_disp_reg16zx(out, pos, dst, PHYS_R12, ins.imm)
             } else {
-                emit_load_mem_reg16zx(out, pos, dst, base_r)
+                emit_load_mem_reg16zx(out, pos, dst, PHYS_R12)
             }
         } else {
         if ld_sz == 4 {
             if ins.imm != 0 {
-                emit_load_mem_disp_reg32zx(out, pos, dst, base_r, ins.imm)
+                emit_load_mem_disp_reg32zx(out, pos, dst, PHYS_R12, ins.imm)
             } else {
-                emit_load_mem_reg32zx(out, pos, dst, base_r)
+                emit_load_mem_reg32zx(out, pos, dst, PHYS_R12)
             }
         } else {
             if ins.imm != 0 {
-                emit_load_mem_disp_reg(out, pos, dst, base_r, ins.imm)
+                emit_load_mem_disp_reg(out, pos, dst, PHYS_R12, ins.imm)
             } else {
-                emit_load_mem_reg(out, pos, dst, base_r)
+                emit_load_mem_reg(out, pos, dst, PHYS_R12)
             }
         }
         }
@@ -16229,76 +15110,6 @@ fn lower_load_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         ra_set_sp_top(&ctx.ra, msp)
         ra_set_spill(&ctx.ra, ins.id, msp)
         emit_store_spill(out, pos, msp, dst)
-    }
-    ret 1
-}
-
-fn lower_load_mem_sib(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    // ins.operand0=base, operand1=idx, operand2=scale(0..3), imm=disp, itype=elem_size
-    let base_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-    // Skip R12 copy when base is a callee-saved promoted reg (R13-R15) — never evicted
-    let skip_r12 = 0
-    if base_r >= 13 and base_r <= 15 { skip_r12 = 1 }
-    if skip_r12 == 0 { emit_mov_rr(out, pos, PHYS_R12, base_r) }
-    consume_use(ctx, ins.operand0)
-    let idx_r = get_or_load(ctx.ra, out, pos, ins.operand1)
-    consume_use(ctx, ins.operand1)
-    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-    let ld_sz = type_sizeof(ins.itype)
-    let scale = ins.operand2 as i32
-    let b = PHYS_R12
-    if skip_r12 == 1 { b = base_r }
-    if ld_sz == 1 {
-        emit_load_mem_sib_reg8zx(out, pos, dst, b, idx_r, scale, ins.imm)
-    } else {
-        if ld_sz == 2 {
-            emit_load_mem_sib_reg16zx(out, pos, dst, b, idx_r, scale, ins.imm)
-        } else {
-            if ld_sz == 4 {
-                emit_load_mem_sib_reg32zx(out, pos, dst, b, idx_r, scale, ins.imm)
-            } else {
-                emit_load_mem_sib_reg(out, pos, dst, b, idx_r, scale, ins.imm)
-            }
-        }
-    }
-    if ctx.use_cnt[ins.id] > 1 {
-        let msp = ctx.ra.sp_top + 8
-        ra_set_sp_top(&ctx.ra, msp)
-        ra_set_spill(&ctx.ra, ins.id, msp)
-        emit_store_spill(out, pos, msp, dst)
-    }
-    ret 1
-}
-
-fn lower_store_mem_sib(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    // ins.operand0=val, operand1=base, operand2=idx, operand3=scale(0..3), imm=disp
-    let val_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-    let base_r = get_or_load(ctx.ra, out, pos, ins.operand1)
-    // Skip R12 copy when base is a callee-saved promoted reg (R13-R15) — never evicted
-    let sms_skip = 0
-    if base_r >= 13 and base_r <= 15 { sms_skip = 1 }
-    if sms_skip == 0 { emit_mov_rr(out, pos, PHYS_R12, base_r) }
-    consume_use(ctx, ins.operand1)
-    let idx_r = get_or_load(ctx.ra, out, pos, ins.operand2)
-    consume_use(ctx, ins.operand2)
-    val_r = get_or_load(ctx.ra, out, pos, ins.operand0)
-    consume_use(ctx, ins.operand0)
-    let st_sz = type_sizeof(ins.itype)
-    let scale = ins.operand3 as i32
-    let sb = PHYS_R12
-    if sms_skip == 1 { sb = base_r }
-    if st_sz == 1 {
-        emit_store_mem_sib_reg8(out, pos, sb, idx_r, scale, val_r, ins.imm)
-    } else {
-        if st_sz == 2 {
-            emit_store_mem_sib_reg16(out, pos, sb, idx_r, scale, val_r, ins.imm)
-        } else {
-            if st_sz == 4 {
-                emit_store_mem_sib_reg32(out, pos, sb, idx_r, scale, val_r, ins.imm)
-            } else {
-                emit_store_mem_sib_reg(out, pos, sb, idx_r, scale, val_r, ins.imm)
-            }
-        }
     }
     ret 1
 }
@@ -16375,7 +15186,6 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_store = 0
     if ins.op == OP_STORE { is_store = 1 }
     if is_store == 1 {
-        g_fre_pass_ok = 0
         let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         // Check if this slot is promoted (all stores update the pinned register)
         let st_promo_r = -1
@@ -16400,12 +15210,6 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if ins.op == OP_LOAD_MEM { is_load_mem = 1 }
     if is_load_mem == 1 {
         ret lower_load_mem(ins, ctx, out, pos)
-    }
-    if ins.op == OP_LOAD_MEM_SIB {
-        ret lower_load_mem_sib(ins, ctx, out, pos)
-    }
-    if ins.op == OP_STORE_MEM_SIB {
-        ret lower_store_mem_sib(ins, ctx, out, pos)
     }
     let is_store_mem = 0
     if ins.op == OP_STORE_MEM { is_store_mem = 1 }
@@ -16441,9 +15245,7 @@ fn lower_instr_mem(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 0
 }
 
-// Magic-multiply fast path for OP_MOD with a non-power-of-2 constant divisor.
-// Uses MULQ: dividend in R12, magic in RAX → RDX = quotient; R12 = dividend - quotient*d.
-// Valid for non-negative dividends in [0, 2^31-1].
+// MOD by non-pow2 constant via MULQ magic multiply (avoids IDIV ~5x speedup)
 fn lower_mod_magic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let mm_id = ins.operand1
     if mm_id < 0 or mm_id >= 8192 { ret 0 }
@@ -16470,7 +15272,6 @@ fn lower_mod_magic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     emit_mov_rr(out, pos, PHYS_R12, a)
     emit_mov_imm64(out, pos, PHYS_RAX, mm_magic)
     emit_mulq_r(out, pos, PHYS_R12)
-    // MULQ clobbered RAX (pool 0) and RDX (pool 2). Clear stale RA mappings.
     ra_clear_pool_slot(&ctx.ra, 0)
     ra_clear_pool_slot(&ctx.ra, 2)
     emit_imul_rr_imm(out, pos, PHYS_RDX, PHYS_RDX, mm_d)
@@ -16488,10 +15289,7 @@ fn lower_mod_magic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 1
 }
 
-fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos: &i64) -> i64 {
-    // All arithmetic ops modify CPU flags
-    if ins.op == OP_ADD or ins.op == OP_SUB or ins.op == OP_MUL or ins.op == OP_DIV or ins.op == OP_MOD { g_flags_live = 0 }
-    if ins.op == OP_AND or ins.op == OP_OR or ins.op == OP_SHL or ins.op == OP_SHR { g_flags_live = 0 }
+fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let is_add = 0
     if ins.op == OP_ADD { is_add = 1 }
     if is_add == 1 {
@@ -16551,15 +15349,16 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, p
         }
         if imm_fits == 1 {
             let a = get_or_load(ctx.ra, out, pos, ins.operand0)
+            emit_mov_rr(out, pos, PHYS_R12, a)
+            if b_imm >= 0 and b_imm < 128 {
+                emit_add_imm8(out, pos, PHYS_R12, b_imm)
+            } else {
+                emit_add_imm32(out, pos, PHYS_R12, b_imm)
+            }
             consume_use(ctx, ins.operand0)
             consume_use(ctx, ins.operand1)
-            let dst = regalloc_alloc_hint(ctx.ra, out, pos, ins.id, a)
-            if dst != a { emit_mov_rr(out, pos, dst, a) }
-            if b_imm >= 0 and b_imm < 128 {
-                emit_add_imm8(out, pos, dst, b_imm)
-            } else {
-                emit_add_imm32(out, pos, dst, b_imm)
-            }
+            let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+            emit_mov_rr(out, pos, dst, PHYS_R12)
             if ctx.use_cnt[ins.id] > 1 {
                 let asp2 = ctx.ra.sp_top + 8
                 ra_set_sp_top(&ctx.ra, asp2)
@@ -16678,10 +15477,11 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, p
         }
         if mi_ok == 1 {
             let a = get_or_load(ctx.ra, out, pos, ins.operand0)
+            emit_imul_rr_imm(out, pos, PHYS_R12, a, mi_val)
             consume_use(ctx, ins.operand0)
             consume_use(ctx, ins.operand1)
             let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-            emit_imul_rr_imm(out, pos, dst, a, mi_val)
+            emit_mov_rr(out, pos, dst, PHYS_R12)
             if ctx.use_cnt[ins.id] > 1 {
                 let msp2 = ctx.ra.sp_top + 8
                 ra_set_sp_top(&ctx.ra, msp2)
@@ -16690,7 +15490,6 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, p
             }
             ret 1
         }
-        // Fast path: both operands cached — IMUL commutative
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         emit_mov_rr(out, pos, PHYS_R12, a)
         let b = get_or_load(ctx.ra, out, pos, ins.operand1)
@@ -16746,11 +15545,6 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, p
             emit_cqo(out, pos)
             emit_idiv_r(out, pos, safe_b)
         }
-        // IDIV clobbered RAX (pool 0) and RDX (pool 2). Any value still mapped to
-        // those registers (e.g. the dividend kept alive for OP_COPY) now has a stale
-        // register entry. Clear so future get_or_load reloads from spill slot.
-        ra_clear_pool_slot(&ctx.ra, 0)
-        ra_clear_pool_slot(&ctx.ra, 2)
         // DIV: quotient in RAX, MOD: remainder in RDX
         let result_reg = PHYS_RAX
         if ins.op == OP_MOD { result_reg = PHYS_RDX }
@@ -16770,15 +15564,6 @@ fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, p
     ret 0
 }
 
-fn cmp_flags_reusable(ins: &Instr) -> i64 {
-    ret 0
-}
-
-// Check if then_blk (bb_target0) contains OP_RET → its dead JMP to merge is non-live
-fn cfuse_can_prop_check(tb: i64) -> i64 {
-    ret 0
-}
-
 fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos: &i64) -> i64 {
     let is_cmp = 0
     if ins.op == OP_CMP_EQ { is_cmp = 1 }
@@ -16788,21 +15573,6 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
     if ins.op == OP_CMP_LTE { is_cmp = 1 }
     if ins.op == OP_CMP_GTE { is_cmp = 1 }
     if is_cmp == 1 {
-        // Compute condition code early (needed for flag-reuse path)
-        let cc = 4
-        let cc_unsigned = is_unsigned_type(ins.itype)
-        if ins.op == OP_CMP_NE { cc = 5 }
-        if cc_unsigned == 0 {
-            if ins.op == OP_CMP_LT { cc = 0xC }
-            if ins.op == OP_CMP_LTE { cc = 0xE }
-            if ins.op == OP_CMP_GT { cc = 0xF }
-            if ins.op == OP_CMP_GTE { cc = 0xD }
-        } else {
-            if ins.op == OP_CMP_LT { cc = 0x2 }
-            if ins.op == OP_CMP_LTE { cc = 0x6 }
-            if ins.op == OP_CMP_GT { cc = 0x7 }
-            if ins.op == OP_CMP_GTE { cc = 0x3 }
-        }
         // Optimization: CMP with immediate constant
         let cb_is_const = 0
         let cb_imm = 0
@@ -16817,48 +15587,9 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         if cb_fits == 1 {
             let a = get_or_load(ctx.ra, out, pos, ins.operand0)
             emit_cmp_imm32(out, pos, a, cb_imm)
-            g_last_cmp_v0 = ins.operand0
-            g_last_cmp_v1 = 0 - 1
-            g_flags_live = 1
-            g_fre_pass_ok = 0
-            g_last_cmp_s0 = -1
-            if ins.operand0 >= 0 and ins.operand0 < 8192 { g_last_cmp_s0 = g_val_load_slot[ins.operand0] }
-            g_last_cmp_s1 = -1
             consume_use(ctx, ins.operand0)
             consume_use(ctx, ins.operand1)
         } else {
-        // Flag-reuse: CPU flags are still valid from same-operand CMP in predecessor block
-        if cmp_flags_reusable(ins) == 1 {
-            consume_use(ctx, ins.operand0)
-            consume_use(ctx, ins.operand1)
-            if ctx.use_cnt[ins.id] == 1 {
-                let fre_ni = g_cur_instr_idx + 1
-                let fre_cnt = jfn.blocks[g_cur_block_idx].instr_cnt
-                loop fre_ni < fre_cnt {
-                    if jfn.blocks[g_cur_block_idx].instrs[fre_ni].dead == 0 {
-                        if jfn.blocks[g_cur_block_idx].instrs[fre_ni].op == OP_BR {
-                            if jfn.blocks[g_cur_block_idx].instrs[fre_ni].operand0 == ins.id {
-                                g_fused_cmp_cc = cc
-                                ret 1
-                            }
-                        }
-                        fre_ni = fre_cnt
-                    } else {
-                        fre_ni = fre_ni + 1
-                    }
-                }
-            }
-            emit_setcc_r12(out, pos, cc)
-            let fre_dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-            emit_mov_rr(out, pos, fre_dst, PHYS_R12)
-            if ctx.use_cnt[ins.id] > 1 {
-                let fre_sp = ctx.ra.sp_top + 8
-                ra_set_sp_top(&ctx.ra, fre_sp)
-                ra_set_spill(&ctx.ra, ins.id, fre_sp)
-                emit_store_spill(out, pos, fre_sp, fre_dst)
-            }
-            ret 1
-        }
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let cmp_a = a
         if ins.operand0 != ins.operand1 {
@@ -16870,16 +15601,22 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         }
         let b = get_or_load(ctx.ra, out, pos, ins.operand1)
         emit_cmp_rr(out, pos, cmp_a, b)
-        g_last_cmp_v0 = ins.operand0
-        g_last_cmp_v1 = ins.operand1
-        g_flags_live = 1
-        g_fre_pass_ok = 0
-        g_last_cmp_s0 = -1
-        if ins.operand0 >= 0 and ins.operand0 < 8192 { g_last_cmp_s0 = g_val_load_slot[ins.operand0] }
-        g_last_cmp_s1 = -1
-        if ins.operand1 >= 0 and ins.operand1 < 8192 { g_last_cmp_s1 = g_val_load_slot[ins.operand1] }
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
+        }
+        let cc = 4
+        let cc_unsigned = is_unsigned_type(ins.itype)
+        if ins.op == OP_CMP_NE { cc = 5 }
+        if cc_unsigned == 0 {
+            if ins.op == OP_CMP_LT { cc = 0xC }
+            if ins.op == OP_CMP_LTE { cc = 0xE }
+            if ins.op == OP_CMP_GT { cc = 0xF }
+            if ins.op == OP_CMP_GTE { cc = 0xD }
+        } else {
+            if ins.op == OP_CMP_LT { cc = 0x2 }
+            if ins.op == OP_CMP_LTE { cc = 0x6 }
+            if ins.op == OP_CMP_GT { cc = 0x7 }
+            if ins.op == OP_CMP_GTE { cc = 0x3 }
         }
         // Branch fusion: if CMP result used only once AND the very next
         // non-dead instruction is OP_BR using this result, skip setcc
@@ -16908,12 +15645,10 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         emit_setcc_r12(out, pos, cc)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, PHYS_R12)
-        if ctx.use_cnt[ins.id] > 1 {
-            let csp2 = ctx.ra.sp_top + 8
-            ra_set_sp_top(&ctx.ra, csp2)
-            ra_set_spill(&ctx.ra, ins.id, csp2)
-            emit_store_spill(out, pos, csp2, dst)
-        }
+        let csp2 = ctx.ra.sp_top + 8
+        ra_set_sp_top(&ctx.ra, csp)2
+        ra_set_spill(&ctx.ra, ins.id, csp)2
+        emit_store_spill(out, pos, csp2, dst)
         ret 1
     }
     let is_and = 0
@@ -16958,17 +15693,17 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
     if ins.op == OP_SHR { is_shift = 1 }
     if ins.op == OP_SHL { is_shift = 1 }
     if is_shift == 1 {
-        let sh_cv = find_const(jfn, ins.operand1)
+        let cv = find_const(jfn, ins.operand1)
         let a = get_or_load(ctx.ra, out, pos, ins.operand0)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_mov_rr(out, pos, dst, a)
         consume_use(ctx, ins.operand0)
-        if sh_cv.found == 1 {
-            if ins.op == OP_SHR { emit_shr_imm8(out, pos, dst, sh_cv.val) }
-            if ins.op == OP_SHL { emit_shl_imm8(out, pos, dst, sh_cv.val) }
+        if cv.found == 1 {
+            if ins.op == OP_SHR { emit_shr_imm8(out, pos, dst, cv.val) }
+            if ins.op == OP_SHL { emit_shl_imm8(out, pos, dst, cv.val) }
         } else {
             let b = get_or_load(ctx.ra, out, pos, ins.operand1)
-            if b != PHYS_RCX { ra_clear_pool_slot(&ctx.ra, 1); emit_mov_rr(out, pos, PHYS_RCX, b) }
+            if b != PHYS_RCX { emit_mov_rr(out, pos, PHYS_RCX, b) }
             if ins.op == OP_SHR { emit_shr_rcl(out, pos, dst) }
             if ins.op == OP_SHL { emit_shl_rcl(out, pos, dst) }
         }
@@ -17029,30 +15764,6 @@ fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if is_jmp == 1 {
         lower_branch_fixup(ctx, pos, ins.bb_target0, pos[0] + 1, 0)
         emit_jmp_rel32(out, pos, 0)
-        // JMP doesn't modify FLAGS — propagate if safe:
-        // either single predecessor, or then-body terminates (dead JMP inflates indeg)
-        if g_fre_pass_ok == 1 {
-            let jt = ins.bb_target0
-            if jt >= 0 and jt < 256 {
-                let jt_safe = 0
-                if g_block_indeg[jt] <= 0 { jt_safe = 1 }
-                if g_cfuse_cur_can_prop == 1 { jt_safe = 1 }
-                if jt_safe == 1 {
-                    g_cfuse_t1 = g_cfuse_t0
-                    g_cfuse_v1a = g_cfuse_v0a
-                    g_cfuse_v1b = g_cfuse_v0b
-                    g_cfuse_s1a = g_cfuse_s0a
-                    g_cfuse_s1b = g_cfuse_s0b
-                    g_cfuse_can_prop1 = g_cfuse_can_prop0
-                    g_cfuse_can_prop0 = g_cfuse_cur_can_prop
-                    g_cfuse_t0 = jt
-                    g_cfuse_v0a = g_last_cmp_v0
-                    g_cfuse_v0b = g_last_cmp_v1
-                    g_cfuse_s0a = g_last_cmp_s0
-                    g_cfuse_s0b = g_last_cmp_s1
-                }
-            }
-        }
         ret 1
     }
     let is_br = 0
@@ -17071,9 +15782,6 @@ fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
             emit_jcc_rel32(out, pos, inv_cc, 0)
             lower_branch_fixup(ctx, pos, ins.bb_target0, pos[0] + 1, 0)
             emit_jmp_rel32(out, pos, 0)
-            // cfuse disabled: reset table instead of pushing
-            g_cfuse_t0 = -1
-            g_cfuse_t1 = -1
             g_fused_cmp_cc = -1
             ret 1
         }
@@ -17109,7 +15817,7 @@ fn lower_instr_alloc(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     emit_mov_imm64(out, pos, PHYS_R10, p_mmap_flags())
     emit_mov_imm64(out, pos, PHYS_R8, -1)
     emit_mov_imm64(out, pos, PHYS_R9, 0)
-    emit_syscall_instr(out, pos)
+    emit_syscall_checked(out, pos)
     let keep_res = 1
     if ins.id < 0 { keep_res = 0 }
     if ins.id >= 8192 { keep_res = 0 }
@@ -17262,33 +15970,22 @@ fn inline_store_result(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
 }
 
 fn try_inline_byte_read(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
-    // MOVZX dst, byte [r0 + r1*1] — no pool save/restore needed.
-    // All pool regs are non-RBP/non-RSP so mod=00 SIB is always safe.
+    emit_save_pool(ctx.ra, out, pos)
     let r0 = get_or_load(ctx.ra, out, pos, ins.operand0)
+    emit_push_r(out, pos, r0)
     let r1 = get_or_load(ctx.ra, out, pos, ins.operand1)
+    emit_push_r(out, pos, r1)
+    emit_pop_r(out, pos, PHYS_RSI)
+    emit_pop_r(out, pos, PHYS_RDI)
+    // MOVZX RAX, byte [RDI + RSI]: 48 0F B6 04 37
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0xB6)
+    emit_byte(out, pos, 0x04)
+    emit_byte(out, pos, 0x37)
+    inline_store_result(ins, ctx, out, pos)
     consume_use(ctx, ins.operand0)
     consume_use(ctx, ins.operand1)
-    let keep = 1
-    if ins.id < 0 { keep = 0 }
-    if ins.id >= 8192 { keep = 0 }
-    if keep == 1 { if ctx.use_cnt[ins.id] <= 0 { keep = 0 } }
-    if keep == 1 {
-        let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
-        let dst_hi = dst / 8; let r0_hi = r0 / 8; let r1_hi = r1 / 8
-        let rex = 64 + dst_hi * 4 + r1_hi * 2 + r0_hi
-        emit_byte(out, pos, rex)
-        emit_byte(out, pos, 0x0F)
-        emit_byte(out, pos, 0xB6)
-        let dst3 = mod8(dst); let r03 = mod8(r0); let r13 = mod8(r1)
-        emit_byte(out, pos, dst3 * 8 + 4)   // modrm: mod=00, reg=dst3, r/m=4 (SIB)
-        emit_byte(out, pos, r13 * 8 + r03)   // sib: scale=0, idx=r1, base=r0
-        if ctx.use_cnt[ins.id] > 1 {
-            let csp = ctx.ra.sp_top + 8
-            ra_set_sp_top(&ctx.ra, csp)
-            ra_set_spill(&ctx.ra, ins.id, csp)
-            emit_store_spill(out, pos, csp, dst)
-        }
-    }
     ret 1
 }
 
@@ -17441,8 +16138,6 @@ fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     fixup_init(&ctx.fixups[fix_idx], pos[0] + 1, ins.str_start, 2, ins.str_len)
     ctx.fix_cnt = ctx.fix_cnt + 1
     emit_call_rel32(out, pos, 0)
-    g_flags_live = 0
-    g_fre_pass_ok = 0
     let keep_res = 1
     if ins.id < 0 { keep_res = 0 }
     if ins.id >= 8192 { keep_res = 0 }
@@ -17958,7 +16653,7 @@ fn lower_instr_chan(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_mov_imm64(out, pos, PHYS_R10, p_mmap_flags())
         emit_mov_imm64(out, pos, PHYS_R8, -1)
         emit_mov_imm64(out, pos, PHYS_R9, 0)
-        emit_syscall_instr(out, pos)
+        emit_syscall_checked(out, pos)
         // Restore cap into RCX
         emit_pop_r(out, pos, PHYS_RCX)
         // RAX = channel pointer, store cap at [RAX+0]
@@ -18922,70 +17617,6 @@ fn emit_movq_xmm_to_gpr(out: &i8, pos: &i64, gpr: i64, xmm: i64) {
     emit_byte(out, pos, modrm)
 }
 
-fn xmm_reset() {
-    g_xmm0_id = 0 - 1
-    g_xmm1_id = 0 - 1
-}
-
-fn xmm_clobbers(op: i64) -> i64 {
-    if op == OP_CALL { ret 1 }
-    if op == OP_CALL_IND { ret 1 }
-    if op == OP_TAIL_CALL { ret 1 }
-    if op == OP_SYSCALL { ret 1 }
-    if op == OP_EPOLL_CTL { ret 1 }
-    if op == OP_EPOLL_WAIT { ret 1 }
-    if op == OP_PRINT_INT { ret 1 }
-    if op == OP_PRINT_FLOAT { ret 1 }
-    if op == OP_ALLOC { ret 1 }
-    if op == OP_ATOMIC_LOAD { ret 1 }
-    if op == OP_ATOMIC_STORE { ret 1 }
-    if op == OP_ATOMIC_CAS { ret 1 }
-    if op == OP_ATOMIC_ADD { ret 1 }
-    if op == OP_CHAN_NEW { ret 1 }
-    if op == OP_CHAN_SEND { ret 1 }
-    if op == OP_CHAN_RECV { ret 1 }
-    if op == OP_CHAN_CLOSE { ret 1 }
-    if op == OP_CLONE_THREAD { ret 1 }
-    if op == OP_FUTEX_WAIT { ret 1 }
-    if op == OP_FUTEX_WAKE { ret 1 }
-    if op == OP_CTX_SWITCH { ret 1 }
-    if op == OP_DEADLOCK_CHK { ret 1 }
-    if op == OP_TNEW1 { ret 1 }
-    if op == OP_TNEW2 { ret 1 }
-    if op == OP_TLEN { ret 1 }
-    if op == OP_TDATA { ret 1 }
-    if op == OP_TGET { ret 1 }
-    if op == OP_TSET { ret 1 }
-    if op == OP_TFILL { ret 1 }
-    if op == OP_TFREE { ret 1 }
-    if op == OP_TSHAPE { ret 1 }
-    ret 0
-}
-
-fn f64_load_op(ctx: &LowerCtx, out: &i8, pos: &i64, xmm: i64, val_id: i64) {
-    // Skip MOVQ if the cached XMM register already contains val_id.
-    if xmm == 0 {
-        if g_xmm0_id == val_id { ret ok(0) }
-        if g_xmm1_id == val_id {
-            emit_sse_rr(out, pos, 0xF2, 0x10, 0, 1)
-            g_xmm0_id = val_id
-            ret ok(0)
-        }
-    }
-    if xmm == 1 {
-        if g_xmm1_id == val_id { ret ok(0) }
-        if g_xmm0_id == val_id {
-            emit_sse_rr(out, pos, 0xF2, 0x10, 1, 0)
-            g_xmm1_id = val_id
-            ret ok(0)
-        }
-    }
-    let r = get_or_load(ctx.ra, out, pos, val_id)
-    emit_movq_gpr_to_xmm(out, pos, xmm, r)
-    if xmm == 0 { g_xmm0_id = val_id }
-    if xmm == 1 { g_xmm1_id = val_id }
-}
-
 fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let op = ins.op
 
@@ -19006,13 +17637,14 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         // MOVQ dst, XMM0 (move float bits directly to allocated GPR)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
     // OP_F2I: convert f64 to integer
     if op == OP_F2I {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        // MOVQ XMM0, src_r (load float bits into XMM)
+        emit_movq_gpr_to_xmm(out, pos, 0, src_r)
         consume_use(ctx, ins.operand0)
         // CVTTSD2SI RAX, XMM0  (F2 48 0F 2C C0)
         emit_byte(out, pos, 0xF2)
@@ -19038,21 +17670,23 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if op == OP_FDIV { is_fbin = 1 }
     if op == OP_FDIV { fbin_op = 0x5E }
     if is_fbin == 1 {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
-        f64_load_op(ctx, out, pos, 1, ins.operand1)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        let b_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_movq_gpr_to_xmm(out, pos, 1, b_r)
         emit_sse_rr(out, pos, 0xF2, fbin_op, 0, 1)
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
         // MOVQ dst, XMM0 (result bits directly to allocated GPR — avoids RAX clobber)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
     // Unary float ops: FNEG, FSQRT
     if op == OP_FNEG {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         // XOR sign bit: load 0x8000000000000000 into RAX, MOVQ XMM1 RAX, XORPD
         emit_byte(out, pos, 0x48)
@@ -19066,20 +17700,18 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 0x00)
         emit_byte(out, pos, 0x80)
         emit_movq_gpr_to_xmm(out, pos, 1, PHYS_RAX)
-        g_xmm1_id = 0 - 1
         emit_sse_rr(out, pos, 0x66, 0x57, 0, 1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
     if op == OP_FSQRT {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         emit_sse_rr(out, pos, 0xF2, 0x51, 0, 0)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
@@ -19089,8 +17721,10 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if op == OP_FCMP_GT { is_fcmp = 2 }
     if op == OP_FCMP_EQ { is_fcmp = 3 }
     if is_fcmp > 0 {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
-        f64_load_op(ctx, out, pos, 1, ins.operand1)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        let b_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_movq_gpr_to_xmm(out, pos, 1, b_r)
         // UCOMISD XMM0, XMM1
         emit_sse_rr(out, pos, 0x66, 0x2E, 0, 1)
         consume_use(ctx, ins.operand0)
@@ -19131,7 +17765,8 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 
     // OP_FABS: clear sign bit
     if op == OP_FABS {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         // Load 0x7FFFFFFFFFFFFFFF into RAX then XMM1
         emit_byte(out, pos, 0x48)
@@ -19145,7 +17780,6 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 0xFF)
         emit_byte(out, pos, 0x7F)
         emit_movq_gpr_to_xmm(out, pos, 1, PHYS_RAX)
-        g_xmm1_id = 0 - 1
         // ANDPD XMM0, XMM1  (66 0F 54 C1)
         emit_byte(out, pos, 0x66)
         emit_byte(out, pos, 0x0F)
@@ -19153,13 +17787,13 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 0xC1)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
     // OP_FSIN: sin(x) via x87 FPU
     if op == OP_FSIN {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         // SUB RSP, 8
         emit_byte(out, pos, 0x48)
@@ -19196,13 +17830,13 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 8)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
     // OP_FCOS: cos(x) via x87 FPU
     if op == OP_FCOS {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         // SUB RSP, 8
         emit_byte(out, pos, 0x48)
@@ -19239,13 +17873,13 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 8)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
     // OP_FEXP: exp(x) via x87 FPU (2^(x * log2(e)))
     if op == OP_FEXP {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         // SUB RSP, 8
         emit_byte(out, pos, 0x48)
@@ -19312,13 +17946,13 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 8)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
     // OP_FLOG: log(x) = ln(2) * log2(x) via x87 FYL2X
     if op == OP_FLOG {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         // SUB RSP, 8
         emit_byte(out, pos, 0x48)
@@ -19358,14 +17992,15 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 8)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
     // OP_FPOW: pow(x, y) = 2^(y * log2(x)) via x87
     if op == OP_FPOW {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
-        f64_load_op(ctx, out, pos, 1, ins.operand1)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
+        let b_r = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_movq_gpr_to_xmm(out, pos, 1, b_r)
         consume_use(ctx, ins.operand0)
         consume_use(ctx, ins.operand1)
         // SUB RSP, 16
@@ -19443,13 +18078,13 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 16)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
     // OP_FTANH: tanh(x) = (exp(2x) - 1) / (exp(2x) + 1) via x87
     if op == OP_FTANH {
-        f64_load_op(ctx, out, pos, 0, ins.operand0)
+        let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_movq_gpr_to_xmm(out, pos, 0, a_r)
         consume_use(ctx, ins.operand0)
         // SUB RSP, 8
         emit_byte(out, pos, 0x48)
@@ -19543,7 +18178,6 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
         emit_byte(out, pos, 8)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         emit_movq_xmm_to_gpr(out, pos, dst, 0)
-        g_xmm0_id = ins.id
         ret 1
     }
 
@@ -19551,7 +18185,6 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if op == OP_PRINT_FLOAT {
         emit_push_r(out, pos, PHYS_R12)
         emit_save_pool(ctx.ra, out, pos)
-        xmm_reset()
         let a_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         emit_movq_gpr_to_xmm(out, pos, 0, a_r)
 
@@ -19920,7 +18553,7 @@ fn lower_tensor_new1(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_mov_imm64(out, pos, PHYS_R10, p_mmap_flags())
     emit_mov_imm64(out, pos, PHYS_R8, -1)
     emit_mov_imm64(out, pos, PHYS_R9, 0)
-    emit_syscall_instr(out, pos)
+    emit_syscall_checked(out, pos)
     emit_pop_r(out, pos, PHYS_RCX)
     emit_pop_r(out, pos, PHYS_RDI)
     // RAX = mmap result; RDI = len
@@ -19987,7 +18620,7 @@ fn lower_tensor_new2(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_mov_imm64(out, pos, PHYS_R10, p_mmap_flags())
     emit_mov_imm64(out, pos, PHYS_R8, -1)
     emit_mov_imm64(out, pos, PHYS_R9, 0)
-    emit_syscall_instr(out, pos)
+    emit_syscall_checked(out, pos)
     emit_pop_r(out, pos, PHYS_RSI)
     emit_pop_r(out, pos, PHYS_RCX)
     emit_pop_r(out, pos, PHYS_RDI)
@@ -20936,7 +19569,7 @@ fn lower_gpu_check(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_byte(out, pos, 0x31)
     emit_byte(out, pos, 0xD2)
     // SYSCALL
-    emit_syscall_instr(out, pos)
+    emit_syscall_checked(out, pos)
     // ADD RSP, 16
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x83)
@@ -21388,7 +20021,7 @@ fn lower_rocm_check(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_byte(out, pos, 0x31)
     emit_byte(out, pos, 0xD2)
     // SYSCALL
-    emit_syscall_instr(out, pos)
+    emit_syscall_checked(out, pos)
     // ADD RSP, 16
     emit_byte(out, pos, 0x48)
     emit_byte(out, pos, 0x83)
@@ -21476,7 +20109,6 @@ fn lower_instr_tensor(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 
 fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
-    if xmm_clobbers(ins.op) == 1 { xmm_reset() }
     if lower_instr_constlike(ins, ctx, jfn, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
@@ -21525,7 +20157,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
     }
 
     if ins.op == OP_PRINT_INT {
-        lower_print_i64(ins, ctx, out, pos)
+        lower_print_int(ins, ctx, out, pos)
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
@@ -21553,7 +20185,7 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
         ret ok(0)
     }
 
-    if lower_instr_arith(ins, ctx, jfn, out, pos) == 1 {
+    if lower_instr_arith(ins, ctx, out, pos) == 1 {
         if ctx.use_cnt[ins.id] > 1 { ensure_spilled(ctx.ra, out, pos, ins.id) }
         ret ok(0)
     }
@@ -21606,7 +20238,6 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
 fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     bb.label_off = pos[0]
-    xmm_reset()
     let i = 0
     loop i < bb.instr_cnt {
         g_cur_instr_idx = i
@@ -21631,12 +20262,10 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
     let arr_type_tok = 0
     let arr_type_start = 0
     let arr_type_len = 0
-    let had_amp = 0
     if tok_type_at_raw(toks0, g_main_pos) == TOK_COLON {
         g_main_pos = g_main_pos + 1
         if tok_type_at_raw(toks0, g_main_pos) == TOK_AMP {
             g_main_pos = g_main_pos + 1
-            had_amp = 1
         }
         arr_type_tok = tok_type_at_raw(toks0, g_main_pos)
         arr_type_start = tok_str_start_at(toks0, g_main_pos)
@@ -21761,17 +20390,6 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
             }
         }
     }
-    if had_amp == 1 and bind_stype < TYPE_PTR_FLAG {
-        if arr_type_tok == TOK_I8  { bind_stype = TYPE_PTR_I8 }
-        if arr_type_tok == TOK_I16 { bind_stype = TYPE_PTR_I16 }
-        if arr_type_tok == TOK_I32 { bind_stype = TYPE_PTR_I32 }
-        if arr_type_tok == TOK_I64 { bind_stype = TYPE_PTR_I64 }
-        if arr_type_tok == TOK_U8  { bind_stype = TYPE_PTR_U8 }
-        if arr_type_tok == TOK_U16 { bind_stype = TYPE_PTR_U16 }
-        if arr_type_tok == TOK_U32 { bind_stype = TYPE_PTR_U32 }
-        if arr_type_tok == TOK_U64 { bind_stype = TYPE_PTR_U64 }
-        if bind_stype < TYPE_PTR_FLAG { bind_stype = TYPE_PTR_I64 }
-    }
     rhs_id = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
     if g_iter_exit_bb != -1 {
         cur = g_iter_exit_bb
@@ -21859,27 +20477,6 @@ fn compile_dot_bracket_store_case(toks: &Token, stab: &StructTable, src: &i8, jf
         g_main_pos = g_main_pos + 2
         dbs_has_subfield = 1
     }
-    // Optional second-level [idx2] after .subfield
-    let dbs_has_idx2 = 0
-    let dbs_idx2_id = 0
-    if dbs_has_subfield == 1 and tok_type_at(toks, g_main_pos) == TOK_LBRACK {
-        g_main_pos = g_main_pos + 1
-        dbs_idx2_id = codegen_expr_inline(toks, &g_main_pos, stab, src, jfn, bb)
-        if tok_type_at(toks, g_main_pos) == TOK_RBRACK {
-            g_main_pos = g_main_pos + 1
-        }
-        dbs_has_idx2 = 1
-    }
-    // Optional third-level .subsubfield
-    let dbs_sub2_start = 0
-    let dbs_sub2_len = 0
-    let dbs_has_sub2 = 0
-    if dbs_has_idx2 == 1 and tok_type_at(toks, g_main_pos) == TOK_DOT {
-        dbs_sub2_start = tok_str_start_at(toks, g_main_pos + 1)
-        dbs_sub2_len   = tok_str_len_at(toks, g_main_pos + 1)
-        g_main_pos = g_main_pos + 2
-        dbs_has_sub2 = 1
-    }
     if tok_type_at(toks, g_main_pos) != TOK_EQ {
         ret bb
     }
@@ -21948,36 +20545,6 @@ fn compile_dot_bracket_store_case(toks: &Token, stab: &StructTable, src: &i8, jf
                 if sub_foff != 0 {
                     let sub_foff_id = emit_const(jfn, bb, TYPE_I64, sub_foff)
                     dbs_addr = emit_binop(jfn, bb, OP_ADD, dbs_addr, sub_foff_id)
-                }
-                if dbs_has_idx2 == 1 {
-                    let sub_esz = 8
-                    if g_field_is_struct[sub_fi] == 1 {
-                        let sesz2 = g_struct_sizes[g_field_type[sub_fi]]
-                        if sesz2 > 0 { sub_esz = sesz2 }
-                    } else {
-                        sub_esz = type_sizeof(g_field_type[sub_fi])
-                        dbs_store_itype = base_type(g_field_type[sub_fi])
-                    }
-                    let sub_esz_id = emit_const(jfn, bb, TYPE_I64, sub_esz)
-                    let sub_boff = emit_binop(jfn, bb, OP_MUL, dbs_idx2_id, sub_esz_id)
-                    dbs_addr = emit_binop(jfn, bb, OP_ADD, dbs_addr, sub_boff)
-                    if dbs_has_sub2 == 1 {
-                        let sub_elem_stype = g_field_type[sub_fi]
-                        let sub2_fi = lookup_field_idx_flat(sub_elem_stype, src, dbs_sub2_start, dbs_sub2_len)
-                        if sub2_fi == -1 {
-                            sub2_fi = lookup_field_idx_any(stab, src, sub_elem_stype, dbs_sub2_start, dbs_sub2_len)
-                        }
-                        if sub2_fi >= 0 {
-                            let sub2_foff = g_field_byte_off[sub2_fi]
-                            if sub2_foff != 0 {
-                                let sub2_foff_id = emit_const(jfn, bb, TYPE_I64, sub2_foff)
-                                dbs_addr = emit_binop(jfn, bb, OP_ADD, dbs_addr, sub2_foff_id)
-                            }
-                            if g_field_is_struct[sub2_fi] == 0 {
-                                dbs_store_itype = base_type(g_field_type[sub2_fi])
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -23094,15 +21661,6 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
-    if op == OP_LOAD_MEM_SIB {
-        mark_use(ctx, o0)
-        mark_use(ctx, o1)
-    }
-    if op == OP_STORE_MEM_SIB {
-        mark_use(ctx, o0)
-        mark_use(ctx, o1)
-        mark_use(ctx, o2)
-    }
     if op == OP_SYSCALL or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
@@ -23165,7 +21723,6 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o1)
     }
 }
-
 
 fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) {
     emit_push_r(out, pos, PHYS_RBP)
@@ -23274,7 +21831,7 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
     let ui = 0
     loop ui < 8192 {
         ctx.use_cnt[ui] = 0
-        g_val_op[ui] = -1
+        g_val_op[ui] = 0
         g_val_imm[ui] = 0
         g_val_load_slot[ui] = -1
         g_val_promo_reg[ui] = -1
@@ -23357,134 +21914,26 @@ fn _emit_promo_preloads(out: &i8, pos: &i64) {
     if g_promo_cnt >= 3 {
         emit_load_spill(out, pos, PHYS_R15, g_promo_slot2)
     }
-    if g_promo_cnt >= 4 {
-        emit_load_spill(out, pos, PHYS_RBX, g_promo_slot3)
-    }
 }
 
 fn _emit_promo_writebacks(out: &i8, pos: &i64) {
-    // Write pinned registers back to memory after loop (skip RO slots — value unchanged)
+    // Write pinned registers back to memory after loop
     if g_promo_cnt >= 1 {
-        let ro0 = g_promo_ro_mask & 1
-        if ro0 == 0 { emit_store_spill(out, pos, g_promo_slot0, PHYS_R13) }
+        emit_store_spill(out, pos, g_promo_slot0, PHYS_R13)
     }
     if g_promo_cnt >= 2 {
-        let ro1 = g_promo_ro_mask & 2
-        if ro1 == 0 { emit_store_spill(out, pos, g_promo_slot1, PHYS_R14) }
+        emit_store_spill(out, pos, g_promo_slot1, PHYS_R14)
     }
     if g_promo_cnt >= 3 {
-        let ro2 = g_promo_ro_mask & 4
-        if ro2 == 0 { emit_store_spill(out, pos, g_promo_slot2, PHYS_R15) }
+        emit_store_spill(out, pos, g_promo_slot2, PHYS_R15)
     }
-    if g_promo_cnt >= 4 {
-        let ro3 = g_promo_ro_mask & 8
-        if ro3 == 0 { emit_store_spill(out, pos, g_promo_slot3, PHYS_RBX) }
-    }
-}
-
-fn lower_fn_preload_promo_params(jfn: &JirFunction, out: &i8, pos: &i64) {
-    // Params are stored via emit_store_spill (not STORE intercept), so promoted
-    // RO param slots need an explicit load into the pinned register.
-    if g_promo_cnt == 0 { ret ok(0) }
-    let pcnt = jfn.param_cnt
-    if pcnt > 6 { pcnt = 6 }
-    let pi = 0
-    loop pi < pcnt {
-        let pslot = jfn.param_slots[pi]
-        let ro0 = g_promo_ro_mask & 1
-        if ro0 != 0 and g_promo_slot0 == pslot {
-            emit_load_spill(out, pos, PHYS_R13, pslot)
-        }
-        let ro1 = g_promo_ro_mask & 2
-        if ro1 != 0 and g_promo_slot1 == pslot {
-            emit_load_spill(out, pos, PHYS_R14, pslot)
-        }
-        let ro2 = g_promo_ro_mask & 4
-        if ro2 != 0 and g_promo_slot2 == pslot {
-            emit_load_spill(out, pos, PHYS_R15, pslot)
-        }
-        let ro3 = g_promo_ro_mask & 8
-        if ro3 != 0 and g_promo_slot3 == pslot {
-            emit_load_spill(out, pos, PHYS_RBX, pslot)
-        }
-        pi = pi + 1
-    }
-}
-
-fn compute_block_indeg(jfn: &JirFunction) -> i64 {
-    let bc = jfn.block_cnt
-    let i = 0
-    loop i < bc {
-        g_block_indeg[i] = 0
-        i = i + 1
-    }
-    i = 0
-    loop i < bc {
-        let j = 0
-        loop j < jfn.blocks[i].instr_cnt {
-            let iop = jfn.blocks[i].instrs[j].op
-            if iop == OP_JMP {
-                let t0 = jfn.blocks[i].instrs[j].bb_target0
-                if t0 >= 0 and t0 < bc { g_block_indeg[t0] = g_block_indeg[t0] + 1 }
-            }
-            if iop == OP_BR {
-                let t0 = jfn.blocks[i].instrs[j].bb_target0
-                let t1 = jfn.blocks[i].instrs[j].bb_target1
-                if t0 >= 0 and t0 < bc { g_block_indeg[t0] = g_block_indeg[t0] + 1 }
-                if t1 >= 0 and t1 < bc { g_block_indeg[t1] = g_block_indeg[t1] + 1 }
-            }
-            j = j + 1
-        }
-        i = i + 1
-    }
-    ret 0
 }
 
 fn lower_fn_emit_blocks(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
-    compute_block_indeg(jfn)
     let i = 0
     loop i < jfn.block_cnt {
         ctx.bb_offsets[i] = pos[0]
         g_cur_block_idx = i
-        // Flag-reuse: check 2-slot pending table (slot0=newest, slot1=older)
-        let fr_match = 0
-        if i == g_cfuse_t0 {
-            g_flags_live = 1
-            g_last_cmp_v0 = g_cfuse_v0a
-            g_last_cmp_v1 = g_cfuse_v0b
-            g_last_cmp_s0 = g_cfuse_s0a
-            g_last_cmp_s1 = g_cfuse_s0b
-            g_cfuse_cur_can_prop = g_cfuse_can_prop0
-            g_cfuse_t0 = g_cfuse_t1
-            g_cfuse_v0a = g_cfuse_v1a
-            g_cfuse_v0b = g_cfuse_v1b
-            g_cfuse_s0a = g_cfuse_s1a
-            g_cfuse_s0b = g_cfuse_s1b
-            g_cfuse_can_prop0 = g_cfuse_can_prop1
-            g_cfuse_t1 = -1
-            g_cfuse_can_prop1 = 0
-            fr_match = 1
-        }
-        if fr_match == 0 and i == g_cfuse_t1 {
-            g_flags_live = 1
-            g_last_cmp_v0 = g_cfuse_v1a
-            g_last_cmp_v1 = g_cfuse_v1b
-            g_last_cmp_s0 = g_cfuse_s1a
-            g_last_cmp_s1 = g_cfuse_s1b
-            g_cfuse_cur_can_prop = g_cfuse_can_prop1
-            g_cfuse_t1 = -1
-            g_cfuse_can_prop1 = 0
-            fr_match = 1
-        }
-        if fr_match == 0 {
-            g_flags_live = 0
-            g_last_cmp_v0 = -1
-            g_last_cmp_v1 = -1
-            g_last_cmp_s0 = -1
-            g_last_cmp_s1 = -1
-            g_cfuse_cur_can_prop = 0
-        }
-        g_fre_pass_ok = fr_match
         // Emit writebacks at start of exit block (promoted regs → memory)
         if g_promo_cnt > 0 and i == g_promo_exit {
             _emit_promo_writebacks(out, pos)
@@ -23544,33 +21993,12 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
 fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64) {
     g_lower_is_main = is_main
     g_fused_cmp_cc = -1
-    g_flags_live = 0
-    g_last_cmp_v0 = -1
-    g_last_cmp_v1 = -1
-    g_cfuse_t0 = -1
-    g_cfuse_v0a = -1
-    g_cfuse_v0b = -1
-    g_cfuse_t1 = -1
-    g_cfuse_v1a = -1
-    g_cfuse_v1b = -1
-    g_last_cmp_s0 = -1
-    g_last_cmp_s1 = -1
-    g_cfuse_s0a = -1
-    g_cfuse_s0b = -1
-    g_cfuse_s1a = -1
-    g_cfuse_s1b = -1
-    g_fre_pass_ok = 0
-    g_cfuse_can_prop0 = 0
-    g_cfuse_can_prop1 = 0
-    g_cfuse_cur_can_prop = 0
-    g_lower_jfn = jfn
     let fn_start = pos[0]
     lower_fn_emit_prologue(jfn, out, pos, is_main)
     lower_fn_store_params(jfn, out, pos)
     lower_fn_collect_uses(jfn, ctx)
     loop_promote_scan(jfn)
     lower_fn_mark_promo_patterns(jfn, ctx)
-    lower_fn_preload_promo_params(jfn, out, pos)
     lower_fn_emit_blocks(jfn, ctx, out, pos)
     // Patch frame size to actual usage (P1: right-sized stack frames)
     if is_main != 1 {
@@ -23741,47 +22169,69 @@ fn write_elf(out_fd: i64, code: &i8, code_len: i64,
     syscall(1, out_fd, zero_buf, 1048576)
 }
 
-fn write_macho_segname(buf: &i8, pos: &i64, name: &i8) {
-    let i = 0
-    let nlen = cstr_len_max(name, 16)
-    loop i < nlen {
-        emit_byte(buf, pos, name[i])
-        i = i + 1
-    }
-    loop i < 16 {
-        emit_byte(buf, pos, 0)
-        i = i + 1
-    }
+fn write_macho(fd: i64, code: &i8, clen: i64, strtab: &i8, slen: i64) {
+    let data_len = slen + g_emit_glob_len
+    let content_sz = clen + data_len
+    let hdr_sz = p_hdr_size()
+    let raw_end = hdr_sz + content_sz
+    // Page-align __TEXT segment: vmsize and filesize = text_pages
+    let text_pages = (raw_end + 0xFFF) and (0 - 0x1000)
+    let text_pad = text_pages - raw_end
+    let link_sz = 16
+    let hdr = alloc_pages(1)
+    let hp = 0
+    write_macho_header(hdr, &hp, text_pages, link_sz, clen, hdr_sz)
+    syscall(1, fd, hdr, hdr_sz)
+    write_macho_body(fd, code, clen, strtab, slen, text_pad, link_sz)
 }
 
-fn write_macho_seg_pz(buf: &i8, pos: &i64) {
-    // __PAGEZERO: va=0, vmsz=0x100000000, fileoff=0, filesize=0, maxprot=0, initprot=0
-    emit_i32_le(buf, pos, 0x19)
-    emit_i32_le(buf, pos, 72)
-    write_macho_segname(buf, pos, "__PAGEZERO")
-    emit_i64_le(buf, pos, 0)
-    emit_i64_le(buf, pos, 0x100000000)
-    emit_i64_le(buf, pos, 0)
-    emit_i64_le(buf, pos, 0)
-    emit_i32_le(buf, pos, 0)
-    emit_i32_le(buf, pos, 0)
-    emit_i32_le(buf, pos, 0)
-    emit_i32_le(buf, pos, 0)
+fn write_macho_header(hdr: &i8, hp: &i64, link_off: i64, sig_sz: i64, clen: i64, hdr_sz: i64) {
+    // Mach-O header: 5 load commands (no LC_CODE_SIGNATURE — codesign adds it)
+    emit_i32_le(hdr, hp, 0xFEEDFACF)
+    emit_i32_le(hdr, hp, 0x01000007)
+    emit_i32_le(hdr, hp, 3)
+    emit_i32_le(hdr, hp, 2)
+    emit_i32_le(hdr, hp, 5)
+    let soc_off = hp[0]
+    emit_i32_le(hdr, hp, 0)
+    emit_i32_le(hdr, hp, 0x00000001)
+    emit_i32_le(hdr, hp, 0)
+    // LC_SEGMENT_64 __PAGEZERO (cmdsize=72)
+    write_macho_seg(hdr, hp, "__PAGEZERO", 0, 0x100000000, 0, 0)
+    // LC_SEGMENT_64 __TEXT with 1 section (cmdsize=152)
+    write_macho_text_seg(hdr, hp, link_off, clen, hdr_sz)
+    // LC_SEGMENT_64 __LINKEDIT (cmdsize=72), page-aligned vmsize
+    let link_va = 0x100000000 + link_off
+    let link_vmsz = 0x1000
+    let link_fp = sig_sz + 0x1100000000
+    write_macho_seg(hdr, hp, "__LINKEDIT", link_va, link_vmsz, link_off, link_fp)
+    // LC_SYMTAB (empty, offsets into __LINKEDIT, cmdsize=24)
+    write_macho_symtab(hdr, hp, link_off)
+    // LC_UNIXTHREAD (cmdsize=184)
+    emit_i32_le(hdr, hp, 5)
+    emit_i32_le(hdr, hp, 184)
+    emit_i32_le(hdr, hp, 4)
+    emit_i32_le(hdr, hp, 42)
+    write_macho_thread_state(hdr, hp)
+    // No LC_CODE_SIGNATURE — codesign -f -s - adds it post-hoc
+    // Patch sizeofcmds
+    let soc_val = hp[0] - 32
+    poke_byte(hdr, soc_off, i32_b0(soc_val))
+    poke_byte(hdr, soc_off + 1, i32_b1(soc_val))
+    poke_byte(hdr, soc_off + 2, i32_b2(soc_val))
+    poke_byte(hdr, soc_off + 3, i32_b3(soc_val))
 }
 
-fn write_macho_seg_link(buf: &i8, pos: &i64, va: i64, vmsz: i64, foff: i64, fsz: i64) {
-    // __LINKEDIT: maxprot=1 (PROT_READ), initprot=1 (PROT_READ)
-    emit_i32_le(buf, pos, 0x19)
-    emit_i32_le(buf, pos, 72)
-    write_macho_segname(buf, pos, "__LINKEDIT")
-    emit_i64_le(buf, pos, va)
-    emit_i64_le(buf, pos, vmsz)
-    emit_i64_le(buf, pos, foff)
-    emit_i64_le(buf, pos, fsz)
-    emit_i32_le(buf, pos, 1)
-    emit_i32_le(buf, pos, 1)
-    emit_i32_le(buf, pos, 0)
-    emit_i32_le(buf, pos, 0)
+fn write_macho_body(fd: i64, code: &i8, clen: i64, strtab: &i8, slen: i64, pad: i64, sig_sz: i64) {
+    syscall(1, fd, code, clen)
+    syscall(1, fd, strtab, slen)
+    if g_emit_glob_len > 0 {
+        syscall(1, fd, g_emit_glob_buf, g_emit_glob_len)
+    }
+    let pad_total = pad + sig_sz
+    let zero_blk = alloc_pages(1)
+    fill_bytes(zero_blk, pad_total, 0)
+    syscall(1, fd, zero_blk, pad_total)
 }
 
 fn write_macho_text_seg(hdr: &i8, hp: &i64, link_off: i64, clen: i64, hdr_sz: i64) {
@@ -23823,6 +22273,37 @@ fn write_macho_symtab(hdr: &i8, hp: &i64, link_off: i64) {
     emit_i32_le(hdr, hp, 4)
 }
 
+fn write_macho_seg(buf: &i8, pos: &i64, name: &i8, va: i64, vmsz: i64, foff: i64, fsz_and_prot: i64) {
+    // fsz_and_prot: low 32 bits = filesize, bits 32-35 = maxprot, bits 36-39 = initprot
+    let fsz = fsz_and_prot and 0xFFFFFFFF
+    let maxp = (fsz_and_prot / 0x100000000) and 0xF
+    let initp = (fsz_and_prot / 0x1000000000) and 0xF
+    emit_i32_le(buf, pos, 0x19)
+    emit_i32_le(buf, pos, 72)
+    write_macho_segname(buf, pos, name)
+    emit_i64_le(buf, pos, va)
+    emit_i64_le(buf, pos, vmsz)
+    emit_i64_le(buf, pos, foff)
+    emit_i64_le(buf, pos, fsz)
+    emit_i32_le(buf, pos, maxp)
+    emit_i32_le(buf, pos, initp)
+    emit_i32_le(buf, pos, 0)
+    emit_i32_le(buf, pos, 0)
+}
+
+fn write_macho_segname(buf: &i8, pos: &i64, name: &i8) {
+    let i = 0
+    let nlen = cstr_len_max(name, 16)
+    loop i < nlen {
+        emit_byte(buf, pos, name[i])
+        i = i + 1
+    }
+    loop i < 16 {
+        emit_byte(buf, pos, 0)
+        i = i + 1
+    }
+}
+
 fn write_macho_thread_state(buf: &i8, pos: &i64) {
     // x86_THREAD_STATE64: 42 uint32 values, all 0 except rip
     // rip is uint64 index 16 = uint32 index 32
@@ -23838,70 +22319,6 @@ fn write_macho_thread_state(buf: &i8, pos: &i64) {
             i = i + 1
         }
     }
-}
-
-fn write_macho_body(fd: i64, code: &i8, clen: i64, strtab: &i8, slen: i64, pad_total: i64) {
-    syscall(1, fd, code, clen)
-    syscall(1, fd, strtab, slen)
-    if g_emit_glob_len > 0 {
-        syscall(1, fd, g_emit_glob_buf, g_emit_glob_len)
-    }
-    let zero_blk = alloc_pages(1)
-    fill_bytes(zero_blk, pad_total, 0)
-    syscall(1, fd, zero_blk, pad_total)
-}
-
-fn write_macho_header(hdr: &i8, hp: &i64, link_off: i64, sig_sz: i64, clen: i64, hdr_sz: i64) {
-    // Mach-O header: 5 load commands (no LC_CODE_SIGNATURE — codesign adds it)
-    emit_i32_le(hdr, hp, 0xFEEDFACF)
-    emit_i32_le(hdr, hp, 0x01000007)
-    emit_i32_le(hdr, hp, 3)
-    emit_i32_le(hdr, hp, 2)
-    emit_i32_le(hdr, hp, 5)
-    let soc_off = hp[0]
-    emit_i32_le(hdr, hp, 0)
-    emit_i32_le(hdr, hp, 0x00000001)
-    emit_i32_le(hdr, hp, 0)
-    // LC_SEGMENT_64 __PAGEZERO (cmdsize=72)
-    write_macho_seg_pz(hdr, hp)
-    // LC_SEGMENT_64 __TEXT with 1 section (cmdsize=152)
-    write_macho_text_seg(hdr, hp, link_off, clen, hdr_sz)
-    // LC_SEGMENT_64 __LINKEDIT (cmdsize=72), page-aligned vmsize
-    let link_va = 0x100000000 + link_off
-    let link_vmsz = 0x1000
-    write_macho_seg_link(hdr, hp, link_va, link_vmsz, link_off, sig_sz)
-    // LC_SYMTAB (empty, offsets into __LINKEDIT, cmdsize=24)
-    write_macho_symtab(hdr, hp, link_off)
-    // LC_UNIXTHREAD (cmdsize=184)
-    emit_i32_le(hdr, hp, 5)
-    emit_i32_le(hdr, hp, 184)
-    emit_i32_le(hdr, hp, 4)
-    emit_i32_le(hdr, hp, 42)
-    write_macho_thread_state(hdr, hp)
-    // No LC_CODE_SIGNATURE — codesign -f -s - adds it post-hoc
-    // Patch sizeofcmds
-    let soc_val = hp[0] - 32
-    poke_byte(hdr, soc_off, i32_b0(soc_val))
-    poke_byte(hdr, soc_off + 1, i32_b1(soc_val))
-    poke_byte(hdr, soc_off + 2, i32_b2(soc_val))
-    poke_byte(hdr, soc_off + 3, i32_b3(soc_val))
-}
-
-fn write_macho(fd: i64, code: &i8, clen: i64, strtab: &i8, slen: i64) {
-    let data_len = slen + g_emit_glob_len
-    let content_sz = clen + data_len
-    let hdr_sz = p_hdr_size()
-    let raw_end = hdr_sz + content_sz
-    // Page-align __TEXT segment: vmsize and filesize = text_pages
-    let text_pages = (raw_end + 0xFFF) and (0 - 0x1000)
-    let text_pad = text_pages - raw_end
-    let link_sz = 16
-    let pad_total = text_pad + link_sz
-    let hdr = alloc_pages(1)
-    let hp = 0
-    write_macho_header(hdr, &hp, text_pages, link_sz, clen, hdr_sz)
-    syscall(1, fd, hdr, hdr_sz)
-    write_macho_body(fd, code, clen, strtab, slen, pad_total)
 }
 
 fn get_argv(base: &i64, n: i64) -> &i8 {
@@ -24140,8 +22557,6 @@ fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx
     dce(jfn)
     tail_call_opt(jfn)
     peephole(jfn)
-    dce(jfn)
-    lea_fuse(jfn)
     lower_fn(jfn, ctx, g_code_buf, &g_lam_code_len, 0)
     compile_lambda_fixups(ctx)
 }
@@ -24383,8 +22798,8 @@ fn import_close_file(fd: i64) {
     syscall(3, fd, 0, 0)
 }
 
-fn import_build_path(path_buf: &i8) -> i64 {
-    // Build "stdlib/<g_import_cur_name>.jda" in path_buf
+fn import_build_path(src: &i8, name_start: i64, name_len: i64, path_buf: &i8) -> i64 {
+    // Build "stdlib/<name>.jda" in path_buf
     // "stdlib/" = 7 bytes
     poke_byte(path_buf, 0, 115)  // s
     poke_byte(path_buf, 1, 116)  // t
@@ -24393,10 +22808,9 @@ fn import_build_path(path_buf: &i8) -> i64 {
     poke_byte(path_buf, 4, 105)  // i
     poke_byte(path_buf, 5, 98)   // b
     poke_byte(path_buf, 6, 47)   // /
-    let name_len = g_import_cur_len
     let i = 0
     loop i < name_len {
-        let ch = g_import_cur_name[i]
+        let ch = src[name_start + i]
         poke_byte(path_buf, 7 + i, ch)
         i = i + 1
     }
@@ -24410,9 +22824,8 @@ fn import_build_path(path_buf: &i8) -> i64 {
     ret off + 4
 }
 
-fn import_already_loaded() -> i64 {
-    // Check if g_import_cur_name is already in g_import_names
-    let name_len = g_import_cur_len
+fn import_already_loaded(src: &i8, name_start: i64, name_len: i64) -> i64 {
+    // Check if this package name is already in g_import_names
     let i = 0
     loop i < g_import_count {
         let base = i * 64
@@ -24422,7 +22835,7 @@ fn import_already_loaded() -> i64 {
         if stored_len != name_len { eq = 0 }
         if eq == 1 {
             loop j < name_len {
-                if g_import_names[base + j] != g_import_cur_name[j] {
+                if g_import_names[base + j] != src[name_start + j] {
                     eq = 0
                 }
                 j = j + 1
@@ -24434,17 +22847,15 @@ fn import_already_loaded() -> i64 {
     ret 0
 }
 
-fn import_record_name() {
-    // Store g_import_cur_name in g_import_names for dedup
+fn import_record_name(src: &i8, name_start: i64, name_len: i64) {
+    // Store package name in g_import_names for dedup
     if g_import_count >= 64 { ret 0 }
     let base = g_import_count * 64
     let i = 0
-    let name_len = g_import_cur_len
     let cpy_len = name_len
     if cpy_len > 62 { cpy_len = 62 }
     loop i < cpy_len {
-        let ch = g_import_cur_name[i]
-        poke_byte(g_import_names, base + i, ch)
+        poke_byte(g_import_names, base + i, src[name_start + i])
         i = i + 1
     }
     poke_byte(g_import_names, base + 63, cpy_len)  // store length
@@ -24522,20 +22933,19 @@ fn import_find_next(src: &i8, src_len: i64, start: i64) -> i64 {
 }
 
 fn import_extract_name(src: &i8, src_len: i64, import_pos: i64) -> i64 {
-    // Given position of "import", extract the quoted package name.
-    // Copies name into g_import_cur_name (null-terminated).
-    // Returns name_len, or 0 on error.
+    // Given position of "import", extract the quoted package name
+    // Returns packed: (name_start << 32) | name_len, or 0 on error
     let p = import_pos + 7  // skip "import "
     // Skip whitespace
     let sk_done = 0
     loop sk_done == 0 {
         if p >= src_len { sk_done = 1 }
         if sk_done == 0 {
-            let is_ws = 0
-            if src[p] == 32 { is_ws = 1 }
-            if src[p] == 9 { is_ws = 1 }
-            if is_ws == 1 { p = p + 1 }
-            if is_ws == 0 { sk_done = 1 }
+            if src[p] == 32 or src[p] == 9 {
+                p = p + 1
+            } else {
+                sk_done = 1
+            }
         }
     }
     // Expect opening quote (34 = ")
@@ -24548,10 +22958,10 @@ fn import_extract_name(src: &i8, src_len: i64, import_pos: i64) -> i64 {
     loop q_done == 0 {
         if p >= src_len { q_done = 1 }
         if q_done == 0 {
-            if src[p] == 34 { q_done = 1 }
-            if q_done == 0 {
-                if src[p] == 10 { q_done = 1 }
-                if q_done == 0 { p = p + 1 }
+            if src[p] == 34 or src[p] == 10 {
+                q_done = 1
+            } else {
+                p = p + 1
             }
         }
     }
@@ -24559,16 +22969,8 @@ fn import_extract_name(src: &i8, src_len: i64, import_pos: i64) -> i64 {
     if src[p] != 34 { ret 0 }
     let name_len = p - name_start
     if name_len == 0 { ret 0 }
-    // Copy name into g_import_cur_name (global buffer, survives function calls)
-    let ci = 0
-    loop ci < name_len {
-        let ch = src[name_start + ci]
-        poke_byte(g_import_cur_name, ci, ch)
-        ci = ci + 1
-    }
-    poke_byte(g_import_cur_name, name_len, 0)
-    g_import_cur_len = name_len
-    ret name_len
+    let result = (name_start << 32) | name_len
+    ret result
 }
 
 fn import_blank_line(src: &i8, src_len: i64, pos: i64) {
@@ -24580,9 +22982,9 @@ fn import_blank_line(src: &i8, src_len: i64, pos: i64) {
     }
 }
 
-fn import_read_one(dest: &i8, max_len: i64) -> i64 {
-    // Build path from g_import_cur_name, open, read, close. Returns bytes read or -1 on error.
-    import_build_path(g_import_path_buf)
+fn import_read_one(src: &i8, name_start: i64, name_len: i64, dest: &i8, max_len: i64) -> i64 {
+    // Build path, open, read, close. Returns bytes read or -1 on error.
+    import_build_path(src, name_start, name_len, g_import_path_buf)
     let fd = import_open_file(g_import_path_buf)
     if fd < 0 { ret 0 - 1 }
     let n = import_read_file(fd, dest, max_len)
@@ -24603,21 +23005,23 @@ fn process_imports(src: &i8, src_len: i64, prepend_buf: &i8) -> i64 {
         let imp_pos = import_find_next(src, src_len, search_pos)
         if imp_pos < 0 { running = 0 }
         if running == 1 {
-            let name_len = import_extract_name(src, src_len, imp_pos)
-            if name_len == 0 {
+            let packed = import_extract_name(src, src_len, imp_pos)
+            if packed == 0 {
                 // Invalid import syntax, skip this line
                 search_pos = imp_pos + 1
             } else {
-                // g_import_cur_name and g_import_cur_len are set by import_extract_name
-                if import_already_loaded() == 1 {
+                let name_start = packed >> 32
+                let name_len = packed & 65535
+                if import_already_loaded(src, name_start, name_len) == 1 {
                     import_blank_line(src, src_len, imp_pos)
                     search_pos = imp_pos + 1
                 } else {
-                    import_record_name()
+                    import_record_name(src, name_start, name_len)
                     let space = max_prepend - out_off
-                    let n = import_read_one(prepend_buf + out_off, space)
+                    let n = import_read_one(src, name_start, name_len, prepend_buf + out_off, space)
                     if n < 0 {
                         eprint("warning: import file not found: ")
+                        import_build_path(src, name_start, name_len, g_import_path_buf)
                         eprint(g_import_path_buf)
                         eprint("\n")
                     }
@@ -24656,7 +23060,6 @@ fn do_imports(src_buf: &i8, buf_off: i64, read_len: i64) -> i64 {
     // Process import statements in user source. Returns total src_len.
     g_import_path_buf = alloc_pages(1)
     g_import_names = alloc_pages(1)
-    g_import_cur_name = alloc_pages(1)
     let import_buf = alloc_pages(256)     // 1MB for import content
     let user_src = src_buf + buf_off
     let import_len = process_imports(user_src, read_len, import_buf)
@@ -24701,6 +23104,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     let out_path: &i8 = 0
     let include_path: &i8 = 0
     g_argv_base = argv_ptr
+    g_target_macos = 1
     repl_check(argc, argv_ptr)
 
     if argc < 2 {
@@ -24741,6 +23145,7 @@ fn main(argc: i64, argv_ptr: &i64) {
         }
         ai = parse_safe_flag(argc, argv_ptr, ai)
         ai = parse_macos_flag(argc, argv_ptr, ai)
+        g_target_macos = 1
         if argc <= ai {
             eprint("error: missing input file\n")
             print_usage()
@@ -24856,12 +23261,6 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_il_gidx = alloc_pages(2)
     g_il_scale = alloc_pages(2)
     g_il_offset = alloc_pages(2)
-    // LEA peephole scratch tables (8192 entries)
-    g_lea_vop = alloc_pages(8) as &i32
-    g_lea_vimm = alloc_pages(16)
-    g_lea_vo0 = alloc_pages(16)
-    g_lea_vo1 = alloc_pages(16)
-    g_lea_uses = alloc_pages(8) as &i32
     // Enum table (packed flat buffer)
     g_enum_buf = alloc_pages(1)
     g_enum_buf[0] = 1
@@ -25044,7 +23443,6 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_cand_slots = alloc_pages(1) as &i64
     g_cand_load = alloc_pages(1) as &i64
     g_cand_store = alloc_pages(1) as &i64
-    g_cand_first_ld = alloc_pages(1) as &i64
     // Value metadata for ADD/CMP immediate + promoted register opts
     g_val_op = alloc_pages(8) as &i32
     g_val_imm = alloc_pages(16) as &i64
@@ -25053,7 +23451,6 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_val_last_use = alloc_pages(16) as &i64
     // Copy propagation arrays
     g_cp_slot_val = alloc_pages(4) as &i64
-    g_block_indeg = alloc_pages(1) as &i64
     // Bootstrap: alloc_pages gives zero-initialized memory so entry 0 is already zero.
     // Just set the count and total size to skip slot 0 (dummy entry).
     g_glob_cnt      = 1
@@ -25222,16 +23619,14 @@ fn main(argc: i64, argv_ptr: &i64) {
                         if jfn.block_cnt > 512 { panic("lex_handle_minus block blowup") }
                     }
                 }
-                // copy_prop(jfn)  -- BASELINE
+                copy_prop(jfn)
                 fold_constants(jfn)
-                // copy_prop(jfn)  -- BASELINE
+                copy_prop(jfn)
                 fold_constants(jfn)
                 dead_store_elim(jfn)
                 dce(jfn)
                 tail_call_opt(jfn)
                 peephole(jfn)
-                dce(jfn)
-                lea_fuse(jfn)
                 lower_fn(jfn, ctx, code_buf, &code_len, is_main)
                 // Collect fixups
                 let ci = 0
@@ -25370,6 +23765,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_emit_glob_buf = glob_buf
     g_emit_glob_len = g_glob_total_sz
     if g_glob_total_sz > 0 { fill_bytes(glob_buf, g_glob_total_sz, 0) }
+
     emit_output(out_fd, code_buf, code_len, merged_str, merged_pos)
     syscall(3, out_fd, 0, 0)
 

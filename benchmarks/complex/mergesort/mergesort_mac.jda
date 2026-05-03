@@ -1,0 +1,68 @@
+// Merge sort benchmark: 2M integers, bottom-up iterative
+// macOS-compatible: alloc_pages, rdtsc timing
+
+fn lcg_next(rng: &i64) -> i64 {
+    rng[0] = (rng[0] * 1103515245 + 12345) & 2147483647
+    ret rng[0]
+}
+
+fn merge_run(arr: &i64, tmp: &i64, lo: i64, mid: i64, hi: i64) {
+    let i = lo; let j = mid; let k = lo
+    loop k < hi {
+        if i < mid and (j >= hi or arr[i] <= arr[j]) {
+            tmp[k] = arr[i]; i = i + 1
+        } else {
+            tmp[k] = arr[j]; j = j + 1
+        }
+        k = k + 1
+    }
+    k = lo
+    loop k < hi { arr[k] = tmp[k]; k = k + 1 }
+}
+
+fn mergesort(arr: &i64, tmp: &i64, n: i64) {
+    let w: i64 = 1
+    loop w < n {
+        let lo: i64 = 0
+        loop lo < n {
+            let mid = lo + w
+            if mid > n { mid = n }
+            let hi = lo + w + w
+            if hi > n { hi = n }
+            if mid < hi { merge_run(arr, tmp, lo, mid, hi) }
+            lo = lo + w + w
+        }
+        w = w + w
+    }
+}
+
+fn main() -> i64 {
+    let N: i64 = 2000000
+    // 2M × 8 bytes = 16MB = 4096 pages each
+    let arr = alloc_pages(4096) as &i64
+    let tmp = alloc_pages(4096) as &i64
+    let rng = alloc_pages(1)    as &i64
+
+    rng[0] = 42
+    let i: i64 = 0
+    loop i < N { arr[i] = lcg_next(rng); i = i + 1 }
+
+    let t0 = rdtsc()
+    mergesort(arr, tmp, N)
+    let t1 = rdtsc()
+
+    // Verify sorted + compute checksum
+    let ok: i64 = 1
+    i = 1
+    loop i < N {
+        if arr[i] < arr[i - 1] { ok = 0 }
+        i = i + 1
+    }
+    let chk: i64 = 0
+    i = 0
+    loop i < N { chk = (chk + arr[i]) & 4294967295; i = i + 1 }
+
+    let ms = (t1 - t0) / 1000000
+    print("n: {N}\nsorted: {ok}\nfirst: {arr[0]}\nlast: {arr[N-1]}\nchecksum: {chk}\ntime: {ms} ms\n")
+    ret 0
+}
