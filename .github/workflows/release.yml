@@ -19,11 +19,14 @@ jobs:
           chmod +x bootstrap/stage0/jda1
 
       - name: Self-host convergence
+        timeout-minutes: 15
         run: |
           ulimit -s unlimited
-          bootstrap/stage0/jda1 bootstrap/stage1/jda1.jda /tmp/jda1_a 2>/dev/null
+          echo "Stage 2: jda1 (bootstrap) -> jda1_a"
+          ./bootstrap/stage0/jda1 bootstrap/stage1/jda1.jda /tmp/jda1_a
           chmod +x /tmp/jda1_a
-          /tmp/jda1_a bootstrap/stage1/jda1.jda /tmp/jda1_b 2>/dev/null
+          echo "Stage 3: jda1_a -> jda1_b"
+          /tmp/jda1_a bootstrap/stage1/jda1.jda /tmp/jda1_b
           chmod +x /tmp/jda1_b
           cmp /tmp/jda1_a /tmp/jda1_b
           echo "CONVERGED — $(wc -c < /tmp/jda1_a) bytes"
