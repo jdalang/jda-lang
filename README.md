@@ -128,7 +128,7 @@ All three compile to **< 1.1 MB static ELF binaries** with zero external depende
 | **macOS** | [`.pkg` installer](https://github.com/jdalang/jda-lang/releases/latest) | Double-click |
 | **Ubuntu/Debian** | [`.deb` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo dpkg -i jda_*.deb` |
 | **Fedora/RHEL** | [`.rpm` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo rpm -i jda-*.rpm` |
-| **Any Linux/macOS** | Shell script | `curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh \| sh` |
+| **Any Linux/macOS** | Shell script | `curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | sh` |
 
 **Multiple versions?** Use the [Jda Version Manager](docs/getting-started/installation.md#version-manager):
 
