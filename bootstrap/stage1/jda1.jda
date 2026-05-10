@@ -448,6 +448,8 @@ let g_cur_fn_name_start = 0
 let g_cur_fn_name_len = 0
 let g_cur_fn_end = 0
 let g_top_fn_cnt = 0
+let g_fn_reach_tbl: &i64 = 0
+let g_fn_caller_cnt_tbl: &i64 = 0
 // Lambda stash for deferred compilation
 let g_lambda_cnt = 0
 // Compile state globals for lambda compilation helper
@@ -4760,6 +4762,8 @@ fn init_large_post_lex_state() {
     g_glob_is_addr  = alloc_pages(8)
     g_inline_tbl    = alloc_pages(64) as &i64
     g_inline_tbl[0] = 0
+    g_fn_reach_tbl = alloc_pages(2)
+    g_fn_caller_cnt_tbl = alloc_pages(2)
 
     g_glob_cnt = 0
     g_glob_total_sz = 0
@@ -4859,6 +4863,150 @@ fn report_top_fn_scan() {
 
 fn prepare_top_fn_scan(toks: &Token, src: &i8, src_len: i64, fn_name_off: &i64, fn_name_len: &i64) {
     run_top_fn_scan(toks, src, src_len, fn_name_off, fn_name_len)
+    build_top_fn_liveness(toks, src)
+}
+
+fn find_fn_body_bounds_tok(toks: &Token, fn_tok_pos: i64, out_lbrace: &i64, out_rbrace: &i64) {
+    out_lbrace[0] = -1
+    out_rbrace[0] = -1
+    let scan_i = fn_tok_pos
+    loop scan_i < g_scan_tok_cnt {
+        let st = tok_type_at_raw(toks, scan_i)
+        if st == TOK_LBRACE {
+            out_lbrace[0] = scan_i
+            let scan_j = scan_i
+            let depth_j = 0
+            loop scan_j < g_scan_tok_cnt {
+                let st2 = tok_type_at_raw(toks, scan_j)
+                if st2 == TOK_LBRACE { depth_j = depth_j + 1 }
+                if st2 == TOK_RBRACE {
+                    depth_j = depth_j - 1
+                    if depth_j == 0 {
+                        out_rbrace[0] = scan_j
+                        ret ok(0)
+                    }
+                }
+                scan_j = scan_j + 1
+            }
+            ret ok(0)
+        }
+        if st == TOK_SEMI {
+            out_rbrace[0] = scan_i
+            ret ok(0)
+        }
+        scan_i = scan_i + 1
+    }
+}
+
+fn top_fn_entry_index(src: &i8, fn_name_off: &i64, fn_name_len: &i64) -> i64 {
+    let fi = 0
+    loop fi < g_top_fn_cnt {
+        if load_i64_at(fn_name_len, fi) == 4 {
+            if streq(src, load_i64_at(fn_name_off, fi), 4, "main") == 1 { ret fi }
+        }
+        fi = fi + 1
+    }
+    if g_top_fn_cnt > 0 { ret 0 }
+    ret -1
+}
+
+fn scan_top_fn_calls(toks: &Token, src: &i8, body_lbrace: i64, body_rbrace: i64, caller_fi: i64, do_count: i64, do_mark: i64) -> i64 {
+    let changed = 0
+    if body_lbrace < 0 or body_rbrace < 0 { ret 0 }
+    let i = body_lbrace + 1
+    loop i < body_rbrace {
+        if tok_type_at_raw(toks, i) == TOK_IDENT {
+            if tok_type_at_raw(toks, i + 1) == TOK_LPAREN {
+                let ns = tok_str_start_at(toks, i)
+                let nl = tok_str_len_at(toks, i)
+                let callee_fi = resolve_top_fn_index(src, ns, nl, g_fn_name_off_tbl, g_fn_name_len_tbl)
+                if callee_fi >= 0 and callee_fi < g_top_fn_cnt {
+                    if do_count == 1 {
+                        g_fn_caller_cnt_tbl[callee_fi] = g_fn_caller_cnt_tbl[callee_fi] + 1
+                    }
+                    if do_mark == 1 and caller_fi >= 0 and caller_fi < g_top_fn_cnt {
+                        if g_fn_reach_tbl[caller_fi] == 1 and g_fn_reach_tbl[callee_fi] == 0 {
+                            g_fn_reach_tbl[callee_fi] = 1
+                            changed = 1
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    ret changed
+}
+
+fn zero_top_fn_dce_tables() {
+    let fi = 0
+    loop fi < 1024 {
+        g_fn_reach_tbl[fi] = 0
+        g_fn_caller_cnt_tbl[fi] = 0
+        fi = fi + 1
+    }
+}
+
+fn count_top_fn_callers(toks: &Token, src: &i8) {
+    let scan_i = 0
+    loop scan_i < g_scan_tok_cnt {
+        let top_t = tok_type_at_raw(toks, scan_i)
+        if top_t == TOK_FN {
+            let name_off = tok_str_start_at(toks, scan_i + 1)
+            let name_len = tok_str_len_at(toks, scan_i + 1)
+            let fi = resolve_top_fn_index(src, name_off, name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
+            let body_lbrace = -1
+            let body_rbrace = -1
+            find_fn_body_bounds_tok(toks, scan_i, &body_lbrace, &body_rbrace)
+            if fi >= 0 and fi < g_top_fn_cnt {
+                scan_top_fn_calls(toks, src, body_lbrace, body_rbrace, fi, 1, 0)
+            }
+            if body_rbrace >= 0 { scan_i = body_rbrace + 1 }
+            else { scan_i = scan_i + 1 }
+        } else {
+            scan_i = scan_i + 1
+        }
+    }
+}
+
+fn mark_live_top_fns(toks: &Token, src: &i8) {
+    let entry_fi = top_fn_entry_index(src, g_fn_name_off_tbl, g_fn_name_len_tbl)
+    if entry_fi < 0 { ret ok(0) }
+    g_fn_reach_tbl[entry_fi] = 1
+    let changed = 1
+    loop changed == 1 {
+        changed = 0
+        let scan_i = 0
+        loop scan_i < g_scan_tok_cnt {
+            let top_t = tok_type_at_raw(toks, scan_i)
+            if top_t == TOK_FN {
+                let name_off = tok_str_start_at(toks, scan_i + 1)
+                let name_len = tok_str_len_at(toks, scan_i + 1)
+                let fi = resolve_top_fn_index(src, name_off, name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
+                let body_lbrace = -1
+                let body_rbrace = -1
+                find_fn_body_bounds_tok(toks, scan_i, &body_lbrace, &body_rbrace)
+                if fi >= 0 and fi < g_top_fn_cnt {
+                    if g_fn_reach_tbl[fi] == 1 {
+                        if scan_top_fn_calls(toks, src, body_lbrace, body_rbrace, fi, 0, 1) == 1 {
+                            changed = 1
+                        }
+                    }
+                }
+                if body_rbrace >= 0 { scan_i = body_rbrace + 1 }
+                else { scan_i = scan_i + 1 }
+            } else {
+                scan_i = scan_i + 1
+            }
+        }
+    }
+}
+
+fn build_top_fn_liveness(toks: &Token, src: &i8) {
+    if g_fn_reach_tbl == 0 or g_fn_caller_cnt_tbl == 0 { ret ok(0) }
+    zero_top_fn_dce_tables()
+    count_top_fn_callers(toks, src)
+    mark_live_top_fns(toks, src)
 }
 
 fn load_top_fields(loop_pos: i64, out_t: &i64, out_start: &i64, out_len: &i64) {
@@ -25778,31 +25926,9 @@ fn main(argc: i64, argv_ptr: &i64) {
             g_cur_fn_name_start = cur_name_off
             g_cur_fn_name_len = cur_name_len
             // Find function bounds
+            let fn_lbrace_scan = -1
             let fn_rbrace_scan = -1
-            let scan_i = fn_tok_pos
-            loop scan_i < g_scan_tok_cnt {
-                let st = tok_type_at_raw(toks, scan_i)
-                if st == TOK_LBRACE {
-                    let scan_j = scan_i
-                    let depth_j = 0
-                    loop scan_j < g_scan_tok_cnt {
-                        let st2 = tok_type_at_raw(toks, scan_j)
-                        depth_j = depth_j + (st2 == TOK_LBRACE) - (st2 == TOK_RBRACE)
-                        if st2 == TOK_RBRACE and depth_j == 0 {
-                            fn_rbrace_scan = scan_j
-                            scan_j = g_scan_tok_cnt
-                        } else {
-                            scan_j = scan_j + 1
-                        }
-                    }
-                    scan_i = g_scan_tok_cnt
-                } else if st == TOK_SEMI {
-                    fn_rbrace_scan = scan_i
-                    scan_i = g_scan_tok_cnt
-                } else {
-                    scan_i = scan_i + 1
-                }
-            }
+            find_fn_body_bounds_tok(toks, fn_tok_pos, &fn_lbrace_scan, &fn_rbrace_scan)
             if fn_rbrace_scan == -1 {
                 print("fn_tok=")
                 print_span(src_buf, top_start, top_len)
@@ -25813,13 +25939,20 @@ fn main(argc: i64, argv_ptr: &i64) {
                 report_error("could not find end of function")
             }
             g_cur_fn_end = fn_rbrace_scan
-            print("COMPILE ")
-            print_span(src_buf, cur_name_off, cur_name_len)
-            print("\n")
             let fi = resolve_top_fn_index(src_buf, cur_name_off, cur_name_len, fn_name_off, fn_name_len)
-            print("FI_OK\n")
-            init_top_jfn(jfn, src_buf, src_len, g_stab_ptr)
-            print("INIT_OK\n")
+            let should_compile_fn = 1
+            if fi >= 0 and fi < g_top_fn_cnt {
+                if g_fn_reach_tbl != 0 {
+                    if g_fn_reach_tbl[fi] == 0 { should_compile_fn = 0 }
+                }
+            }
+            if should_compile_fn == 1 {
+                print("COMPILE ")
+                print_span(src_buf, cur_name_off, cur_name_len)
+                print("\n")
+                print("FI_OK\n")
+                init_top_jfn(jfn, src_buf, src_len, g_stab_ptr)
+                print("INIT_OK\n")
                 // Skip 'fn name'
                 g_main_pos = fn_tok_pos + 2
                 expect(TOK_LPAREN)
@@ -25968,6 +26101,10 @@ fn main(argc: i64, argv_ptr: &i64) {
                     gf_call_cnt = g_lam_call_cnt
                 }
                 g_unsafe_depth = 0
+            } else {
+                g_main_pos = fn_rbrace_scan + 1
+                g_unsafe_depth = 0
+            }
         } else if top_t == TOK_LET or (top_len == 3 and streq(src_buf, top_start, 3, "let") == 1) {
             skip_top_level_let(toks, g_stab_ptr, src_buf)
         } else {
