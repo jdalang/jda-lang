@@ -1,40 +1,40 @@
-; =============================================================================
-; jda::targets::wasm — WebAssembly Binary Format Backend
-; =============================================================================
-; Compiles JIR directly to a valid .wasm binary module (WebAssembly 1.0 / 2.0).
-; No LLVM. No Emscripten. No wasm-pack.
-;
-; The output is a self-contained .wasm file that can be:
-;   • Loaded in any browser via WebAssembly.instantiate()
-;   • Run with wasmtime, wasmer, or wasm3 on the command line
-;   • Linked with WASI for file I/O and network (via WASI syscall shim)
-;
-; WebAssembly Binary Format structure:
-;   \0asm  version=1          magic + version
-;   §1  Type section          function signatures
-;   §2  Import section        WASI imports (optional)
-;   §3  Function section      type indices for each function
-;   §5  Memory section        linear memory declaration
-;   §6  Global section        globals (stack pointer, heap base)
-;   §7  Export section        exported functions + memory
-;   §10 Code section          function bodies (locals + opcodes)
-;   §11 Data section          static data segments
-;
-; WASI syscall shim (when targeting WASI):
-;   All jda syscalls are translated to WASI preview1 host function imports:
-;     fd_write, fd_read, path_open, path_remove_file, clock_time_get, proc_exit
-;
-; Type encoding (LEB128):
-;   i32 = 0x7F   i64 = 0x7E   f32 = 0x7D   f64 = 0x7C
-;   funcref = 0x70   externref = 0x6F   void = 0x40
-; =============================================================================
+// =============================================================================
+// jda::targets::wasm — WebAssembly Binary Format Backend
+// =============================================================================
+// Compiles JIR directly to a valid .wasm binary module (WebAssembly 1.0 / 2.0).
+// No LLVM. No Emscripten. No wasm-pack.
+//
+// The output is a self-contained .wasm file that can be:
+//   • Loaded in any browser via WebAssembly.instantiate()
+//   • Run with wasmtime, wasmer, or wasm3 on the command line
+//   • Linked with WASI for file I/O and network (via WASI syscall shim)
+//
+// WebAssembly Binary Format structure:
+//   \0asm  version=1          magic + version
+//   §1  Type section          function signatures
+//   §2  Import section        WASI imports (optional)
+//   §3  Function section      type indices for each function
+//   §5  Memory section        linear memory declaration
+//   §6  Global section        globals (stack pointer, heap base)
+//   §7  Export section        exported functions + memory
+//   §10 Code section          function bodies (locals + opcodes)
+//   §11 Data section          static data segments
+//
+// WASI syscall shim (when targeting WASI):
+//   All jda syscalls are translated to WASI preview1 host function imports:
+//     fd_write, fd_read, path_open, path_remove_file, clock_time_get, proc_exit
+//
+// Type encoding (LEB128):
+//   i32 = 0x7F   i64 = 0x7E   f32 = 0x7D   f64 = 0x7C
+//   funcref = 0x70   externref = 0x6F   void = 0x40
+// =============================================================================
 
 import jda::ir::jir::{ JirModule, JirFn, JirInstr, JirValue, Op, JirType }
 import jda::fs::{ file_write }
 
-; =============================================================================
-; LEB128 encoding helpers
-; =============================================================================
+// =============================================================================
+// LEB128 encoding helpers
+// =============================================================================
 
 fn write_uleb128(buf: []mut i8, pos: &mut i64, v: u64) {
     loop {
@@ -74,30 +74,30 @@ fn write_u32_le(buf: []mut i8, pos: &mut i64, v: u32) {
     }
 }
 
-; Write a byte vector prefixed with its LEB128 length
+// Write a byte vector prefixed with its LEB128 length
 fn write_vec_u8(out: []mut i8, pos: &mut i64, data: ref []i8) {
     write_uleb128(out, pos, data.len as u64)
     loop i in 0..data.len { out[pos[0]] = data[i]   pos[0] = pos[0] + 1 }
 }
 
-; Write a string (wasm name = u32 length + UTF-8 bytes)
+// Write a string (wasm name = u32 length + UTF-8 bytes)
 fn write_name(out: []mut i8, pos: &mut i64, s: ref []i8) {
     write_uleb128(out, pos, s.len as u64)
     loop i in 0..s.len { out[pos[0]] = s[i]   pos[0] = pos[0] + 1 }
 }
 
-; =============================================================================
-; Wasm value types and opcodes
-; =============================================================================
+// =============================================================================
+// Wasm value types and opcodes
+// =============================================================================
 
-; Value types
+// Value types
 const WASM_I32   : i8 = 0x7F
 const WASM_I64   : i8 = 0x7E
 const WASM_F32   : i8 = 0x7D
 const WASM_F64   : i8 = 0x7C
 const WASM_VOID  : i8 = 0x40
 
-; Opcodes
+// Opcodes
 const OP_UNREACHABLE  : i8 = 0x00
 const OP_NOP          : i8 = 0x01
 const OP_BLOCK        : i8 = 0x02
@@ -184,7 +184,7 @@ const OP_F64_CONVERT_I64_S  : i8 = 0xB9
 const OP_I32_TRUNC_F32_S    : i8 = 0xA8
 const OP_I64_TRUNC_F64_S    : i8 = 0xB0
 
-; Section IDs
+// Section IDs
 const SEC_TYPE     : u8 = 1
 const SEC_IMPORT   : u8 = 2
 const SEC_FUNCTION : u8 = 3
@@ -195,9 +195,9 @@ const SEC_EXPORT   : u8 = 7
 const SEC_CODE     : u8 = 10
 const SEC_DATA     : u8 = 11
 
-; =============================================================================
-; Wasm module builder
-; =============================================================================
+// =============================================================================
+// Wasm module builder
+// =============================================================================
 struct WasmModule {
     types:   []WasmFuncType
     imports: []WasmImport
@@ -212,7 +212,7 @@ struct WasmModule {
 }
 
 struct WasmFuncType {
-    params:  []i8    ; value types
+    params:  []i8    // value types
     results: []i8
 }
 
@@ -224,14 +224,14 @@ struct WasmImport {
 
 struct WasmFunc {
     type_idx: i64
-    locals:   []i8        ; additional local value types
+    locals:   []i8        // additional local value types
     body:     [65536]i8
     body_len: i64
 }
 
 struct WasmExport {
     name:     []i8
-    kind:     u8    ; 0=func, 1=table, 2=mem, 3=global
+    kind:     u8    // 0=func, 1=table, 2=mem, 3=global
     index:    i64
 }
 
@@ -265,7 +265,7 @@ impl WasmModule {
         self.imports[idx] = WasmImport { module: module, name: name,
                                           type_idx: type_idx }
         self.n_imports = self.n_imports + 1
-        ret idx + 1000000   ; sentinel to distinguish from local funcs
+        ret idx + 1000000   // sentinel to distinguish from local funcs
     }
 
     fn add_func(self, type_idx: i64) -> i64 {
@@ -290,19 +290,19 @@ impl WasmModule {
     fn emit_to_buf(self, out: []mut i8, cap: i64) -> i64 {
         let pos = 0i64
 
-        ; Magic + version
+        // Magic + version
         out[pos+0] = 0x00   out[pos+1] = 0x61
-        out[pos+2] = 0x73   out[pos+3] = 0x6D   ; \0asm
+        out[pos+2] = 0x73   out[pos+3] = 0x6D   // \0asm
         out[pos+4] = 0x01   out[pos+5] = 0x00
-        out[pos+6] = 0x00   out[pos+7] = 0x00   ; version = 1
+        out[pos+6] = 0x00   out[pos+7] = 0x00   // version = 1
         pos = pos + 8
 
-        ; Type section
+        // Type section
         pos = self.emit_section(out, pos, SEC_TYPE, fn(b: []mut i8, p: &mut i64) {
             write_uleb128(b, p, self.n_types as u64)
             loop i in 0..self.n_types {
                 let t = &self.types[i]
-                write_u8(b, p, 0x60)   ; func type tag
+                write_u8(b, p, 0x60)   // func type tag
                 write_uleb128(b, p, t.params.len as u64)
                 for vt in t.params { write_u8(b, p, vt as u8) }
                 write_uleb128(b, p, t.results.len as u64)
@@ -310,7 +310,7 @@ impl WasmModule {
             }
         })
 
-        ; Import section
+        // Import section
         if self.n_imports > 0 {
             pos = self.emit_section(out, pos, SEC_IMPORT, fn(b, p) {
                 write_uleb128(b, p, self.n_imports as u64)
@@ -318,13 +318,13 @@ impl WasmModule {
                     let im = &self.imports[i]
                     write_name(b, p, im.module)
                     write_name(b, p, im.name)
-                    write_u8(b, p, 0x00)   ; func import
+                    write_u8(b, p, 0x00)   // func import
                     write_uleb128(b, p, im.type_idx as u64)
                 }
             })
         }
 
-        ; Function section
+        // Function section
         pos = self.emit_section(out, pos, SEC_FUNCTION, fn(b, p) {
             write_uleb128(b, p, self.n_funcs as u64)
             loop i in 0..self.n_funcs {
@@ -332,31 +332,31 @@ impl WasmModule {
             }
         })
 
-        ; Memory section — 1 page (64 KB), growable up to 256 pages (16 MB)
+        // Memory section — 1 page (64 KB), growable up to 256 pages (16 MB)
         pos = self.emit_section(out, pos, SEC_MEMORY, fn(b, p) {
-            write_uleb128(b, p, 1)   ; 1 memory
-            write_u8(b, p, 0x01)     ; has max
-            write_uleb128(b, p, 1)   ; min = 1 page
-            write_uleb128(b, p, 256) ; max = 256 pages
+            write_uleb128(b, p, 1)   // 1 memory
+            write_u8(b, p, 0x01)     // has max
+            write_uleb128(b, p, 1)   // min = 1 page
+            write_uleb128(b, p, 256) // max = 256 pages
         })
 
-        ; Global section — stack pointer (mutable i32)
+        // Global section — stack pointer (mutable i32)
         pos = self.emit_section(out, pos, SEC_GLOBAL, fn(b, p) {
-            write_uleb128(b, p, 1)             ; 1 global
-            write_u8(b, p, WASM_I32 as u8)    ; type i32
-            write_u8(b, p, 1)                  ; mutable
+            write_uleb128(b, p, 1)             // 1 global
+            write_u8(b, p, WASM_I32 as u8)    // type i32
+            write_u8(b, p, 1)                  // mutable
             write_u8(b, p, OP_I32_CONST as u8)
-            write_sleb128(b, p, 65536 - 1024)  ; initial SP near top of page
+            write_sleb128(b, p, 65536 - 1024)  // initial SP near top of page
             write_u8(b, p, OP_END as u8)
         })
 
-        ; Export section
+        // Export section
         pos = self.emit_section(out, pos, SEC_EXPORT, fn(b, p) {
-            ; Always export memory as "memory"
+            // Always export memory as "memory"
             let export_count = self.n_exports + 1
             write_uleb128(b, p, export_count as u64)
             write_name(b, p, "memory")
-            write_u8(b, p, 2)   ; memory export
+            write_u8(b, p, 2)   // memory export
             write_uleb128(b, p, 0)
 
             loop i in 0..self.n_exports {
@@ -367,15 +367,15 @@ impl WasmModule {
             }
         })
 
-        ; Code section
+        // Code section
         pos = self.emit_section(out, pos, SEC_CODE, fn(b, p) {
             write_uleb128(b, p, self.n_funcs as u64)
             loop i in 0..self.n_funcs {
                 let f = &self.funcs[i]
-                ; function body = locals_count + locals + opcodes + end
+                // function body = locals_count + locals + opcodes + end
                 let fbuf = [65536]i8
                 let fp   = 0i64
-                write_uleb128(fbuf, &mut fp, 0)   ; 0 local declarations
+                write_uleb128(fbuf, &mut fp, 0)   // 0 local declarations
                 loop j in 0..f.body_len { fbuf[fp] = f.body[j]   fp = fp + 1 }
                 write_u8(fbuf, &mut fp, OP_END as u8)
                 write_uleb128(b, p, fp as u64)
@@ -383,13 +383,13 @@ impl WasmModule {
             }
         })
 
-        ; Data section
+        // Data section
         if self.n_data > 0 {
             pos = self.emit_section(out, pos, SEC_DATA, fn(b, p) {
                 write_uleb128(b, p, self.n_data as u64)
                 loop i in 0..self.n_data {
                     let d = &self.data[i]
-                    write_u8(b, p, 0)   ; active segment, memory 0
+                    write_u8(b, p, 0)   // active segment, memory 0
                     write_u8(b, p, OP_I32_CONST as u8)
                     write_sleb128(b, p, d.offset)
                     write_u8(b, p, OP_END as u8)
@@ -407,21 +407,21 @@ impl WasmModule {
         let p    = pos
         out[p]   = id as i8   p = p + 1
 
-        ; Write body into a temp buffer to get its size
+        // Write body into a temp buffer to get its size
         let tmp  = [65536]i8
         let tp   = 0i64
         body(tmp, &mut tp)
 
-        ; Write size then body
+        // Write size then body
         write_uleb128(out, &mut p, tp as u64)
         loop i in 0..tp { out[p] = tmp[i]   p = p + 1 }
         ret p
     }
 }
 
-; =============================================================================
-; JIR → Wasm code generator
-; =============================================================================
+// =============================================================================
+// JIR → Wasm code generator
+// =============================================================================
 
 fn jir_type_to_wasm(ty: JirType) -> i8 {
     match ty {
@@ -429,7 +429,7 @@ fn jir_type_to_wasm(ty: JirType) -> i8 {
         JirType::I64 => WASM_I64
         JirType::F32 => WASM_F32
         JirType::F64 => WASM_F64
-        _             => WASM_I64   ; default
+        _             => WASM_I64   // default
     }
 }
 
@@ -456,7 +456,7 @@ fn lower_jir_fn(fn_: ref JirFn, func: &mut WasmFunc) {
                         }
                         JirType::F64 => {
                             write_u8(b, pos, OP_F64_CONST as u8)
-                            ; write 8 bytes little-endian f64
+                            // write 8 bytes little-endian f64
                             let bits = instr.imm_f64.to_bits()
                             loop i in 0..8 {
                                 b[pos[0]] = ((bits >> (i*8)) & 0xFF) as i8
@@ -519,16 +519,16 @@ fn lower_jir_fn(fn_: ref JirFn, func: &mut WasmFunc) {
                         JirType::F64 => write_u8(b, pos, OP_F64_LOAD as u8)
                         _            => write_u8(b, pos, OP_I64_LOAD as u8)
                     }
-                    write_uleb128(b, pos, 3)   ; alignment (8-byte)
-                    write_uleb128(b, pos, 0)   ; offset 0
+                    write_uleb128(b, pos, 3)   // alignment (8-byte)
+                    write_uleb128(b, pos, 0)   // offset 0
                     write_u8(b, pos, OP_LOCAL_SET as u8)
                     write_uleb128(b, pos, instr.dst as u64)
                 }
                 Op::Store => {
                     write_u8(b, pos, OP_LOCAL_GET as u8)
-                    write_uleb128(b, pos, instr.src1 as u64)   ; address
+                    write_uleb128(b, pos, instr.src1 as u64)   // address
                     write_u8(b, pos, OP_LOCAL_GET as u8)
-                    write_uleb128(b, pos, instr.src0 as u64)   ; value
+                    write_uleb128(b, pos, instr.src0 as u64)   // value
                     match instr.type_ {
                         JirType::I32 => write_u8(b, pos, OP_I32_STORE as u8)
                         JirType::F32 => write_u8(b, pos, OP_F32_STORE as u8)
@@ -539,7 +539,7 @@ fn lower_jir_fn(fn_: ref JirFn, func: &mut WasmFunc) {
                     write_uleb128(b, pos, 0)
                 }
                 Op::Call => {
-                    ; Push arguments
+                    // Push arguments
                     for arg in instr.args {
                         write_u8(b, pos, OP_LOCAL_GET as u8)
                         write_uleb128(b, pos, arg as u64)
@@ -578,40 +578,40 @@ fn lower_jir_fn(fn_: ref JirFn, func: &mut WasmFunc) {
     }
 }
 
-; =============================================================================
-; WASI syscall import table
-; =============================================================================
-; WASI Preview 1 — maps jda syscall numbers to WASI host functions
+// =============================================================================
+// WASI syscall import table
+// =============================================================================
+// WASI Preview 1 — maps jda syscall numbers to WASI host functions
 fn add_wasi_imports(m: &mut WasmModule) {
-    ; fd_write(fd, iovs_ptr, iovs_len, nwritten_ptr) -> errno
+    // fd_write(fd, iovs_ptr, iovs_len, nwritten_ptr) -> errno
     let t_fd_write = m.add_type([WASM_I32, WASM_I32, WASM_I32, WASM_I32],
                                  [WASM_I32])
     m.add_import("wasi_snapshot_preview1", "fd_write", t_fd_write)
 
-    ; fd_read(fd, iovs_ptr, iovs_len, nread_ptr) -> errno
+    // fd_read(fd, iovs_ptr, iovs_len, nread_ptr) -> errno
     let t_fd_read = m.add_type([WASM_I32, WASM_I32, WASM_I32, WASM_I32],
                                 [WASM_I32])
     m.add_import("wasi_snapshot_preview1", "fd_read", t_fd_read)
 
-    ; proc_exit(exit_code)
+    // proc_exit(exit_code)
     let t_exit = m.add_type([WASM_I32], [])
     m.add_import("wasi_snapshot_preview1", "proc_exit", t_exit)
 
-    ; clock_time_get(clock_id, precision, time_ptr) -> errno
+    // clock_time_get(clock_id, precision, time_ptr) -> errno
     let t_clock = m.add_type([WASM_I32, WASM_I64, WASM_I32], [WASM_I32])
     m.add_import("wasi_snapshot_preview1", "clock_time_get", t_clock)
 }
 
-; =============================================================================
-; Top-level compile function
-; =============================================================================
+// =============================================================================
+// Top-level compile function
+// =============================================================================
 fn wasm_compile(module: ref JirModule, out_path: ref []i8,
                 wasi: bool) -> Result<(), []i8> {
     let m = WasmModule::new()
 
     if wasi { add_wasi_imports(&mut m) }
 
-    ; Register function types and functions
+    // Register function types and functions
     for fn_ in module.functions {
         let params = [fn_.params.len]i8
         loop i in 0..fn_.params.len {
@@ -626,26 +626,26 @@ fn wasm_compile(module: ref JirModule, out_path: ref []i8,
         let type_idx = m.add_type(params[0..fn_.params.len], results)
         let func_idx = m.add_func(type_idx)
 
-        ; Lower the function body
+        // Lower the function body
         lower_jir_fn(fn_, &mut m.funcs[func_idx])
 
-        ; Export public functions
+        // Export public functions
         if fn_.is_public {
             m.add_export(fn_.name, 0, func_idx)
         }
     }
 
-    ; Emit binary to buffer
-    let out_buf = [1048576]i8   ; 1 MB
+    // Emit binary to buffer
+    let out_buf = [1048576]i8   // 1 MB
     let out_len = m.emit_to_buf(out_buf, 1048576)
 
     file_write(out_path, out_buf[0..out_len])?
     ret ok(())
 }
 
-; =============================================================================
-; JavaScript / HTML loader snippet (emitted alongside the .wasm)
-; =============================================================================
+// =============================================================================
+// JavaScript / HTML loader snippet (emitted alongside the .wasm)
+// =============================================================================
 fn emit_js_loader(wasm_name: ref []i8, out_path: ref []i8) -> Result<(), []i8> {
     let js = fmt_str(
 "// Auto-generated by jda wasm backend

@@ -1,133 +1,133 @@
-; =============================================================================
-; Jda Language — Complete Front-End Syntax Specification
-; =============================================================================
-; Jda reads like Ruby. Compiles to raw machine code.
-; No VM. No GC. No runtime tax.
-;
-; Philosophy:
-;   - Minimal punctuation: no semicolons, no mandatory type annotations
-;   - Everything is an expression (if/match/block all return values)
-;   - Errors are values, not exceptions (Result type)
-;   - Ownership is the only memory model (from Phase 2)
-; =============================================================================
+// =============================================================================
+// Jda Language — Complete Front-End Syntax Specification
+// =============================================================================
+// Jda reads like Ruby. Compiles to raw machine code.
+// No VM. No GC. No runtime tax.
+//
+// Philosophy:
+//   - Minimal punctuation: no semicolons, no mandatory type annotations
+//   - Everything is an expression (if/match/block all return values)
+//   - Errors are values, not exceptions (Result type)
+//   - Ownership is the only memory model (from Phase 2)
+// =============================================================================
 
-; =============================================================================
-; 1. VARIABLES & BINDINGS
-; =============================================================================
+// =============================================================================
+// 1. VARIABLES & BINDINGS
+// =============================================================================
 
-; Immutable binding (default) — inferred type
+// Immutable binding (default) — inferred type
 let x = 42
 let name = "Jda"
 let pi   = 3.14159
 
-; Mutable binding
+// Mutable binding
 let mut count = 0
 count = count + 1
 
-; Explicit type annotation
+// Explicit type annotation
 let x: i32  = 42
 let y: f64  = 3.14
 let z: bool = true
 
-; Destructuring
+// Destructuring
 let (a, b) = (1, 2)
 let Point { x, y } = point
 
-; Multiple assignment
+// Multiple assignment
 let (min, max) = (0, 100)
 
-; Constants (compile-time, zero cost)
+// Constants (compile-time, zero cost)
 const MAX_CONNS = 10_000
 const GREETING  = "Hello from Jda"
 
-; =============================================================================
-; 2. TYPES
-; =============================================================================
+// =============================================================================
+// 2. TYPES
+// =============================================================================
 
-; Primitives
-;   i8   i16  i32  i64   — signed integers
-;   u8   u16  u32  u64   — unsigned integers
-;   f32  f64             — floating point
-;   bool                 — true / false
-;   i8   (used as char)  — single byte
+// Primitives
+//   i8   i16  i32  i64   — signed integers
+//   u8   u16  u32  u64   — unsigned integers
+//   f32  f64             — floating point
+//   bool                 — true / false
+//   i8   (used as char)  — single byte
 
-; Pointer types (Phase 2 ownership qualifiers)
-;   own *T   — unique owned pointer
-;   ref *T   — immutable borrow
-;   mut *T   — mutable borrow
+// Pointer types (Phase 2 ownership qualifiers)
+//   own *T   — unique owned pointer
+//   ref *T   — immutable borrow
+//   mut *T   — mutable borrow
 
-; Slice (fat pointer: pointer + length)
-;   []T      — immutable slice
-;   []mut T  — mutable slice
+// Slice (fat pointer: pointer + length)
+//   []T      — immutable slice
+//   []mut T  — mutable slice
 
-; Tuples
-;   (i32, f64)            — two-element tuple
-;   (i32, i32, i32)       — three-element tuple
+// Tuples
+//   (i32, f64)            — two-element tuple
+//   (i32, i32, i32)       — three-element tuple
 
-; Arrays (fixed size, stack allocated)
-;   [N]T     — array of N elements of type T
-;   [8]i64   — eight i64 values on the stack
+// Arrays (fixed size, stack allocated)
+//   [N]T     — array of N elements of type T
+//   [8]i64   — eight i64 values on the stack
 
-; Optional (no null pointers — use this instead)
-;   ?T       — either some(val) or none
+// Optional (no null pointers — use this instead)
+//   ?T       — either some(val) or none
 
-; Result (errors as values — no exceptions)
-;   Result<T, E>  — either ok(val: T) or err(e: E)
+// Result (errors as values — no exceptions)
+//   Result<T, E>  — either ok(val: T) or err(e: E)
 
-; =============================================================================
-; 3. FUNCTIONS
-; =============================================================================
+// =============================================================================
+// 3. FUNCTIONS
+// =============================================================================
 
-; Basic function
+// Basic function
 fn add(a: i64, b: i64) -> i64 {
     ret a + b
 }
 
-; Single-expression shorthand (arrow body)
+// Single-expression shorthand (arrow body)
 fn square(x: i64) -> i64 => x * x
 
-; No return value (void)
+// No return value (void)
 fn greet(name: ref []i8) {
     print("Hello, ")
     print(name)
 }
 
-; Multiple return values via tuple
+// Multiple return values via tuple
 fn divmod(a: i64, b: i64) -> (i64, i64) {
     ret (a / b, a % b)
 }
 
-; Generic functions
+// Generic functions
 fn max<T>(a: T, b: T) -> T {
     if a > b { ret a }
     ret b
 }
 
-; Functions are first-class values
+// Functions are first-class values
 let double = fn(x: i64) -> i64 => x * 2
 
-; Closures (capture by ref by default, by move with `move`)
+// Closures (capture by ref by default, by move with `move`)
 let offset = 10
 let shift  = |x: i64| => x + offset
-let owned  = move |x: i64| => x + offset    ; moves offset into closure
+let owned  = move |x: i64| => x + offset    // moves offset into closure
 
-; Higher-order functions
+// Higher-order functions
 fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
     ret f(x)
 }
 
-; Variadic (takes a slice of T)
+// Variadic (takes a slice of T)
 fn sum(nums: []i64) -> i64 {
     let total = 0
     for n in nums { total = total + n }
     ret total
 }
 
-; =============================================================================
-; 4. CONTROL FLOW
-; =============================================================================
+// =============================================================================
+// 4. CONTROL FLOW
+// =============================================================================
 
-; --- if / else if / else ---
+// --- if / else if / else ---
 if x > 0 {
     print("positive")
 } else if x < 0 {
@@ -136,41 +136,41 @@ if x > 0 {
     print("zero")
 }
 
-; if is an expression
+// if is an expression
 let label = if x > 0 { "pos" } else { "non-pos" }
 
-; --- loop (infinite)
+// --- loop (infinite)
 loop {
     if done { break }
 }
 
-; --- loop with condition (replaces while)
+// --- loop with condition (replaces while)
 loop count < 100 {
     count = count + 1
 }
 
-; --- loop with index
+// --- loop with index
 loop i in 0..10 {
     print(i)
 }
 
-; --- loop with step
+// --- loop with step
 loop i in 0..100 step 2 {
     print(i)
 }
 
-; --- for-in (iterates over a slice/iterator)
+// --- for-in (iterates over a slice/iterator)
 for item in collection {
     process(item)
 }
 
-; loop control
+// loop control
 loop {
-    if skip  { next }   ; continue to next iteration
-    if abort { break }  ; exit loop
+    if skip  { next }   // continue to next iteration
+    if abort { break }  // exit loop
 }
 
-; --- match (exhaustive pattern matching)
+// --- match (exhaustive pattern matching)
 match value {
     0       => print("zero")
     1..=9   => print("single digit")
@@ -178,14 +178,14 @@ match value {
     _       => print("large")
 }
 
-; match on enum
+// match on enum
 match shape {
     Circle(r)     => area = pi * r * r
     Rect(w, h)    => area = w * h
     Triangle(b,h) => area = 0.5 * b * h
 }
 
-; match as expression
+// match as expression
 let desc = match status {
     200 => "OK"
     404 => "Not Found"
@@ -193,35 +193,35 @@ let desc = match status {
     _   => "Unknown"
 }
 
-; match with guards
+// match with guards
 match x {
     n if n < 0  => print("negative")
     n if n == 0 => print("zero")
     n           => print("positive: ", n)
 }
 
-; match on Option
+// match on Option
 match maybe_val {
     some(v) => use(v)
     none    => print("nothing")
 }
 
-; match on Result
+// match on Result
 match result {
     ok(v)    => process(v)
     err(msg) => log_error(msg)
 }
 
-; --- defer (runs at end of scope, LIFO order)
+// --- defer (runs at end of scope, LIFO order)
 fn open_and_process(path: ref []i8) {
     let fd = file_open(path)
-    defer file_close(fd)       ; runs when function returns, even on err path
-    ; ... process fd ...
+    defer file_close(fd)       // runs when function returns, even on err path
+    // ... process fd ...
 }
 
-; =============================================================================
-; 5. STRUCTS
-; =============================================================================
+// =============================================================================
+// 5. STRUCTS
+// =============================================================================
 
 struct Point {
     x: f64
@@ -234,17 +234,17 @@ struct Rect {
     height: f64
 }
 
-; Construction
+// Construction
 let p = Point { x: 3.0, y: 4.0 }
 let r = Rect { origin: p, width: 100.0, height: 50.0 }
 
-; Field access
+// Field access
 let area = r.width * r.height
 
-; Struct update syntax (copy all fields except listed)
-let p2 = Point { x: 10.0, ..p }    ; copies p.y
+// Struct update syntax (copy all fields except listed)
+let p2 = Point { x: 10.0, ..p }    // copies p.y
 
-; Methods (impl block)
+// Methods (impl block)
 impl Point {
     fn distance(self, other: ref Point) -> f64 {
         let dx = self.x - other.x
@@ -257,18 +257,18 @@ impl Point {
         self.y = self.y + dy
     }
 
-    ; Static constructor
+    // Static constructor
     fn origin() -> Point => Point { x: 0.0, y: 0.0 }
 }
 
-; Usage
+// Usage
 let dist = p.distance(&p2)
 
-; =============================================================================
-; 6. ENUMS
-; =============================================================================
+// =============================================================================
+// 6. ENUMS
+// =============================================================================
 
-; Simple enum (like C enum — zero cost)
+// Simple enum (like C enum — zero cost)
 enum Direction {
     North
     South
@@ -276,14 +276,14 @@ enum Direction {
     West
 }
 
-; Enum with data (tagged union — no boxing, stack allocated)
+// Enum with data (tagged union — no boxing, stack allocated)
 enum Shape {
-    Circle(f64)           ; radius
-    Rect(f64, f64)        ; width, height
-    Triangle(f64, f64)    ; base, height
+    Circle(f64)           // radius
+    Rect(f64, f64)        // width, height
+    Triangle(f64, f64)    // base, height
 }
 
-; Enum with named fields
+// Enum with named fields
 enum Event {
     KeyPress  { key: u8, modifiers: u32 }
     MouseMove { x: i32, y: i32 }
@@ -291,7 +291,7 @@ enum Event {
     Quit
 }
 
-; Methods on enums
+// Methods on enums
 impl Shape {
     fn area(self) -> f64 {
         match self {
@@ -302,12 +302,12 @@ impl Shape {
     }
 }
 
-; =============================================================================
-; 7. ERROR HANDLING — Result Type (no exceptions)
-; =============================================================================
+// =============================================================================
+// 7. ERROR HANDLING — Result Type (no exceptions)
+// =============================================================================
 
-; Every fallible operation returns Result<T, E>
-; E is usually []i8 (string) or a custom error enum
+// Every fallible operation returns Result<T, E>
+// E is usually []i8 (string) or a custom error enum
 
 fn parse_int(s: ref []i8) -> Result<i64, []i8> {
     if s.len == 0 {
@@ -323,36 +323,36 @@ fn parse_int(s: ref []i8) -> Result<i64, []i8> {
     ret ok(val)
 }
 
-; Propagate errors with `?` (like Rust — returns err early)
+// Propagate errors with `?` (like Rust — returns err early)
 fn read_and_parse(path: ref []i8) -> Result<i64, []i8> {
-    let contents = file_read(path)?    ; returns err if file_read fails
+    let contents = file_read(path)?    // returns err if file_read fails
     let number   = parse_int(contents)?
     ret ok(number)
 }
 
-; Handling results
+// Handling results
 match read_and_parse("config.txt") {
     ok(n)  => print("Got: ", n)
     err(e) => print("Error: ", e)
 }
 
-; Unwrap with default (no panic — safe)
+// Unwrap with default (no panic — safe)
 let n = parse_int(input).unwrap_or(0)
 
-; Map over ok value
+// Map over ok value
 let doubled = parse_int(s).map(|n| n * 2)
 
-; Chain operations
+// Chain operations
 let result = file_read(path)
     .and_then(|data| parse_int(data))
     .map(|n| n * 2)
     .unwrap_or(0)
 
-; =============================================================================
-; 8. TRAITS (Interfaces)
-; =============================================================================
+// =============================================================================
+// 8. TRAITS (Interfaces)
+// =============================================================================
 
-; Declare a trait
+// Declare a trait
 trait Drawable {
     fn draw(self, canvas: &mut Canvas)
     fn bounding_box(self) -> Rect
@@ -363,7 +363,7 @@ trait Serialise {
     fn from_bytes(data: ref []u8) -> Result<Self, []i8>
 }
 
-; Implement a trait for a type
+// Implement a trait for a type
 impl Drawable for Circle {
     fn draw(self, canvas: &mut Canvas) {
         canvas.draw_circle(self.x, self.y, self.radius)
@@ -378,25 +378,25 @@ impl Drawable for Circle {
     }
 }
 
-; Trait bounds on generics
+// Trait bounds on generics
 fn render_all<T: Drawable>(items: []T, canvas: &mut Canvas) {
     for item in items {
         item.draw(canvas)
     }
 }
 
-; Multiple trait bounds
+// Multiple trait bounds
 fn process<T: Drawable + Serialise>(item: T) {
     item.draw(&mut canvas)
     let bytes = item.to_bytes()
     send_over_network(bytes)
 }
 
-; =============================================================================
-; 9. GENERICS & TYPE PARAMETERS
-; =============================================================================
+// =============================================================================
+// 9. GENERICS & TYPE PARAMETERS
+// =============================================================================
 
-; Generic struct
+// Generic struct
 struct Stack<T> {
     data: own []T
     top:  i64
@@ -422,74 +422,74 @@ impl<T> Stack<T> {
     }
 }
 
-; =============================================================================
-; 10. MODULES & IMPORTS
-; =============================================================================
+// =============================================================================
+// 10. MODULES & IMPORTS
+// =============================================================================
 
-; Declare a module (in its own file: net/tcp.jda)
+// Declare a module (in its own file: net/tcp.jda)
 mod net {
     mod tcp
     mod udp
 }
 
-; Import specific items
+// Import specific items
 import jda::net::tcp::{ TcpListener, TcpStream }
 import jda::mem::region::region_new
 
-; Import with alias
+// Import with alias
 import jda::concurrency::jthread as jt
 
-; Wildcard import
+// Wildcard import
 import jda::stdlib::*
 
-; =============================================================================
-; 11. STRING HANDLING
-; =============================================================================
+// =============================================================================
+// 11. STRING HANDLING
+// =============================================================================
 
-; Strings are []i8 (byte slices) — UTF-8 by convention
+// Strings are []i8 (byte slices) — UTF-8 by convention
 let s: []i8 = "Hello, Jda!"
 
-; String length
+// String length
 let n = s.len
 
-; Byte access
+// Byte access
 let first = s[0]
 
-; Slice
-let sub = s[0..5]      ; "Hello"
+// Slice
+let sub = s[0..5]      // "Hello"
 
-; Concatenation (allocates — returns own []i8)
+// Concatenation (allocates — returns own []i8)
 let full = s + " World"
 
-; String interpolation
+// String interpolation
 let name = "world"
-let msg  = "Hello, {name}!"    ; compile-time formatted
+let msg  = "Hello, {name}!"    // compile-time formatted
 
-; Format to buffer (no allocation)
+// Format to buffer (no allocation)
 let buf = [256]i8
 let out = fmt(buf, "x={}, y={}", x, y)
 
-; Common string operations
+// Common string operations
 s.starts_with("Hello")
 s.ends_with("!")
 s.contains("Jda")
-s.split(",")           ; returns iterator of []i8
+s.split(",")           // returns iterator of []i8
 s.trim()
 s.to_upper()
 s.to_lower()
 
-; =============================================================================
-; 12. MEMORY INTEGRATION (Phase 2 recap in syntax context)
-; =============================================================================
+// =============================================================================
+// 12. MEMORY INTEGRATION (Phase 2 recap in syntax context)
+// =============================================================================
 
-; Stack allocation (default for small values)
-let arr = [1024]u8      ; 1 KB on the stack
+// Stack allocation (default for small values)
+let arr = [1024]u8      // 1 KB on the stack
 
-; Heap via region (scoped — freed at block end)
+// Heap via region (scoped — freed at block end)
 let r = region_new(16)
 defer region_free(r)
 let buf = region_alloc(&mut r, 4096, 8)
 
-; Page-level (OS pages)
+// Page-level (OS pages)
 let page = pages_alloc(1)
 defer pages_free(page, 1)

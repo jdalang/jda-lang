@@ -1,45 +1,45 @@
-; =============================================================================
-; jda::concurrency::channel — Lock-Free Channels
-; =============================================================================
-; Channels are the ONLY way for J-Threads to share data.
-; No shared mutable state means no data races — guaranteed at compile time.
-;
-; Channel flavours:
-;   chan<T>()        — unbuffered (rendezvous — send blocks until recv)
-;   chan<T>(N)       — buffered N-capacity (send blocks only when full)
-;
-; Implementation: MPSC (Multi-Producer Single-Consumer) lock-free ring buffer.
-; Uses atomic operations — no mutex, no kernel involvement.
-;
-; Ownership:
-;   send() takes `own T`   — transfers ownership into the channel
-;   recv() returns `own T` — transfers ownership out to receiver
-;   Zero copy. No cloning.
-; =============================================================================
+// =============================================================================
+// jda::concurrency::channel — Lock-Free Channels
+// =============================================================================
+// Channels are the ONLY way for J-Threads to share data.
+// No shared mutable state means no data races — guaranteed at compile time.
+//
+// Channel flavours:
+//   chan<T>()        — unbuffered (rendezvous — send blocks until recv)
+//   chan<T>(N)       — buffered N-capacity (send blocks only when full)
+//
+// Implementation: MPSC (Multi-Producer Single-Consumer) lock-free ring buffer.
+// Uses atomic operations — no mutex, no kernel involvement.
+//
+// Ownership:
+//   send() takes `own T`   — transfers ownership into the channel
+//   recv() returns `own T` — transfers ownership out to receiver
+//   Zero copy. No cloning.
+// =============================================================================
 
 import jda::mem::page_alloc
 import jda::concurrency::jthread
 
 const CHAN_DEFAULT_CAP = 64
 
-; =============================================================================
-; Channel<T> — internal structure
-; =============================================================================
+// =============================================================================
+// Channel<T> — internal structure
+// =============================================================================
 struct Channel<T> {
-    buf:    own *T      ; ring buffer (heap allocated)
-    cap:    u64         ; buffer capacity (power of 2)
-    mask:   u64         ; cap - 1, for fast modulo
-    head:   u64         ; atomic — consumer reads from head
-    tail:   u64         ; atomic — producers write to tail
-    closed: bool        ; atomic flag — true after chan_close()
+    buf:    own *T      // ring buffer (heap allocated)
+    cap:    u64         // buffer capacity (power of 2)
+    mask:   u64         // cap - 1, for fast modulo
+    head:   u64         // atomic — consumer reads from head
+    tail:   u64         // atomic — producers write to tail
+    closed: bool        // atomic flag — true after chan_close()
 }
 
-; =============================================================================
-; chan<T>() — create an unbuffered channel (capacity = 1)
-; chan<T>(N) — create a buffered channel
-; =============================================================================
+// =============================================================================
+// chan<T>() — create an unbuffered channel (capacity = 1)
+// chan<T>(N) — create a buffered channel
+// =============================================================================
 fn chan_new<T>(cap: u64) -> own Channel<T> {
-    ; Capacity must be power of 2 for ring buffer mask trick
+    // Capacity must be power of 2 for ring buffer mask trick
     let real_cap = next_pow2(cap)
     let buf = pages_alloc((real_cap * size_of<T>() / 4096) + 1) as own *T
     ret Channel<T> {
@@ -52,11 +52,11 @@ fn chan_new<T>(cap: u64) -> own Channel<T> {
     }
 }
 
-; =============================================================================
-; send(ch: &Channel<T>, val: own T) — put a value into the channel
-; =============================================================================
-; Blocks (yields current J-Thread) if buffer is full.
-; Returns err if channel is closed.
+// =============================================================================
+// send(ch: &Channel<T>, val: own T) — put a value into the channel
+// =============================================================================
+// Blocks (yields current J-Thread) if buffer is full.
+// Returns err if channel is closed.
 fn chan_send<T>(ch: &Channel<T>, val: own T) -> Result<(), []i8> {
     if ch.closed { ret err("channel closed") }
 
@@ -66,48 +66,48 @@ fn chan_send<T>(ch: &Channel<T>, val: own T) -> Result<(), []i8> {
         let used = tail - head
 
         if used < ch.cap {
-            ; Space available — claim the slot
+            // Space available — claim the slot
             if atomic_cmpxchg(&ch.tail, tail, tail + 1) {
-                ch.buf[tail & ch.mask] = val   ; write (ownership transferred)
+                ch.buf[tail & ch.mask] = val   // write (ownership transferred)
                 ret ok(())
             }
-            ; Lost the race — retry
+            // Lost the race — retry
         } else {
-            ; Buffer full — yield and retry after other threads run
+            // Buffer full — yield and retry after other threads run
             jthread_yield()
             if ch.closed { ret err("channel closed while waiting") }
         }
     }
 }
 
-; =============================================================================
-; recv(ch: &Channel<T>) -> own T — take a value from the channel
-; =============================================================================
-; Blocks (yields) until a value is available.
-; Returns err if channel is closed and empty.
+// =============================================================================
+// recv(ch: &Channel<T>) -> own T — take a value from the channel
+// =============================================================================
+// Blocks (yields) until a value is available.
+// Returns err if channel is closed and empty.
 fn chan_recv<T>(ch: &Channel<T>) -> Result<own T, []i8> {
     loop {
         let head = atomic_load(&ch.head)
         let tail = atomic_load(&ch.tail)
 
         if head < tail {
-            ; Data available — claim the slot
+            // Data available — claim the slot
             if atomic_cmpxchg(&ch.head, head, head + 1) {
-                let val = ch.buf[head & ch.mask]   ; read (ownership transferred)
+                let val = ch.buf[head & ch.mask]   // read (ownership transferred)
                 ret ok(val)
             }
-            ; Lost the race — retry
+            // Lost the race — retry
         } else {
-            ; Empty
+            // Empty
             if ch.closed { ret err("channel closed") }
-            jthread_yield()   ; yield and wait for a sender
+            jthread_yield()   // yield and wait for a sender
         }
     }
 }
 
-; =============================================================================
-; try_recv — non-blocking recv, returns none immediately if empty
-; =============================================================================
+// =============================================================================
+// try_recv — non-blocking recv, returns none immediately if empty
+// =============================================================================
 fn chan_try_recv<T>(ch: &Channel<T>) -> ?own T {
     let head = atomic_load(&ch.head)
     let tail = atomic_load(&ch.tail)
@@ -118,27 +118,27 @@ fn chan_try_recv<T>(ch: &Channel<T>) -> ?own T {
     ret none
 }
 
-; =============================================================================
-; close — signal no more sends. Pending recvs drain remaining data.
-; =============================================================================
+// =============================================================================
+// close — signal no more sends. Pending recvs drain remaining data.
+// =============================================================================
 fn chan_close<T>(ch: &Channel<T>) {
     atomic_store(&ch.closed, true)
 }
 
-; =============================================================================
-; select — wait on multiple channels simultaneously (compiler macro)
-; =============================================================================
-; Syntax (handled by compiler, desugars to select_raw):
-;
-;   select {
-;       ch1.recv() => |v| { handle_v(v) }
-;       ch2.recv() => |v| { handle_v2(v) }
-;       ch3.send(val) => { after_send() }
-;       timeout(500ms) => { handle_timeout() }
-;   }
-;
-; Implementation: polls each channel in order, yields if none ready.
-; Timeout uses the TSC (timestamp counter) to avoid syscall overhead.
+// =============================================================================
+// select — wait on multiple channels simultaneously (compiler macro)
+// =============================================================================
+// Syntax (handled by compiler, desugars to select_raw):
+//
+//   select {
+//       ch1.recv() => |v| { handle_v(v) }
+//       ch2.recv() => |v| { handle_v2(v) }
+//       ch3.send(val) => { after_send() }
+//       timeout(500ms) => { handle_timeout() }
+//   }
+//
+// Implementation: polls each channel in order, yields if none ready.
+// Timeout uses the TSC (timestamp counter) to avoid syscall overhead.
 
 fn select_recv2<A, B>(
     ch_a: &Channel<A>, ch_b: &Channel<B>,
@@ -149,17 +149,17 @@ fn select_recv2<A, B>(
     let tsc_per_ns = cpu_tsc_hz() / 1_000_000_000
 
     loop {
-        ; Try ch_a
+        // Try ch_a
         match chan_try_recv(ch_a) {
             some(v) => { on_a(v)   ret }
             none    => {}
         }
-        ; Try ch_b
+        // Try ch_b
         match chan_try_recv(ch_b) {
             some(v) => { on_b(v)   ret }
             none    => {}
         }
-        ; Check timeout
+        // Check timeout
         if timeout_ns > 0 {
             let elapsed = (rdtsc() - start) / tsc_per_ns
             if elapsed >= timeout_ns as u64 { ret }
@@ -168,9 +168,9 @@ fn select_recv2<A, B>(
     }
 }
 
-; =============================================================================
-; Helpers
-; =============================================================================
+// =============================================================================
+// Helpers
+// =============================================================================
 fn next_pow2(n: u64) -> u64 {
     if n <= 1 { ret 1 }
     let p = 1u64

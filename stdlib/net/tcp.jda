@@ -1,24 +1,24 @@
-; =============================================================================
-; jda::net::tcp — TCP Socket API
-; =============================================================================
-; Pure Jda. Zero libc. All operations use direct Linux syscalls.
-; Optimised for J-Thread concurrency — all blocking calls yield instead
-; of blocking the OS thread.
-;
-; Linux syscalls used (no <sys/socket.h>):
-;   SYS_SOCKET   = 41    socket(domain, type, protocol)
-;   SYS_BIND     = 49    bind(fd, addr, addrlen)
-;   SYS_LISTEN   = 50    listen(fd, backlog)
-;   SYS_ACCEPT4  = 288   accept4(fd, addr, addrlen, flags)
-;   SYS_CONNECT  = 42    connect(fd, addr, addrlen)
-;   SYS_SENDTO   = 44    sendto(fd, buf, len, flags, NULL, 0)
-;   SYS_RECVFROM = 45    recvfrom(fd, buf, len, flags, NULL, NULL)
-;   SYS_CLOSE    = 3     close(fd)
-;   SYS_SETSOCKOPT = 54  setsockopt(fd, level, opt, val, len)
-;   SYS_FCNTL    = 72    fcntl(fd, cmd, arg) — set O_NONBLOCK
-; =============================================================================
+// =============================================================================
+// jda::net::tcp — TCP Socket API
+// =============================================================================
+// Pure Jda. Zero libc. All operations use direct Linux syscalls.
+// Optimised for J-Thread concurrency — all blocking calls yield instead
+// of blocking the OS thread.
+//
+// Linux syscalls used (no <sys/socket.h>):
+//   SYS_SOCKET   = 41    socket(domain, type, protocol)
+//   SYS_BIND     = 49    bind(fd, addr, addrlen)
+//   SYS_LISTEN   = 50    listen(fd, backlog)
+//   SYS_ACCEPT4  = 288   accept4(fd, addr, addrlen, flags)
+//   SYS_CONNECT  = 42    connect(fd, addr, addrlen)
+//   SYS_SENDTO   = 44    sendto(fd, buf, len, flags, NULL, 0)
+//   SYS_RECVFROM = 45    recvfrom(fd, buf, len, flags, NULL, NULL)
+//   SYS_CLOSE    = 3     close(fd)
+//   SYS_SETSOCKOPT = 54  setsockopt(fd, level, opt, val, len)
+//   SYS_FCNTL    = 72    fcntl(fd, cmd, arg) — set O_NONBLOCK
+// =============================================================================
 
-; Syscall numbers
+// Syscall numbers
 const SYS_SOCKET     = 41
 const SYS_BIND       = 49
 const SYS_LISTEN     = 50
@@ -30,10 +30,10 @@ const SYS_CLOSE      = 3
 const SYS_SETSOCKOPT = 54
 const SYS_FCNTL      = 72
 
-; Address family / socket type
+// Address family / socket type
 const AF_INET      = 2
 const SOCK_STREAM  = 1
-const SOCK_NONBLOCK = 2048    ; create non-blocking socket directly
+const SOCK_NONBLOCK = 2048    // create non-blocking socket directly
 const SOL_SOCKET   = 1
 const SO_REUSEADDR = 2
 const SO_REUSEPORT = 15
@@ -42,54 +42,54 @@ const TCP_NODELAY  = 1
 const F_SETFL      = 4
 const O_NONBLOCK   = 2048
 
-; EAGAIN / EWOULDBLOCK — returned when non-blocking op has no data
+// EAGAIN / EWOULDBLOCK — returned when non-blocking op has no data
 const EAGAIN = 11
 
-; =============================================================================
-; SockAddrIn — Linux sockaddr_in (16 bytes, packed)
-; =============================================================================
+// =============================================================================
+// SockAddrIn — Linux sockaddr_in (16 bytes, packed)
+// =============================================================================
 struct SockAddrIn {
-    sin_family: u16     ; AF_INET = 2
-    sin_port:   u16     ; port in network byte order (big-endian)
-    sin_addr:   u32     ; IPv4 address in network byte order
-    sin_zero:   [8]u8   ; padding
+    sin_family: u16     // AF_INET = 2
+    sin_port:   u16     // port in network byte order (big-endian)
+    sin_addr:   u32     // IPv4 address in network byte order
+    sin_zero:   [8]u8   // padding
 }
 
-; =============================================================================
-; TcpStream — a connected TCP socket
-; =============================================================================
+// =============================================================================
+// TcpStream — a connected TCP socket
+// =============================================================================
 struct TcpStream {
     fd:        i32
     peer_addr: u32
     peer_port: u16
 }
 
-; =============================================================================
-; TcpListener — a bound-and-listening socket
-; =============================================================================
+// =============================================================================
+// TcpListener — a bound-and-listening socket
+// =============================================================================
 struct TcpListener {
     fd:        i32
     local_port: u16
 }
 
-; =============================================================================
-; TcpListener::bind(addr: []i8, port: u16) -> Result<TcpListener, []i8>
-; =============================================================================
+// =============================================================================
+// TcpListener::bind(addr: []i8, port: u16) -> Result<TcpListener, []i8>
+// =============================================================================
 impl TcpListener {
     fn bind(addr: ref []i8, port: u16) -> Result<own TcpListener, []i8> {
-        ; 1. Create socket
+        // 1. Create socket
         let fd = syscall(SYS_SOCKET, AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0) as i32
         if fd < 0 { ret err("socket() failed") }
 
-        ; 2. SO_REUSEADDR — allow fast restart without TIME_WAIT delay
+        // 2. SO_REUSEADDR — allow fast restart without TIME_WAIT delay
         let one: i32 = 1
         syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEADDR, &one, 4)
         syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEPORT, &one, 4)
 
-        ; 3. TCP_NODELAY — disable Nagle's algorithm for low latency
+        // 3. TCP_NODELAY — disable Nagle's algorithm for low latency
         syscall(SYS_SETSOCKOPT, fd, IPPROTO_TCP, TCP_NODELAY, &one, 4)
 
-        ; 4. Bind
+        // 4. Bind
         let sa = SockAddrIn {
             sin_family: AF_INET as u16,
             sin_port:   htons(port),
@@ -102,7 +102,7 @@ impl TcpListener {
             ret err("bind() failed")
         }
 
-        ; 5. Listen
+        // 5. Listen
         let rc = syscall(SYS_LISTEN, fd, 1024) as i32
         if rc < 0 {
             tcp_close_fd(fd)
@@ -112,8 +112,8 @@ impl TcpListener {
         ret ok(TcpListener { fd: fd, local_port: port })
     }
 
-    ; accept() — yield-based non-blocking accept
-    ; Returns when a new connection is ready.
+    // accept() — yield-based non-blocking accept
+    // Returns when a new connection is ready.
     fn accept(self) -> Result<own TcpStream, []i8> {
         let peer_sa = SockAddrIn { sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8] }
         let peer_len: u32 = 16
@@ -129,7 +129,7 @@ impl TcpListener {
                 })
             }
             if -fd == EAGAIN {
-                jthread_yield()   ; no connection yet — yield to other J-Threads
+                jthread_yield()   // no connection yet — yield to other J-Threads
             } else {
                 ret err("accept4() failed")
             }
@@ -141,11 +141,11 @@ impl TcpListener {
     }
 }
 
-; =============================================================================
-; TcpStream methods
-; =============================================================================
+// =============================================================================
+// TcpStream methods
+// =============================================================================
 impl TcpStream {
-    ; connect(addr, port) — non-blocking connect with yield
+    // connect(addr, port) — non-blocking connect with yield
     fn connect(addr: ref []i8, port: u16) -> Result<own TcpStream, []i8> {
         let fd = syscall(SYS_SOCKET, AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0) as i32
         if fd < 0 { ret err("socket() failed") }
@@ -157,18 +157,18 @@ impl TcpStream {
             sin_zero:   [0; 8],
         }
         let rc = syscall(SYS_CONNECT, fd, &sa, 16) as i32
-        ; Non-blocking connect returns -EINPROGRESS immediately — wait for writable
-        if rc < 0 and -rc != 115 {   ; 115 = EINPROGRESS
+        // Non-blocking connect returns -EINPROGRESS immediately — wait for writable
+        if rc < 0 and -rc != 115 {   // 115 = EINPROGRESS
             tcp_close_fd(fd)
             ret err("connect() failed")
         }
-        ; Yield until connected (epoll/io_uring notifies scheduler)
+        // Yield until connected (epoll/io_uring notifies scheduler)
         jthread_yield_until_writable(fd)
 
         ret ok(TcpStream { fd: fd, peer_addr: ntohl(sa.sin_addr), peer_port: port })
     }
 
-    ; read(buf, max) -> i64  — bytes read, 0 = closed, <0 = error
+    // read(buf, max) -> i64  — bytes read, 0 = closed, <0 = error
     fn read(self, buf: []mut i8, max: i64) -> i64 {
         loop {
             let n = syscall(SYS_RECVFROM, self.fd, buf, max, 0, 0, 0) as i64
@@ -178,7 +178,7 @@ impl TcpStream {
         }
     }
 
-    ; write(buf, len) -> i64 — bytes written
+    // write(buf, len) -> i64 — bytes written
     fn write(self, buf: ref []i8, len: i64) -> i64 {
         let sent = 0i64
         loop sent < len {
@@ -195,15 +195,15 @@ impl TcpStream {
     }
 }
 
-; =============================================================================
-; Helpers
-; =============================================================================
+// =============================================================================
+// Helpers
+// =============================================================================
 
 fn tcp_close_fd(fd: i32) {
     syscall(SYS_CLOSE, fd, 0, 0, 0, 0, 0)
 }
 
-; Convert "1.2.3.4" string to u32 in network byte order
+// Convert "1.2.3.4" string to u32 in network byte order
 fn ip_to_u32(s: ref []i8) -> u32 {
     let a = 0u32   let b = 0u32   let c = 0u32   let d = 0u32
     let i = 0
@@ -214,7 +214,7 @@ fn ip_to_u32(s: ref []i8) -> u32 {
     ret (a << 24) | (b << 16) | (c << 8) | d
 }
 
-; Host-to-network byte order (big-endian)
+// Host-to-network byte order (big-endian)
 fn htons(x: u16) -> u16 => ((x & 0xFF) << 8) | (x >> 8)
 fn ntohs(x: u16) -> u16 => htons(x)
 fn htonl(x: u32) -> u32 => ((x & 0xFF) << 24) | (((x>>8) & 0xFF) << 16) | (((x>>16) & 0xFF) << 8) | (x >> 24)

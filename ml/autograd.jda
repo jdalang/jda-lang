@@ -1,48 +1,48 @@
-; =============================================================================
-; jda Compile-Time Autograd — Automatic Differentiation
-; =============================================================================
-; PyTorch builds a computational graph at RUNTIME, then runs backprop.
-; This costs memory (graph nodes), time (graph traversal), and adds complexity.
-;
-; jda's compiler understands calculus NATIVELY.
-; Given a forward function, it generates the backward pass SOURCE CODE
-; at compile time via symbolic differentiation over JIR.
-;
-; Result:
-;   - Zero runtime graph overhead
-;   - Backward pass is a plain jda function — inspectable, optimisable
-;   - Works seamlessly with AVX-512 and PTX backends
-;   - No Python GIL, no C++ autograd engine
-;
-; The `@differentiable` decorator triggers the compiler to generate grad.
-; =============================================================================
+// =============================================================================
+// jda Compile-Time Autograd — Automatic Differentiation
+// =============================================================================
+// PyTorch builds a computational graph at RUNTIME, then runs backprop.
+// This costs memory (graph nodes), time (graph traversal), and adds complexity.
+//
+// jda's compiler understands calculus NATIVELY.
+// Given a forward function, it generates the backward pass SOURCE CODE
+// at compile time via symbolic differentiation over JIR.
+//
+// Result:
+//   - Zero runtime graph overhead
+//   - Backward pass is a plain jda function — inspectable, optimisable
+//   - Works seamlessly with AVX-512 and PTX backends
+//   - No Python GIL, no C++ autograd engine
+//
+// The `@differentiable` decorator triggers the compiler to generate grad.
+// =============================================================================
 
-; =============================================================================
-; PART 1 — USER-FACING SYNTAX
-; =============================================================================
+// =============================================================================
+// PART 1 — USER-FACING SYNTAX
+// =============================================================================
 
-; Mark a function as differentiable.
-; Compiler generates `<fn_name>_grad` automatically.
+// Mark a function as differentiable.
+// Compiler generates `<fn_name>_grad` automatically.
 @differentiable
 fn mse_loss(pred: ref Tensor<[dyn, dyn], f32>,
             target: ref Tensor<[dyn, dyn], f32>) -> Tensor<[], f32> {
-    let diff = pred - target         ; element-wise subtract
-    ret (diff * diff).mean()         ; mean squared error
+    let diff = pred - target         // element-wise subtract
+    ret (diff * diff).mean()         // mean squared error
 }
-; Compiler generates:
-;   fn mse_loss_grad(pred, target) -> (d_pred, d_target)
-; which is the partial derivative w.r.t. each input.
+// Compiler generates:
+//   fn mse_loss_grad(pred, target) -> (d_pred, d_target)
+// which is the partial derivative w.r.t. each input.
 
-; Usage:
+// Usage:
 fn train_step(pred: ref Tensor<[32, 10], f32>,
               target: ref Tensor<[32, 10], f32>) {
     let loss      = mse_loss(pred, target)
-    let (dp, dt)  = mse_loss_grad(pred, target)   ; compile-time generated
-    ; dp has same shape as pred — [32 x 10]
-    ; dt has same shape as target — [32 x 10]
+    let (dp, dt)  = mse_loss_grad(pred, target)   // compile-time generated
+    // dp has same shape as pred — [32 x 10]
+    // dt has same shape as target — [32 x 10]
 }
 
-; Cross-entropy with softmax — more complex, still fully differentiable
+// Cross-entropy with softmax — more complex, still fully differentiable
 @differentiable
 fn cross_entropy(logits: ref Tensor<[dyn, dyn], f32>,
                  labels: ref Tensor<[dyn], i32>) -> Tensor<[], f32> {
@@ -51,53 +51,53 @@ fn cross_entropy(logits: ref Tensor<[dyn, dyn], f32>,
     ret -(probs.log() * one_hot(labels, logits.shape[1])).sum() / n
 }
 
-; =============================================================================
-; PART 2 — THE COMPILER DIFFERENTIATION ALGORITHM (JIR PASS)
-; =============================================================================
-; This is the compiler's internal algorithm — implemented as a JIR pass.
-; It walks the JIR of the forward function and constructs the backward JIR.
-;
-; Algorithm: Reverse-Mode Automatic Differentiation (backpropagation)
-; Applied symbolically on SSA JIR — no runtime graph needed.
-;
-; Derivative rules applied per JIR opcode:
-;
-;   OP_ADD    (z = x + y)    → dz/dx = 1,   dz/dy = 1
-;   OP_SUB    (z = x - y)    → dz/dx = 1,   dz/dy = -1
-;   OP_MUL    (z = x * y)    → dz/dx = y,   dz/dy = x
-;   OP_DIV    (z = x / y)    → dz/dx = 1/y, dz/dy = -x/y²
-;   OP_MATMUL (Z = X @ W)    → dZ/dX = G @ W.T, dZ/dW = X.T @ G
-;   OP_EXP    (y = exp(x))   → dy/dx = exp(x) = y
-;   OP_LOG    (y = log(x))   → dy/dx = 1/x
-;   OP_POW    (y = x^n)      → dy/dx = n * x^(n-1)
-;   OP_SUM    (y = sum(x))   → dy/dx = ones_like(x)
-;   OP_MEAN   (y = mean(x))  → dy/dx = ones_like(x) / numel(x)
-;   OP_RELU   (y = max(x,0)) → dy/dx = x > 0 ? 1 : 0
-;   OP_TANH   (y = tanh(x))  → dy/dx = 1 - tanh(x)²
+// =============================================================================
+// PART 2 — THE COMPILER DIFFERENTIATION ALGORITHM (JIR PASS)
+// =============================================================================
+// This is the compiler's internal algorithm — implemented as a JIR pass.
+// It walks the JIR of the forward function and constructs the backward JIR.
+//
+// Algorithm: Reverse-Mode Automatic Differentiation (backpropagation)
+// Applied symbolically on SSA JIR — no runtime graph needed.
+//
+// Derivative rules applied per JIR opcode:
+//
+//   OP_ADD    (z = x + y)    → dz/dx = 1,   dz/dy = 1
+//   OP_SUB    (z = x - y)    → dz/dx = 1,   dz/dy = -1
+//   OP_MUL    (z = x * y)    → dz/dx = y,   dz/dy = x
+//   OP_DIV    (z = x / y)    → dz/dx = 1/y, dz/dy = -x/y²
+//   OP_MATMUL (Z = X @ W)    → dZ/dX = G @ W.T, dZ/dW = X.T @ G
+//   OP_EXP    (y = exp(x))   → dy/dx = exp(x) = y
+//   OP_LOG    (y = log(x))   → dy/dx = 1/x
+//   OP_POW    (y = x^n)      → dy/dx = n * x^(n-1)
+//   OP_SUM    (y = sum(x))   → dy/dx = ones_like(x)
+//   OP_MEAN   (y = mean(x))  → dy/dx = ones_like(x) / numel(x)
+//   OP_RELU   (y = max(x,0)) → dy/dx = x > 0 ? 1 : 0
+//   OP_TANH   (y = tanh(x))  → dy/dx = 1 - tanh(x)²
 
-; Implemented in jda (the compiler is written in jda — Phase 1.2):
+// Implemented in jda (the compiler is written in jda — Phase 1.2):
 
 fn autograd_pass(fwd_fn: &JirFunction) -> JirFunction {
-    ; Step 1: topological sort of the forward JIR
+    // Step 1: topological sort of the forward JIR
     let order = topo_sort(fwd_fn)
 
-    ; Step 2: allocate a gradient JIR function (the backward pass)
+    // Step 2: allocate a gradient JIR function (the backward pass)
     let bwd_fn = JirFunction::new(fwd_fn.name + "_grad")
 
-    ; Step 3: seed — gradient of output w.r.t. itself = 1.0
+    // Step 3: seed — gradient of output w.r.t. itself = 1.0
     let grad_map = HashMap<SSAId, SSAId>::new()
     let out_id   = fwd_fn.return_val
     grad_map[out_id] = emit_ones_like(bwd_fn, out_id)
 
-    ; Step 4: walk in REVERSE topological order — chain rule
+    // Step 4: walk in REVERSE topological order — chain rule
     let i = order.len - 1
     loop i >= 0 {
         let instr = order[i]
-        let g_out = grad_map[instr.dest]    ; incoming gradient
+        let g_out = grad_map[instr.dest]    // incoming gradient
 
         match instr.op {
             OP_ADD => {
-                ; z = x + y  →  grad_x += g_out, grad_y += g_out
+                // z = x + y  →  grad_x += g_out, grad_y += g_out
                 accumulate(grad_map, instr.operand0, g_out, bwd_fn)
                 accumulate(grad_map, instr.operand1, g_out, bwd_fn)
             }
@@ -107,14 +107,14 @@ fn autograd_pass(fwd_fn: &JirFunction) -> JirFunction {
                 accumulate(grad_map, instr.operand1, neg, bwd_fn)
             }
             OP_MUL => {
-                ; z = x * y  →  grad_x += g_out * y, grad_y += g_out * x
+                // z = x * y  →  grad_x += g_out * y, grad_y += g_out * x
                 let gx = emit_mul(bwd_fn, g_out, instr.operand1)
                 let gy = emit_mul(bwd_fn, g_out, instr.operand0)
                 accumulate(grad_map, instr.operand0, gx, bwd_fn)
                 accumulate(grad_map, instr.operand1, gy, bwd_fn)
             }
             OP_MATMUL => {
-                ; Z = X @ W  →  grad_X += G @ W.T,  grad_W += X.T @ G
+                // Z = X @ W  →  grad_X += G @ W.T,  grad_W += X.T @ G
                 let wt  = emit_transpose(bwd_fn, instr.operand1)
                 let xt  = emit_transpose(bwd_fn, instr.operand0)
                 let gx  = emit_matmul(bwd_fn, g_out, wt)
@@ -123,46 +123,46 @@ fn autograd_pass(fwd_fn: &JirFunction) -> JirFunction {
                 accumulate(grad_map, instr.operand1, gw, bwd_fn)
             }
             OP_EXP => {
-                ; y = exp(x)  →  grad_x += g_out * y
+                // y = exp(x)  →  grad_x += g_out * y
                 let gy = emit_mul(bwd_fn, g_out, instr.dest)
                 accumulate(grad_map, instr.operand0, gy, bwd_fn)
             }
             OP_LOG => {
-                ; y = log(x)  →  grad_x += g_out / x
+                // y = log(x)  →  grad_x += g_out / x
                 let gx = emit_div(bwd_fn, g_out, instr.operand0)
                 accumulate(grad_map, instr.operand0, gx, bwd_fn)
             }
             OP_RELU => {
-                ; y = relu(x)  →  grad_x += g_out * (x > 0)
+                // y = relu(x)  →  grad_x += g_out * (x > 0)
                 let mask = emit_gt(bwd_fn, instr.operand0, 0.0)
                 let gx   = emit_mul(bwd_fn, g_out, mask)
                 accumulate(grad_map, instr.operand0, gx, bwd_fn)
             }
             OP_MEAN => {
-                ; y = mean(x)  →  grad_x += g_out / numel(x)
+                // y = mean(x)  →  grad_x += g_out / numel(x)
                 let n  = emit_numel(bwd_fn, instr.operand0)
                 let gx = emit_div_broadcast(bwd_fn, g_out, n)
                 accumulate(grad_map, instr.operand0, gx, bwd_fn)
             }
             OP_SUM => {
-                ; y = sum(x)  →  grad_x += broadcast(g_out, shape_of(x))
+                // y = sum(x)  →  grad_x += broadcast(g_out, shape_of(x))
                 let gx = emit_broadcast_like(bwd_fn, g_out, instr.operand0)
                 accumulate(grad_map, instr.operand0, gx, bwd_fn)
             }
             OP_TANH => {
-                ; y = tanh(x)  →  grad_x += g_out * (1 - y²)
+                // y = tanh(x)  →  grad_x += g_out * (1 - y²)
                 let y2   = emit_mul(bwd_fn, instr.dest, instr.dest)
                 let one  = emit_const_f32(bwd_fn, 1.0)
                 let dtdx = emit_sub(bwd_fn, one, y2)
                 let gx   = emit_mul(bwd_fn, g_out, dtdx)
                 accumulate(grad_map, instr.operand0, gx, bwd_fn)
             }
-            _ => {}    ; non-differentiable ops (load, store, etc.) — skip
+            _ => {}    // non-differentiable ops (load, store, etc.) — skip
         }
         i = i - 1
     }
 
-    ; Step 5: collect gradients for all function inputs
+    // Step 5: collect gradients for all function inputs
     for param in fwd_fn.params {
         let g = grad_map.get(param.id).unwrap_or(emit_zeros_like(bwd_fn, param))
         bwd_fn.add_output(g)
@@ -171,7 +171,7 @@ fn autograd_pass(fwd_fn: &JirFunction) -> JirFunction {
     ret bwd_fn
 }
 
-; Accumulate a gradient (handles the += for values used multiple times)
+// Accumulate a gradient (handles the += for values used multiple times)
 fn accumulate(grad_map: &mut HashMap<SSAId, SSAId>,
               val_id: SSAId, grad: SSAId, fn: &mut JirFunction) {
     match grad_map.get(val_id) {
@@ -185,37 +185,37 @@ fn accumulate(grad_map: &mut HashMap<SSAId, SSAId>,
     }
 }
 
-; =============================================================================
-; PART 3 — EXAMPLE: WHAT THE COMPILER GENERATES
-; =============================================================================
-; Given this user code:
+// =============================================================================
+// PART 3 — EXAMPLE: WHAT THE COMPILER GENERATES
+// =============================================================================
+// Given this user code:
 
 @differentiable
 fn simple_loss(x: ref Tensor<[N], f32>, w: ref Tensor<[N], f32>) -> f32 {
-    let y = (x * w).sum()    ; dot product
-    ret y * y                 ; squared
+    let y = (x * w).sum()    // dot product
+    ret y * y                 // squared
 }
 
-; The compiler generates this backward pass (as actual jda source, not a graph):
+// The compiler generates this backward pass (as actual jda source, not a graph):
 
 fn simple_loss_grad(x: ref Tensor<[N], f32>, w: ref Tensor<[N], f32>)
                    -> (Tensor<[N], f32>, Tensor<[N], f32>) {
-    ; Forward values needed for backward (recomputed or cached)
+    // Forward values needed for backward (recomputed or cached)
     let y    = (x * w).sum()
-    let g_y2 = 2.0 * y              ; d(y²)/dy = 2y, g_out = 1.0 (seed)
-    let g_y  = g_y2 * 1.0           ; g_out flows through *
-    ; sum backward: broadcast g_y to shape of (x*w)
+    let g_y2 = 2.0 * y              // d(y²)/dy = 2y, g_out = 1.0 (seed)
+    let g_y  = g_y2 * 1.0           // g_out flows through *
+    // sum backward: broadcast g_y to shape of (x*w)
     let g_xw = Tensor<[N], f32>::fill(g_y)
-    ; mul backward: g_x = g_xw * w, g_w = g_xw * x
+    // mul backward: g_x = g_xw * w, g_w = g_xw * x
     let g_x  = g_xw * w
     let g_w  = g_xw * x
     ret (g_x, g_w)
 }
 
-; Compare with PyTorch:
-;   loss.backward()  — traverses runtime graph, allocates grad tensors,
-;                       calls C++ autograd engine, crosses Python/C++ boundary
-;
-; jda:
-;   simple_loss_grad(x, w)  — pure function call, no graph, no overhead,
-;                              inlined by compiler, optimised with AVX-512/PTX
+// Compare with PyTorch:
+//   loss.backward()  — traverses runtime graph, allocates grad tensors,
+//                       calls C++ autograd engine, crosses Python/C++ boundary
+//
+// jda:
+//   simple_loss_grad(x, w)  — pure function call, no graph, no overhead,
+//                              inlined by compiler, optimised with AVX-512/PTX
