@@ -451,6 +451,15 @@ let g_top_fn_cnt = 0
 let g_fn_reach_tbl: &i64 = 0
 let g_fn_caller_cnt_tbl: &i64 = 0
 let g_orig_src_len: i64 = 0
+// PGO globals (8 total to stay under bootstrap 256-global limit)
+let g_pgo_mode: i64 = 0
+let g_use_profile: i64 = 0
+let g_pgo_fixup: &i64 = 0
+let g_pgo_fixup_cnt: i64 = 0
+let g_pgo_bb_global: i64 = 0
+let g_pgo_dump_fn_off: i64 = 0
+let g_profile_data: &i64 = 0
+let g_pgo_bb_order: &i64 = 0
 // Lambda stash for deferred compilation
 let g_lambda_cnt = 0
 // Compile state globals for lambda compilation helper
@@ -17716,6 +17725,21 @@ fn lower_instr_ctrl(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if is_ret == 1 {
         let src_r = get_or_load(ctx.ra, out, pos, ins.operand0)
         if g_lower_is_main == 1 {
+            if g_pgo_mode == 1 {
+                // Profile mode: main returns to _start so _start can call dump fn
+                emit_byte(out, pos, 0x48)
+                emit_byte(out, pos, 0x8D)
+                emit_byte(out, pos, 0x65)
+                emit_byte(out, pos, 0xE0)
+                emit_pop_r(out, pos, PHYS_R15)
+                emit_pop_r(out, pos, PHYS_R14)
+                emit_pop_r(out, pos, PHYS_R13)
+                emit_pop_r(out, pos, PHYS_RBX)
+                emit_pop_r(out, pos, PHYS_RBP)
+                emit_ret_instr(out, pos)
+                consume_use(ctx, ins.operand0)
+                ret 1
+            }
             if src_r != PHYS_RDI {
                 emit_mov_rr(out, pos, PHYS_RDI, src_r)
             }
@@ -24317,10 +24341,12 @@ fn compute_block_indeg(jfn: &JirFunction) -> i64 {
 
 fn lower_fn_emit_blocks(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) {
     compute_block_indeg(jfn)
+    let fn_bb_start = g_pgo_bb_global
     let i = 0
     loop i < jfn.block_cnt {
-        ctx.bb_offsets[i] = pos[0]
-        g_cur_block_idx = i
+        let bi = pgo_get_bi(i, jfn.block_cnt)
+        ctx.bb_offsets[bi] = pos[0]
+        g_cur_block_idx = bi
         // Flag-reuse: check 2-slot pending table (slot0=newest, slot1=older)
         let fr_match = 0
         if i == g_cfuse_t0 {
@@ -24360,11 +24386,14 @@ fn lower_fn_emit_blocks(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) 
             g_cfuse_cur_can_prop = 0
         }
         g_fre_pass_ok = fr_match
+        if g_pgo_mode == 1 {
+            pgo_emit_counter_inc(out, pos, fn_bb_start + bi)
+        }
         // Emit writebacks at start of exit block (promoted regs → memory)
-        if g_promo_cnt > 0 and i == g_promo_exit {
+        if g_promo_cnt > 0 and bi == g_promo_exit {
             _emit_promo_writebacks(out, pos)
         }
-        lower_block(jfn.blocks[i], ctx, jfn, out, pos)
+        lower_block(jfn.blocks[bi], ctx, jfn, out, pos)
         i = i + 1
     }
     g_cur_block_idx = -1
@@ -24372,6 +24401,21 @@ fn lower_fn_emit_blocks(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64) 
 
 fn lower_fn_emit_epilogue(out: &i8, pos: &i64, is_main: i64) {
     if is_main == 1 {
+        if g_pgo_mode == 1 {
+            // In profile mode main must return to _start so _start can call the dump fn;
+            // restore callee-saved regs the same way regular functions do
+            emit_byte(out, pos, 0x48)
+            emit_byte(out, pos, 0x8D)
+            emit_byte(out, pos, 0x65)
+            emit_byte(out, pos, 0xE0)
+            emit_pop_r(out, pos, PHYS_R15)
+            emit_pop_r(out, pos, PHYS_R14)
+            emit_pop_r(out, pos, PHYS_R13)
+            emit_pop_r(out, pos, PHYS_RBX)
+            emit_pop_r(out, pos, PHYS_RBP)
+            emit_ret_instr(out, pos)
+            ret ok(0)
+        }
         emit_byte(out, pos, 0x48)
         emit_byte(out, pos, 0xC7)
         emit_byte(out, pos, 0xC0)
@@ -24447,7 +24491,13 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     lower_fn_mark_promo_patterns(jfn, ctx)
     linear_scan(jfn)
     lower_fn_preload_promo_params(jfn, out, pos)
+    if g_use_profile == 1 {
+        pgo_compute_bb_order(jfn.block_cnt, g_pgo_bb_global)
+    }
     lower_fn_emit_blocks(jfn, ctx, out, pos)
+    if g_pgo_mode == 1 or g_use_profile == 1 {
+        g_pgo_bb_global = g_pgo_bb_global + jfn.block_cnt
+    }
     // Patch frame size to actual usage (P1: right-sized stack frames)
     if is_main != 1 {
         let real_frame = ctx.ra.sp_top
@@ -24814,6 +24864,227 @@ fn parse_macos_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
     }
     ret ai
 }
+
+fn parse_profile_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    if argc > ai {
+        let maybe = get_argv(argv_ptr, ai)
+        if cstr_eq(maybe, "--profile") == 1 {
+            g_pgo_mode = 1
+            ret ai + 1
+        }
+    }
+    ret ai
+}
+
+fn parse_use_profile_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    if argc > ai {
+        let maybe = get_argv(argv_ptr, ai)
+        if cstr_eq(maybe, "--use-profile") == 1 {
+            if argc > ai + 1 {
+                g_use_profile = 1
+                read_pgo_profile(get_argv(argv_ptr, ai + 1))
+                ret ai + 2
+            }
+        }
+    }
+    ret ai
+}
+
+fn pgo_alloc_tables() {
+    // Interleaved fixup: [co0, bb0, co1, bb1, ...] — 2 qwords per entry
+    g_pgo_fixup     = alloc_pages(16) as &i64
+    g_pgo_bb_order  = alloc_pages(1)  as &i64
+    g_pgo_fixup_cnt = 0
+    g_pgo_bb_global = 0
+}
+
+fn pgo_emit_counter_inc(out: &i8, pos: &i64, bb_idx: i64) {
+    let co = pos[0] + 3
+    let k = g_pgo_fixup_cnt * 2
+    g_pgo_fixup[k]     = co
+    g_pgo_fixup[k + 1] = bb_idx
+    g_pgo_fixup_cnt = g_pgo_fixup_cnt + 1
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0x05)
+    emit_i32_le(out, pos, 0)
+}
+
+fn pgo_emit_dump_fn(code_buf: &i8, pos: &i64, bb_cnt: i64) {
+    g_pgo_dump_fn_off = pos[0]
+    let sz = (3 + bb_cnt) * 8
+    // _jda_profile_dump body (68 bytes):
+    // +0:  push rbx
+    // +1:  push r12
+    // +3:  lea rdi,[rip+58]  → path at +68
+    // +10: mov esi,0x241  (O_WRONLY|O_CREAT|O_TRUNC)
+    // +15: mov edx,0x1A4  (mode 0644)
+    // +20: mov eax,2  (sys_open)
+    // +25: syscall
+    // +27: test rax,rax
+    // +30: js +32  (.done at +64)
+    // +32: mov ebx,eax  (save fd)
+    // +34: lea rsi,[rip+51]  → counter region at +92
+    // +41: mov edx,sz
+    // +46: mov edi,ebx
+    // +48: mov eax,1  (sys_write)
+    // +53: syscall
+    // +55: mov edi,ebx
+    // +57: mov eax,3  (sys_close)
+    // +62: syscall
+    // +64: pop r12  (.done)
+    // +66: pop rbx
+    // +67: ret
+    emit_byte(code_buf, pos, 0x53)
+    emit_byte(code_buf, pos, 0x41)
+    emit_byte(code_buf, pos, 0x54)
+    emit_byte(code_buf, pos, 0x48)
+    emit_byte(code_buf, pos, 0x8D)
+    emit_byte(code_buf, pos, 0x3D)
+    emit_i32_le(code_buf, pos, 58)
+    emit_byte(code_buf, pos, 0xBE)
+    emit_i32_le(code_buf, pos, 0x241)
+    emit_byte(code_buf, pos, 0xBA)
+    emit_i32_le(code_buf, pos, 0x1A4)
+    emit_byte(code_buf, pos, 0xB8)
+    emit_i32_le(code_buf, pos, 2)
+    emit_byte(code_buf, pos, 0x0F)
+    emit_byte(code_buf, pos, 0x05)
+    emit_byte(code_buf, pos, 0x48)
+    emit_byte(code_buf, pos, 0x85)
+    emit_byte(code_buf, pos, 0xC0)
+    emit_byte(code_buf, pos, 0x78)
+    emit_byte(code_buf, pos, 0x20)
+    emit_byte(code_buf, pos, 0x89)
+    emit_byte(code_buf, pos, 0xC3)
+    emit_byte(code_buf, pos, 0x48)
+    emit_byte(code_buf, pos, 0x8D)
+    emit_byte(code_buf, pos, 0x35)
+    emit_i32_le(code_buf, pos, 51)
+    emit_byte(code_buf, pos, 0xBA)
+    emit_i32_le(code_buf, pos, sz)
+    emit_byte(code_buf, pos, 0x89)
+    emit_byte(code_buf, pos, 0xDF)
+    emit_byte(code_buf, pos, 0xB8)
+    emit_i32_le(code_buf, pos, 1)
+    emit_byte(code_buf, pos, 0x0F)
+    emit_byte(code_buf, pos, 0x05)
+    emit_byte(code_buf, pos, 0x89)
+    emit_byte(code_buf, pos, 0xDF)
+    emit_byte(code_buf, pos, 0xB8)
+    emit_i32_le(code_buf, pos, 3)
+    emit_byte(code_buf, pos, 0x0F)
+    emit_byte(code_buf, pos, 0x05)
+    emit_byte(code_buf, pos, 0x41)
+    emit_byte(code_buf, pos, 0x5C)
+    emit_byte(code_buf, pos, 0x5B)
+    emit_byte(code_buf, pos, 0xC3)
+    // Path string: "/tmp/jda_profile.bin\0\0\0\0" (24 bytes)
+    emit_byte(code_buf, pos, 47)
+    emit_byte(code_buf, pos, 116)
+    emit_byte(code_buf, pos, 109)
+    emit_byte(code_buf, pos, 112)
+    emit_byte(code_buf, pos, 47)
+    emit_byte(code_buf, pos, 106)
+    emit_byte(code_buf, pos, 100)
+    emit_byte(code_buf, pos, 97)
+    emit_byte(code_buf, pos, 95)
+    emit_byte(code_buf, pos, 112)
+    emit_byte(code_buf, pos, 114)
+    emit_byte(code_buf, pos, 111)
+    emit_byte(code_buf, pos, 102)
+    emit_byte(code_buf, pos, 105)
+    emit_byte(code_buf, pos, 108)
+    emit_byte(code_buf, pos, 101)
+    emit_byte(code_buf, pos, 46)
+    emit_byte(code_buf, pos, 98)
+    emit_byte(code_buf, pos, 105)
+    emit_byte(code_buf, pos, 110)
+    emit_byte(code_buf, pos, 0)
+    emit_byte(code_buf, pos, 0)
+    emit_byte(code_buf, pos, 0)
+    emit_byte(code_buf, pos, 0)
+    // Counter region header: [bb_count, version=1, reserved=0]
+    emit_i64_le(code_buf, pos, bb_cnt)
+    emit_i64_le(code_buf, pos, 1)
+    emit_i64_le(code_buf, pos, 0)
+    // Counter slots: bb_cnt * 8 bytes (all zeros)
+    let dump_ci = 0
+    loop dump_ci < bb_cnt {
+        emit_i64_le(code_buf, pos, 0)
+        dump_ci = dump_ci + 1
+    }
+}
+
+fn pgo_patch_counter_fixups(code_buf: &i8) {
+    // Counter[i] is at: g_pgo_dump_fn_off + 68 + 24 + 24 + i*8 = base + 116 + i*8
+    let base = g_pgo_dump_fn_off + 116
+    let k = 0
+    loop k < g_pgo_fixup_cnt {
+        let ki = k * 2
+        let co = g_pgo_fixup[ki]
+        let bb = g_pgo_fixup[ki + 1]
+        let disp = base + bb * 8 - (co + 4)
+        poke_byte(code_buf, co,     i32_b0(disp))
+        poke_byte(code_buf, co + 1, i32_b1(disp))
+        poke_byte(code_buf, co + 2, i32_b2(disp))
+        poke_byte(code_buf, co + 3, i32_b3(disp))
+        k = k + 1
+    }
+}
+
+fn read_pgo_profile(path: &i8) {
+    let fd = syscall(2, path, 0, 0)
+    if fd < 0 { ret ok(0) }
+    let buf = alloc_pages(16)
+    let n = syscall(0, fd, buf, 65536)
+    syscall(3, fd, 0, 0)
+    if n < 24 { ret ok(0) }
+    g_profile_data = buf as &i64
+}
+
+fn pgo_compute_bb_order(block_cnt: i64, fn_bb_start: i64) {
+    let i = 0
+    loop i < block_cnt {
+        g_pgo_bb_order[i] = i
+        i = i + 1
+    }
+    if g_profile_data == 0 { ret ok(0) }
+    if g_profile_data[0] < fn_bb_start + block_cnt { ret ok(0) }
+    // Insertion sort: keep BB 0 at position 0, sort [1..block_cnt-1] descending by count
+    let j = 2
+    loop j < block_cnt {
+        let key_bb = g_pgo_bb_order[j]
+        let key_cnt = g_profile_data[3 + fn_bb_start + key_bb]
+        let k = j - 1
+        let go = 1
+        loop go == 1 {
+            if k < 1 { go = 0 }
+            if go == 1 {
+                let prev = g_profile_data[3 + fn_bb_start + g_pgo_bb_order[k]]
+                if prev < key_cnt {
+                    g_pgo_bb_order[k + 1] = g_pgo_bb_order[k]
+                    k = k - 1
+                }
+                if prev >= key_cnt { go = 0 }
+            }
+        }
+        g_pgo_bb_order[k + 1] = key_bb
+        j = j + 1
+    }
+}
+
+fn pgo_get_bi(i: i64, block_cnt: i64) -> i64 {
+    if g_use_profile == 1 {
+        g_cfuse_t0 = -1
+        g_cfuse_t1 = -1
+        if g_promo_cnt == 0 and g_pgo_bb_order != 0 {
+            ret g_pgo_bb_order[i]
+        }
+    }
+    ret i
+}
+
 
 // Compare two null-terminated C strings. Returns 1 if equal, 0 otherwise.
 fn cstr_eq(a: &i8, b: &i8) -> i64 {
@@ -25617,6 +25888,8 @@ fn main(argc: i64, argv_ptr: &i64) {
         }
         ai = parse_safe_flag(argc, argv_ptr, ai)
         ai = parse_macos_flag(argc, argv_ptr, ai)
+        ai = parse_profile_flag(argc, argv_ptr, ai)
+        ai = parse_use_profile_flag(argc, argv_ptr, ai)
         if argc <= ai {
             eprint("error: missing input file\n")
             print_usage()
@@ -25829,6 +26102,11 @@ fn main(argc: i64, argv_ptr: &i64) {
     emit_byte(code_buf, &code_len, 0x08)
     emit_byte(code_buf, &code_len, 0xE8)             // call rel32
     emit_i32_le(code_buf, &code_len, 0)              // placeholder
+    if g_pgo_mode == 1 {
+        // dump call at offset 53; imm32 at 54 (hardcoded in fixup below)
+        emit_byte(code_buf, &code_len, 0xE8)
+        emit_i32_le(code_buf, &code_len, 0)
+    }
     emit_byte(code_buf, &code_len, 0xB8)
     let exit_nr = p_sys_exit()
     emit_i32_le(code_buf, &code_len, exit_nr)
@@ -25886,6 +26164,9 @@ fn main(argc: i64, argv_ptr: &i64) {
     let jfn = g_jfn
     let ctx = g_ctx
     g_entry_main_idx = -1
+    if g_pgo_mode == 1 or g_use_profile == 1 {
+        pgo_alloc_tables()
+    }
 
     // Main Compilation Loop
     g_main_pos = 0
@@ -26089,6 +26370,12 @@ fn main(argc: i64, argv_ptr: &i64) {
         }
     }
 
+    // ---- PGO: emit dump function and patch counter fixups ----
+    if g_pgo_mode == 1 {
+        pgo_emit_dump_fn(code_buf, &code_len, g_pgo_bb_global)
+        pgo_patch_counter_fixups(code_buf)
+    }
+
     // ---- Patch Entry Point ----
     let m_off = load_i64_at(fn_code_off, 0)
     if g_entry_main_idx >= 0 { m_off = g_entry_main_idx }
@@ -26099,6 +26386,14 @@ fn main(argc: i64, argv_ptr: &i64) {
     poke_byte(code_buf, entry_call_imm_off + 1, i32_b1(e_rel))
     poke_byte(code_buf, entry_call_imm_off + 2, i32_b2(e_rel))
     poke_byte(code_buf, entry_call_imm_off + 3, i32_b3(e_rel))
+    if g_pgo_mode == 1 and g_pgo_dump_fn_off > 0 {
+        // dump call imm32 at offset 54 (call at 53, rip_after = 58)
+        let dump_rel = g_pgo_dump_fn_off - 58
+        poke_byte(code_buf, 54, i32_b0(dump_rel))
+        poke_byte(code_buf, 55, i32_b1(dump_rel))
+        poke_byte(code_buf, 56, i32_b2(dump_rel))
+        poke_byte(code_buf, 57, i32_b3(dump_rel))
+    }
 
     // ---- Global Fixups (String/Calls) ----
     let fix_va = p_load_va()
