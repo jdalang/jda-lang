@@ -5,7 +5,7 @@
 #define MyAppName "Jda Programming Language"
 #define MyAppVersion GetEnv('JDA_VERSION')
 #if MyAppVersion == ""
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "0.2.0"
 #endif
 #define MyAppPublisher "Jda Language Team"
 #define MyAppURL "https://github.com/jdalang/jda-lang"

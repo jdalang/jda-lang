@@ -514,29 +514,6 @@ write_css
 </head>
 <body>
 <h1>Jda Documentation</h1>
-
-<section class="news">
-<h2>Latest News</h2>
-<div class="item">
-  <h3>May 9, 2026: Jda v1.0.0 Released</h3>
-  <p>We’re happy to announce the release of Jda v1.0.0.</p>
-  <ul>
-    <li><strong>Defer statements</strong> — <code>defer file_close(fd)</code> schedules cleanup at function exit.</li>
-    <li><strong>114 stdlib packages</strong> — New: datetime, calendar, httpserver, httpclient, etc.</li>
-    <li><strong>Const generics</strong> — <code>fn zeros&lt;const N&gt;()</code> for compile-time parameters.</li>
-    <li><strong>Compound assignment</strong> — <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code> operators.</li>
-    <li><strong>Improved error messages</strong> — Filename and line numbers in all compiler errors.</li>
-    <li><strong>Package manager</strong> — <code>jda pkg install</code>, <code>jda pkg list</code>.</li>
-    <li><strong>Unsafe blocks</strong> — <code>unsafe { ... }</code> for low-level operations.</li>
-    <li><strong>VS Code extension</strong> — Syntax highlighting and LSP integration.</li>
-  </ul>
-</div>
-<div class="item">
-  <h3>March 1, 2026: Jda v0.1.0 Released</h3>
-  <p>Initial public release of the Jda programming language.</p>
-</div>
-</section>
-
 <h2>Modules</h2>
 <ul>
 HEADEOF

@@ -18,31 +18,6 @@
 
 ---
 
-## News
-
-### May 9, 2026: Jda v1.0.0 Released
-
-We’re happy to announce the release of Jda v1.0.0.
-
-#### Highlights
-- **Defer statements** — `defer file_close(fd)` schedules cleanup at function exit. Multiple defers run in LIFO order.
-- **114 stdlib packages** — New: `datetime`, `calendar`, `httpserver`, `httpclient`, `tarfile`, `zipfile`, `statistics`, `configparser`, `toml`, `htmlparser`, `xml`, and more.
-- **Const generics** — `fn zeros<const N>() -> [i64; N]` for compile-time integer parameters.
-- **Compound assignment** — `+=`, `-=`, `*=`, `/=` operators.
-- **Improved error messages** — Filename and line numbers in all compiler errors.
-- **Package manager** — `jda pkg install`, `jda pkg list`, `jda pkg search`.
-- **Unsafe blocks** — `unsafe { ... }` for low-level operations. Compile with `--safe` to enforce.
-- **VS Code extension** — Syntax highlighting, LSP integration, hover docs, diagnostics, and code snippets for `.jda` files.
-
-#### Download
-Get Jda v1.0.0 from the [Download & Install](#download--install) section.
-
----
-
-### March 1, 2026: Jda v0.1.0 Released
-
-Initial public release of the Jda programming language.
-
 ## Highlights
 
 - **Self-hosted** — the compiler is written entirely in Jda (zero C/C++/Rust)
@@ -58,7 +33,7 @@ Initial public release of the Jda programming language.
 
 ## Current Status
 
-**Self-hosting converged** (March 1, 2026). The compiler compiles itself and produces a byte-identical binary:
+**Self-hosting converged** (April 2, 2026). The compiler compiles itself and produces a byte-identical binary:
 
 ```
 jda0 (asm) → jda1 (374 KB) → jda1_sh2 (2.1 MB) → jda1_sh3

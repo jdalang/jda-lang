@@ -540,7 +540,7 @@ fn main() -> i64 {
 fn main() -> i64 {
     let m = hashmap_new()
     hashmap_set(m, "name", "Jda")
-    hashmap_set(m, "version", "1.0.0")
+    hashmap_set(m, "version", "0.2.0")
     let name = hashmap_get(m, "name")
     print(name)
     print("\n")
