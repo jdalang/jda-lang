@@ -450,6 +450,7 @@ let g_cur_fn_end = 0
 let g_top_fn_cnt = 0
 let g_fn_reach_tbl: &i64 = 0
 let g_fn_caller_cnt_tbl: &i64 = 0
+let g_orig_src_len: i64 = 0
 // Lambda stash for deferred compilation
 let g_lambda_cnt = 0
 // Compile state globals for lambda compilation helper
@@ -4916,9 +4917,9 @@ fn scan_top_fn_calls(toks: &Token, src: &i8, body_lbrace: i64, body_rbrace: i64,
     let i = body_lbrace + 1
     loop i < body_rbrace {
         if tok_type_at_raw(toks, i) == TOK_IDENT {
+            let ns = tok_str_start_at(toks, i)
+            let nl = tok_str_len_at(toks, i)
             if tok_type_at_raw(toks, i + 1) == TOK_LPAREN {
-                let ns = tok_str_start_at(toks, i)
-                let nl = tok_str_len_at(toks, i)
                 let callee_fi = resolve_top_fn_index(src, ns, nl, g_fn_name_off_tbl, g_fn_name_len_tbl)
                 if callee_fi >= 0 and callee_fi < g_top_fn_cnt {
                     if do_count == 1 {
@@ -4928,6 +4929,27 @@ fn scan_top_fn_calls(toks: &Token, src: &i8, body_lbrace: i64, body_rbrace: i64,
                         if g_fn_reach_tbl[caller_fi] == 1 and g_fn_reach_tbl[callee_fi] == 0 {
                             g_fn_reach_tbl[callee_fi] = 1
                             changed = 1
+                        }
+                    }
+                }
+                // fn_addr(name) — mark the referenced function as called
+                if nl == 7 and streq(src, ns, 7, "fn_addr") == 1 {
+                    if i + 2 < body_rbrace {
+                        if tok_type_at_raw(toks, i + 2) == TOK_IDENT {
+                            let ref_ns = tok_str_start_at(toks, i + 2)
+                            let ref_nl = tok_str_len_at(toks, i + 2)
+                            let ref_fi = resolve_top_fn_index(src, ref_ns, ref_nl, g_fn_name_off_tbl, g_fn_name_len_tbl)
+                            if ref_fi >= 0 and ref_fi < g_top_fn_cnt {
+                                if do_count == 1 {
+                                    g_fn_caller_cnt_tbl[ref_fi] = g_fn_caller_cnt_tbl[ref_fi] + 1
+                                }
+                                if do_mark == 1 and caller_fi >= 0 and caller_fi < g_top_fn_cnt {
+                                    if g_fn_reach_tbl[caller_fi] == 1 and g_fn_reach_tbl[ref_fi] == 0 {
+                                        g_fn_reach_tbl[ref_fi] = 1
+                                        changed = 1
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -4951,7 +4973,9 @@ fn count_top_fn_callers(toks: &Token, src: &i8) {
     let scan_i = 0
     loop scan_i < g_scan_tok_cnt {
         let top_t = tok_type_at_raw(toks, scan_i)
-        if top_t == TOK_FN {
+        let top_start = tok_str_start_at(toks, scan_i)
+        let top_len = tok_str_len_at(toks, scan_i)
+        if top_t == TOK_FN or (top_len == 2 and streq(src, top_start, 2, "fn") == 1) {
             let name_off = tok_str_start_at(toks, scan_i + 1)
             let name_len = tok_str_len_at(toks, scan_i + 1)
             let fi = resolve_top_fn_index(src, name_off, name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
@@ -4979,7 +5003,9 @@ fn mark_live_top_fns(toks: &Token, src: &i8) {
         let scan_i = 0
         loop scan_i < g_scan_tok_cnt {
             let top_t = tok_type_at_raw(toks, scan_i)
-            if top_t == TOK_FN {
+            let top_start = tok_str_start_at(toks, scan_i)
+            let top_len = tok_str_len_at(toks, scan_i)
+            if top_t == TOK_FN or (top_len == 2 and streq(src, top_start, 2, "fn") == 1) {
                 let name_off = tok_str_start_at(toks, scan_i + 1)
                 let name_len = tok_str_len_at(toks, scan_i + 1)
                 let fi = resolve_top_fn_index(src, name_off, name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
@@ -5007,6 +5033,22 @@ fn build_top_fn_liveness(toks: &Token, src: &i8) {
     zero_top_fn_dce_tables()
     count_top_fn_callers(toks, src)
     mark_live_top_fns(toks, src)
+}
+
+fn should_skip_compile_fn(fi: i64, name_off: i64, name_len: i64) -> i64 {
+    if fi < 0 or fi >= g_top_fn_cnt { ret 0 }
+    if g_fn_caller_cnt_tbl == 0 or g_fn_reach_tbl == 0 { ret 0 }
+    if g_fn_caller_cnt_tbl[fi] != 0 or g_fn_reach_tbl[fi] != 0 { ret 0 }
+    // Expansion products (impl/generic/trait methods) have names in appended source
+    if g_orig_src_len > 0 {
+        if load_i64_at(g_fn_name_off_tbl, fi) >= g_orig_src_len { ret 0 }
+    }
+    // Runtime hooks starting with __ (e.g. __thread_done used by spawn)
+    if name_len >= 2 {
+        let src = g_src_buf_ptr
+        if src[name_off] == 95 and src[name_off + 1] == 95 { ret 0 }
+    }
+    ret 1
 }
 
 fn load_top_fields(loop_pos: i64, out_t: &i64, out_start: &i64, out_len: &i64) {
@@ -25662,18 +25704,11 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_dbg_toks = toks
     g_dbg_toks_init = toks
     let tok_cnt = lex_main_input()
-    print("LEX_OK tc=")
-    print_i64(g_lex_count)
-    print("\n")
     g_dbg_tok_cnt = g_lex_count
     g_scan_tok_cnt = g_lex_count
-    print("INIT_STATE\n")
     init_large_post_lex_state()
-    print("CONST_PRE\n")
     run_top_const_prelude(g_dbg_toks_init, g_src_buf_ptr, g_runtime_src_len)
-    print("STRUCT_PRE\n")
     run_top_struct_prelude(g_dbg_toks_init, g_stab_ptr, g_src_buf_ptr, g_runtime_src_len)
-    print("FN_SCAN\n")
     // Pass 1: Scan for global functions
     let fn_name_off = alloc_pages(2)
     let fn_name_len = alloc_pages(2)
@@ -25713,9 +25748,8 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_trait_buf = alloc_pages(2)
     g_trait_cnt = 0
     g_trait_copy_pos = g_scan_tok_cnt + 2000
-    print("PREP_FN\n")
     prepare_top_fn_scan(toks, src_buf, src_len, fn_name_off, fn_name_len)
-    print("PREP_FN_DONE\n")
+    g_orig_src_len = src_len
     // Generic function expansion: scan, expand, re-scan
     scan_generic_fns(toks, src_buf, g_scan_tok_cnt)
     if g_genfn_buf[0] > 0 {
@@ -25757,97 +25791,53 @@ fn main(argc: i64, argv_ptr: &i64) {
     // Set compile state globals for lambda helper
     g_code_buf = code_buf
     g_merged_str = merged_str
-    print("BUFS_OK\n")
-    print("PRE_EMIT\n")
     // _start: preserve initial stack frame, mmap heap, then call main(argc, argv)
     emit_byte(code_buf, &code_len, 0x48)             // mov rbp, rsp
-    print("E1\n")
     emit_byte(code_buf, &code_len, 0x89)
-    print("E2\n")
     emit_byte(code_buf, &code_len, 0xE5)
-    print("E3\n")
     emit_byte(code_buf, &code_len, 0xB8)             // mov eax, 9
-    print("E4\n")
     let mmap_nr = p_sys_mmap()
     emit_i32_le(code_buf, &code_len, mmap_nr)
-    print("E5\n")
     emit_byte(code_buf, &code_len, 0x31)             // xor edi, edi
-    print("E6\n")
     emit_byte(code_buf, &code_len, 0xFF)
-    print("E7\n")
     emit_byte(code_buf, &code_len, 0xBE)             // mov esi, 0x59A20
-    print("E8\n")
     emit_i32_le(code_buf, &code_len, 367136)
-    print("E9\n")
     emit_byte(code_buf, &code_len, 0xBA)             // mov edx, 3
-    print("E10\n")
     emit_i32_le(code_buf, &code_len, 3)
-    print("E11\n")
     emit_byte(code_buf, &code_len, 0x41)             // mov r10d, 0x22
-    print("E12\n")
     emit_byte(code_buf, &code_len, 0xBA)
-    print("E13\n")
     let mmap_fl = p_mmap_flags()
     emit_i32_le(code_buf, &code_len, mmap_fl)
-    print("E14\n")
     emit_byte(code_buf, &code_len, 0x41)             // mov r8d, -1
-    print("E15\n")
     emit_byte(code_buf, &code_len, 0xB8)
-    print("E16\n")
     emit_i32_le(code_buf, &code_len, -1)
-    print("E17\n")
     emit_byte(code_buf, &code_len, 0x45)             // xor r9d, r9d
-    print("E18\n")
     emit_byte(code_buf, &code_len, 0x31)
-    print("E19\n")
     emit_byte(code_buf, &code_len, 0xC9)
-    print("E20\n")
     emit_byte(code_buf, &code_len, 0x0F)             // syscall
-    print("E21\n")
     emit_byte(code_buf, &code_len, 0x05)
-    print("E22\n")
     emit_byte(code_buf, &code_len, 0x49)             // mov r15, rax
-    print("E23\n")
     emit_byte(code_buf, &code_len, 0x89)
-    print("E24\n")
     emit_byte(code_buf, &code_len, 0xC7)
-    print("E25\n")
     emit_byte(code_buf, &code_len, 0x48)             // mov rdi, [rbp+0]
-    print("E26\n")
     emit_byte(code_buf, &code_len, 0x8B)
-    print("E27\n")
     emit_byte(code_buf, &code_len, 0x7D)
-    print("E28\n")
     emit_byte(code_buf, &code_len, 0x00)
-    print("E29\n")
     emit_byte(code_buf, &code_len, 0x48)             // lea rsi, [rbp+8]
-    print("E30\n")
     emit_byte(code_buf, &code_len, 0x8D)
-    print("E31\n")
     emit_byte(code_buf, &code_len, 0x75)
-    print("E32\n")
     emit_byte(code_buf, &code_len, 0x08)
-    print("E33\n")
     emit_byte(code_buf, &code_len, 0xE8)             // call rel32
-    print("E34\n")
     emit_i32_le(code_buf, &code_len, 0)              // placeholder
-    print("E35\n")
     emit_byte(code_buf, &code_len, 0xB8)
-    print("E36\n")
     let exit_nr = p_sys_exit()
     emit_i32_le(code_buf, &code_len, exit_nr)
-    print("E37\n")
     emit_byte(code_buf, &code_len, 0x31)
-    print("E38\n")
     emit_byte(code_buf, &code_len, 0xFF)
-    print("E39\n")
     emit_byte(code_buf, &code_len, 0x0F)
-    print("E40\n")
     emit_byte(code_buf, &code_len, 0x05)
-    print("E41\n")
 
     // Fixup arrays
-    print("FIXUP_ALLOC\n")
     let gf_strtab_co   = alloc_pages(16)
     let gf_strtab_tgt  = alloc_pages(16)
     let gf_strtab_base = alloc_pages(16)
@@ -25896,15 +25886,9 @@ fn main(argc: i64, argv_ptr: &i64) {
     let jfn = g_jfn
     let ctx = g_ctx
     g_entry_main_idx = -1
-    print("LS_INIT_OK\n")
 
     // Main Compilation Loop
     g_main_pos = 0
-    print("Z1\n")
-    if g_main_pos < g_scan_tok_cnt {
-        print("Z4\n")
-    }
-    print("Z5\n")
     loop g_main_pos < g_scan_tok_cnt {
         let top_t = tok_type_at_raw(toks, g_main_pos)
         let top_start = tok_str_start_at(toks, g_main_pos)
@@ -25941,18 +25925,11 @@ fn main(argc: i64, argv_ptr: &i64) {
             g_cur_fn_end = fn_rbrace_scan
             let fi = resolve_top_fn_index(src_buf, cur_name_off, cur_name_len, fn_name_off, fn_name_len)
             let should_compile_fn = 1
-            if fi >= 0 and fi < g_top_fn_cnt {
-                if g_fn_reach_tbl != 0 {
-                    if g_fn_reach_tbl[fi] == 0 { should_compile_fn = 0 }
-                }
+            if should_skip_compile_fn(fi, cur_name_off, cur_name_len) == 1 {
+                should_compile_fn = 0
             }
             if should_compile_fn == 1 {
-                print("COMPILE ")
-                print_span(src_buf, cur_name_off, cur_name_len)
-                print("\n")
-                print("FI_OK\n")
                 init_top_jfn(jfn, src_buf, src_len, g_stab_ptr)
-                print("INIT_OK\n")
                 // Skip 'fn name'
                 g_main_pos = fn_tok_pos + 2
                 expect(TOK_LPAREN)
