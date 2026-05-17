@@ -8,8 +8,8 @@ Pick the installer for your platform:
 |----------|----------|---------------|
 | **Windows 10/11** | [`.exe` installer](https://github.com/jdalang/jda-lang/releases/latest) | Double-click, follow wizard |
 | **macOS** | [`.pkg` installer](https://github.com/jdalang/jda-lang/releases/latest) | Double-click, follow prompts |
-| **Ubuntu / Debian** | [`.deb` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo dpkg -i jda_0.2.0_amd64.deb` |
-| **Fedora / RHEL / CentOS** | [`.rpm` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo rpm -i jda-0.2.0-1.x86_64.rpm` |
+| **Ubuntu / Debian** | [`.deb` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo dpkg -i jda_1.0.0_amd64.deb` |
+| **Fedora / RHEL / CentOS** | [`.rpm` package](https://github.com/jdalang/jda-lang/releases/latest) | `sudo rpm -i jda-1.0.0-1.x86_64.rpm` |
 | **Arch Linux** | Tarball | [Manual install](#linux-tarball) |
 | **FreeBSD** | Tarball | [Manual install](#freebsd) |
 
@@ -25,7 +25,7 @@ jda version
 
 ### Option 1: .exe Installer (recommended)
 
-1. Download `jda-0.2.0-windows-setup.exe` from the [releases page](https://github.com/jdalang/jda-lang/releases/latest)
+1. Download `jda-1.0.0-windows-setup.exe` from the [releases page](https://github.com/jdalang/jda-lang/releases/latest)
 2. Double-click to run the installer
 3. Follow the installation wizard
 4. Open a new Command Prompt or PowerShell and run:
@@ -67,7 +67,7 @@ This gives you native Linux performance. Recommended for development.
 
 ### Option 1: .pkg Installer (recommended)
 
-1. Download `jda-0.2.0-macos.pkg` from the [releases page](https://github.com/jdalang/jda-lang/releases/latest)
+1. Download `jda-1.0.0-macos.pkg` from the [releases page](https://github.com/jdalang/jda-lang/releases/latest)
 2. Double-click to open the installer
 3. Follow the prompts (installs to `/usr/local/jda`)
 4. Open Terminal and run:
@@ -102,10 +102,10 @@ brew install jdalang/tap/jda
 
 ```bash
 # Download
-curl -LO https://github.com/jdalang/jda-lang/releases/latest/download/jda_0.2.0_amd64.deb
+curl -LO https://github.com/jdalang/jda-lang/releases/latest/download/jda_1.0.0_amd64.deb
 
 # Install
-sudo dpkg -i jda_0.2.0_amd64.deb
+sudo dpkg -i jda_1.0.0_amd64.deb
 
 # Verify
 jda version
@@ -131,10 +131,10 @@ curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | 
 
 ```bash
 # Download
-curl -LO https://github.com/jdalang/jda-lang/releases/latest/download/jda-0.2.0-1.x86_64.rpm
+curl -LO https://github.com/jdalang/jda-lang/releases/latest/download/jda-1.0.0-1.x86_64.rpm
 
 # Install
-sudo rpm -i jda-0.2.0-1.x86_64.rpm
+sudo rpm -i jda-1.0.0-1.x86_64.rpm
 
 # Verify
 jda version
@@ -160,11 +160,11 @@ For any Linux distribution (Arch, Alpine, Gentoo, NixOS, etc.):
 
 ```bash
 # Download
-curl -LO https://github.com/jdalang/jda-lang/releases/latest/download/jda-0.2.0-linux-x86_64.tar.gz
+curl -LO https://github.com/jdalang/jda-lang/releases/latest/download/jda-1.0.0-linux-x86_64.tar.gz
 
 # Extract
 mkdir -p ~/.jda
-tar -xzf jda-0.2.0-linux-x86_64.tar.gz -C ~/.jda
+tar -xzf jda-1.0.0-linux-x86_64.tar.gz -C ~/.jda
 
 # Add to PATH
 echo 'export PATH="$HOME/.jda/bin:$PATH"' >> ~/.bashrc
@@ -185,9 +185,9 @@ Jda runs on FreeBSD x86-64 via Linux binary compatibility:
 sudo sysctl kern.elf64.fallback_brand=3
 
 # Then install via tarball
-curl -LO https://github.com/jdalang/jda-lang/releases/latest/download/jda-0.2.0-linux-x86_64.tar.gz
+curl -LO https://github.com/jdalang/jda-lang/releases/latest/download/jda-1.0.0-linux-x86_64.tar.gz
 mkdir -p ~/.jda
-tar -xzf jda-0.2.0-linux-x86_64.tar.gz -C ~/.jda
+tar -xzf jda-1.0.0-linux-x86_64.tar.gz -C ~/.jda
 echo 'export PATH="$HOME/.jda/bin:$PATH"' >> ~/.profile
 ```
 
@@ -209,7 +209,7 @@ The shell installer supports environment variables:
 
 ```bash
 # Install a specific version
-JDA_VERSION=0.2.0 curl -fsSL .../install.sh | sh
+JDA_VERSION=1.0.0 curl -fsSL .../install.sh | sh
 
 # Custom install directory (default: ~/.jda)
 JDA_INSTALL_DIR=/opt/jda curl -fsSL .../install.sh | sh
@@ -235,12 +235,12 @@ curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install-jdavm
 ```bash
 # Install versions
 jdavm install latest        # latest release
-jdavm install 0.2.0         # specific version
+jdavm install 1.0.0         # specific version
 jdavm install 0.1.1         # older version
 
 # Switch versions
-jdavm use 0.2.0             # switch active version
-jdavm default 0.2.0         # set default (persists across shells)
+jdavm use 1.0.0             # switch active version
+jdavm default 1.0.0         # set default (persists across shells)
 
 # Info
 jdavm list                  # installed versions
@@ -265,11 +265,11 @@ jdavm stores each version in its own directory:
       bin/jda1
       stdlib/
       tools/
-    0.2.0/
+    1.0.0/
       bin/jda1
       stdlib/
       tools/
-  current -> versions/0.2.0  # symlink to active version
+  current -> versions/1.0.0  # symlink to active version
   default                    # persisted default version
 ```
 
@@ -368,7 +368,7 @@ If you get permission errors during install:
 curl -fsSL https://raw.githubusercontent.com/jdalang/jda-lang/main/install.sh | sh
 
 # Or install system-wide
-sudo dpkg -i jda_0.2.0_amd64.deb
+sudo dpkg -i jda_1.0.0_amd64.deb
 ```
 
 ---

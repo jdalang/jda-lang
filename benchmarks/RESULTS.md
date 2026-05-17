@@ -1,6 +1,6 @@
 # Jda Benchmark Results
 
-**Date**: April 8, 2026
+**Date**: May 9, 2026
 **Platform**: Docker (Ubuntu 22.04, linux/amd64) on macOS Apple Silicon — all languages tested in the same containerized environment for fair comparison
 **Methodology**: Best of 3 runs, wall-clock time via `time.perf_counter()`, no warm-up cache tricks
 
