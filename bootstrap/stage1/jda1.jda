@@ -15560,8 +15560,16 @@ fn regalloc_alloc(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) -> i32 {
         if g_val_op[victim] == OP_CONST { do_spill = 0 }
     }
     if do_spill == 1 {
-        let next_sp = ra.sp_top + 8
-        ra.sp_top = next_sp
+        // Task B: prefer a recycled free slot before growing sp_top
+        let next_sp = 0
+        if g_spill_free_cnt > 0 {
+            g_spill_free_cnt = g_spill_free_cnt - 1
+            next_sp = g_spill_free[g_spill_free_cnt]
+        }
+        if next_sp <= 0 {
+            next_sp = ra.sp_top + 8
+            ra.sp_top = next_sp
+        }
         ra.spill_off[victim] = next_sp
         emit_store_spill(out, pos, next_sp, spill_reg)
     }
@@ -15632,7 +15640,7 @@ fn regalloc_free(ra: &RegAlloc, val_id: i64) {
     if idx < 0 { idx_ok = 0 }
     if idx >= N_ALLOC_REGS { idx_ok = 0 }
     if idx_ok != 1 { ret ok(0) }
-    
+
     ra.reg2val[idx]    = -1
     ra.val2reg[val_id] = -1
 }
@@ -15657,6 +15665,13 @@ fn consume_use(ctx: &LowerCtx, val_id: i64) {
     ctx.use_cnt[val_id] = next
     if next <= 0 {
         regalloc_free(ctx.ra, val_id)
+        // Task A: return spill slot to free list when value is truly dead
+        let sp = ctx.ra.spill_off[val_id]
+        if sp > 0 {
+            g_spill_free[g_spill_free_cnt] = sp
+            g_spill_free_cnt = g_spill_free_cnt + 1
+            ctx.ra.spill_off[val_id] = -1
+        }
     }
 }
 
@@ -16591,8 +16606,16 @@ fn ensure_spilled(ra: &RegAlloc, out: &i8, pos: &i64, val_id: i64) {
     if ra.spill_off[val_id] > 0 { ret ok(0) }
     let r = regalloc_get(ra, val_id)
     if r == -1 { ret ok(0) }
-    let next_sp = ra.sp_top + 8
-    ra.sp_top = next_sp
+    // Task B: prefer a recycled free slot before growing sp_top
+    let next_sp = 0
+    if g_spill_free_cnt > 0 {
+        g_spill_free_cnt = g_spill_free_cnt - 1
+        next_sp = g_spill_free[g_spill_free_cnt]
+    }
+    if next_sp <= 0 {
+        next_sp = ra.sp_top + 8
+        ra.sp_top = next_sp
+    }
     ra.spill_off[val_id] = next_sp
     emit_store_spill(out, pos, next_sp, r)
 }
