@@ -93,8 +93,28 @@ for test_file in "$TEST_DIR"/*.jda; do
         fi
     fi
 
+    # Check for .pgo sidecar: two-phase PGO test
+    # File contains one line: the --use-profile pass extra flags (usually empty)
+    pgo_file="$TEST_DIR/${test_name}.pgo"
+    extra_flags=""
+    if [ -f "$pgo_file" ]; then
+        profile_bin="$TMP_DIR/${test_name}.profile.bin"
+        # Phase 1: compile with --profile, run to generate profile data
+        timeout 30 "$JDA" build --profile $include_flag "$test_file" -o "${bin_out}_prof" 2>&1 || true
+        if [ -f "${bin_out}_prof" ]; then
+            chmod +x "${bin_out}_prof"
+            timeout 10 "${bin_out}_prof" > /dev/null 2>&1 || true
+            if [ -f /tmp/jda_profile.bin ]; then
+                cp /tmp/jda_profile.bin "$profile_bin"
+            fi
+        fi
+        if [ -f "$profile_bin" ]; then
+            extra_flags="--use-profile $profile_bin"
+        fi
+    fi
+
     # Compile (30s timeout to prevent hangs on known-failing programs)
-    compile_out=$(timeout 30 "$JDA" build $include_flag "$test_file" -o "$bin_out" 2>&1) || true
+    compile_out=$(timeout 30 "$JDA" build $extra_flags $include_flag "$test_file" -o "$bin_out" 2>&1) || true
     if [ ! -f "$bin_out" ]; then
         is_known=0
         for kf in $KNOWN_FAILURES; do
