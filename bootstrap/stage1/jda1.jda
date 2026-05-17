@@ -17584,7 +17584,7 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
             consume_use(ctx, ins.operand0)
             consume_use(ctx, ins.operand1)
             if ctx.use_cnt[ins.id] == 1 {
-                let fre_ni = g_cur_instr_idx + 1
+                let fre_ni = g_ls_active[g_cur_instr_idx] + 1
                 let fre_cnt = jfn.blocks[g_cur_block_idx].instr_cnt
                 loop fre_ni < fre_cnt {
                     if jfn.blocks[g_cur_block_idx].instrs[fre_ni].dead == 0 {
@@ -17638,7 +17638,7 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         // and let BR emit jcc directly using CPU flags
         if ctx.use_cnt[ins.id] == 1 {
             let can_fuse = 0
-            let ni = g_cur_instr_idx + 1
+            let ni = g_ls_active[g_cur_instr_idx] + 1
             let blk_cnt = jfn.blocks[g_cur_block_idx].instr_cnt
             loop ni < blk_cnt {
                 if jfn.blocks[g_cur_block_idx].instrs[ni].dead == 0 {
@@ -22567,6 +22567,42 @@ fn sched_is_load(op: i64) -> i64 {
     ret 0
 }
 
+// After sched_bb, rewrite g_val_last_use for vals whose last use is in this BB
+// to use scheduled-position coordinates instead of original-position coordinates.
+// This keeps RA eviction correct when instructions are reordered.
+fn sched_fix_last_use(bb_id: i64, jfn: &JirFunction, n: i64) {
+    let base = g_cur_block_idx * 128
+    let sp = 0
+    loop sp < n {
+        let orig = g_ls_active[sp]
+        let o0 = jfn.blocks[bb_id].instrs[orig].operand0
+        let o1 = jfn.blocks[bb_id].instrs[orig].operand1
+        let o2 = jfn.blocks[bb_id].instrs[orig].operand2
+        let o3 = jfn.blocks[bb_id].instrs[orig].operand3
+        if o0 >= 0 and o0 < 8192 {
+            if g_val_last_use[o0] / 128 == g_cur_block_idx {
+                g_val_last_use[o0] = base + sp
+            }
+        }
+        if o1 >= 0 and o1 < 8192 {
+            if g_val_last_use[o1] / 128 == g_cur_block_idx {
+                g_val_last_use[o1] = base + sp
+            }
+        }
+        if o2 >= 0 and o2 < 8192 {
+            if g_val_last_use[o2] / 128 == g_cur_block_idx {
+                g_val_last_use[o2] = base + sp
+            }
+        }
+        if o3 >= 0 and o3 < 8192 {
+            if g_val_last_use[o3] / 128 == g_cur_block_idx {
+                g_val_last_use[o3] = base + sp
+            }
+        }
+        sp = sp + 1
+    }
+}
+
 // Phase 1: init per-instruction scheduling arrays
 fn sched_bb_init(bb_id: i64, jfn: &JirFunction, n: i64) {
     let i = 0
@@ -22725,10 +22761,11 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     bb.label_off = pos[0]
     xmm_reset()
     sched_bb(bb.id, jfn, bb.instr_cnt)
+    sched_fix_last_use(bb.id, jfn, bb.instr_cnt)
     let i = 0
     loop i < bb.instr_cnt {
         let orig = g_ls_active[i]
-        g_cur_instr_idx = orig
+        g_cur_instr_idx = i
         if jfn.blocks[bb.id].instrs[orig].dead == 0 {
             lower_instr(jfn.blocks[bb.id].instrs[orig], ctx, jfn, out, pos)
         }
