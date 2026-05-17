@@ -1,123 +1,123 @@
-; =============================================================================
-; jda Ownership & Lifetime Model — Compiler Rules Reference
-; =============================================================================
-; Jda uses compile-time ownership to guarantee memory safety
-; with zero runtime overhead. No GC. No reference counting at runtime.
-; Inspired by linear types and affine types theory.
-;
-; The three qualifiers:
-;
-;   own T    — unique ownership. Exactly one owner at a time.
-;              Moving transfers ownership. Passing to a function
-;              that takes `own` consumes the caller's binding.
-;
-;   ref T    — immutable borrow. Many refs can exist simultaneously.
-;              Ref cannot outlive the owner (compiler enforced).
-;              Cannot mutate through a ref.
-;
-;   mut T    — mutable borrow. Only ONE mut borrow at a time.
-;              No other borrows (ref or mut) may coexist.
-;              Cannot outlive the owner.
-;
-; There is no implicit copy. To duplicate, you call .clone() explicitly.
-; =============================================================================
+// =============================================================================
+// jda Ownership & Lifetime Model — Compiler Rules Reference
+// =============================================================================
+// Jda uses compile-time ownership to guarantee memory safety
+// with zero runtime overhead. No GC. No reference counting at runtime.
+// Inspired by linear types and affine types theory.
+//
+// The three qualifiers:
+//
+//   own T    — unique ownership. Exactly one owner at a time.
+//              Moving transfers ownership. Passing to a function
+//              that takes `own` consumes the caller's binding.
+//
+//   ref T    — immutable borrow. Many refs can exist simultaneously.
+//              Ref cannot outlive the owner (compiler enforced).
+//              Cannot mutate through a ref.
+//
+//   mut T    — mutable borrow. Only ONE mut borrow at a time.
+//              No other borrows (ref or mut) may coexist.
+//              Cannot outlive the owner.
+//
+// There is no implicit copy. To duplicate, you call .clone() explicitly.
+// =============================================================================
 
-; =============================================================================
-; RULE 1 — Single Owner
-; =============================================================================
-; Every value has exactly one owner at any point in time.
-; When the owner goes out of scope, the value is freed (or drop() is called).
+// =============================================================================
+// RULE 1 — Single Owner
+// =============================================================================
+// Every value has exactly one owner at any point in time.
+// When the owner goes out of scope, the value is freed (or drop() is called).
 
 fn rule1_example() {
-    let a = pages_alloc(1)      ; `a` owns the page
-    let b = a                   ; ownership MOVES to `b`. `a` is now dead.
-    ; print(a)                  ; COMPILE ERROR: use of moved value `a`
-    pages_free(b, 1)            ; `b` is consumed. memory freed.
-    ; pages_free(b, 1)          ; COMPILE ERROR: use of moved value `b`
+    let a = pages_alloc(1)      // `a` owns the page
+    let b = a                   // ownership MOVES to `b`. `a` is now dead.
+    // print(a)                  // COMPILE ERROR: use of moved value `a`
+    pages_free(b, 1)            // `b` is consumed. memory freed.
+    // pages_free(b, 1)          // COMPILE ERROR: use of moved value `b`
 }
 
-; =============================================================================
-; RULE 2 — Borrow Checker
-; =============================================================================
-; You can have EITHER:
-;   - any number of immutable `ref` borrows, OR
-;   - exactly one `mut` borrow
-; but NOT both at the same time.
+// =============================================================================
+// RULE 2 — Borrow Checker
+// =============================================================================
+// You can have EITHER:
+//   - any number of immutable `ref` borrows, OR
+//   - exactly one `mut` borrow
+// but NOT both at the same time.
 
 fn rule2_example() {
-    let buf = pages_alloc(1)     ; own *i8
+    let buf = pages_alloc(1)     // own *i8
 
-    let r1 = &buf                ; ref *i8 — borrow #1
-    let r2 = &buf                ; ref *i8 — borrow #2 (OK, multiple refs fine)
-    ; let m = &mut buf           ; COMPILE ERROR: cannot borrow as mut
-                                 ; while immutable borrows exist
+    let r1 = &buf                // ref *i8 — borrow #1
+    let r2 = &buf                // ref *i8 — borrow #2 (OK, multiple refs fine)
+    // let m = &mut buf           // COMPILE ERROR: cannot borrow as mut
+                                 // while immutable borrows exist
 
-    ; r1 and r2 go out of use here
-    let m = &mut buf             ; NOW OK — no active refs
-    m[0] = 0x41                  ; write 'A'
-    ; let r3 = &buf              ; COMPILE ERROR: cannot borrow as ref
-                                 ; while mut borrow is active
+    // r1 and r2 go out of use here
+    let m = &mut buf             // NOW OK — no active refs
+    m[0] = 0x41                  // write 'A'
+    // let r3 = &buf              // COMPILE ERROR: cannot borrow as ref
+                                 // while mut borrow is active
 
     pages_free(buf, 1)
 }
 
-; =============================================================================
-; RULE 3 — Lifetimes
-; =============================================================================
-; A borrow cannot outlive the value it borrows from.
-; The compiler tracks lifetimes lexically.
-; Returning a borrow from a function requires a lifetime annotation.
+// =============================================================================
+// RULE 3 — Lifetimes
+// =============================================================================
+// A borrow cannot outlive the value it borrows from.
+// The compiler tracks lifetimes lexically.
+// Returning a borrow from a function requires a lifetime annotation.
 
-; Lifetime annotation syntax: 'name
-; Functions that return a borrow must declare where it comes from.
+// Lifetime annotation syntax: 'name
+// Functions that return a borrow must declare where it comes from.
 
 fn longest<'a>(x: ref 'a *i8, y: ref 'a *i8, xlen: i64, ylen: i64) -> ref 'a *i8 {
     if xlen >= ylen { ret x }
     ret y
 }
-; The `'a` says: the returned ref lives as long as both inputs do.
-; Compiler rejects any call where the inputs have incompatible lifetimes.
+// The `'a` says: the returned ref lives as long as both inputs do.
+// Compiler rejects any call where the inputs have incompatible lifetimes.
 
-; ILLEGAL — returning a ref to a local (dangling pointer):
-; fn bad() -> ref *i8 {
-;     let local = 42i64
-;     ret &local              ; COMPILE ERROR: `local` does not live long enough
-; }
+// ILLEGAL — returning a ref to a local (dangling pointer):
+// fn bad() -> ref *i8 {
+//     let local = 42i64
+//     ret &local              // COMPILE ERROR: `local` does not live long enough
+// }
 
-; =============================================================================
-; RULE 4 — Drop Order
-; =============================================================================
-; Values are dropped in reverse declaration order (LIFO — like a stack).
-; This mirrors how hardware stack frames work.
+// =============================================================================
+// RULE 4 — Drop Order
+// =============================================================================
+// Values are dropped in reverse declaration order (LIFO — like a stack).
+// This mirrors how hardware stack frames work.
 
 fn rule4_example() {
-    let a = region_new(4)   ; allocated first
-    let b = region_new(4)   ; allocated second
-    ; ... use a and b ...
-    ; End of scope:
-    ;   b is dropped first  (region_free called on b)
-    ;   a is dropped second (region_free called on a)
+    let a = region_new(4)   // allocated first
+    let b = region_new(4)   // allocated second
+    // ... use a and b ...
+    // End of scope:
+    //   b is dropped first  (region_free called on b)
+    //   a is dropped second (region_free called on a)
 }
 
-; =============================================================================
-; RULE 5 — The `drop` Function (explicit early free)
-; =============================================================================
-; You can explicitly free a value before its scope ends using `drop`.
-; This consumes the value immediately.
+// =============================================================================
+// RULE 5 — The `drop` Function (explicit early free)
+// =============================================================================
+// You can explicitly free a value before its scope ends using `drop`.
+// This consumes the value immediately.
 
 fn rule5_example() {
     let buf = pages_alloc(8)
-    ; ... use buf ...
-    drop(buf)               ; freed here — buf is consumed
-    ; ... more code runs, buf is gone, memory is reclaimed ...
-    ; buf[0] = 1             ; COMPILE ERROR: use of dropped value
+    // ... use buf ...
+    drop(buf)               // freed here — buf is consumed
+    // ... more code runs, buf is gone, memory is reclaimed ...
+    // buf[0] = 1             // COMPILE ERROR: use of dropped value
 }
 
-; =============================================================================
-; RULE 6 — Struct Ownership
-; =============================================================================
-; Structs own their fields. Moving a struct moves all its fields.
-; Individual fields can be borrowed independently.
+// =============================================================================
+// RULE 6 — Struct Ownership
+// =============================================================================
+// Structs own their fields. Moving a struct moves all its fields.
+// Individual fields can be borrowed independently.
 
 struct Buffer {
     data: own *i8
@@ -142,45 +142,45 @@ fn buffer_push(b: &mut Buffer, byte: i8) {
 
 fn buffer_free(b: own Buffer) {
     pages_free(b.data, (b.cap / 4096) + 1)
-    ; b.len and b.cap are i64 values — freed automatically (stack)
+    // b.len and b.cap are i64 values — freed automatically (stack)
 }
 
-; =============================================================================
-; RULE 7 — Region Lifetime Scoping
-; =============================================================================
-; All pointers obtained from a region share the region's lifetime `'r`.
-; They are automatically invalidated when the region is freed.
+// =============================================================================
+// RULE 7 — Region Lifetime Scoping
+// =============================================================================
+// All pointers obtained from a region share the region's lifetime `'r`.
+// They are automatically invalidated when the region is freed.
 
 fn rule7_example() {
     let r = region_new(4)
 
-    let ptr_a = region_alloc(&mut r, 64, 8)    ; ref 'r *i8
-    let ptr_b = region_alloc(&mut r, 128, 8)   ; ref 'r *i8
+    let ptr_a = region_alloc(&mut r, 64, 8)    // ref 'r *i8
+    let ptr_b = region_alloc(&mut r, 128, 8)   // ref 'r *i8
 
-    ptr_a[0] = 0x41   ; fine — region is alive
+    ptr_a[0] = 0x41   // fine — region is alive
 
-    region_free(r)    ; region freed, all 'r refs are dead
+    region_free(r)    // region freed, all 'r refs are dead
 
-    ; ptr_a[0] = 0x42  ; COMPILE ERROR: ptr_a has lifetime 'r, region freed
+    // ptr_a[0] = 0x42  // COMPILE ERROR: ptr_a has lifetime 'r, region freed
 }
 
-; =============================================================================
-; SUMMARY: Compiler Error Messages
-; =============================================================================
-;
-;   error[E001]: use of moved value `x`
-;     --> file.jda:12:5
-;      | let y = x        moved here
-;      | print(x)         ^^^^ value used after move
-;
-;   error[E002]: cannot borrow `buf` as mutable because it is also
-;                borrowed as immutable
-;
-;   error[E003]: `local` does not live long enough
-;     --> file.jda:8:5
-;      | ret &local       returns reference to local variable
-;
-;   error[E004]: use of dropped value `buf`
-;
-;   error[E005]: lifetime 'r does not live long enough
-;                borrow may outlive the region it was obtained from
+// =============================================================================
+// SUMMARY: Compiler Error Messages
+// =============================================================================
+//
+//   error[E001]: use of moved value `x`
+//     --> file.jda:12:5
+//      | let y = x        moved here
+//      | print(x)         ^^^^ value used after move
+//
+//   error[E002]: cannot borrow `buf` as mutable because it is also
+//                borrowed as immutable
+//
+//   error[E003]: `local` does not live long enough
+//     --> file.jda:8:5
+//      | ret &local       returns reference to local variable
+//
+//   error[E004]: use of dropped value `buf`
+//
+//   error[E005]: lifetime 'r does not live long enough
+//                borrow may outlive the region it was obtained from

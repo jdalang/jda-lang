@@ -1,21 +1,21 @@
-; =============================================================================
-; jda-httpd — A minimal HTTP/1.1 server written in Jda
-; =============================================================================
-; Second real application. Pure syscalls, zero libc.
-; Demonstrates: socket programming, string parsing, HTTP protocol.
-;
-; Usage: jda-httpd [port]      (default: 8080)
-;
-; Supported:
-;   GET /              → welcome page
-;   GET /hello         → "Hello from Jda!"
-;   GET /status        → server stats (uptime, requests served)
-;   GET /echo?msg=...  → echoes query string
-;   GET /fib?n=...     → computes fibonacci(n)
-;   Everything else    → 404
-; =============================================================================
+// =============================================================================
+// jda-httpd — A minimal HTTP/1.1 server written in Jda
+// =============================================================================
+// Second real application. Pure syscalls, zero libc.
+// Demonstrates: socket programming, string parsing, HTTP protocol.
+//
+// Usage: jda-httpd [port]      (default: 8080)
+//
+// Supported:
+//   GET /              → welcome page
+//   GET /hello         → "Hello from Jda!"
+//   GET /status        → server stats (uptime, requests served)
+//   GET /echo?msg=...  → echoes query string
+//   GET /fib?n=...     → computes fibonacci(n)
+//   Everything else    → 404
+// =============================================================================
 
-; --- Socket syscall wrappers (1 syscall per function) ---
+// --- Socket syscall wrappers (1 syscall per function) ---
 
 fn sock_create() -> i64 {
     ret syscall(41, 2, 1, 0)
@@ -54,7 +54,7 @@ fn get_time() -> i64 {
     ret syscall(201, 0, 0, 0)
 }
 
-; --- Byte helpers ---
+// --- Byte helpers ---
 
 fn _b(buf: &i8, idx: i64) -> i64 {
     ret buf[idx]
@@ -64,7 +64,7 @@ fn _print_buf(buf: &i8, len: i64) -> i64 {
     ret syscall(1, 1, buf, len)
 }
 
-; --- Build sockaddr_in (16 bytes) ---
+// --- Build sockaddr_in (16 bytes) ---
 
 fn build_sockaddr(buf: &i8, port: i64) {
     let i = 0
@@ -76,7 +76,7 @@ fn build_sockaddr(buf: &i8, port: i64) {
     set_byte(buf, 3, lo)
 }
 
-; --- String matching ---
+// --- String matching ---
 
 fn starts_with(buf: &i8, off: i64, s: &i8, slen: i64) -> i64 {
     let i = 0
@@ -154,7 +154,7 @@ fn path_eq(buf: &i8, off: i64, len: i64, s: &i8, slen: i64) -> i64 {
     ret starts_with(buf, off, s, slen)
 }
 
-; --- Fibonacci ---
+// --- Fibonacci ---
 
 fn fib(n: i64) -> i64 {
     if n <= 1 { ret n }
@@ -170,11 +170,11 @@ fn fib(n: i64) -> i64 {
     ret b
 }
 
-; --- HTTP Response Builder ---
-; All responses go into resp buffer. tmp is a scratch buffer.
-; No alloc_pages anywhere in these functions!
+// --- HTTP Response Builder ---
+// All responses go into resp buffer. tmp is a scratch buffer.
+// No alloc_pages anywhere in these functions!
 
-; g_tmp is set by main before dispatching each request
+// g_tmp is set by main before dispatching each request
 let g_tmp: &i8 = 0
 
 fn resp_headers(resp: &i8, code: i64, ctype: &i8, ctlen: i64, bodylen: i64) -> i64 {
@@ -199,13 +199,13 @@ fn resp_headers(resp: &i8, code: i64, ctype: &i8, ctlen: i64, bodylen: i64) -> i
     ret pos
 }
 
-; NOTE: removed build_resp — it had 7 args (max is 6!)
+// NOTE: removed build_resp — it had 7 args (max is 6!)
 
-; --- Route Handlers ---
+// --- Route Handlers ---
 
 fn handle_index(resp: &i8) -> i64 {
     let tmp = g_tmp
-    ; Build index page into tmp+512 to avoid overlap with header scratch space
+    // Build index page into tmp+512 to avoid overlap with header scratch space
     let bo = 512
     bo = copy_into(tmp, bo, "<html><body>", 12)
     bo = copy_into(tmp, bo, "<h1>jda-httpd</h1>", 18)
@@ -254,13 +254,13 @@ fn handle_echo(resp: &i8, req: &i8, qoff: i64, qlen: i64) -> i64 {
     if found == 0 {
         blen = copy_into(tmp, 0, "(no msg parameter)\n", 19)
     }
-    ; Body is in tmp[0..blen]. Build response using resp, with body from tmp.
-    ; But resp_headers also uses tmp for Content-Length! We need a second approach.
-    ; Copy body aside first, then build response.
-    ; Actually, build_resp copies body into resp after headers.
-    ; resp_headers writes Content-Length digits into tmp — that's fine, body is already in tmp too
-    ; but at different offsets... this is a problem.
-    ; Solution: write body starting at tmp+512 to avoid overlap.
+    // Body is in tmp[0..blen]. Build response using resp, with body from tmp.
+    // But resp_headers also uses tmp for Content-Length! We need a second approach.
+    // Copy body aside first, then build response.
+    // Actually, build_resp copies body into resp after headers.
+    // resp_headers writes Content-Length digits into tmp — that's fine, body is already in tmp too
+    // but at different offsets... this is a problem.
+    // Solution: write body starting at tmp+512 to avoid overlap.
     let body_off = 512
     let bi = 0
     loop bi < blen {
@@ -298,11 +298,11 @@ fn handle_fib_route(resp: &i8, req: &i8, qoff: i64, qlen: i64) -> i64 {
         ret copy_region(resp, hf, "Usage: /fib?n=30\n", 0, 17)
     }
 
-    ; Build body: "fib(N) = R\n" in tmp+512
+    // Build body: "fib(N) = R\n" in tmp+512
     let bo = 512
     bo = copy_into(tmp, bo, "fib(", 4)
     let nlen = fmt_i64(tmp, result_n)
-    ; copy digits from tmp[0..nlen] to tmp[bo..bo+nlen]
+    // copy digits from tmp[0..nlen] to tmp[bo..bo+nlen]
     let di = 0
     loop di < nlen { set_byte(tmp, bo + di, _b(tmp, di)) di = di + 1 }
     bo = bo + nlen
@@ -344,7 +344,7 @@ fn handle_status_route(resp: &i8, reqs: i64, start: i64) -> i64 {
     ret pos
 }
 
-; --- Request Dispatch ---
+// --- Request Dispatch ---
 
 fn dispatch(req: &i8, rlen: i64, resp: &i8, reqs: i64, start: i64) -> i64 {
     if rlen < 4 { ret handle_404(resp) }
@@ -371,7 +371,7 @@ fn dispatch(req: &i8, rlen: i64, resp: &i8, reqs: i64, start: i64) -> i64 {
     ret handle_404(resp)
 }
 
-; --- Main ---
+// --- Main ---
 
 fn main(argc: i64, argv: &i64) -> i64 {
     let port = 8080
@@ -381,7 +381,7 @@ fn main(argc: i64, argv: &i64) -> i64 {
         if port == 0 { port = 8080 }
     }
 
-    ; Pre-allocate ALL buffers here (no alloc_pages in helpers!)
+    // Pre-allocate ALL buffers here (no alloc_pages in helpers!)
     let optbuf: &i64 = alloc_pages(1)
     let addr: &i8 = alloc_pages(1)
     let reqbuf: &i8 = alloc_pages(2)
@@ -418,7 +418,7 @@ fn main(argc: i64, argv: &i64) -> i64 {
             if n > 0 {
                 reqs = reqs + 1
 
-                ; Log: "[N] METHOD /path"
+                // Log: "[N] METHOD /path"
                 print("[")
                 let rlen2 = fmt_i64(tmp, reqs)
                 _print_buf(tmp, rlen2)

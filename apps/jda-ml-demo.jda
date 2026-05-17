@@ -1,6 +1,6 @@
-; jda-ml-demo — Neural Network Training from Scratch in Pure Jda
-; Trains MLPs on 3 tasks: XOR, Sine, Matmul. No external dependencies.
-; Compare with: python3 apps/ml-demo-python.py
+// jda-ml-demo — Neural Network Training from Scratch in Pure Jda
+// Trains MLPs on 3 tasks: XOR, Sine, Matmul. No external dependencies.
+// Compare with: python3 apps/ml-demo-python.py
 
 struct Timespec {
     tv_sec: i64
@@ -14,7 +14,7 @@ fn time_now_ms() -> i64 {
     ret ns / 1000000
 }
 
-; --- Float formatting ---
+// --- Float formatting ---
 
 fn print_f64(val: f64) {
     let scaled: f64 = val * 10000.0
@@ -34,7 +34,7 @@ fn print_f64(val: f64) {
     print "{frac}"
 }
 
-; --- Neural network primitives ---
+// --- Neural network primitives ---
 
 fn linear_forward(x: i64, w: i64, bias: i64, out: i64) {
     let batch = tensor_shape(x, 0)
@@ -167,7 +167,7 @@ fn zero_tensor(t: i64) {
     tensor_fill(t, 0.0)
 }
 
-; --- PRNG for weight init ---
+// --- PRNG for weight init ---
 
 fn rng_next(state: &i64) -> i64 {
     let s = state[0]
@@ -210,7 +210,7 @@ fn matmul_bench(a: i64, b: i64, c: i64, M: i64, K: i64, N: i64) {
     }
 }
 
-; === Task 1: XOR Classification (2->8->1 MLP) ===
+// === Task 1: XOR Classification (2->8->1 MLP) ===
 
 fn task_xor() {
     print "=== Task 1: XOR Classification ===\n"
@@ -324,7 +324,7 @@ fn task_xor() {
     print " ms\n\n"
 }
 
-; === Task 2: Sine Approximation (1->16->1 MLP) ===
+// === Task 2: Sine Approximation (1->16->1 MLP) ===
 
 fn task_sine() {
     print "=== Task 2: Sine Approximation ===\n"
@@ -426,7 +426,7 @@ fn task_sine() {
     print " ms\n\n"
 }
 
-; === Task 3: Matrix Multiply Benchmark (64x64) ===
+// === Task 3: Matrix Multiply Benchmark (64x64) ===
 
 fn task_matmul() {
     print "=== Task 3: Matrix Multiply Benchmark ===\n"
@@ -467,7 +467,7 @@ fn task_matmul() {
     print "  FLOP/matmul: 524288\n\n"
 }
 
-; === Main ===
+// === Main ===
 
 fn main() -> i64 {
     print "================================================================\n"

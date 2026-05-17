@@ -1,22 +1,22 @@
-; =============================================================================
-; jda::net::udp — UDP Socket API
-; =============================================================================
-; Connectionless datagram sockets via direct Linux syscalls.
-; No libc. No <sys/socket.h>. J-Thread yield on EAGAIN.
-;
-; Linux syscalls used:
-;   SYS_SOCKET    = 41   socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-;   SYS_BIND      = 49   bind(fd, addr, addrlen)
-;   SYS_SENDTO    = 44   sendto(fd, buf, len, flags, dst_addr, addrlen)
-;   SYS_RECVFROM  = 45   recvfrom(fd, buf, len, flags, src_addr, &addrlen)
-;   SYS_SETSOCKOPT= 54   setsockopt(fd, level, opt, val, len)
-;   SYS_CLOSE     = 3    close(fd)
-;
-; Usage:
-;   let sock = UdpSocket::bind("0.0.0.0", 9000)?
-;   sock.send_to("Hello", "192.168.1.10", 9001)
-;   let (n, from) = sock.recv_from(buf, 1500)?
-; =============================================================================
+// =============================================================================
+// jda::net::udp — UDP Socket API
+// =============================================================================
+// Connectionless datagram sockets via direct Linux syscalls.
+// No libc. No <sys/socket.h>. J-Thread yield on EAGAIN.
+//
+// Linux syscalls used:
+//   SYS_SOCKET    = 41   socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+//   SYS_BIND      = 49   bind(fd, addr, addrlen)
+//   SYS_SENDTO    = 44   sendto(fd, buf, len, flags, dst_addr, addrlen)
+//   SYS_RECVFROM  = 45   recvfrom(fd, buf, len, flags, src_addr, &addrlen)
+//   SYS_SETSOCKOPT= 54   setsockopt(fd, level, opt, val, len)
+//   SYS_CLOSE     = 3    close(fd)
+//
+// Usage:
+//   let sock = UdpSocket::bind("0.0.0.0", 9000)?
+//   sock.send_to("Hello", "192.168.1.10", 9001)
+//   let (n, from) = sock.recv_from(buf, 1500)?
+// =============================================================================
 
 import jda::net::tcp::{ SockAddrIn, htons, htonl, ntohs, ntohl, ip_to_u32 }
 
@@ -36,30 +36,30 @@ const SO_REUSEADDR   = 2
 const SO_REUSEPORT   = 15
 const SO_BROADCAST   = 6
 const IPPROTO_IP     = 0
-const IP_ADD_MEMBERSHIP  = 35    ; join multicast group
-const IP_DROP_MEMBERSHIP = 36    ; leave multicast group
+const IP_ADD_MEMBERSHIP  = 35    // join multicast group
+const IP_DROP_MEMBERSHIP = 36    // leave multicast group
 const IP_MULTICAST_TTL   = 33
 const IP_MULTICAST_LOOP  = 34
 const EAGAIN         = 11
 
-; Source address info returned with each recv_from
+// Source address info returned with each recv_from
 struct UdpPeer {
-    addr: u32    ; IPv4 address (host byte order)
+    addr: u32    // IPv4 address (host byte order)
     port: u16
 }
 
-; =============================================================================
-; UdpSocket
-; =============================================================================
+// =============================================================================
+// UdpSocket
+// =============================================================================
 struct UdpSocket {
     fd:         i32
     local_port: u16
 }
 
 impl UdpSocket {
-    ; -------------------------------------------------------------------------
-    ; bind(addr, port) — create and bind a UDP socket
-    ; -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // bind(addr, port) — create and bind a UDP socket
+    // -------------------------------------------------------------------------
     fn bind(addr: ref []i8, port: u16) -> Result<own UdpSocket, []i8> {
         let fd = syscall(SYS_SOCKET, AF_INET,
                          SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP) as i32
@@ -83,7 +83,7 @@ impl UdpSocket {
         ret ok(UdpSocket { fd: fd, local_port: port })
     }
 
-    ; Unbound socket — for send-only use (OS assigns ephemeral port)
+    // Unbound socket — for send-only use (OS assigns ephemeral port)
     fn open() -> Result<own UdpSocket, []i8> {
         let fd = syscall(SYS_SOCKET, AF_INET,
                          SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP) as i32
@@ -91,9 +91,9 @@ impl UdpSocket {
         ret ok(UdpSocket { fd: fd, local_port: 0 })
     }
 
-    ; -------------------------------------------------------------------------
-    ; send_to(buf, dst_addr, dst_port) -> i64   bytes sent
-    ; -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // send_to(buf, dst_addr, dst_port) -> i64   bytes sent
+    // -------------------------------------------------------------------------
     fn send_to(self, buf: ref []i8, dst: ref []i8, port: u16) -> Result<i64, []i8> {
         let sa = SockAddrIn {
             sin_family: AF_INET as u16,
@@ -107,17 +107,17 @@ impl UdpSocket {
         ret ok(n)
     }
 
-    ; Send raw bytes to a pre-built SockAddrIn (zero allocation fast path)
+    // Send raw bytes to a pre-built SockAddrIn (zero allocation fast path)
     fn send_to_raw(self, buf: ref []i8, len: i64,
                    sa: ref SockAddrIn) -> i64 {
         ret syscall(SYS_SENDTO, self.fd, buf, len, 0, sa, 16) as i64
     }
 
-    ; -------------------------------------------------------------------------
-    ; recv_from(buf, max) -> Result<(i64, UdpPeer), []i8>
-    ; Blocks (yields J-Thread) until a datagram arrives.
-    ; Returns bytes received and sender address.
-    ; -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // recv_from(buf, max) -> Result<(i64, UdpPeer), []i8>
+    // Blocks (yields J-Thread) until a datagram arrives.
+    // Returns bytes received and sender address.
+    // -------------------------------------------------------------------------
     fn recv_from(self, buf: []mut i8, max: i64)
                 -> Result<(i64, UdpPeer), []i8> {
         let src_sa  = SockAddrIn { sin_family: 0, sin_port: 0,
@@ -139,7 +139,7 @@ impl UdpSocket {
         }
     }
 
-    ; Non-blocking try — returns none if no datagram ready
+    // Non-blocking try — returns none if no datagram ready
     fn try_recv_from(self, buf: []mut i8, max: i64)
                     -> ?( i64, UdpPeer) {
         let src_sa  = SockAddrIn { sin_family: 0, sin_port: 0,
@@ -154,9 +154,9 @@ impl UdpSocket {
         }))
     }
 
-    ; -------------------------------------------------------------------------
-    ; Broadcast — send to 255.255.255.255 or subnet broadcast
-    ; -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Broadcast — send to 255.255.255.255 or subnet broadcast
+    // -------------------------------------------------------------------------
     fn enable_broadcast(self) {
         let one: i32 = 1
         syscall(SYS_SETSOCKOPT, self.fd, SOL_SOCKET, SO_BROADCAST, &one, 4)
@@ -166,12 +166,12 @@ impl UdpSocket {
         ret self.send_to(buf, "255.255.255.255", port).unwrap_or(0)
     }
 
-    ; -------------------------------------------------------------------------
-    ; Multicast — join/leave a multicast group (224.0.0.0/4)
-    ; -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Multicast — join/leave a multicast group (224.0.0.0/4)
+    // -------------------------------------------------------------------------
     struct IpMreq {
-        multiaddr: u32   ; multicast group address
-        interface: u32   ; local interface (0 = default)
+        multiaddr: u32   // multicast group address
+        interface: u32   // local interface (0 = default)
     }
 
     fn join_multicast(self, group: ref []i8) -> Result<(), []i8> {
@@ -200,22 +200,22 @@ impl UdpSocket {
                 IP_MULTICAST_TTL, &v, 4)
     }
 
-    ; -------------------------------------------------------------------------
-    ; close
-    ; -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // close
+    // -------------------------------------------------------------------------
     fn close(self) {
         syscall(SYS_CLOSE, self.fd, 0, 0)
     }
 }
 
-; =============================================================================
-; Example: simple UDP echo server (one J-Thread)
-; =============================================================================
+// =============================================================================
+// Example: simple UDP echo server (one J-Thread)
+// =============================================================================
 fn udp_echo_server(port: u16) {
     let sock = UdpSocket::bind("0.0.0.0", port).unwrap()
     defer sock.close()
 
-    let buf = [65536]i8    ; max UDP datagram = 64 KB
+    let buf = [65536]i8    // max UDP datagram = 64 KB
     print("UDP echo server on port ", port)
 
     loop {

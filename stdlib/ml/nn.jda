@@ -1,28 +1,28 @@
-; =============================================================================
-; jda::ml::nn — Native Neural Network Standard Library
-; =============================================================================
-; Built entirely on jda's native Tensor primitives and compile-time Autograd.
-; No C++. No Python. No PyTorch. No runtime overhead.
-;
-; Modules:
-;   Linear   — fully-connected layer  (weight matrix + bias)
-;   ReLU     — rectified linear unit activation
-;   Sigmoid  — logistic activation
-;   Tanh     — hyperbolic tangent activation
-;   Softmax  — normalised exponential (for classification output)
-;   MSELoss  — mean squared error
-;   CELoss   — cross-entropy loss
-;   Adam     — adaptive moment estimation optimizer
-;   SGD      — stochastic gradient descent optimizer
-; =============================================================================
+// =============================================================================
+// jda::ml::nn — Native Neural Network Standard Library
+// =============================================================================
+// Built entirely on jda's native Tensor primitives and compile-time Autograd.
+// No C++. No Python. No PyTorch. No runtime overhead.
+//
+// Modules:
+//   Linear   — fully-connected layer  (weight matrix + bias)
+//   ReLU     — rectified linear unit activation
+//   Sigmoid  — logistic activation
+//   Tanh     — hyperbolic tangent activation
+//   Softmax  — normalised exponential (for classification output)
+//   MSELoss  — mean squared error
+//   CELoss   — cross-entropy loss
+//   Adam     — adaptive moment estimation optimizer
+//   SGD      — stochastic gradient descent optimizer
+// =============================================================================
 
 import jda::ml::tensor
 
-; =============================================================================
-; Trait: Layer<In, Out>
-; =============================================================================
-; All layers implement this trait.
-; `forward` is marked @differentiable so the compiler generates backward.
+// =============================================================================
+// Trait: Layer<In, Out>
+// =============================================================================
+// All layers implement this trait.
+// `forward` is marked @differentiable so the compiler generates backward.
 trait Layer<const In: i64, const Out: i64> {
     @differentiable
     fn forward(self, x: ref Tensor<[dyn, In], f32>) -> Tensor<[dyn, Out], f32>
@@ -30,16 +30,16 @@ trait Layer<const In: i64, const Out: i64> {
     fn parameters(self) -> []&mut Tensor<dyn, f32>
 }
 
-; =============================================================================
-; Linear — y = x @ W.T + b
-; =============================================================================
+// =============================================================================
+// Linear — y = x @ W.T + b
+// =============================================================================
 struct Linear<const In: i64, const Out: i64> {
-    W: Tensor<[Out, In], f32>    ; weight matrix  [out_features × in_features]
-    b: Tensor<[Out], f32>        ; bias vector    [out_features]
+    W: Tensor<[Out, In], f32>    // weight matrix  [out_features × in_features]
+    b: Tensor<[Out], f32>        // bias vector    [out_features]
 }
 
 impl<const In: i64, const Out: i64> Linear<In, Out> {
-    ; He initialisation (good for ReLU networks)
+    // He initialisation (good for ReLU networks)
     fn new() -> own Linear<In, Out> {
         let scale = sqrt(2.0 / In as f32)
         ret Linear {
@@ -48,7 +48,7 @@ impl<const In: i64, const Out: i64> Linear<In, Out> {
         }
     }
 
-    ; Xavier / Glorot initialisation (good for tanh/sigmoid)
+    // Xavier / Glorot initialisation (good for tanh/sigmoid)
     fn new_xavier() -> own Linear<In, Out> {
         let limit = sqrt(6.0 / (In + Out) as f32)
         ret Linear {
@@ -59,29 +59,29 @@ impl<const In: i64, const Out: i64> Linear<In, Out> {
 
     @differentiable
     fn forward(self, x: ref Tensor<[dyn, In], f32>) -> Tensor<[dyn, Out], f32> {
-        ret x @ self.W.T + self.b    ; [B, In] @ [In, Out] + [Out] = [B, Out]
+        ret x @ self.W.T + self.b    // [B, In] @ [In, Out] + [Out] = [B, Out]
     }
-    ; Compiler generates `forward_grad`:
-    ;   dL/dx = grad @ W          (backprop through matmul)
-    ;   dL/dW = x.T @ grad        (weight gradient)
-    ;   dL/db = grad.sum(dim: 0)  (bias gradient)
+    // Compiler generates `forward_grad`:
+    //   dL/dx = grad @ W          (backprop through matmul)
+    //   dL/dW = x.T @ grad        (weight gradient)
+    //   dL/db = grad.sum(dim: 0)  (bias gradient)
 
     fn parameters(self) -> []&mut Tensor<dyn, f32> {
         ret [&mut self.W, &mut self.b]
     }
 }
 
-; =============================================================================
-; Activation Functions
-; =============================================================================
+// =============================================================================
+// Activation Functions
+// =============================================================================
 
 struct ReLU {}
 impl ReLU {
     @differentiable
     fn forward(self, x: ref Tensor<dyn, f32>) -> Tensor<dyn, f32> {
-        ret x.max(0.0)    ; element-wise max(x, 0)
+        ret x.max(0.0)    // element-wise max(x, 0)
     }
-    ; Grad: dy/dx = x > 0 ? 1 : 0  (generated by compiler)
+    // Grad: dy/dx = x > 0 ? 1 : 0  (generated by compiler)
 }
 
 struct Sigmoid {}
@@ -90,7 +90,7 @@ impl Sigmoid {
     fn forward(self, x: ref Tensor<dyn, f32>) -> Tensor<dyn, f32> {
         ret 1.0 / (1.0 + (-x).exp())
     }
-    ; Grad: dy/dx = y * (1 - y)  (generated by compiler)
+    // Grad: dy/dx = y * (1 - y)  (generated by compiler)
 }
 
 struct Tanh {}
@@ -99,7 +99,7 @@ impl Tanh {
     fn forward(self, x: ref Tensor<dyn, f32>) -> Tensor<dyn, f32> {
         ret x.tanh()
     }
-    ; Grad: dy/dx = 1 - tanh(x)^2  (generated by compiler)
+    // Grad: dy/dx = 1 - tanh(x)^2  (generated by compiler)
 }
 
 fn softmax(x: ref Tensor<dyn, f32>, dim: i32) -> Tensor<dyn, f32> {
@@ -107,9 +107,9 @@ fn softmax(x: ref Tensor<dyn, f32>, dim: i32) -> Tensor<dyn, f32> {
     ret e / e.sum(dim: dim).unsqueeze(dim)
 }
 
-; =============================================================================
-; Loss Functions
-; =============================================================================
+// =============================================================================
+// Loss Functions
+// =============================================================================
 
 @differentiable
 fn mse_loss(pred: ref Tensor<dyn, f32>,
@@ -123,7 +123,7 @@ fn cross_entropy_loss(logits: ref Tensor<[dyn, dyn], f32>,
                       labels: ref Tensor<[dyn], i32>) -> Tensor<[], f32> {
     let B    = logits.shape[0] as f32
     let probs = softmax(logits, dim: 1)
-    let oh   = one_hot(labels, logits.shape[1])    ; [B, C]
+    let oh   = one_hot(labels, logits.shape[1])    // [B, C]
     ret -(probs.log() * oh).sum() / B
 }
 
@@ -136,30 +136,30 @@ fn one_hot(labels: ref Tensor<[dyn], i32>, n_classes: i64) -> Tensor<[dyn, dyn],
     ret out
 }
 
-; =============================================================================
-; Adam Optimizer
-; =============================================================================
-; Adaptive Moment Estimation — by far the most common optimizer in deep learning.
-;
-; Update rule:
-;   m = β1 * m + (1 - β1) * g          (first moment — momentum)
-;   v = β2 * v + (1 - β2) * g²         (second moment — RMSProp)
-;   m̂ = m / (1 - β1^t)                 (bias correction)
-;   v̂ = v / (1 - β2^t)                 (bias correction)
-;   θ = θ - lr * m̂ / (sqrt(v̂) + ε)    (parameter update)
+// =============================================================================
+// Adam Optimizer
+// =============================================================================
+// Adaptive Moment Estimation — by far the most common optimizer in deep learning.
+//
+// Update rule:
+//   m = β1 * m + (1 - β1) * g          (first moment — momentum)
+//   v = β2 * v + (1 - β2) * g²         (second moment — RMSProp)
+//   m̂ = m / (1 - β1^t)                 (bias correction)
+//   v̂ = v / (1 - β2^t)                 (bias correction)
+//   θ = θ - lr * m̂ / (sqrt(v̂) + ε)    (parameter update)
 
 struct AdamState {
-    m:   Tensor<dyn, f32>   ; first moment
-    v:   Tensor<dyn, f32>   ; second moment
+    m:   Tensor<dyn, f32>   // first moment
+    v:   Tensor<dyn, f32>   // second moment
 }
 
 struct Adam {
-    lr:     f32             ; learning rate (default: 1e-3)
-    beta1:  f32             ; (default: 0.9)
-    beta2:  f32             ; (default: 0.999)
-    eps:    f32             ; numerical stability (default: 1e-8)
-    t:      i64             ; step counter
-    states: []AdamState     ; one state per parameter tensor
+    lr:     f32             // learning rate (default: 1e-3)
+    beta1:  f32             // (default: 0.9)
+    beta2:  f32             // (default: 0.999)
+    eps:    f32             // numerical stability (default: 1e-8)
+    t:      i64             // step counter
+    states: []AdamState     // one state per parameter tensor
 }
 
 impl Adam {
@@ -188,15 +188,15 @@ impl Adam {
             let g = grads[i]
             let s = &mut self.states[i]
 
-            ; Moment updates
+            // Moment updates
             s.m = b1 * s.m + (1.0 - b1) * g
             s.v = b2 * s.v + (1.0 - b2) * (g * g)
 
-            ; Bias-corrected moments
+            // Bias-corrected moments
             let m_hat = s.m / (1.0 - b1 ^ t)
             let v_hat = s.v / (1.0 - b2 ^ t)
 
-            ; Parameter update
+            // Parameter update
             p[0] = p[0] - self.lr * m_hat / (v_hat.sqrt() + self.eps)
         }
     }
@@ -206,9 +206,9 @@ impl Adam {
     }
 }
 
-; =============================================================================
-; SGD with momentum
-; =============================================================================
+// =============================================================================
+// SGD with momentum
+// =============================================================================
 struct SGD {
     lr:       f32
     momentum: f32

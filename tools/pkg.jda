@@ -1,35 +1,35 @@
-; =============================================================================
-; jda::pkg — Package Manager
-; =============================================================================
-; `jda add <package>[@version]`   — install a package
-; `jda remove <package>`          — uninstall a package
-; `jda update [package]`          — update one or all packages
-; `jda list`                      — list installed packages
-; `jda publish`                   — publish current package to registry
-;
-; Design principles:
-;   - Zero network dependencies beyond raw TCP (uses jda::net::tcp + http)
-;   - Packages are source archives (.jda.tar) — no compiled blobs
-;   - SHA-256 integrity check before extraction
-;   - Dependency graph resolved topologically (no cycles allowed)
-;   - Local cache in  ~/.jda/pkg/<name>/<version>/
-;   - Project manifest: jda.pkg   (simple key = value format, like Cargo.toml)
-;
-; Manifest format (jda.pkg):
-;   [package]
-;   name    = "my-app"
-;   version = "1.0.0"
-;   author  = "Alice <alice@example.com>"
-;
-;   [dependencies]
-;   jda-http   = "2.1.0"
-;   jda-crypto = ">=1.0.0 <2.0.0"
-;
-; Registry API (HTTPS/HTTP):
-;   GET  /pkg/<name>/<version>          → JSON metadata + download URL
-;   GET  /pkg/<name>/<version>.jda.tar  → source archive
-;   POST /pkg/publish                   → upload archive + metadata
-; =============================================================================
+// =============================================================================
+// jda::pkg — Package Manager
+// =============================================================================
+// `jda add <package>[@version]`   — install a package
+// `jda remove <package>`          — uninstall a package
+// `jda update [package]`          — update one or all packages
+// `jda list`                      — list installed packages
+// `jda publish`                   — publish current package to registry
+//
+// Design principles:
+//   - Zero network dependencies beyond raw TCP (uses jda::net::tcp + http)
+//   - Packages are source archives (.jda.tar) — no compiled blobs
+//   - SHA-256 integrity check before extraction
+//   - Dependency graph resolved topologically (no cycles allowed)
+//   - Local cache in  ~/.jda/pkg/<name>/<version>/
+//   - Project manifest: jda.pkg   (simple key = value format, like Cargo.toml)
+//
+// Manifest format (jda.pkg):
+//   [package]
+//   name    = "my-app"
+//   version = "1.0.0"
+//   author  = "Alice <alice@example.com>"
+//
+//   [dependencies]
+//   jda-http   = "2.1.0"
+//   jda-crypto = ">=1.0.0 <2.0.0"
+//
+// Registry API (HTTPS/HTTP):
+//   GET  /pkg/<name>/<version>          → JSON metadata + download URL
+//   GET  /pkg/<name>/<version>.jda.tar  → source archive
+//   POST /pkg/publish                   → upload archive + metadata
+// =============================================================================
 
 import jda::net::tcp::{ TcpStream }
 import jda::net::http::{ send_request, parse_response }
@@ -43,19 +43,19 @@ const REGISTRY_PORT : u16 = 80
 const CACHE_DIR     = "~/.jda/pkg"
 const MANIFEST_FILE = "jda.pkg"
 
-; =============================================================================
-; Semantic version
-; =============================================================================
+// =============================================================================
+// Semantic version
+// =============================================================================
 struct SemVer {
     major: i64
     minor: i64
     patch: i64
-    pre:   []i8   ; pre-release label, e.g. "alpha.1"  (empty = stable)
+    pre:   []i8   // pre-release label, e.g. "alpha.1"  (empty = stable)
 }
 
 impl SemVer {
     fn parse(s: ref []i8) -> Result<SemVer, []i8> {
-        ; "1.2.3" or "1.2.3-alpha.1"
+        // "1.2.3" or "1.2.3-alpha.1"
         let i = 0i64
         let major = parse_semver_num(s, &mut i)?
         if i >= s.len or s[i] != '.' { ret err("semver: expected '.'") }
@@ -115,15 +115,15 @@ fn cmp_i64(a: i64, b: i64) -> i32 {
     ret 0
 }
 
-; =============================================================================
-; Version requirement  (">= 1.2.0 < 2.0.0"  or  "1.2.3")
-; =============================================================================
+// =============================================================================
+// Version requirement  (">= 1.2.0 < 2.0.0"  or  "1.2.3")
+// =============================================================================
 enum VersionReq {
     Exact(SemVer)
-    Range(SemVer, SemVer)   ; [min, max)
-    Caret(SemVer)           ; "^1.2.3" — compatible minor/patch
-    Tilde(SemVer)           ; "~1.2.3" — compatible patch only
-    Any                     ; "*"
+    Range(SemVer, SemVer)   // [min, max)
+    Caret(SemVer)           // "^1.2.3" — compatible minor/patch
+    Tilde(SemVer)           // "~1.2.3" — compatible patch only
+    Any                     // "*"
 }
 
 impl VersionReq {
@@ -155,7 +155,7 @@ impl VersionReq {
 }
 
 fn parse_range_req(s: ref []i8) -> Result<VersionReq, []i8> {
-    ; ">= 1.0.0 < 2.0.0"
+    // ">= 1.0.0 < 2.0.0"
     let parts = s.split(' ')
     if parts.len < 4 { ret err("pkg: bad range requirement") }
     let lo = SemVer::parse(parts[1])?
@@ -163,9 +163,9 @@ fn parse_range_req(s: ref []i8) -> Result<VersionReq, []i8> {
     ret ok(VersionReq::Range(lo, hi))
 }
 
-; =============================================================================
-; Manifest — jda.pkg
-; =============================================================================
+// =============================================================================
+// Manifest — jda.pkg
+// =============================================================================
 struct Dependency {
     name: []i8
     req:  VersionReq
@@ -252,9 +252,9 @@ fn dep_req_str(req: ref VersionReq) -> []i8 {
     }
 }
 
-; =============================================================================
-; Registry client
-; =============================================================================
+// =============================================================================
+// Registry client
+// =============================================================================
 struct PkgMeta {
     name:        []i8
     version:     SemVer
@@ -303,14 +303,14 @@ fn http_get(host: ref []i8, port: u16, path: ref []i8)
                        [ArgStr(path), ArgStr(host)])
     stream.write(req)?
 
-    let buf = [1048576]i8   ; 1 MB response buffer
+    let buf = [1048576]i8   // 1 MB response buffer
     let total = 0i64
     loop {
         let n = stream.read(buf[total..1048576], 1048576 - total)?
         if n == 0 { break }
         total = total + n
     }
-    ; strip HTTP headers (find \r\n\r\n)
+    // strip HTTP headers (find \r\n\r\n)
     let body_start = 0i64
     loop body_start + 3 < total {
         if buf[body_start]   == '\r' and buf[body_start+1] == '\n' and
@@ -323,11 +323,11 @@ fn http_get(host: ref []i8, port: u16, path: ref []i8)
     ret ok(buf[body_start..total])
 }
 
-; =============================================================================
-; SHA-256 integrity check
-; =============================================================================
+// =============================================================================
+// SHA-256 integrity check
+// =============================================================================
 fn sha256_hex(data: ref []i8) -> []i8 {
-    ; SHA-256 constants
+    // SHA-256 constants
     let K = [64]u32 {
         0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5,
         0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
@@ -351,19 +351,19 @@ fn sha256_hex(data: ref []i8) -> []i8 {
         0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
     }
 
-    ; Pre-process: padding
+    // Pre-process: padding
     let msg_len = data.len as u64
     let pad_len = (msg_len + 9 + 63) / 64 * 64
     let padded  = [pad_len]u8
     loop i in 0..msg_len as i64 { padded[i] = data[i] as u8 }
     padded[msg_len as i64] = 0x80
-    ; big-endian bit length at end
+    // big-endian bit length at end
     let bit_len = msg_len * 8
     loop i in 0..8 {
         padded[pad_len as i64 - 1 - i] = (bit_len >> (i * 8)) as u8
     }
 
-    ; Process 64-byte blocks
+    // Process 64-byte blocks
     let W = [64]u32
     loop blk in 0..pad_len / 64 {
         let off = blk * 64
@@ -392,7 +392,7 @@ fn sha256_hex(data: ref []i8) -> []i8 {
         h[4]=h[4]+e  h[5]=h[5]+f  h[6]=h[6]+g  h[7]=h[7]+hh
     }
 
-    ; Encode to hex string
+    // Encode to hex string
     let hex = [64]i8
     let HEX = "0123456789abcdef"
     loop i in 0..8 {
@@ -417,9 +417,9 @@ fn sha256_verify(data: ref []i8, expected: ref []i8) -> bool {
     ret true
 }
 
-; =============================================================================
-; Install / remove / update commands
-; =============================================================================
+// =============================================================================
+// Install / remove / update commands
+// =============================================================================
 
 struct PkgInstallOpts {
     cache_dir: []i8
@@ -434,13 +434,13 @@ fn pkg_add(name: ref []i8, ver_str: ref []i8,
 
     let meta = registry_get_meta(name, ver_str)?
 
-    ; Resolve dependencies first (topological)
+    // Resolve dependencies first (topological)
     for dep in meta.deps {
         let dep_ver = resolve_dep(dep.name, &dep.req, opts)?
         pkg_add(dep.name, dep_ver, opts)?
     }
 
-    ; Download archive
+    // Download archive
     let pkg_dir = path_join(opts.cache_dir, name)
     let ver_dir = path_join(pkg_dir, ver_str)
     if path_exists(ver_dir) {
@@ -459,7 +459,7 @@ fn pkg_add(name: ref []i8, ver_str: ref []i8,
         let arc_path = path_join(ver_dir, "pkg.jda.tar")
         file_write(arc_path, archive)?
         tar_extract(archive, ver_dir)?
-        ; write installed metadata
+        // write installed metadata
         let lock = fmt_str("{} = \"{}\"\nsha256 = \"{}\"\n",
                            [ArgStr(name), ArgStr(meta.version.to_str()),
                             ArgStr(meta.sha256)])
@@ -491,10 +491,10 @@ fn pkg_list(opts: ref PkgInstallOpts) -> Result<(), []i8> {
     ret ok(())
 }
 
-; Find the highest version matching `req` from the registry
+// Find the highest version matching `req` from the registry
 fn resolve_dep(name: ref []i8, req: ref VersionReq,
                opts: ref PkgInstallOpts) -> Result<[]i8, []i8> {
-    ; GET /pkg/<name>/versions → JSON array of version strings
+    // GET /pkg/<name>/versions → JSON array of version strings
     let path = fmt_str("/pkg/{}/versions", [ArgStr(name)])
     let resp = http_get(REGISTRY_HOST, REGISTRY_PORT, path)?
     let json = json_parse(resp)?
@@ -518,19 +518,19 @@ fn resolve_dep(name: ref []i8, req: ref VersionReq,
     }
 }
 
-; =============================================================================
-; Minimal tar extractor (ustar format)
-; =============================================================================
-; ustar header is 512 bytes; file data follows in 512-byte blocks.
+// =============================================================================
+// Minimal tar extractor (ustar format)
+// =============================================================================
+// ustar header is 512 bytes; file data follows in 512-byte blocks.
 fn tar_extract(archive: ref []i8, dest_dir: ref []i8) -> Result<(), []i8> {
     let pos = 0i64
     loop pos + 512 <= archive.len {
-        ; Read 512-byte header
+        // Read 512-byte header
         let hdr = &archive[pos]
-        ; Check for end-of-archive (two zero blocks)
+        // Check for end-of-archive (two zero blocks)
         if hdr[0] == 0 { break }
 
-        ; Parse fields (null-terminated octal strings)
+        // Parse fields (null-terminated octal strings)
         let name    = cstr_slice(hdr, 0,   100)
         let size_s  = cstr_slice(hdr, 124,  12)
         let typeflag = hdr[156]
@@ -538,13 +538,13 @@ fn tar_extract(archive: ref []i8, dest_dir: ref []i8) -> Result<(), []i8> {
         pos = pos + 512
 
         if typeflag == '0' or typeflag == 0 {
-            ; Regular file
+            // Regular file
             let out_path = path_join(dest_dir, name)
             let dir      = path_dir(out_path)
             mkdir_p(dir)?
             file_write(out_path, archive[pos..pos+size])?
         }
-        ; Skip to next 512-byte boundary
+        // Skip to next 512-byte boundary
         pos = pos + (size + 511) / 512 * 512
     }
     ret ok(())
@@ -572,13 +572,13 @@ fn dir_remove_all(path: ref []i8) -> Result<(), []i8> {
         if e.type_ == 4 { dir_remove_all(full)? }
         else             { unlink(full)? }
     }
-    syscall(84, path, 0, 0)   ; SYS_RMDIR
+    syscall(84, path, 0, 0)   // SYS_RMDIR
     ret ok(())
 }
 
-; =============================================================================
-; CLI entry point
-; =============================================================================
+// =============================================================================
+// CLI entry point
+// =============================================================================
 fn pkg_main(args: ref [][]i8) -> i32 {
     let opts = PkgInstallOpts {
         cache_dir: expand_home(CACHE_DIR),
@@ -639,8 +639,8 @@ fn expand_home(path: ref []i8) -> []i8 {
 }
 
 fn getenv(name: ref []i8) -> []i8 {
-    ; Walk the environment (pointed to by __environ)
-    ; Simplified: return /root as fallback
+    // Walk the environment (pointed to by __environ)
+    // Simplified: return /root as fallback
     ret "/root"
 }
 

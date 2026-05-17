@@ -1,39 +1,39 @@
-; =============================================================================
-; jda::ml::rocm — AMD ROCm GPU Backend
-; =============================================================================
-; Direct AMD GPU access via the Kernel Fusion Driver (KFD) — no ROCm runtime,
-; no HIP, no C++ required.  Complements ml/ptx.jda (NVIDIA PTX backend).
-;
-; Linux kernel interfaces used:
-;   /dev/kfd           HSA Kernel Fusion Driver — process-level device access
-;   /dev/dri/renderD*  DRM render node          — GPUVM memory management
-;
-; ioctl commands (from amdkfd_ioctl.h):
-;   KFD_IOC_GET_VERSION     = 0xC008_4B01
-;   KFD_IOC_CREATE_QUEUE    = 0xC050_4B04
-;   KFD_IOC_ALLOC_MEMORY_OF_GPU = 0xC028_4B1F
-;   KFD_IOC_MAP_MEMORY_TO_GPU   = 0xC020_4B21
-;   KFD_IOC_UNMAP_AND_FREE      = 0xC020_4B22
-;   KFD_IOC_SUBMIT_QUEUE        = 0xC018_4B06
-;
-; GPU execution model (GFX9 / RDNA2):
-;   - Shader programs are written in GCN / RDNA ISA text (AMD's PTX equivalent)
-;   - Assembled via in-process assembler (amd-isa.jda, simplified)
-;   - Submitted as compute dispatches via KFD queue
-;
-; Memory model:
-;   - GPU-visible memory allocated with KFD_IOC_ALLOC_MEMORY_OF_GPU
-;   - Mapped to GPU address space with KFD_IOC_MAP_MEMORY_TO_GPU
-;   - Host-device transfer via CPU-accessible (coherent) allocations + fence
-;
-; Usage:
-;   let gpu = RocmContext::open(device: 0)?
-;   let a   = gpu.alloc(1024 * 4)           ; 4 KB GPU buffer
-;   gpu.h2d(host_buf, &a, 1024 * 4)         ; host → device
-;   gpu.matmul(&a, &b, &c, M, N, K)         ; tiled SGEMM
-;   gpu.d2h(&c, host_out, M * N * 4)        ; device → host
-;   gpu.free(a)
-; =============================================================================
+// =============================================================================
+// jda::ml::rocm — AMD ROCm GPU Backend
+// =============================================================================
+// Direct AMD GPU access via the Kernel Fusion Driver (KFD) — no ROCm runtime,
+// no HIP, no C++ required.  Complements ml/ptx.jda (NVIDIA PTX backend).
+//
+// Linux kernel interfaces used:
+//   /dev/kfd           HSA Kernel Fusion Driver — process-level device access
+//   /dev/dri/renderD*  DRM render node          — GPUVM memory management
+//
+// ioctl commands (from amdkfd_ioctl.h):
+//   KFD_IOC_GET_VERSION     = 0xC008_4B01
+//   KFD_IOC_CREATE_QUEUE    = 0xC050_4B04
+//   KFD_IOC_ALLOC_MEMORY_OF_GPU = 0xC028_4B1F
+//   KFD_IOC_MAP_MEMORY_TO_GPU   = 0xC020_4B21
+//   KFD_IOC_UNMAP_AND_FREE      = 0xC020_4B22
+//   KFD_IOC_SUBMIT_QUEUE        = 0xC018_4B06
+//
+// GPU execution model (GFX9 / RDNA2):
+//   - Shader programs are written in GCN / RDNA ISA text (AMD's PTX equivalent)
+//   - Assembled via in-process assembler (amd-isa.jda, simplified)
+//   - Submitted as compute dispatches via KFD queue
+//
+// Memory model:
+//   - GPU-visible memory allocated with KFD_IOC_ALLOC_MEMORY_OF_GPU
+//   - Mapped to GPU address space with KFD_IOC_MAP_MEMORY_TO_GPU
+//   - Host-device transfer via CPU-accessible (coherent) allocations + fence
+//
+// Usage:
+//   let gpu = RocmContext::open(device: 0)?
+//   let a   = gpu.alloc(1024 * 4)           // 4 KB GPU buffer
+//   gpu.h2d(host_buf, &a, 1024 * 4)         // host → device
+//   gpu.matmul(&a, &b, &c, M, N, K)         // tiled SGEMM
+//   gpu.d2h(&c, host_out, M * N * 4)        // device → host
+//   gpu.free(a)
+// =============================================================================
 
 const SYS_OPEN   = 2
 const SYS_CLOSE  = 3
@@ -42,7 +42,7 @@ const SYS_MMAP   = 9
 const SYS_MUNMAP = 11
 const O_RDWR     = 2
 
-; ---- KFD ioctl codes --------------------------------------------------------
+// ---- KFD ioctl codes --------------------------------------------------------
 const KFD_IOC_GET_VERSION         : u32 = 0xC008_4B01
 const KFD_IOC_CREATE_QUEUE        : u32 = 0xC050_4B04
 const KFD_IOC_DESTROY_QUEUE       : u32 = 0xC008_4B05
@@ -52,35 +52,35 @@ const KFD_IOC_MAP_MEMORY_TO_GPU   : u32 = 0xC020_4B21
 const KFD_IOC_UNMAP_AND_FREE      : u32 = 0xC020_4B22
 const KFD_IOC_GET_PROCESS_APERTURES : u32 = 0xC050_4B0A
 
-; ---- KFD memory flags -------------------------------------------------------
-const KFD_IOC_ALLOC_MEM_FLAGS_VRAM       : u32 = 0x0001   ; GPU VRAM
-const KFD_IOC_ALLOC_MEM_FLAGS_GTT        : u32 = 0x0002   ; GTT (CPU-accessible)
-const KFD_IOC_ALLOC_MEM_FLAGS_USERPTR    : u32 = 0x0004   ; user pointer
-const KFD_IOC_ALLOC_MEM_FLAGS_COHERENT   : u32 = 0x0100   ; CPU-coherent
-const KFD_IOC_ALLOC_MEM_FLAGS_EXECUTABLE : u32 = 0x1000   ; shader code
+// ---- KFD memory flags -------------------------------------------------------
+const KFD_IOC_ALLOC_MEM_FLAGS_VRAM       : u32 = 0x0001   // GPU VRAM
+const KFD_IOC_ALLOC_MEM_FLAGS_GTT        : u32 = 0x0002   // GTT (CPU-accessible)
+const KFD_IOC_ALLOC_MEM_FLAGS_USERPTR    : u32 = 0x0004   // user pointer
+const KFD_IOC_ALLOC_MEM_FLAGS_COHERENT   : u32 = 0x0100   // CPU-coherent
+const KFD_IOC_ALLOC_MEM_FLAGS_EXECUTABLE : u32 = 0x1000   // shader code
 
-; =============================================================================
-; KFD data structures (binary layout must match kernel ABI)
-; =============================================================================
+// =============================================================================
+// KFD data structures (binary layout must match kernel ABI)
+// =============================================================================
 struct KfdVersionArgs {
     major_version: u32
     minor_version: u32
 }
 
 struct KfdAllocMemArgs {
-    va_addr:    u64    ; requested GPU VA (0 = kernel chooses)
-    size:       u64    ; bytes
-    handle:     u64    ; OUT: opaque handle
-    mmap_offset:u64    ; OUT: offset for mmap if needed
+    va_addr:    u64    // requested GPU VA (0 = kernel chooses)
+    size:       u64    // bytes
+    handle:     u64    // OUT: opaque handle
+    mmap_offset:u64    // OUT: offset for mmap if needed
     gpu_id:     u32
     flags:      u32
 }
 
 struct KfdMapMemArgs {
     handle:     u64
-    device_ids_array_ptr: u64   ; pointer to []u32 of GPU IDs
+    device_ids_array_ptr: u64   // pointer to []u32 of GPU IDs
     n_devices:  u32
-    n_success:  u32             ; OUT
+    n_success:  u32             // OUT
 }
 
 struct KfdFreeMemArgs {
@@ -93,9 +93,9 @@ struct KfdCreateQueueArgs {
     ring_base_address:  u64
     ring_size:          u32
     gpu_id:             u32
-    queue_type:         u32   ; 1 = COMPUTE
-    queue_id:           u32   ; OUT
-    doorbell_offset:    u64   ; OUT
+    queue_type:         u32   // 1 = COMPUTE
+    queue_id:           u32   // OUT
+    doorbell_offset:    u64   // OUT
     eop_buffer_address: u64
     eop_buffer_size:    u32
     ctx_save_restore_address: u64
@@ -111,10 +111,10 @@ struct KfdSubmitQueueArgs {
     n_packets:      u64
 }
 
-; Packet structures for PM4/HSA dispatch
+// Packet structures for PM4/HSA dispatch
 struct HsaDispatchPacket {
-    header:         u16   ; HSA_PACKET_TYPE_KERNEL_DISPATCH = 2, barrier bit
-    setup:          u16   ; dimensions
+    header:         u16   // HSA_PACKET_TYPE_KERNEL_DISPATCH = 2, barrier bit
+    setup:          u16   // dimensions
     workgroup_size_x: u16
     workgroup_size_y: u16
     workgroup_size_z: u16
@@ -124,55 +124,55 @@ struct HsaDispatchPacket {
     grid_size_z:    u32
     private_segment_size: u32
     group_segment_size:   u32
-    kernel_object:  u64   ; GPU VA of shader code
-    kernarg_address:u64   ; GPU VA of kernel arguments
+    kernel_object:  u64   // GPU VA of shader code
+    kernarg_address:u64   // GPU VA of kernel arguments
     _reserved2:     u64
     completion_signal: u64
 }
 
-; =============================================================================
-; GPU buffer handle
-; =============================================================================
+// =============================================================================
+// GPU buffer handle
+// =============================================================================
 struct RocmBuf {
-    handle:   u64    ; KFD opaque handle
-    gpu_va:   u64    ; GPU virtual address
-    host_ptr: *mut i8   ; CPU mapping (GTT buffers only)
+    handle:   u64    // KFD opaque handle
+    gpu_va:   u64    // GPU virtual address
+    host_ptr: *mut i8   // CPU mapping (GTT buffers only)
     size:     u64
-    is_gtt:   bool   ; coherent (CPU-accessible) vs pure VRAM
+    is_gtt:   bool   // coherent (CPU-accessible) vs pure VRAM
 }
 
-; =============================================================================
-; RocmContext — one per GPU device
-; =============================================================================
+// =============================================================================
+// RocmContext — one per GPU device
+// =============================================================================
 struct RocmContext {
-    kfd_fd:     i32    ; /dev/kfd file descriptor
-    gpu_id:     u32    ; KFD GPU ID
-    queue_id:   u32    ; compute queue ID
-    doorbell:   u64    ; mapped doorbell page VA
+    kfd_fd:     i32    // /dev/kfd file descriptor
+    gpu_id:     u32    // KFD GPU ID
+    queue_id:   u32    // compute queue ID
+    doorbell:   u64    // mapped doorbell page VA
 
-    ; ring buffer for PM4 packets
+    // ring buffer for PM4 packets
     ring_buf:   *mut i8
     ring_size:  u32
     ring_wptr:  u32
 }
 
 impl RocmContext {
-    ; ---- open the KFD and create a compute queue ----------------------------
+    // ---- open the KFD and create a compute queue ----------------------------
     fn open(device: u32) -> Result<own RocmContext, []i8> {
         let kfd_path = "/dev/kfd\0"
         let fd = syscall(SYS_OPEN, kfd_path, O_RDWR, 0) as i32
         if fd < 0 { ret err("rocm: cannot open /dev/kfd") }
 
-        ; verify KFD version
+        // verify KFD version
         let ver = KfdVersionArgs { major_version: 0, minor_version: 0 }
         let rc = syscall(SYS_IOCTL, fd, KFD_IOC_GET_VERSION, &ver) as i32
         if rc < 0 { ret err("rocm: KFD_IOC_GET_VERSION failed") }
 
-        ; get GPU IDs via apertures ioctl (simplified — use device index)
-        let gpu_id = device + 1   ; KFD GPU IDs start at 1
+        // get GPU IDs via apertures ioctl (simplified — use device index)
+        let gpu_id = device + 1   // KFD GPU IDs start at 1
 
-        ; allocate ring buffer (GTT coherent, executable)
-        let ring_sz: u32 = 65536   ; 64 KB
+        // allocate ring buffer (GTT coherent, executable)
+        let ring_sz: u32 = 65536   // 64 KB
         let ring_alloc = KfdAllocMemArgs {
             va_addr: 0, size: ring_sz as u64,
             handle: 0, mmap_offset: 0,
@@ -185,17 +185,17 @@ impl RocmContext {
                          KFD_IOC_ALLOC_MEMORY_OF_GPU, &ring_alloc) as i32
         if r < 0 { ret err("rocm: ring alloc failed") }
 
-        ; mmap ring into CPU address space
-        let ring_ptr = syscall(SYS_MMAP, 0, ring_sz, 3 ; PROT_RW
+        // mmap ring into CPU address space
+        let ring_ptr = syscall(SYS_MMAP, 0, ring_sz, 3 // PROT_RW
                                , 1, fd, ring_alloc.mmap_offset) as *mut i8
         if ring_ptr as i64 < 0 { ret err("rocm: ring mmap failed") }
 
-        ; create compute queue
+        // create compute queue
         let qargs = KfdCreateQueueArgs {
             ring_base_address:  ring_ptr as u64,
             ring_size:          ring_sz,
             gpu_id:             gpu_id,
-            queue_type:         1,   ; COMPUTE
+            queue_type:         1,   // COMPUTE
             queue_id:           0,
             doorbell_offset:    0,
             eop_buffer_address: 0,
@@ -220,7 +220,7 @@ impl RocmContext {
         })
     }
 
-    ; ---- allocate GPU VRAM buffer -------------------------------------------
+    // ---- allocate GPU VRAM buffer -------------------------------------------
     fn alloc(self, bytes: u64) -> Result<own RocmBuf, []i8> {
         let args = KfdAllocMemArgs {
             va_addr: 0, size: bytes, handle: 0, mmap_offset: 0,
@@ -251,7 +251,7 @@ impl RocmContext {
         })
     }
 
-    ; ---- allocate CPU-coherent (GTT) buffer — for host↔device transfers -----
+    // ---- allocate CPU-coherent (GTT) buffer — for host↔device transfers -----
     fn alloc_coherent(self, bytes: u64) -> Result<own RocmBuf, []i8> {
         let args = KfdAllocMemArgs {
             va_addr: 0, size: bytes, handle: 0, mmap_offset: 0,
@@ -285,15 +285,15 @@ impl RocmContext {
         })
     }
 
-    ; ---- host → device transfer (via coherent staging buffer) ---------------
+    // ---- host → device transfer (via coherent staging buffer) ---------------
     fn h2d(self, host: ref []i8, dst: ref RocmBuf, bytes: i64) {
         if dst.is_gtt {
-            ; direct write through CPU mapping
+            // direct write through CPU mapping
             memcpy(dst.host_ptr, host, bytes)
-            ; memory fence — ensures GPU sees the write
+            // memory fence — ensures GPU sees the write
             asm { --- mfence }
         } else {
-            ; use a temporary GTT staging buffer
+            // use a temporary GTT staging buffer
             let stage = self.alloc_coherent(bytes as u64).unwrap()
             memcpy(stage.host_ptr, host, bytes)
             asm { --- mfence }
@@ -302,7 +302,7 @@ impl RocmContext {
         }
     }
 
-    ; ---- device → host transfer ----------------------------------------------
+    // ---- device → host transfer ----------------------------------------------
     fn d2h(self, src: ref RocmBuf, host: []mut i8, bytes: i64) {
         if src.is_gtt {
             asm { --- mfence }
@@ -317,7 +317,7 @@ impl RocmContext {
         }
     }
 
-    ; ---- free a GPU buffer ---------------------------------------------------
+    // ---- free a GPU buffer ---------------------------------------------------
     fn free(self, buf: own RocmBuf) {
         if buf.is_gtt and buf.host_ptr as i64 != 0 {
             syscall(SYS_MUNMAP, buf.host_ptr, buf.size)
@@ -330,16 +330,16 @@ impl RocmContext {
         drop(buf)
     }
 
-    ; ==========================================================================
-    ; GPU compute dispatch — submit a precompiled shader
-    ; ==========================================================================
+    // ==========================================================================
+    // GPU compute dispatch — submit a precompiled shader
+    // ==========================================================================
     fn dispatch(self, shader_gpu_va: u64,
                 kernarg_gpu_va: u64,
                 grid_x: u32, grid_y: u32, grid_z: u32,
                 wg_x: u32,   wg_y: u32,   wg_z: u32) {
         let pkt = HsaDispatchPacket {
-            header:          (2 << 8) | 1,  ; type=DISPATCH, barrier=1
-            setup:           3,              ; 3 dimensions
+            header:          (2 << 8) | 1,  // type=DISPATCH, barrier=1
+            setup:           3,              // 3 dimensions
             workgroup_size_x: wg_x as u16,
             workgroup_size_y: wg_y as u16,
             workgroup_size_z: wg_z as u16,
@@ -348,7 +348,7 @@ impl RocmContext {
             grid_size_y:     grid_y,
             grid_size_z:     grid_z,
             private_segment_size: 0,
-            group_segment_size:   16384,     ; 16 KB LDS
+            group_segment_size:   16384,     // 16 KB LDS
             kernel_object:        shader_gpu_va,
             kernarg_address:      kernarg_gpu_va,
             _reserved2:           0,
@@ -358,28 +358,28 @@ impl RocmContext {
         self.queue_flush()
     }
 
-    ; Write a 64-byte HSA packet into the ring buffer
+    // Write a 64-byte HSA packet into the ring buffer
     fn ring_write_packet(self, pkt: ref HsaDispatchPacket) {
         let dst = self.ring_buf + self.ring_wptr as i64
         memcpy(dst, pkt as *i8, 64)
         self.ring_wptr = (self.ring_wptr + 64) % self.ring_size
     }
 
-    ; Write doorbell to kick the GPU queue
+    // Write doorbell to kick the GPU queue
     fn queue_flush(self) {
         let doorbell_ptr = self.doorbell as *mut u32
         doorbell_ptr[0] = self.ring_wptr
         asm { --- mfence }
     }
 
-    ; DMA copy inside GPU (no CPU involvement) — emitted as a SDMA packet
+    // DMA copy inside GPU (no CPU involvement) — emitted as a SDMA packet
     fn gpu_copy(self, src_va: u64, dst_va: u64, bytes: u64) {
-        ; SDMA COPY_LINEAR packet (simplified — real impl writes to SDMA queue)
-        ; For this backend we use a tiny GCN compute kernel for the copy.
+        // SDMA COPY_LINEAR packet (simplified — real impl writes to SDMA queue)
+        // For this backend we use a tiny GCN compute kernel for the copy.
         self.launch_copy_kernel(src_va, dst_va, bytes)
     }
 
-    ; ---- close ---------------------------------------------------------------
+    // ---- close ---------------------------------------------------------------
     fn close(self) {
         let qd = KfdCreateQueueArgs { queue_id: self.queue_id,
             ring_base_address: 0, ring_size: 0, gpu_id: 0,
@@ -393,18 +393,18 @@ impl RocmContext {
         syscall(SYS_CLOSE, self.kfd_fd, 0, 0)
     }
 
-    ; ==========================================================================
-    ; High-level: SGEMM  C = A × B   (all in GPU VRAM)
-    ; Uses a 16×16-tiled kernel written in RDNA2 ISA (assembled at runtime).
-    ; ==========================================================================
+    // ==========================================================================
+    // High-level: SGEMM  C = A × B   (all in GPU VRAM)
+    // Uses a 16×16-tiled kernel written in RDNA2 ISA (assembled at runtime).
+    // ==========================================================================
     fn matmul(self, a: ref RocmBuf, b: ref RocmBuf, c: ref RocmBuf,
               M: u32, N: u32, K: u32) {
-        ; 1. Assemble the RDNA2 SGEMM kernel into a GTT buffer
+        // 1. Assemble the RDNA2 SGEMM kernel into a GTT buffer
         let kern_size: u64 = 4096
         let kern_buf  = self.alloc_coherent(kern_size).unwrap()
         let isa_bytes = emit_sgemm_rdna2(kern_buf.host_ptr, M, N, K)
 
-        ; 2. Allocate kernarg buffer: { a_ptr, b_ptr, c_ptr, M, N, K }
+        // 2. Allocate kernarg buffer: { a_ptr, b_ptr, c_ptr, M, N, K }
         let karg_size: u64 = 64
         let karg_buf  = self.alloc_coherent(karg_size).unwrap()
         let ka = karg_buf.host_ptr as *mut u64
@@ -414,14 +414,14 @@ impl RocmContext {
         let km = karg_buf.host_ptr as *mut u32
         km[6] = M   km[7] = N   km[8] = K
 
-        ; 3. Dispatch: grid = ⌈M/16⌉ × ⌈N/16⌉, workgroup = 16×16×1
+        // 3. Dispatch: grid = ⌈M/16⌉ × ⌈N/16⌉, workgroup = 16×16×1
         let gx = (M + 15) / 16
         let gy = (N + 15) / 16
         self.dispatch(kern_buf.gpu_va, karg_buf.gpu_va,
                        gx, gy, 1,
                        16, 16, 1)
 
-        ; 4. Clean up shader and kernarg buffers
+        // 4. Clean up shader and kernarg buffers
         self.free(kern_buf)
         self.free(karg_buf)
     }
@@ -432,7 +432,7 @@ impl RocmContext {
         let karg_buf = self.alloc_coherent(64).unwrap()
         let ka = karg_buf.host_ptr as *mut u64
         ka[0] = src_va   ka[1] = dst_va   ka[2] = bytes
-        let threads = ((bytes + 3) / 4) as u32   ; one thread per dword
+        let threads = ((bytes + 3) / 4) as u32   // one thread per dword
         self.dispatch(kern_buf.gpu_va, karg_buf.gpu_va,
                        threads, 1, 1,
                        256, 1, 1)
@@ -441,140 +441,140 @@ impl RocmContext {
     }
 }
 
-; =============================================================================
-; RDNA2 ISA code emitter — 16×16-tiled SGEMM
-; =============================================================================
-; Emits raw 32-bit encoded RDNA2 (GFX10) instructions into `buf`.
-; Each thread computes one C[row, col] element using a 16-element dot product.
-;
-; Register convention:
-;   s0-s1  : kernarg pointer
-;   v0     : thread ID X (0..15 = col tile)
-;   v1     : thread ID Y (0..15 = row tile)
-;   v2-v3  : A pointer (row)
-;   v4-v5  : B pointer (col)
-;   v6-v7  : C pointer
-;   a0     : accumulator (AGPR)
-;   v8-v23 : A row elements (f32 × 16)
-;   v24-v39: B col elements (f32 × 16)
-; =============================================================================
+// =============================================================================
+// RDNA2 ISA code emitter — 16×16-tiled SGEMM
+// =============================================================================
+// Emits raw 32-bit encoded RDNA2 (GFX10) instructions into `buf`.
+// Each thread computes one C[row, col] element using a 16-element dot product.
+//
+// Register convention:
+//   s0-s1  : kernarg pointer
+//   v0     : thread ID X (0..15 = col tile)
+//   v1     : thread ID Y (0..15 = row tile)
+//   v2-v3  : A pointer (row)
+//   v4-v5  : B pointer (col)
+//   v6-v7  : C pointer
+//   a0     : accumulator (AGPR)
+//   v8-v23 : A row elements (f32 × 16)
+//   v24-v39: B col elements (f32 × 16)
+// =============================================================================
 fn emit_sgemm_rdna2(buf: *mut i8, M: u32, N: u32, K: u32) -> i64 {
     let pos = 0i64
     let out = buf as *mut u32
 
-    ; Helper: emit one 32-bit instruction word
+    // Helper: emit one 32-bit instruction word
     fn e(w: u32) {
         out[pos / 4] = w
         pos = pos + 4
     }
 
-    ; S_LOAD_DWORDX4 s[0:3], s[0:1], 0x00   — load {a_ptr, b_ptr} from kernarg
-    e(0xF4080000)   ; S_LOAD_DWORDX4
-    e(0x00000000)   ; offset 0
+    // S_LOAD_DWORDX4 s[0:3], s[0:1], 0x00   — load {a_ptr, b_ptr} from kernarg
+    e(0xF4080000)   // S_LOAD_DWORDX4
+    e(0x00000000)   // offset 0
 
-    ; S_LOAD_DWORDX2 s[4:5], s[0:1], 0x10   — load {c_ptr}
+    // S_LOAD_DWORDX2 s[4:5], s[0:1], 0x10   — load {c_ptr}
     e(0xF4040002)
     e(0x00000010)
 
-    ; S_LOAD_DWORD s6, s[0:1], 0x18         — load M
+    // S_LOAD_DWORD s6, s[0:1], 0x18         — load M
     e(0xF4000003)
     e(0x00000018)
 
-    ; S_WAITCNT lgkmcnt(0)
+    // S_WAITCNT lgkmcnt(0)
     e(0xBF8CC07F)
 
-    ; V_MOV_B32 v0, s12 (workgroup offset X)
+    // V_MOV_B32 v0, s12 (workgroup offset X)
     e(0x7E000300 | 12)
-    ; V_LSHL_ADD_U32 v0, v0, 4, v0         — col = wg_x * 16 + tid_x
-    ; (thread-id-x is already in v0 from the dispatch setup)
+    // V_LSHL_ADD_U32 v0, v0, 4, v0         — col = wg_x * 16 + tid_x
+    // (thread-id-x is already in v0 from the dispatch setup)
 
-    ; Accumulator init: V_ACCVGPR_WRITE_B32 a0, 0
+    // Accumulator init: V_ACCVGPR_WRITE_B32 a0, 0
     e(0xD3BE0000)
-    e(0x00010100)   ; src0 = inline const 0
+    e(0x00010100)   // src0 = inline const 0
 
-    ; Main K-loop: 16-element FMA chain
-    ; For brevity, emit 16 iterations of:
-    ;   GLOBAL_LOAD_DWORD  v8,  v[2:3], 0    (A element)
-    ;   GLOBAL_LOAD_DWORD  v24, v[4:5], 0    (B element)
-    ;   S_WAITCNT vmcnt(0)
-    ;   V_FMAC_F32 v6, v8, v24              (C += A * B)
+    // Main K-loop: 16-element FMA chain
+    // For brevity, emit 16 iterations of:
+    //   GLOBAL_LOAD_DWORD  v8,  v[2:3], 0    (A element)
+    //   GLOBAL_LOAD_DWORD  v24, v[4:5], 0    (B element)
+    //   S_WAITCNT vmcnt(0)
+    //   V_FMAC_F32 v6, v8, v24              (C += A * B)
     loop k in 0..16 {
         let koff = (k * 4) as u32
-        ; GLOBAL_LOAD_DWORD  v8, v[2:3], k*4
+        // GLOBAL_LOAD_DWORD  v8, v[2:3], k*4
         e(0xDC500000 | (8 << 16))
         e(0x00020000 | koff)
-        ; GLOBAL_LOAD_DWORD v24, v[4:5], k*4
+        // GLOBAL_LOAD_DWORD v24, v[4:5], k*4
         e(0xDC500000 | (24 << 16))
         e(0x00040000 | koff)
-        ; S_WAITCNT vmcnt(0)
+        // S_WAITCNT vmcnt(0)
         e(0xBF8C0F70)
-        ; V_FMAC_F32 v6, v8, v24
-        e(0x56060018)   ; opcode V_FMAC_F32, vdst=v6, vsrc0=v8, vsrc1=v24
+        // V_FMAC_F32 v6, v8, v24
+        e(0x56060018)   // opcode V_FMAC_F32, vdst=v6, vsrc0=v8, vsrc1=v24
     }
 
-    ; GLOBAL_STORE_DWORD  v[6:7], v6, 0     (store result to C)
+    // GLOBAL_STORE_DWORD  v[6:7], v6, 0     (store result to C)
     e(0xDC700000 | (6 << 16))
     e(0x00060000)
 
-    ; S_ENDPGM
+    // S_ENDPGM
     e(0xBF810000)
 
     ret pos
 }
 
-; Simple element-wise copy kernel: each thread copies one dword
+// Simple element-wise copy kernel: each thread copies one dword
 fn emit_copy_rdna2(buf: *mut i8, bytes: u64) -> i64 {
     let out = buf as *mut u32
     let pos = 0i64
     fn e(w: u32) { out[pos/4] = w   pos = pos + 4 }
 
-    ; Load src/dst pointers from kernarg
-    e(0xF4080000)   ; S_LOAD_DWORDX4 s[0:3], s[0:1], 0
+    // Load src/dst pointers from kernarg
+    e(0xF4080000)   // S_LOAD_DWORDX4 s[0:3], s[0:1], 0
     e(0x00000000)
-    e(0xBF8CC07F)   ; S_WAITCNT lgkmcnt(0)
+    e(0xBF8CC07F)   // S_WAITCNT lgkmcnt(0)
 
-    ; thread ID → byte offset (each thread = 4 bytes)
-    ; GLOBAL_LOAD_DWORD v4, v[0:1], 0  (v0=tid global offset)
+    // thread ID → byte offset (each thread = 4 bytes)
+    // GLOBAL_LOAD_DWORD v4, v[0:1], 0  (v0=tid global offset)
     e(0xDC500000 | (4 << 16))
     e(0x00000000)
-    e(0xBF8C0F70)   ; S_WAITCNT vmcnt(0)
+    e(0xBF8C0F70)   // S_WAITCNT vmcnt(0)
 
-    ; GLOBAL_STORE_DWORD v[2:3], v4, 0
+    // GLOBAL_STORE_DWORD v[2:3], v4, 0
     e(0xDC700000 | (4 << 16))
     e(0x00020000)
 
-    e(0xBF810000)   ; S_ENDPGM
+    e(0xBF810000)   // S_ENDPGM
     ret pos
 }
 
-; =============================================================================
-; Example — SGEMM benchmark
-; =============================================================================
-;
-;   let M: u32 = 1024   let N: u32 = 1024   let K: u32 = 1024
-;   let gpu = RocmContext::open(device: 0).unwrap()
-;
-;   let a_host = [M * K]f32::randn()
-;   let b_host = [K * N]f32::randn()
-;   let c_host = [M * N]f32::zeros()
-;
-;   let a_dev = gpu.alloc(M * K * 4).unwrap()
-;   let b_dev = gpu.alloc(K * N * 4).unwrap()
-;   let c_dev = gpu.alloc(M * N * 4).unwrap()
-;
-;   gpu.h2d(a_host, &a_dev, M * K * 4)
-;   gpu.h2d(b_host, &b_dev, K * N * 4)
-;
-;   let t0 = rdtsc()
-;   gpu.matmul(&a_dev, &b_dev, &c_dev, M, N, K)
-;   let t1 = rdtsc()
-;
-;   gpu.d2h(&c_dev, c_host, M * N * 4)
-;
-;   let gflops = (2.0 * M * N * K) as f64 / (t1 - t0) as f64
-;   print("ROCm SGEMM: {gflops:.1f} GFLOPS")
-;
-;   gpu.free(a_dev)
-;   gpu.free(b_dev)
-;   gpu.free(c_dev)
-;   gpu.close()
+// =============================================================================
+// Example — SGEMM benchmark
+// =============================================================================
+//
+//   let M: u32 = 1024   let N: u32 = 1024   let K: u32 = 1024
+//   let gpu = RocmContext::open(device: 0).unwrap()
+//
+//   let a_host = [M * K]f32::randn()
+//   let b_host = [K * N]f32::randn()
+//   let c_host = [M * N]f32::zeros()
+//
+//   let a_dev = gpu.alloc(M * K * 4).unwrap()
+//   let b_dev = gpu.alloc(K * N * 4).unwrap()
+//   let c_dev = gpu.alloc(M * N * 4).unwrap()
+//
+//   gpu.h2d(a_host, &a_dev, M * K * 4)
+//   gpu.h2d(b_host, &b_dev, K * N * 4)
+//
+//   let t0 = rdtsc()
+//   gpu.matmul(&a_dev, &b_dev, &c_dev, M, N, K)
+//   let t1 = rdtsc()
+//
+//   gpu.d2h(&c_dev, c_host, M * N * 4)
+//
+//   let gflops = (2.0 * M * N * K) as f64 / (t1 - t0) as f64
+//   print("ROCm SGEMM: {gflops:.1f} GFLOPS")
+//
+//   gpu.free(a_dev)
+//   gpu.free(b_dev)
+//   gpu.free(c_dev)
+//   gpu.close()

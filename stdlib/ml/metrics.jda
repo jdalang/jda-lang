@@ -1,25 +1,25 @@
-; =============================================================================
-; jda::ml::metrics — Model Evaluation Metrics
-; =============================================================================
-; Classification:
-;   accuracy, precision, recall, f1_score, f1_macro, f1_weighted
-;   confusion_matrix, roc_auc, average_precision
-;
-; Regression:
-;   mae, mse, rmse, r_squared, mape, huber_loss
-;
-; Multi-label:
-;   hamming_loss, subset_accuracy, multilabel_f1
-;
-; All functions operate on plain []f32 or []i64 slices — zero allocations
-; beyond the confusion matrix buffer (caller-supplied).
-; =============================================================================
+// =============================================================================
+// jda::ml::metrics — Model Evaluation Metrics
+// =============================================================================
+// Classification:
+//   accuracy, precision, recall, f1_score, f1_macro, f1_weighted
+//   confusion_matrix, roc_auc, average_precision
+//
+// Regression:
+//   mae, mse, rmse, r_squared, mape, huber_loss
+//
+// Multi-label:
+//   hamming_loss, subset_accuracy, multilabel_f1
+//
+// All functions operate on plain []f32 or []i64 slices — zero allocations
+// beyond the confusion matrix buffer (caller-supplied).
+// =============================================================================
 
-; =============================================================================
-; Binary classification — expects labels in {0, 1}
-; =============================================================================
+// =============================================================================
+// Binary classification — expects labels in {0, 1}
+// =============================================================================
 
-; ---- confusion matrix cells (binary) ----------------------------------------
+// ---- confusion matrix cells (binary) ----------------------------------------
 fn true_positives(pred: ref []i64, true: ref []i64) -> i64 {
     let tp = 0i64
     loop i in 0..pred.len {
@@ -49,7 +49,7 @@ fn false_negatives(pred: ref []i64, true: ref []i64) -> i64 {
     ret fn_
 }
 
-; ---- accuracy ---------------------------------------------------------------
+// ---- accuracy ---------------------------------------------------------------
 fn accuracy(pred: ref []i64, true: ref []i64) -> f64 {
     let correct = 0i64
     loop i in 0..pred.len {
@@ -58,7 +58,7 @@ fn accuracy(pred: ref []i64, true: ref []i64) -> f64 {
     ret correct as f64 / pred.len as f64
 }
 
-; ---- precision, recall, F1 --------------------------------------------------
+// ---- precision, recall, F1 --------------------------------------------------
 fn precision(pred: ref []i64, true: ref []i64) -> f64 {
     let tp = true_positives(pred, true)
     let fp = false_positives(pred, true)
@@ -80,7 +80,7 @@ fn f1_score(pred: ref []i64, true: ref []i64) -> f64 {
     ret 2.0 * p * r / (p + r)
 }
 
-; F-beta: beta=2 weights recall higher; beta=0.5 weights precision higher
+// F-beta: beta=2 weights recall higher; beta=0.5 weights precision higher
 fn f_beta(pred: ref []i64, true: ref []i64, beta: f64) -> f64 {
     let p = precision(pred, true)
     let r = recall(pred, true)
@@ -107,10 +107,10 @@ fn matthews_corrcoef(pred: ref []i64, true: ref []i64) -> f64 {
     ret (tp * tn - fp * fn_) / denom
 }
 
-; =============================================================================
-; Multi-class confusion matrix
-; =============================================================================
-; buf must be [n_classes * n_classes]i64 zeroed by caller
+// =============================================================================
+// Multi-class confusion matrix
+// =============================================================================
+// buf must be [n_classes * n_classes]i64 zeroed by caller
 fn confusion_matrix(pred: ref []i64, true: ref []i64,
                     n_classes: i64, buf: []mut i64) {
     loop i in 0..n_classes * n_classes { buf[i] = 0 }
@@ -123,7 +123,7 @@ fn confusion_matrix(pred: ref []i64, true: ref []i64,
     }
 }
 
-; Per-class precision from confusion matrix (col-normalised)
+// Per-class precision from confusion matrix (col-normalised)
 fn cm_precision(cm: ref []i64, c: i64, n_classes: i64) -> f64 {
     let tp = cm[c * n_classes + c]
     let col_sum = 0i64
@@ -132,7 +132,7 @@ fn cm_precision(cm: ref []i64, c: i64, n_classes: i64) -> f64 {
     ret tp as f64 / col_sum as f64
 }
 
-; Per-class recall from confusion matrix (row-normalised)
+// Per-class recall from confusion matrix (row-normalised)
 fn cm_recall(cm: ref []i64, c: i64, n_classes: i64) -> f64 {
     let tp = cm[c * n_classes + c]
     let row_sum = 0i64
@@ -141,7 +141,7 @@ fn cm_recall(cm: ref []i64, c: i64, n_classes: i64) -> f64 {
     ret tp as f64 / row_sum as f64
 }
 
-; Macro-F1: unweighted average of per-class F1
+// Macro-F1: unweighted average of per-class F1
 fn f1_macro(pred: ref []i64, true: ref []i64, n_classes: i64) -> f64 {
     let cm  = [n_classes * n_classes]i64
     confusion_matrix(pred, true, n_classes, cm)
@@ -155,7 +155,7 @@ fn f1_macro(pred: ref []i64, true: ref []i64, n_classes: i64) -> f64 {
     ret sum / n_classes as f64
 }
 
-; Weighted-F1: weighted by class support
+// Weighted-F1: weighted by class support
 fn f1_weighted(pred: ref []i64, true: ref []i64, n_classes: i64) -> f64 {
     let cm  = [n_classes * n_classes]i64
     confusion_matrix(pred, true, n_classes, cm)
@@ -172,7 +172,7 @@ fn f1_weighted(pred: ref []i64, true: ref []i64, n_classes: i64) -> f64 {
     ret sum / total
 }
 
-; Micro-F1: aggregate TP/FP/FN across all classes
+// Micro-F1: aggregate TP/FP/FN across all classes
 fn f1_micro(pred: ref []i64, true: ref []i64, n_classes: i64) -> f64 {
     let tp_all = 0i64
     let fp_all = 0i64
@@ -192,20 +192,20 @@ fn f1_micro(pred: ref []i64, true: ref []i64, n_classes: i64) -> f64 {
     ret 2.0 * p * r / (p + r)
 }
 
-; =============================================================================
-; ROC-AUC (binary) — trapezoidal rule
-; =============================================================================
-; scores: predicted probabilities for class 1  ([0.0, 1.0])
-; true:   binary ground-truth labels {0, 1}
-;
-; Complexity: O(n log n) sort + O(n) integration
+// =============================================================================
+// ROC-AUC (binary) — trapezoidal rule
+// =============================================================================
+// scores: predicted probabilities for class 1  ([0.0, 1.0])
+// true:   binary ground-truth labels {0, 1}
+//
+// Complexity: O(n log n) sort + O(n) integration
 fn roc_auc(scores: ref []f32, true: ref []i64) -> f64 {
     let n = scores.len
 
-    ; argsort scores descending
+    // argsort scores descending
     let order = [n]i64
     loop i in 0..n { order[i] = i }
-    ; insertion sort (simple; use mergesort for large n in production)
+    // insertion sort (simple; use mergesort for large n in production)
     loop i in 1..n {
         let key_i = order[i]
         let key_s = scores[key_i]
@@ -217,24 +217,24 @@ fn roc_auc(scores: ref []f32, true: ref []i64) -> f64 {
         order[j+1] = key_i
     }
 
-    let pos = 0i64   ; total positives
+    let pos = 0i64   // total positives
     loop i in 0..n { if true[i] == 1 { pos = pos + 1 } }
     let neg = n - pos
 
     if pos == 0 or neg == 0 { ret 0.5 }
 
-    let tpr = 0.0f64   ; true  positive rate (recall)
-    let fpr = 0.0f64   ; false positive rate
+    let tpr = 0.0f64   // true  positive rate (recall)
+    let fpr = 0.0f64   // false positive rate
     let auc = 0.0f64
     let prev_tpr = 0.0f64
     let prev_fpr = 0.0f64
-    let prev_score = scores[order[0]] + 1.0f32  ; sentinel
+    let prev_score = scores[order[0]] + 1.0f32  // sentinel
 
     loop i in 0..n {
         let idx = order[i]
         let s   = scores[idx]
         if s != prev_score {
-            ; integrate trapezoid
+            // integrate trapezoid
             auc = auc + (fpr - prev_fpr) * (tpr + prev_tpr) / 2.0
             prev_tpr   = tpr
             prev_fpr   = fpr
@@ -246,18 +246,18 @@ fn roc_auc(scores: ref []f32, true: ref []i64) -> f64 {
             fpr = fpr + 1.0 / neg as f64
         }
     }
-    ; final trapezoid to (1,1)
+    // final trapezoid to (1,1)
     auc = auc + (fpr - prev_fpr) * (tpr + prev_tpr) / 2.0
     auc = auc + (1.0 - fpr) * (tpr + 1.0) / 2.0
     ret auc
 }
 
-; Average precision (area under PR curve)
+// Average precision (area under PR curve)
 fn average_precision(scores: ref []f32, true: ref []i64) -> f64 {
     let n = scores.len
     let order = [n]i64
     loop i in 0..n { order[i] = i }
-    ; sort descending by score (insertion sort)
+    // sort descending by score (insertion sort)
     loop i in 1..n {
         let ki = order[i]
         let ks = scores[ki]
@@ -282,9 +282,9 @@ fn average_precision(scores: ref []f32, true: ref []i64) -> f64 {
     ret ap / pos as f64
 }
 
-; =============================================================================
-; Regression metrics
-; =============================================================================
+// =============================================================================
+// Regression metrics
+// =============================================================================
 
 fn mae(pred: ref []f32, true: ref []f32) -> f64 {
     let s = 0.0f64
@@ -310,8 +310,8 @@ fn r_squared(pred: ref []f32, true: ref []f32) -> f64 {
     for v in true { mean_true = mean_true + v as f64 }
     mean_true = mean_true / true.len as f64
 
-    let ss_res = 0.0f64   ; residual sum of squares
-    let ss_tot = 0.0f64   ; total sum of squares
+    let ss_res = 0.0f64   // residual sum of squares
+    let ss_tot = 0.0f64   // total sum of squares
     loop i in 0..pred.len {
         let d_res = (pred[i] - true[i]) as f64
         let d_tot = true[i] as f64 - mean_true
@@ -322,7 +322,7 @@ fn r_squared(pred: ref []f32, true: ref []f32) -> f64 {
     ret 1.0 - ss_res / ss_tot
 }
 
-; Mean Absolute Percentage Error (in %)
+// Mean Absolute Percentage Error (in %)
 fn mape(pred: ref []f32, true: ref []f32) -> f64 {
     let s = 0.0f64
     let n = 0i64
@@ -336,7 +336,7 @@ fn mape(pred: ref []f32, true: ref []f32) -> f64 {
     ret s / n as f64 * 100.0
 }
 
-; Huber loss (robust to outliers, delta=1.0 by default)
+// Huber loss (robust to outliers, delta=1.0 by default)
 fn huber_loss(pred: ref []f32, true: ref []f32, delta: f32) -> f64 {
     let s = 0.0f64
     loop i in 0..pred.len {
@@ -354,7 +354,7 @@ fn median_absolute_error(pred: ref []f32, true: ref []f32) -> f64 {
     let n = pred.len
     let errs = [n]f32
     loop i in 0..n { errs[i] = abs(pred[i] - true[i]) }
-    ; partial insertion sort to find median
+    // partial insertion sort to find median
     loop i in 1..n {
         let key = errs[i]
         let j   = i - 1
@@ -370,14 +370,14 @@ fn median_absolute_error(pred: ref []f32, true: ref []f32) -> f64 {
     ret (errs[n/2 - 1] + errs[n/2]) as f64 / 2.0
 }
 
-; =============================================================================
-; Multi-label classification metrics
-; =============================================================================
+// =============================================================================
+// Multi-label classification metrics
+// =============================================================================
 
-; Hamming loss: fraction of labels that are incorrectly predicted
+// Hamming loss: fraction of labels that are incorrectly predicted
 fn hamming_loss(pred: ref [][]i64, true: ref [][]i64) -> f64 {
     let n = pred.len
-    let k = pred[0].len    ; number of labels
+    let k = pred[0].len    // number of labels
     let wrong = 0i64
     loop i in 0..n {
         loop j in 0..k {
@@ -387,7 +387,7 @@ fn hamming_loss(pred: ref [][]i64, true: ref [][]i64) -> f64 {
     ret wrong as f64 / (n * k) as f64
 }
 
-; Subset accuracy: fraction of samples where ALL labels are correct
+// Subset accuracy: fraction of samples where ALL labels are correct
 fn subset_accuracy(pred: ref [][]i64, true: ref [][]i64) -> f64 {
     let n = pred.len
     let k = pred[0].len
@@ -402,9 +402,9 @@ fn subset_accuracy(pred: ref [][]i64, true: ref [][]i64) -> f64 {
     ret exact as f64 / n as f64
 }
 
-; =============================================================================
-; Pretty-print helpers
-; =============================================================================
+// =============================================================================
+// Pretty-print helpers
+// =============================================================================
 fn print_classification_report(pred: ref []i64, true: ref []i64,
                                 n_classes: i64,
                                 class_names: ref [][]i8) {
@@ -446,22 +446,22 @@ fn print_confusion_matrix(cm: ref []i64, n_classes: i64,
     }
 }
 
-; =============================================================================
-; Usage example
-; =============================================================================
-;
-;   let true_labels = [0i64, 1, 1, 0, 2, 1, 0, 2, 2]
-;   let pred_labels = [0i64, 1, 0, 0, 2, 1, 1, 2, 1]
-;
-;   print("accuracy:  ", accuracy(&pred_labels, &true_labels))   ; 0.667
-;   print("macro-F1:  ", f1_macro(&pred_labels, &true_labels, 3))
-;
-;   let scores = [0.9f32, 0.8, 0.3, 0.1, 0.7, 0.6, 0.4, 0.2, 0.5]
-;   let binary  = [1i64,  1,   0,   0,   1,   1,   0,   0,   0]
-;   print("ROC-AUC:   ", roc_auc(&scores, &binary))
-;
-;   let pred_f = [2.5f32, 0.0, 2.1, 7.8]
-;   let true_f = [3.0f32, -0.5, 2.0, 7.0]
-;   print("MAE:  ", mae(&pred_f, &true_f))
-;   print("RMSE: ", rmse(&pred_f, &true_f))
-;   print("R²:   ", r_squared(&pred_f, &true_f))
+// =============================================================================
+// Usage example
+// =============================================================================
+//
+//   let true_labels = [0i64, 1, 1, 0, 2, 1, 0, 2, 2]
+//   let pred_labels = [0i64, 1, 0, 0, 2, 1, 1, 2, 1]
+//
+//   print("accuracy:  ", accuracy(&pred_labels, &true_labels))   // 0.667
+//   print("macro-F1:  ", f1_macro(&pred_labels, &true_labels, 3))
+//
+//   let scores = [0.9f32, 0.8, 0.3, 0.1, 0.7, 0.6, 0.4, 0.2, 0.5]
+//   let binary  = [1i64,  1,   0,   0,   1,   1,   0,   0,   0]
+//   print("ROC-AUC:   ", roc_auc(&scores, &binary))
+//
+//   let pred_f = [2.5f32, 0.0, 2.1, 7.8]
+//   let true_f = [3.0f32, -0.5, 2.0, 7.0]
+//   print("MAE:  ", mae(&pred_f, &true_f))
+//   print("RMSE: ", rmse(&pred_f, &true_f))
+//   print("R²:   ", r_squared(&pred_f, &true_f))

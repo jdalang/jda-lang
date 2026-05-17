@@ -1,46 +1,46 @@
-; =============================================================================
-; jda::mem::region — Region / Arena Allocator
-; =============================================================================
-; High-performance bump-pointer allocator for scoped memory.
-;
-; Concept: allocate a large slab of pages upfront. Hand out
-; sub-slices with O(1) bump. Free the entire slab at once
-; when the region scope closes. Zero per-object overhead.
-;
-; Usage pattern:
-;
-;   region r = region_new(16)      ; 16 pages = 64 KB
-;   let a = region_alloc(&mut r, 128)  ; 128 bytes
-;   let b = region_alloc(&mut r, 256)  ; 256 bytes
-;   ; ... use a and b ...
-;   region_free(r)                 ; frees everything at once — O(1)
-;
-; Ownership:
-;   region_new  returns `own Region`
-;   region_alloc takes `mut ref Region` (borrows, does not consume)
-;   region_free  takes `own Region` (consumes — region unusable after)
-;
-; Compiler rule: allocations from a region are valid only within
-; the region's lifetime. The compiler tracks the region lifetime
-; and rejects any reference that escapes it.
-; =============================================================================
+// =============================================================================
+// jda::mem::region — Region / Arena Allocator
+// =============================================================================
+// High-performance bump-pointer allocator for scoped memory.
+//
+// Concept: allocate a large slab of pages upfront. Hand out
+// sub-slices with O(1) bump. Free the entire slab at once
+// when the region scope closes. Zero per-object overhead.
+//
+// Usage pattern:
+//
+//   region r = region_new(16)      // 16 pages = 64 KB
+//   let a = region_alloc(&mut r, 128)  // 128 bytes
+//   let b = region_alloc(&mut r, 256)  // 256 bytes
+//   // ... use a and b ...
+//   region_free(r)                 // frees everything at once — O(1)
+//
+// Ownership:
+//   region_new  returns `own Region`
+//   region_alloc takes `mut ref Region` (borrows, does not consume)
+//   region_free  takes `own Region` (consumes — region unusable after)
+//
+// Compiler rule: allocations from a region are valid only within
+// the region's lifetime. The compiler tracks the region lifetime
+// and rejects any reference that escapes it.
+// =============================================================================
 
 import jda::mem::page_alloc
 
-; Region header — stored at the start of the allocated slab
+// Region header — stored at the start of the allocated slab
 struct Region {
-    base:     *i8   ; pointer to start of memory slab
-    cursor:   i64   ; offset of next free byte (bump pointer)
-    capacity: i64   ; total slab size in bytes
-    pages:    i64   ; number of pages (for munmap)
+    base:     *i8   // pointer to start of memory slab
+    cursor:   i64   // offset of next free byte (bump pointer)
+    capacity: i64   // total slab size in bytes
+    pages:    i64   // number of pages (for munmap)
 }
 
-; ------------------------------------------------------------
-; region_new(pages: i64) -> own Region
-;
-; Allocates `pages` pages and initialises a Region header.
-; The Region header itself lives on the stack (not heap).
-; ------------------------------------------------------------
+// ------------------------------------------------------------
+// region_new(pages: i64) -> own Region
+//
+// Allocates `pages` pages and initialises a Region header.
+// The Region header itself lives on the stack (not heap).
+// ------------------------------------------------------------
 fn region_new(pages: i64) -> own Region {
     let ptr = pages_alloc(pages)
     let r   = Region {
@@ -52,17 +52,17 @@ fn region_new(pages: i64) -> own Region {
     ret ok(r)
 }
 
-; ------------------------------------------------------------
-; region_alloc(r: &mut Region, size: i64, align: i64) -> ref *i8
-;
-; Bumps the cursor forward by `size` bytes (aligned to `align`).
-; Returns a borrowed pointer — valid only while `r` is alive.
-; Returns err if the region is full.
-;
-; align must be a power of 2 (1, 2, 4, 8, 16 ...).
-; ------------------------------------------------------------
+// ------------------------------------------------------------
+// region_alloc(r: &mut Region, size: i64, align: i64) -> ref *i8
+//
+// Bumps the cursor forward by `size` bytes (aligned to `align`).
+// Returns a borrowed pointer — valid only while `r` is alive.
+// Returns err if the region is full.
+//
+// align must be a power of 2 (1, 2, 4, 8, 16 ...).
+// ------------------------------------------------------------
 fn region_alloc(r: &mut Region, size: i64, align: i64) -> ref *i8 {
-    ; Round cursor up to alignment
+    // Round cursor up to alignment
     let aligned = (r.cursor + align - 1) & ~(align - 1)
     let end     = aligned + size
 
@@ -74,35 +74,35 @@ fn region_alloc(r: &mut Region, size: i64, align: i64) -> ref *i8 {
     ret ok((r.base + aligned) as ref *i8)
 }
 
-; ------------------------------------------------------------
-; region_reset(r: &mut Region)
-;
-; Resets the bump pointer to zero — reuses the same pages.
-; All previous allocations are immediately invalidated.
-; Compiler marks all refs obtained from r as dead after this call.
-; Useful for per-frame allocators (game engines, request handlers).
-; ------------------------------------------------------------
+// ------------------------------------------------------------
+// region_reset(r: &mut Region)
+//
+// Resets the bump pointer to zero — reuses the same pages.
+// All previous allocations are immediately invalidated.
+// Compiler marks all refs obtained from r as dead after this call.
+// Useful for per-frame allocators (game engines, request handlers).
+// ------------------------------------------------------------
 fn region_reset(r: &mut Region) {
     r.cursor = 0
 }
 
-; ------------------------------------------------------------
-; region_free(r: own Region)
-;
-; Releases all pages back to the OS. Consumes the Region.
-; After this call the Region and all its allocations are dead.
-; Compiler enforces: zero dangling references.
-; ------------------------------------------------------------
+// ------------------------------------------------------------
+// region_free(r: own Region)
+//
+// Releases all pages back to the OS. Consumes the Region.
+// After this call the Region and all its allocations are dead.
+// Compiler enforces: zero dangling references.
+// ------------------------------------------------------------
 fn region_free(r: own Region) {
     pages_free(r.base, r.pages)
-    ; r is consumed. All refs obtained from r are now invalid.
-    ; Compiler emits error on any use after this point.
+    // r is consumed. All refs obtained from r are now invalid.
+    // Compiler emits error on any use after this point.
 }
 
-; ------------------------------------------------------------
-; region_used(r: ref Region) -> i64
-; region_remaining(r: ref Region) -> i64
-; ------------------------------------------------------------
+// ------------------------------------------------------------
+// region_used(r: ref Region) -> i64
+// region_remaining(r: ref Region) -> i64
+// ------------------------------------------------------------
 fn region_used(r: ref Region) -> i64 {
     ret r.cursor
 }
