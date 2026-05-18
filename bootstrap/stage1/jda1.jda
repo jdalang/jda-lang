@@ -269,6 +269,7 @@ const OP_BITCAST       = 101  // i64→f64 bitwise reinterpret (no instruction; 
 const OP_I2FX2_BIN     = 102  // SLP-fused I2F pair: CVTSI2SD×2 + MOVLHPS + packed fbin (broadcast)
 const OP_F64X2_HADD    = 103  // SLP reduction: acc += a[i] + a[i+1] via MOVUPD + HADDPD + ADDSD
 const OP_F64X4_BIN     = 104  // AVX2 4-wide: VMOVUPD ymm + VADDPD/VMULPD/etc ymm
+const OP_F64X8_BIN     = 105  // AVX-512 8-wide: EVEX VMOVUPD zmm + VADDPD/VMULPD/etc zmm (with CPUID guard)
 
 // x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -622,6 +623,12 @@ let g_lea_uses: &i32 = 0
 // XMM handoff cache: value_id currently in XMM0/XMM1 (-1 = unknown)
 let g_xmm0_id: i64 = -1
 let g_xmm1_id: i64 = -1
+let g_avx8_cnt: i64 = 0
+let g_avx8_r6: &i64 = 0
+let g_avx8_r7: &i64 = 0
+let g_avx8_iid: &i64 = 0
+let g_avx8_lookup_r6: i64 = 0
+let g_avx8_lookup_r7: i64 = 0
 // SLP vectorization: per-val operand0 (base pointer) for adjacency detection
 let g_slp_o0: &i64 = 0
 // SLP broadcast flag: set by slp_find_pair when b operand is broadcast (same id)
@@ -15074,11 +15081,94 @@ fn slp_widen4(jfn: &JirFunction) {
     }
 }
 
+fn avx8_lookup(id: i64) {
+    let k = 0
+    loop k < g_avx8_cnt {
+        if g_avx8_iid[k] == id {
+            g_avx8_lookup_r6 = g_avx8_r6[k]
+            g_avx8_lookup_r7 = g_avx8_r7[k]
+            ret ok(0)
+        }
+        k = k + 1
+    }
+}
+
+fn slp_try_widen8(jfn: &JirFunction, bi: i64, ii: i64, icnt: i64) -> i64 {
+    let op0 = jfn.blocks[bi].instrs[ii].imm
+    let ba = jfn.blocks[bi].instrs[ii].operand0
+    let bb = jfn.blocks[bi].instrs[ii].operand1
+    let oa = jfn.blocks[bi].instrs[ii].operand2
+    let ob = jfn.blocks[bi].instrs[ii].operand3
+    let jj = ii + 1
+    let lim = ii + 9
+    loop jj < icnt and jj < lim {
+        if jfn.blocks[bi].instrs[jj].op == OP_F64X4_BIN {
+            if jfn.blocks[bi].instrs[jj].dead == 0 {
+                let m = 1
+                if jfn.blocks[bi].instrs[jj].imm != op0 { m = 0 }
+                if jfn.blocks[bi].instrs[jj].operand0 != ba { m = 0 }
+                let oa2 = jfn.blocks[bi].instrs[jj].operand2
+                if oa2 != oa + 32 { m = 0 }
+                let ob2 = jfn.blocks[bi].instrs[jj].operand3
+                if ob == 0 - 1 and ob2 == 0 - 1 {
+                    if jfn.blocks[bi].instrs[jj].operand1 != bb { m = 0 }
+                }
+                if ob != 0 - 1 and ob2 != 0 - 1 {
+                    if jfn.blocks[bi].instrs[jj].operand1 != bb { m = 0 }
+                    if ob2 != ob + 32 { m = 0 }
+                }
+                if ob == 0 - 1 and ob2 != 0 - 1 { m = 0 }
+                if ob != 0 - 1 and ob2 == 0 - 1 { m = 0 }
+                if m == 1 {
+                    let r4 = jfn.blocks[bi].instrs[jj].id
+                    let r5 = jfn.blocks[bi].instrs[jj].itype
+                    let r6 = jfn.blocks[bi].instrs[jj].str_start
+                    let r7 = jfn.blocks[bi].instrs[jj].str_len
+                    if g_avx8_cnt < 64 {
+                        g_avx8_iid[g_avx8_cnt] = jfn.blocks[bi].instrs[ii].id
+                        g_avx8_r6[g_avx8_cnt] = r6
+                        g_avx8_r7[g_avx8_cnt] = r7
+                        g_avx8_cnt = g_avx8_cnt + 1
+                    }
+                    jfn.blocks[bi].instrs[ii].op = OP_F64X8_BIN
+                    jfn.blocks[bi].instrs[ii].bb_target0 = r4
+                    jfn.blocks[bi].instrs[ii].bb_target1 = r5
+                    instr_set_dead(&jfn.blocks[bi].instrs[jj], 1)
+                    ret jj
+                }
+            }
+        }
+        jj = jj + 1
+    }
+    ret 0 - 1
+}
+
+fn slp_widen8(jfn: &JirFunction) {
+    g_avx8_cnt = 0
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let icnt = jfn.blocks[bi].instr_cnt
+        let ii = 0
+        loop ii < icnt {
+            let adv = 1
+            if jfn.blocks[bi].instrs[ii].op == OP_F64X4_BIN {
+                if jfn.blocks[bi].instrs[ii].dead == 0 {
+                    let jj_r = slp_try_widen8(jfn, bi, ii, icnt)
+                    if jj_r >= 0 { ii = jj_r + 1 adv = 0 }
+                }
+            }
+            ii = ii + adv
+        }
+        bi = bi + 1
+    }
+}
+
 fn lea_fuse_and_slp(jfn: &JirFunction) {
     lea_fuse(jfn)
     slp_vectorize(jfn)
     slp_reduce_pass(jfn)
     slp_widen4(jfn)
+    slp_widen8(jfn)
 }
 
 fn loop_promote_scan(jfn: &JirFunction) {
@@ -15456,6 +15546,9 @@ fn ls_init_globals() {
     g_ls_free = alloc_pages(1) as &i64
     g_spill_free = alloc_pages(1) as &i64
     g_slp_o0 = alloc_pages(16) as &i64
+    g_avx8_r6 = alloc_pages(1) as &i64
+    g_avx8_r7 = alloc_pages(1) as &i64
+    g_avx8_iid = alloc_pages(1) as &i64
 }
 
 fn ls_init_free(pinned_cnt: i64) {
@@ -20047,6 +20140,195 @@ fn lower_f64x4_bin(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 1
 }
 
+// VMOVUPD zmm_dst, [base+disp32]: EVEX.512.66.0F W1 0x10
+fn emit_evex_vmovupd_zmm_mem(out: &i8, pos: &i64, dst: i64, base: i64, disp: i64) {
+    emit_evex(out, pos, 1, 1, 0, 2)
+    emit_byte(out, pos, 0x10)
+    let b3 = mod8(base)
+    if b3 == 4 {
+        emit_byte(out, pos, 0x80 + dst * 8 + 4)
+        emit_byte(out, pos, 0x24)
+    }
+    if b3 != 4 {
+        emit_byte(out, pos, 0x80 + dst * 8 + b3)
+    }
+    emit_i32_le(out, pos, disp)
+}
+
+// EVEX.512.66.0F opcode zmm_dst, zmm_src1, zmm_src2 (3-register form, all < zmm8)
+fn emit_evex_vop_zmm3(out: &i8, pos: &i64, opc: i64, d: i64, s1: i64, s2: i64) {
+    emit_evex(out, pos, 1, 1, s1, 2)
+    emit_byte(out, pos, opc)
+    emit_byte(out, pos, 0xC0 + d * 8 + s2)
+}
+
+// VPBROADCASTSD zmm_dst, xmm_src: EVEX.512.66.0F38 W1 0x19
+fn emit_evex_vbroadcastsd(out: &i8, pos: &i64, dst_zmm: i64, src_xmm: i64) {
+    emit_evex(out, pos, 2, 1, 0, 2)
+    emit_byte(out, pos, 0x19)
+    emit_byte(out, pos, 0xC0 + dst_zmm * 8 + src_xmm)
+}
+
+// VEXTRACTF64X4 ymm_dst, zmm_src, imm8: EVEX.512.66.0F3A W1 0x1B
+fn emit_vextractf64x4(out: &i8, pos: &i64, dst_ymm: i64, src_zmm: i64, imm8: i64) {
+    emit_evex(out, pos, 3, 1, 0, 2)
+    emit_byte(out, pos, 0x1B)
+    emit_byte(out, pos, 0xC0 + src_zmm * 8 + dst_ymm)
+    emit_byte(out, pos, imm8)
+}
+
+// Push 4 scalar f64 results to stack from xmm0 (low pair) and xmm1 (high pair after VEXTRACTF128)
+fn emit_push4_f64_from_xmm01(out: &i8, pos: &i64) {
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 0)
+    emit_push_r(out, pos, PHYS_RAX)
+    emit_movhlps(out, pos, 2, 0)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 2)
+    emit_push_r(out, pos, PHYS_RAX)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 1)
+    emit_push_r(out, pos, PHYS_RAX)
+    emit_movhlps(out, pos, 2, 1)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 2)
+    emit_push_r(out, pos, PHYS_RAX)
+}
+
+// OP_F64X8_BIN: AVX-512 8-wide f64 op with runtime CPUID guard, AVX2 fallback.
+// id/itype/str_start/str_len = r0-r3; bb_target0/bb_target1 = r4/r5; g_avx8_r6/r7 = r6/r7
+fn lower_f64x8_bin(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let base_a = ins.operand0
+    let base_b = ins.operand1
+    let off_a = ins.operand2
+    let off_b = ins.operand3
+    let fbin_op = ins.imm
+    avx8_lookup(ins.id)
+    let r6 = g_avx8_lookup_r6
+    let r7 = g_avx8_lookup_r7
+    // Load base pointers into physical registers before save_pool
+    let ra = get_or_load(ctx.ra, out, pos, base_a)
+    let rb = 0
+    if off_b != 0 - 1 { rb = get_or_load(ctx.ra, out, pos, base_b) }
+    // Save caller-saved pool regs; push RBX (CPUID clobbers it, not in pool)
+    emit_save_pool(ctx.ra, out, pos)
+    emit_push_r(out, pos, PHYS_RBX)
+    // CPUID leaf 7: EBX bit 16 = AVX-512F
+    emit_byte(out, pos, 0x31); emit_byte(out, pos, 0xC9)  // xor ecx, ecx
+    emit_byte(out, pos, 0xB8); emit_byte(out, pos, 0x07)  // mov eax, 7
+    emit_byte(out, pos, 0x00); emit_byte(out, pos, 0x00); emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x0F); emit_byte(out, pos, 0xA2)  // cpuid
+    emit_byte(out, pos, 0x0F); emit_byte(out, pos, 0xBA)  // bt ebx, 16
+    emit_byte(out, pos, 0xE3); emit_byte(out, pos, 0x10)
+    emit_pop_r(out, pos, PHYS_RBX)
+    // JNC fallback  (0F 83 rel32)
+    let jnc_off = pos[0]
+    emit_byte(out, pos, 0x0F); emit_byte(out, pos, 0x83)
+    emit_i32_le(out, pos, 0)
+
+    // ===== AVX-512 path =====
+    emit_restore_pool(ctx.ra, out, pos)
+    emit_evex_vmovupd_zmm_mem(out, pos, 0, ra, off_a)
+    if off_b == 0 - 1 {
+        // broadcast scalar base_b into zmm1 via xmm2
+        let rb2 = get_or_load(ctx.ra, out, pos, base_b)
+        emit_movq_gpr_to_xmm(out, pos, 2, rb2)
+        emit_evex_vbroadcastsd(out, pos, 1, 2)
+    }
+    if off_b != 0 - 1 {
+        emit_evex_vmovupd_zmm_mem(out, pos, 1, rb, off_b)
+    }
+    emit_evex_vop_zmm3(out, pos, fbin_op, 0, 0, 1)
+    emit_vextractf64x4(out, pos, 1, 0, 1)
+    emit_vzeroupper(out, pos)
+    // Push r0..r3 from xmm0(low), movhlps xmm2, vextractf128 xmm2
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 0); emit_push_r(out, pos, PHYS_RAX)
+    emit_movhlps(out, pos, 2, 0)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 2); emit_push_r(out, pos, PHYS_RAX)
+    emit_vextractf128(out, pos, 2, 0, 1)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 2); emit_push_r(out, pos, PHYS_RAX)
+    emit_movhlps(out, pos, 2, 2)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 2); emit_push_r(out, pos, PHYS_RAX)
+    // Push r4..r7 from xmm1(low), movhlps xmm2, vextractf128 xmm2
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 1); emit_push_r(out, pos, PHYS_RAX)
+    emit_movhlps(out, pos, 2, 1)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 2); emit_push_r(out, pos, PHYS_RAX)
+    emit_vextractf128(out, pos, 2, 1, 1)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 2); emit_push_r(out, pos, PHYS_RAX)
+    emit_movhlps(out, pos, 2, 2)
+    emit_movq_xmm_to_gpr(out, pos, PHYS_RAX, 2); emit_push_r(out, pos, PHYS_RAX)
+    // JMP done  (E9 rel32)
+    let jmp_off = pos[0]
+    emit_jmp_rel32(out, pos, 0)
+
+    // ===== AVX2 fallback path =====
+    let fb_off = pos[0]
+    let jnc_rel = fb_off - (jnc_off + 6)
+    poke_byte(out, jnc_off + 2, i32_b0(jnc_rel))
+    poke_byte(out, jnc_off + 3, i32_b1(jnc_rel))
+    poke_byte(out, jnc_off + 4, i32_b2(jnc_rel))
+    poke_byte(out, jnc_off + 5, i32_b3(jnc_rel))
+    emit_restore_pool(ctx.ra, out, pos)
+    // First half: [base_a + off_a .. off_a+24] (4 doubles = 32 bytes)
+    emit_vmovupd_ymm_mem(out, pos, 0, ra, off_a)
+    if off_b == 0 - 1 {
+        let rb3 = get_or_load(ctx.ra, out, pos, base_b)
+        emit_movq_gpr_to_xmm(out, pos, 1, rb3)
+        emit_byte(out, pos, 0x66); emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x14); emit_byte(out, pos, 0xC9)
+        emit_vinsertf128(out, pos, 1, 1, 1, 1)
+    }
+    if off_b != 0 - 1 { emit_vmovupd_ymm_mem(out, pos, 1, rb, off_b) }
+    emit_vop_ymm3(out, pos, fbin_op, 0, 0, 1)
+    emit_vextractf128(out, pos, 1, 0, 1)
+    emit_vzeroupper(out, pos)
+    emit_push4_f64_from_xmm01(out, pos)
+    // Second half: [base_a + off_a+32 .. off_a+56] (4 doubles)
+    let off_a2 = off_a + 32
+    emit_vmovupd_ymm_mem(out, pos, 0, ra, off_a2)
+    if off_b == 0 - 1 {
+        let rb4 = get_or_load(ctx.ra, out, pos, base_b)
+        emit_movq_gpr_to_xmm(out, pos, 1, rb4)
+        emit_byte(out, pos, 0x66); emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x14); emit_byte(out, pos, 0xC9)
+        emit_vinsertf128(out, pos, 1, 1, 1, 1)
+    }
+    if off_b != 0 - 1 {
+        let off_b2 = off_b + 32
+        emit_vmovupd_ymm_mem(out, pos, 1, rb, off_b2)
+    }
+    emit_vop_ymm3(out, pos, fbin_op, 0, 0, 1)
+    emit_vextractf128(out, pos, 1, 0, 1)
+    emit_vzeroupper(out, pos)
+    emit_push4_f64_from_xmm01(out, pos)
+
+    // ===== Merge: pop r7..r0, allocate result registers =====
+    let done_off = pos[0]
+    let jmp_rel = done_off - (jmp_off + 5)
+    poke_byte(out, jmp_off + 1, i32_b0(jmp_rel))
+    poke_byte(out, jmp_off + 2, i32_b1(jmp_rel))
+    poke_byte(out, jmp_off + 3, i32_b2(jmp_rel))
+    poke_byte(out, jmp_off + 4, i32_b3(jmp_rel))
+    // Pop in reverse push order (r7 was pushed last → at top of stack)
+    let dst7 = regalloc_alloc(ctx.ra, out, pos, r7)
+    emit_pop_r(out, pos, dst7)
+    let dst6 = regalloc_alloc(ctx.ra, out, pos, r6)
+    emit_pop_r(out, pos, dst6)
+    let dst5 = regalloc_alloc(ctx.ra, out, pos, ins.bb_target1)
+    emit_pop_r(out, pos, dst5)
+    let dst4 = regalloc_alloc(ctx.ra, out, pos, ins.bb_target0)
+    emit_pop_r(out, pos, dst4)
+    let dst3 = regalloc_alloc(ctx.ra, out, pos, ins.str_len)
+    emit_pop_r(out, pos, dst3)
+    let dst2 = regalloc_alloc(ctx.ra, out, pos, ins.str_start)
+    emit_pop_r(out, pos, dst2)
+    let dst1 = regalloc_alloc(ctx.ra, out, pos, ins.itype)
+    emit_pop_r(out, pos, dst1)
+    let dst0 = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_pop_r(out, pos, dst0)
+    consume_use(ctx, base_a)
+    consume_use(ctx, base_b)
+    g_xmm0_id = 0 - 1
+    g_xmm1_id = 0 - 1
+    ret 1
+}
+
 fn sse_pack_xmm(ctx: &LowerCtx, out: &i8, pos: &i64, xmm_dst: i64, lo_id: i64, hi_id: i64) {
     // Pack lo_id into xmm_dst low lane, hi_id into xmm_dst high lane.
     // If lo and hi come from adjacent LOAD_MEM, use single MOVUPD.
@@ -20282,6 +20564,7 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     if op == OP_I2FX2_BIN { ret lower_i2fx2_bin(ins, ctx, out, pos) }
     if op == OP_F64X2_HADD { ret lower_f64x2_hadd(ins, ctx, out, pos) }
     if op == OP_F64X4_BIN { ret lower_f64x4_bin(ins, ctx, out, pos) }
+    if op == OP_F64X8_BIN { ret lower_f64x8_bin(ins, ctx, out, pos) }
 
     // Unary float ops: FNEG, FSQRT
     if op == OP_FNEG {
@@ -24621,6 +24904,10 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)  // base_a
         mark_use(ctx, o1)  // base_b or scalar
     }
+    if op == OP_F64X8_BIN {
+        mark_use(ctx, o0)
+        mark_use(ctx, o1)
+    }
     if op == OP_FCMP_LT or op == OP_FCMP_GT or op == OP_FCMP_EQ or op == OP_FPOW {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
@@ -24793,6 +25080,37 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
                     let r3f = jfn.blocks[bi].instrs[ii].str_len
                     if r3f >= 0 and r3f < 8192 {
                         if g_val_first_def[r3f] == -1 { g_val_first_def[r3f] = bi * 128 + ii }
+                    }
+                }
+                if jfn.blocks[bi].instrs[ii].op == OP_F64X8_BIN {
+                    let r1e = jfn.blocks[bi].instrs[ii].itype
+                    if r1e >= 0 and r1e < 8192 {
+                        if g_val_first_def[r1e] == -1 { g_val_first_def[r1e] = bi * 128 + ii }
+                    }
+                    let r2e = jfn.blocks[bi].instrs[ii].str_start
+                    if r2e >= 0 and r2e < 8192 {
+                        if g_val_first_def[r2e] == -1 { g_val_first_def[r2e] = bi * 128 + ii }
+                    }
+                    let r3e = jfn.blocks[bi].instrs[ii].str_len
+                    if r3e >= 0 and r3e < 8192 {
+                        if g_val_first_def[r3e] == -1 { g_val_first_def[r3e] = bi * 128 + ii }
+                    }
+                    let r4e = jfn.blocks[bi].instrs[ii].bb_target0
+                    if r4e >= 0 and r4e < 8192 {
+                        if g_val_first_def[r4e] == -1 { g_val_first_def[r4e] = bi * 128 + ii }
+                    }
+                    let r5e = jfn.blocks[bi].instrs[ii].bb_target1
+                    if r5e >= 0 and r5e < 8192 {
+                        if g_val_first_def[r5e] == -1 { g_val_first_def[r5e] = bi * 128 + ii }
+                    }
+                    avx8_lookup(jfn.blocks[bi].instrs[ii].id)
+                    let r6e = g_avx8_lookup_r6
+                    if r6e >= 0 and r6e < 8192 {
+                        if g_val_first_def[r6e] == -1 { g_val_first_def[r6e] = bi * 128 + ii }
+                    }
+                    let r7e = g_avx8_lookup_r7
+                    if r7e >= 0 and r7e < 8192 {
+                        if g_val_first_def[r7e] == -1 { g_val_first_def[r7e] = bi * 128 + ii }
                     }
                 }
             }
