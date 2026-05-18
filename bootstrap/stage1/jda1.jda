@@ -4461,7 +4461,7 @@ fn lex_global_fast() -> i32 {
                     // Avoids >> 32 which jda0 may compile as 32-bit shift (nop on x86)
                     tok_set_type(g_dbg_toks_init, g_lex_count, TOK_FLOAT)
                     tok_set_start(g_dbg_toks_init, g_lex_count, int_part)
-                    tok_set_len(g_dbg_toks_init, g_lex_count, (frac_val << 8) | frac_digits)
+                    tok_set_len(g_dbg_toks_init, g_lex_count, frac_val * 256 + frac_digits)
                     tok_set_imm(g_dbg_toks_init, g_lex_count, 0)
                     tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
                     g_lex_count = g_lex_count + 1
@@ -9080,8 +9080,8 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         let fl2_fpk = tok_str_len_at_raw(toks, pos[0])
         pos[0] = pos[0] + 1
         g_codegen_stype = TYPE_F64
-        let fl2_frac = (fl2_fpk >> 8) & 16777215
-        let fl2_dig = fl2_fpk & 255
+        let fl2_frac = fl2_fpk / 256
+        let fl2_dig = fl2_fpk - fl2_frac * 256
         let fl2_sc = 1
         let fl2_di = 0
         loop fl2_di < fl2_dig {
@@ -11726,8 +11726,8 @@ fn live_codegen_primary_small_inline(tt: i64, bb: i64) -> i64 {
         let fl_fpk = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos)
         g_main_pos = g_main_pos + 1
         g_codegen_stype = TYPE_F64
-        let fl_frac = (fl_fpk >> 8) & 16777215
-        let fl_dig = fl_fpk & 255
+        let fl_frac = fl_fpk / 256
+        let fl_dig = fl_fpk - fl_frac * 256
         let fl_sc = 1
         let fl_di = 0
         loop fl_di < fl_dig {
