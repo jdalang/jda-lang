@@ -1,0 +1,31 @@
+// Tests OP_F64X4_BIN: 4-wide AVX2 VMOVUPD+VMULPD via paired SLP widening
+fn dot4(a: &i64, b: &i64) -> f64 {
+    let a0: f64 = f64_bitcast(a[0])
+    let a1: f64 = f64_bitcast(a[1])
+    let a2: f64 = f64_bitcast(a[2])
+    let a3: f64 = f64_bitcast(a[3])
+    let b0: f64 = f64_bitcast(b[0])
+    let b1: f64 = f64_bitcast(b[1])
+    let b2: f64 = f64_bitcast(b[2])
+    let b3: f64 = f64_bitcast(b[3])
+    let r0: f64 = a0 * b0
+    let r1: f64 = a1 * b1
+    let r2: f64 = a2 * b2
+    let r3: f64 = a3 * b3
+    ret r0 + r1 + r2 + r3
+}
+
+fn main() {
+    let a: &i64 = alloc_pages(1)
+    let b: &i64 = alloc_pages(1)
+    a[0] = f64_from_int(1)
+    a[1] = f64_from_int(2)
+    a[2] = f64_from_int(3)
+    a[3] = f64_from_int(4)
+    b[0] = f64_from_int(2)
+    b[1] = f64_from_int(2)
+    b[2] = f64_from_int(2)
+    b[3] = f64_from_int(2)
+    let r = dot4(a, b)
+    print_int(f64_to_int(r))
+}

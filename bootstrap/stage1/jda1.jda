@@ -267,6 +267,8 @@ const OP_COPY          = 99
 const OP_F64X2_BIN     = 100  // SLP-fused packed f64×2 binary op (ADDPD/SUBPD/MULPD/DIVPD)
 const OP_BITCAST       = 101  // i64→f64 bitwise reinterpret (no instruction; enables SLP on f64 memory)
 const OP_I2FX2_BIN     = 102  // SLP-fused I2F pair: CVTSI2SD×2 + MOVLHPS + packed fbin (broadcast)
+const OP_F64X2_HADD    = 103  // SLP reduction: acc += a[i] + a[i+1] via MOVUPD + HADDPD + ADDSD
+const OP_F64X4_BIN     = 104  // AVX2 4-wide: VMOVUPD ymm + VADDPD/VMULPD/etc ymm
 
 // x86-64 physical register numbers (Intel encoding)
 const PHYS_RAX = 0
@@ -14918,9 +14920,165 @@ fn lea_fuse(jfn: &JirFunction) {
     }
 }
 
+// slp_try_reduce: scan for FADD(acc, load1) then FADD(id, load2) with adj loads.
+// Returns jj (the second FADD index) if fused, -1 otherwise.
+fn slp_try_reduce(jfn: &JirFunction, bi: i64, ii: i64, icnt: i64) -> i64 {
+    let load1 = jfn.blocks[bi].instrs[ii].operand1
+    // Skip I2F-wrapped loads: HADD uses MOVUPD (raw bits), not CVTSI2SD
+    if g_val_op[load1] == OP_I2F { ret 0 - 1 }
+    let r1 = slp_resolve_load(load1)
+    if g_val_op[r1] != OP_LOAD_MEM { ret 0 - 1 }
+    let acc = jfn.blocks[bi].instrs[ii].operand0
+    let id1 = jfn.blocks[bi].instrs[ii].id
+    let jj = ii + 1
+    let found = 0 - 1
+    let lim = ii + 9
+    loop jj < icnt and jj < lim {
+        let jop = jfn.blocks[bi].instrs[jj].op
+        let unsafe1 = 0
+        if jop == OP_STORE_MEM { unsafe1 = 1 }
+        if jop == OP_CALL { unsafe1 = 1 }
+        if jop == OP_CALL_IND { unsafe1 = 1 }
+        if jop == OP_SYSCALL { unsafe1 = 1 }
+        if unsafe1 == 1 { jj = icnt }
+        if unsafe1 == 0 {
+            if jop == OP_FADD and jfn.blocks[bi].instrs[jj].dead == 0 {
+                if jfn.blocks[bi].instrs[jj].operand0 == id1 {
+                    let load2 = jfn.blocks[bi].instrs[jj].operand1
+                    if g_val_op[load2] != OP_I2F {
+                        let r2 = slp_resolve_load(load2)
+                        if g_val_op[r2] == OP_LOAD_MEM {
+                            if slp_adj(load1, load2) == 1 {
+                                found = jj
+                                jj = icnt
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if jj < icnt { jj = jj + 1 }
+    }
+    if found < 0 { ret 0 - 1 }
+    // Verify id1 is only used by the second FADD (not elsewhere in the window)
+    let k = ii + 1
+    loop k < found {
+        if jfn.blocks[bi].instrs[k].dead == 0 {
+            if jfn.blocks[bi].instrs[k].operand0 == id1 { ret 0 - 1 }
+            if jfn.blocks[bi].instrs[k].operand1 == id1 { ret 0 - 1 }
+        }
+        k = k + 1
+    }
+    // Fuse: rewrite ii as OP_F64X2_HADD
+    let r1b = slp_resolve_load(load1)
+    let base_l = g_slp_o0[r1b]
+    let off_l = g_val_imm[r1b]
+    let load2f = jfn.blocks[bi].instrs[found].operand1
+    let new_id = jfn.blocks[bi].instrs[found].id
+    jfn.blocks[bi].instrs[ii].op = OP_F64X2_HADD
+    jfn.blocks[bi].instrs[ii].operand0 = acc
+    jfn.blocks[bi].instrs[ii].operand1 = base_l
+    jfn.blocks[bi].instrs[ii].operand2 = off_l
+    jfn.blocks[bi].instrs[ii].id = new_id
+    instr_set_dead(&jfn.blocks[bi].instrs[found], 1)
+    slp_mark_single_use_dead(jfn, load1)
+    slp_mark_single_use_dead(jfn, load2f)
+    ret found
+}
+
+fn slp_reduce_pass(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let icnt = jfn.blocks[bi].instr_cnt
+        let ii = 0
+        loop ii < icnt {
+            let adv = 1
+            if jfn.blocks[bi].instrs[ii].op == OP_FADD {
+                if jfn.blocks[bi].instrs[ii].dead == 0 {
+                    let jj_r = slp_try_reduce(jfn, bi, ii, icnt)
+                    if jj_r >= 0 { ii = jj_r + 1 adv = 0 }
+                }
+            }
+            ii = ii + adv
+        }
+        bi = bi + 1
+    }
+}
+
+// slp_try_widen4: look for a second OP_F64X2_BIN adjacent to instrs[ii] (same op,
+// same bases, off+16). Returns jj if widened, -1 otherwise.
+fn slp_try_widen4(jfn: &JirFunction, bi: i64, ii: i64, icnt: i64) -> i64 {
+    let op0 = jfn.blocks[bi].instrs[ii].imm
+    let ba = jfn.blocks[bi].instrs[ii].operand0
+    let bb2 = jfn.blocks[bi].instrs[ii].operand1
+    let oa = jfn.blocks[bi].instrs[ii].operand2
+    let ob = jfn.blocks[bi].instrs[ii].operand3
+    let jj = ii + 1
+    let lim = ii + 9
+    loop jj < icnt and jj < lim {
+        let jop = jfn.blocks[bi].instrs[jj].op
+        if jop == OP_F64X2_BIN and jfn.blocks[bi].instrs[jj].dead == 0 {
+            let match1 = 0
+            if jfn.blocks[bi].instrs[jj].imm == op0 { match1 = 1 }
+            if jfn.blocks[bi].instrs[jj].operand0 == ba { match1 = match1 + 0 }
+            if jfn.blocks[bi].instrs[jj].operand0 != ba { match1 = 0 }
+            let oa2 = jfn.blocks[bi].instrs[jj].operand2
+            let ob2 = jfn.blocks[bi].instrs[jj].operand3
+            let oa_ok = 0
+            let oa_need = oa + 16
+            if oa2 == oa_need { oa_ok = 1 }
+            if oa_ok == 0 { match1 = 0 }
+            // Check b side: both broadcast or both non-broadcast, same base, adjacent offsets
+            if ob == 0 - 1 and ob2 == 0 - 1 {
+                if jfn.blocks[bi].instrs[jj].operand1 != bb2 { match1 = 0 }
+            }
+            if ob != 0 - 1 and ob2 != 0 - 1 {
+                if jfn.blocks[bi].instrs[jj].operand1 != bb2 { match1 = 0 }
+                let ob_need = ob + 16
+                if ob2 != ob_need { match1 = 0 }
+            }
+            if ob == 0 - 1 and ob2 != 0 - 1 { match1 = 0 }
+            if ob != 0 - 1 and ob2 == 0 - 1 { match1 = 0 }
+            if match1 == 1 {
+                // Fuse: rewrite ii as OP_F64X4_BIN, stash extra result ids
+                let id2 = jfn.blocks[bi].instrs[jj].id
+                let id3 = jfn.blocks[bi].instrs[jj].itype
+                jfn.blocks[bi].instrs[ii].op = OP_F64X4_BIN
+                jfn.blocks[bi].instrs[ii].str_start = id2
+                jfn.blocks[bi].instrs[ii].str_len = id3
+                instr_set_dead(&jfn.blocks[bi].instrs[jj], 1)
+                ret jj
+            }
+        }
+        jj = jj + 1
+    }
+    ret 0 - 1
+}
+
+fn slp_widen4(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let icnt = jfn.blocks[bi].instr_cnt
+        let ii = 0
+        loop ii < icnt {
+            let adv = 1
+            if jfn.blocks[bi].instrs[ii].op == OP_F64X2_BIN {
+                if jfn.blocks[bi].instrs[ii].dead == 0 {
+                    let jj_r = slp_try_widen4(jfn, bi, ii, icnt)
+                    if jj_r >= 0 { ii = jj_r + 1 adv = 0 }
+                }
+            }
+            ii = ii + adv
+        }
+        bi = bi + 1
+    }
+}
+
 fn lea_fuse_and_slp(jfn: &JirFunction) {
     lea_fuse(jfn)
     slp_vectorize(jfn)
+    slp_reduce_pass(jfn)
+    slp_widen4(jfn)
 }
 
 fn loop_promote_scan(jfn: &JirFunction) {
@@ -19735,6 +19893,160 @@ fn lower_i2fx2_bin(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     ret 1
 }
 
+// HADDPD xmm_dst, xmm_src: 66 0F 7C /r
+fn emit_haddpd(out: &i8, pos: &i64, dst_xmm: i64, src_xmm: i64) {
+    emit_byte(out, pos, 0x66)
+    emit_byte(out, pos, 0x0F)
+    emit_byte(out, pos, 0x7C)
+    emit_byte(out, pos, 0xC0 + dst_xmm * 8 + src_xmm)
+}
+
+// VMOVUPD ymm_dst, [base+disp]: VEX.256.66.0F 10 /r
+fn emit_vmovupd_ymm_mem(out: &i8, pos: &i64, dst_ymm: i64, base: i64, disp: i64) {
+    let base3 = mod8(base)
+    let base_hi = base / 8
+    if base_hi == 0 {
+        emit_byte(out, pos, 0xC5)
+        emit_byte(out, pos, 0xFD)
+    }
+    if base_hi != 0 {
+        emit_byte(out, pos, 0xC4)
+        emit_byte(out, pos, 0xC1)
+        emit_byte(out, pos, 0x7D)
+    }
+    emit_byte(out, pos, 0x10)
+    if base3 == 4 {
+        emit_byte(out, pos, 0x80 + dst_ymm * 8 + 0x04)
+        emit_byte(out, pos, 0x24)
+        emit_i32_le(out, pos, disp)
+    }
+    if base3 != 4 {
+        emit_byte(out, pos, 0x80 + dst_ymm * 8 + base3)
+        emit_i32_le(out, pos, disp)
+    }
+}
+
+// VADDPD/VMULPD/etc ymm_dst, ymm_src1, ymm_src2: VEX.256.66.0F opcode (all < ymm8)
+fn emit_vop_ymm3(out: &i8, pos: &i64, opcode: i64, dst_ymm: i64, src1_ymm: i64, src2_ymm: i64) {
+    let nv = 15 - src1_ymm
+    emit_byte(out, pos, 0xC5)
+    let byte2 = 0x80 + nv * 8 + 4 + 1
+    emit_byte(out, pos, byte2)
+    emit_byte(out, pos, opcode)
+    emit_byte(out, pos, 0xC0 + dst_ymm * 8 + src2_ymm)
+}
+
+// VEXTRACTF128 xmm_dst, ymm_src, imm8: VEX.256.66.0F3A.W0 19 /r ib
+fn emit_vextractf128(out: &i8, pos: &i64, dst_xmm: i64, src_ymm: i64, imm8: i64) {
+    emit_byte(out, pos, 0xC4)
+    emit_byte(out, pos, 0xE3)
+    emit_byte(out, pos, 0x7D)
+    emit_byte(out, pos, 0x19)
+    emit_byte(out, pos, 0xC0 + src_ymm * 8 + dst_xmm)
+    emit_byte(out, pos, imm8)
+}
+
+// VZEROUPPER: VEX.128.0F 77 (C5 F8 77)
+fn emit_vzeroupper(out: &i8, pos: &i64) {
+    emit_byte(out, pos, 0xC5)
+    emit_byte(out, pos, 0xF8)
+    emit_byte(out, pos, 0x77)
+}
+
+// VINSERTF128 ymm_dst, ymm_src1, xmm_src2, imm8: VEX.256.66.0F3A.W0 18 /r ib
+fn emit_vinsertf128(out: &i8, pos: &i64, dst_ymm: i64, src1_ymm: i64, src2_xmm: i64, imm8: i64) {
+    let nv = 15 - src1_ymm
+    emit_byte(out, pos, 0xC4)
+    emit_byte(out, pos, 0xE3)
+    let p2 = nv * 8 + 4 + 1
+    emit_byte(out, pos, p2)
+    emit_byte(out, pos, 0x18)
+    emit_byte(out, pos, 0xC0 + dst_ymm * 8 + src2_xmm)
+    emit_byte(out, pos, imm8)
+}
+
+// OP_F64X2_HADD: acc += a[i] + a[i+1] via MOVUPD + HADDPD + ADDSD
+// operand0=acc, operand1=base_ptr, operand2=off (byte offset)
+fn lower_f64x2_hadd(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let base_l = ins.operand1
+    let off_l = ins.operand2
+    let ra = get_or_load(ctx.ra, out, pos, base_l)
+    // MOVUPD xmm1, [base + off]  → xmm1 = [a[i], a[i+1]]
+    emit_movupd_xmm_mem(out, pos, 1, ra, off_l)
+    g_xmm1_id = 0 - 1
+    consume_use(ctx, base_l)
+    // HADDPD xmm1, xmm1  → xmm1[lo] = a[i] + a[i+1]
+    emit_haddpd(out, pos, 1, 1)
+    g_xmm1_id = 0 - 1
+    // Load acc into xmm0
+    f64_load_op(ctx, out, pos, 0, ins.operand0)
+    consume_use(ctx, ins.operand0)
+    // ADDSD xmm0, xmm1  → acc + (a[i] + a[i+1])
+    emit_sse_rr(out, pos, 0xF2, 0x58, 0, 1)
+    g_xmm0_id = 0 - 1
+    g_xmm1_id = 0 - 1
+    let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_movq_xmm_to_gpr(out, pos, dst, 0)
+    g_xmm0_id = ins.id
+    ret 1
+}
+
+// OP_F64X4_BIN: 4-wide AVX2 binary f64 op
+// operand0=base_a, operand1=base_b (or scalar if broadcast), operand2=off_a, operand3=off_b (-1=bcast)
+// id=r0, itype=r1, str_start=r2, str_len=r3
+fn lower_f64x4_bin(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
+    let base_a = ins.operand0; let base_b = ins.operand1
+    let off_a = ins.operand2; let off_b = ins.operand3
+    let fbin_op = ins.imm
+    // Load ymm0 = [a0,a1,a2,a3]
+    let ra = get_or_load(ctx.ra, out, pos, base_a)
+    emit_vmovupd_ymm_mem(out, pos, 0, ra, off_a)
+    consume_use(ctx, base_a)
+    // Load ymm1 = b side
+    if off_b == 0 - 1 {
+        // broadcast scalar base_b into ymm1
+        f64_load_op(ctx, out, pos, 1, base_b)
+        // UNPCKLPD xmm1, xmm1: 66 0F 14 C9
+        emit_byte(out, pos, 0x66)
+        emit_byte(out, pos, 0x0F)
+        emit_byte(out, pos, 0x14)
+        emit_byte(out, pos, 0xC9)
+        g_xmm1_id = 0 - 1
+        // VINSERTF128 ymm1, ymm1, xmm1, 1 — duplicate to high half
+        emit_vinsertf128(out, pos, 1, 1, 1, 1)
+        consume_use(ctx, base_b)
+    }
+    if off_b != 0 - 1 {
+        let rb = get_or_load(ctx.ra, out, pos, base_b)
+        emit_vmovupd_ymm_mem(out, pos, 1, rb, off_b)
+        consume_use(ctx, base_b)
+    }
+    // VADDPD/etc ymm0, ymm0, ymm1
+    emit_vop_ymm3(out, pos, fbin_op, 0, 0, 1)
+    // Extract high 128 bits before VZEROUPPER
+    emit_vextractf128(out, pos, 1, 0, 1)
+    g_xmm1_id = 0 - 1
+    emit_vzeroupper(out, pos)
+    // Extract 4 scalar results
+    let dst0 = regalloc_alloc(ctx.ra, out, pos, ins.id)
+    emit_movq_xmm_to_gpr(out, pos, dst0, 0)
+    g_xmm0_id = ins.id
+    emit_movhlps(out, pos, 0, 0)
+    g_xmm0_id = 0 - 1
+    let dst1 = regalloc_alloc(ctx.ra, out, pos, ins.itype)
+    emit_movq_xmm_to_gpr(out, pos, dst1, 0)
+    g_xmm0_id = ins.itype
+    let dst2 = regalloc_alloc(ctx.ra, out, pos, ins.str_start)
+    emit_movq_xmm_to_gpr(out, pos, dst2, 1)
+    g_xmm1_id = ins.str_start
+    emit_movhlps(out, pos, 1, 1)
+    g_xmm1_id = 0 - 1
+    let dst3 = regalloc_alloc(ctx.ra, out, pos, ins.str_len)
+    emit_movq_xmm_to_gpr(out, pos, dst3, 1)
+    g_xmm1_id = ins.str_len
+    ret 1
+}
+
 fn sse_pack_xmm(ctx: &LowerCtx, out: &i8, pos: &i64, xmm_dst: i64, lo_id: i64, hi_id: i64) {
     // Pack lo_id into xmm_dst low lane, hi_id into xmm_dst high lane.
     // If lo and hi come from adjacent LOAD_MEM, use single MOVUPD.
@@ -19968,6 +20280,8 @@ fn lower_instr_float(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     // SLP-fused packed f64×2 binary op
     if op == OP_F64X2_BIN { ret lower_f64x2_bin(ins, ctx, out, pos) }
     if op == OP_I2FX2_BIN { ret lower_i2fx2_bin(ins, ctx, out, pos) }
+    if op == OP_F64X2_HADD { ret lower_f64x2_hadd(ins, ctx, out, pos) }
+    if op == OP_F64X4_BIN { ret lower_f64x4_bin(ins, ctx, out, pos) }
 
     // Unary float ops: FNEG, FSQRT
     if op == OP_FNEG {
@@ -24299,6 +24613,14 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
     }
+    if op == OP_F64X2_HADD {
+        mark_use(ctx, o0)  // acc
+        mark_use(ctx, o1)  // base ptr
+    }
+    if op == OP_F64X4_BIN {
+        mark_use(ctx, o0)  // base_a
+        mark_use(ctx, o1)  // base_b or scalar
+    }
     if op == OP_FCMP_LT or op == OP_FCMP_GT or op == OP_FCMP_EQ or op == OP_FPOW {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
@@ -24457,6 +24779,20 @@ fn lower_fn_collect_uses(jfn: &JirFunction, ctx: &LowerCtx) {
                         if g_val_first_def[hi_vid] == -1 {
                             g_val_first_def[hi_vid] = bi * 128 + ii
                         }
+                    }
+                }
+                if jfn.blocks[bi].instrs[ii].op == OP_F64X4_BIN {
+                    let r1f = jfn.blocks[bi].instrs[ii].itype
+                    if r1f >= 0 and r1f < 8192 {
+                        if g_val_first_def[r1f] == -1 { g_val_first_def[r1f] = bi * 128 + ii }
+                    }
+                    let r2f = jfn.blocks[bi].instrs[ii].str_start
+                    if r2f >= 0 and r2f < 8192 {
+                        if g_val_first_def[r2f] == -1 { g_val_first_def[r2f] = bi * 128 + ii }
+                    }
+                    let r3f = jfn.blocks[bi].instrs[ii].str_len
+                    if r3f >= 0 and r3f < 8192 {
+                        if g_val_first_def[r3f] == -1 { g_val_first_def[r3f] = bi * 128 + ii }
                     }
                 }
             }
