@@ -1,0 +1,26 @@
+// Tests OP_F64X2_HADD: acc += a[i] + a[i+1] using raw f64-bit memory
+fn sum_pairs_f64(a: &i64, n: i64) -> f64 {
+    let acc: f64 = 0.0
+    let i = 0
+    loop i < n {
+        acc = acc + f64_bitcast(a[i])
+        acc = acc + f64_bitcast(a[i + 1])
+        i = i + 2
+    }
+    ret acc
+}
+
+fn main() {
+    let arr: &i64 = alloc_pages(1)
+    let v1: f64 = f64_from_int(1)
+    let v2: f64 = f64_from_int(2)
+    let v3: f64 = f64_from_int(3)
+    let v4: f64 = f64_from_int(4)
+    arr[0] = v1
+    arr[1] = v2
+    arr[2] = v3
+    arr[3] = v4
+    let r = sum_pairs_f64(arr, 4)
+    let ri = f64_to_int(r)
+    print_int(ri)
+}
