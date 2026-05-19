@@ -365,6 +365,7 @@ function prescan(    saved_pos, sname, fname_f, offset, depth, gname, \
                             else if (et == "i32" || et == "u32") field_sz = ne * 4
                             else if (et == "i16" || et == "u16") field_sz = ne * 2
                             else field_sz = ne * 8
+                            struct_field_is_array[sname ":" fname_f] = 1
                         } else if (peek_kind() == "id" && tk_kind[POS+1] == "]") {
                             cn = peek_val(); advance()
                             if (peek_kind() == "]") advance()
@@ -376,6 +377,7 @@ function prescan(    saved_pos, sname, fname_f, offset, depth, gname, \
                             else if (et == "i32" || et == "u32") field_sz = ne * 4
                             else if (et == "i16" || et == "u16") field_sz = ne * 2
                             else field_sz = ne * 8
+                            struct_field_is_array[sname ":" fname_f] = 1
                         } else {
                             # []type = pointer/slice = 8 bytes
                             if (peek_kind() == "]") advance()
@@ -749,11 +751,27 @@ function arm64_parse_postfix(    fname_f, foff, nargs, saved_lt) {
                 emit("  bl _strlen")
                 LAST_TYPE = "i64"
             } else {
-                # Field read
-                foff = find_field_off(fname_f, LAST_TYPE)
+                # Field read — inline array fields yield the field address, not a loaded pointer
+                _flt = LAST_TYPE
+                foff = find_field_off(fname_f, _flt)
+                _fkey = (_flt != "" && (_flt ":" fname_f) in struct_field_is_array) ? (_flt ":" fname_f) : \
+                        (fname_f in struct_field_is_array ? fname_f : "")
+                _is_arr = (_flt ":" fname_f) in struct_field_is_array
+                if (!_is_arr) {
+                    for (_asn in struct_names) {
+                        if ((_asn ":" fname_f) in struct_field_is_array) { _is_arr = 1; break }
+                    }
+                }
                 if (foff >= 0) {
-                    if (foff <= 32760) emit("  ldr x0, [x0, #" foff "]")
-                    else { emit("  mov x9, #" foff); emit("  ldr x0, [x0, x9]") }
+                    if (_is_arr) {
+                        # Inline array field: result is address of field, not a load
+                        if (foff == 0) { /* x0 already points to the field */ }
+                        else if (foff <= 4095) emit("  add x0, x0, #" foff)
+                        else { emit("  mov x9, #" foff); emit("  add x0, x0, x9") }
+                    } else {
+                        if (foff <= 32760) emit("  ldr x0, [x0, #" foff "]")
+                        else { emit("  mov x9, #" foff); emit("  ldr x0, [x0, x9]") }
+                    }
                 }
                 LAST_TYPE = ""
             }
@@ -761,6 +779,7 @@ function arm64_parse_postfix(    fname_f, foff, nargs, saved_lt) {
         } else if (peek_kind() == "[") {
             advance()  # [
             if (peek_kind() == "]") { advance(); LAST_TYPE = "ptr"; break }
+            saved_lt = LAST_TYPE  # save element type before index eval clobbers it
             emit("  str x0, [sp, #-16]!")  # save base
             arm64_parse_expr()             # idx or start in x0
             if (peek_kind() == "." && tk_kind[POS+1] == ".") {
@@ -780,8 +799,13 @@ function arm64_parse_postfix(    fname_f, foff, nargs, saved_lt) {
             } else {
                 emit("  mov x1, x0")              # index
                 emit("  ldr x0, [sp], #16")       # base
-                emit("  lsl x1, x1, #3")          # scale by 8 for i64
-                emit("  ldr x0, [x0, x1]")        # load i64
+                if (saved_lt == "i8" || saved_lt == "u8" || saved_lt == "str") {
+                    emit("  add x0, x0, x1")      # byte address: base + idx
+                    emit("  ldrb w0, [x0]")       # 1-byte load, zero-extended
+                } else {
+                    emit("  lsl x1, x1, #3")      # scale by 8 for i64/ptr
+                    emit("  ldr x0, [x0, x1]")    # 8-byte load
+                }
             }
             expect("]")
             LAST_TYPE = ""
@@ -1017,7 +1041,7 @@ function arm64_parse_primary(    kind, val, name, nargs, idx, lo, hi, sname, bas
             LAST_TYPE = var_type[name]
             emit("  ldr x0, [x29, #" env[name] "]")
         } else if (name in global_off) {
-            LAST_TYPE = ""
+            LAST_TYPE = (name in var_type) ? var_type[name] : ""
             emit("  adrp x9, _jda_globals@PAGE")
             emit("  add x9, x9, _jda_globals@PAGEOFF")
             emit("  ldr x0, [x9, #" global_off[name] "]")
@@ -1430,8 +1454,11 @@ function arm64_gen_stmt(    kind, val, name, off, else_lbl, end_lbl, top_lbl, co
                         # Continue to next field or =
                     } else if (peek_kind() == "=") {
                         # Final: .field = expr
+                        # Save x9 (struct pointer) — expr eval may clobber it via adrp x9 for globals
                         advance()  # =
+                        emit("  str x9, [sp, #-16]!")
                         arm64_parse_expr()
+                        emit("  ldr x9, [sp], #16")
                         if (foff >= 0) {
                             if (foff <= 32760) emit("  str x0, [x9, #" foff "]")
                             else { emit("  mov x10, #" foff); emit("  str x0, [x9, x10]") }
@@ -1501,8 +1528,14 @@ function arm64_gen_stmt(    kind, val, name, off, else_lbl, end_lbl, top_lbl, co
                 arm64_parse_expr()             # RHS → x0
                 emit("  ldr x9, [sp], #16")    # restore ptr into x9
                 emit("  ldr x10, [sp], #16")   # restore idx into x10
-                emit("  lsl x10, x10, #3")     # scale index by 8 for i64
-                emit("  str x0, [x9, x10]")    # store i64
+                _elem_type = (name in var_type) ? var_type[name] : ""
+                if (_elem_type == "i8" || _elem_type == "u8" || _elem_type == "str") {
+                    emit("  add x9, x9, x10")  # byte address: base + idx
+                    emit("  strb w0, [x9]")    # 1-byte store
+                } else {
+                    emit("  lsl x10, x10, #3") # scale index by 8 for i64/ptr
+                    emit("  str x0, [x9, x10]") # 8-byte store
+                }
                 return
             }
             # Not an assignment: discard pushed idx and fall through
