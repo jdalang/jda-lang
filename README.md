@@ -21,18 +21,15 @@
 
 ## Highlights
 
-- **Self-hosted** — the compiler is written entirely in Jda (zero C/C++/Rust)
-- **Bootstrapped from assembly** — no external compiler dependency
-- **33x faster compilation than Rust** — 42ms average compile time ([benchmarks](benchmarks/RESULTS.md))
-- **Beats C on sudoku and LZ77** — 41ms vs 62ms (sudoku), 277ms vs 1830ms (LZ77) — even running via Rosetta 2 x86-64
-- **6.6× faster than C on LZ77** — hash-chain compression with source-level optimizations outperforms all languages tested
-- **24–53x faster than Python/Ruby** — compiled performance with scripting-speed iteration
-- **117 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, debugging, profiling, and more
+- **Self-hosted** — compiler written entirely in Jda, zero C/C++/Rust, bootstrapped from raw assembly
+- **Beats C on 2 of 5 real-world benchmarks** — faster than clang -O2 on sudoku (1.5×) and LZ77 (6.6×), measured on Apple Silicon
+- **6.6× faster than C on LZ77** — and faster than Rust and Go too, even running via Rosetta 2 x86-64
+- **33× faster compilation than Rust** — 42ms average compile time ([benchmarks](benchmarks/RESULTS.md))
+- **117 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, and more
 - **388 conformance tests** — all passing
-- **Cross-platform** — native on Linux, Docker-based on macOS/Windows
-- **Built-in concurrency** — goroutine-style green threads with channels
-- **ML primitives** — tensors, autograd, neural networks, AVX-512 acceleration
-- **Jda Forge** — high-performance web framework built entirely in Jda ([Website](https://www.jdalang.org/forge/))
+- **Built-in concurrency** — goroutine-style green threads with channels, no GC
+- **ML primitives** — tensors, autograd, neural networks, AVX-512 / CUDA / ROCm acceleration
+- **Jda Forge** — full-stack web framework built entirely in Jda ([jdalang.org/forge](https://www.jdalang.org/forge/))
 
 ## Current Status
 
@@ -331,15 +328,6 @@ rustc -O  -o sudoku_rs benchmarks/complex/sudoku/sudoku.rs
 ```
 
 </details>
-
-## Jda Forge
-
-**[Jda Forge](https://www.jdalang.org/forge/)** is a full-stack web framework built entirely in Jda — no C, no dependencies. It provides HTTP routing, middleware, templating, and a database layer, all written in the language itself.
-
-- Website: [jdalang.org/forge](https://www.jdalang.org/forge/)
-- GitHub: [github.com/jdalang/jda-forge](https://github.com/jdalang/jda-forge)
-
-Because Forge is written in Jda, it serves as a real-world proof that the language is ready for production web development — and benefits directly from every compiler improvement.
 
 ## Tooling
 
