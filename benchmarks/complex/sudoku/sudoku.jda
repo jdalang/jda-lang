@@ -8,9 +8,9 @@ fn _sb(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 fn _rd(buf: &i8, n: i64) -> i64 { ret syscall(0, 0, buf, n, 0) }
 
 fn now_ms(ts: &i64) -> i64 {
-    syscall(228, 1, ts, 0, 0)
-    let s = ts[0]; let ns = ts[1]
-    ret s * 1000 + ns / 1000000
+    syscall(96, ts, 0, 0, 0)
+    let s = ts[0]; let us = ts[1]
+    ret s * 1000 + us / 1000
 }
 
 // Memory layout (i64 slots):

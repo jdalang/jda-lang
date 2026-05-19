@@ -611,6 +611,12 @@ let g_promo_ro_mask = 0
 let g_save_mask: i64 = 0
 // Copy propagation globals
 let g_cp_slot_val: &i64 = 0
+let g_cp_no_init: i64 = 0
+// Global copy-prop dataflow tables
+let g_rd_blk_gen: &i64 = 0    // [256*128] GEN per block: -1=untouched, -2=killed, >=0=val_id
+let g_rd_blk_out: &i64 = 0    // [256*128] OUT from iterative dataflow
+let g_rd_pred: &i64 = 0       // [256*8] predecessor block ids
+let g_rd_pred_cnt: &i64 = 0   // [256] predecessor counts
 // Register coalescing: old/new value IDs for substitution (set before coal_sub_* calls)
 let g_coal_o: i64 = 0
 let g_coal_n: i64 = 0
@@ -655,6 +661,8 @@ let g_skip_fn_body_compile_tmp = 0
 let g_small_work_jfn: &JirFunction = 0
 let g_small_work_bb = 0
 let g_target_macos = 0
+let g_mac_text_pages: i64 = 0
+let g_mac_data_pages: i64 = 0
 let g_fn_name_off_tbl: &i64 = 0
 let g_fn_name_len_tbl: &i64 = 0
 let g_fn_code_off_tbl: &i64 = 0
@@ -10029,7 +10037,7 @@ fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     let count = 0
     let idx = 0
     loop idx < 7 { g_sc_extra[idx] = -1 idx = idx + 1 }
-    g_sc_extra[3] = nr
+    g_sc_extra[3] = macos_xlat_nr_id(jfn, bb, nr)
     loop tok_type_at(toks, pos[0]) == TOK_COMMA {
         pos[0] = pos[0] + 1
         let arg = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
@@ -13455,6 +13463,7 @@ fn cp_init_slots() {
 
 fn cp_scan_block(jfn: &JirFunction, bi: i64) {
     cp_init_slots()
+    rd_seed_in_bi(jfn, bi)
     let base_id = -1
     if jfn.blocks[bi].instr_cnt > 0 {
         base_id = jfn.blocks[bi].instrs[0].id
@@ -13763,6 +13772,190 @@ fn coalesce_copies_block(jfn: &JirFunction, bi: i64) {
         }
         ii = ii + 1
     }
+}
+
+// ============================================================
+// 7a-GLOBAL. REACHING-DEFINITIONS DATAFLOW
+// ============================================================
+// Task A: compute gen/kill bitvectors and iterate to fixed point.
+// g_rd_blk_gen[bi*128+si]: last effect on slot (512+si) in block bi
+//   -1 = untouched, -2 = killed (OP_ADDR), >=0 = stored val_id
+// g_rd_blk_out[bi*128+si]: OUT state from fixed-point iteration
+// si = slot_idx - 512 (covers stack offsets 4096..5112)
+
+fn rd_add_pred(succ: i64, pred: i64) {
+    let cnt = g_rd_pred_cnt[succ]
+    if cnt < 8 {
+        g_rd_pred[succ * 8 + cnt] = pred
+        g_rd_pred_cnt[succ] = cnt + 1
+    }
+}
+
+fn rd_compute_preds(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < 256 { g_rd_pred_cnt[bi] = 0; bi = bi + 1 }
+    bi = 0
+    loop bi < jfn.block_cnt {
+        let icnt = jfn.blocks[bi].instr_cnt
+        if icnt > 0 {
+            let lop = jfn.blocks[bi].instrs[icnt - 1].op
+            let t0 = jfn.blocks[bi].instrs[icnt - 1].bb_target0
+            let t1 = jfn.blocks[bi].instrs[icnt - 1].bb_target1
+            if lop == OP_BR {
+                if t0 >= 0 and t0 < 256 { rd_add_pred(t0, bi) }
+                if t1 >= 0 and t1 < 256 { rd_add_pred(t1, bi) }
+            }
+            if lop == OP_JMP {
+                if t0 >= 0 and t0 < 256 { rd_add_pred(t0, bi) }
+            }
+        }
+        bi = bi + 1
+    }
+}
+
+// Returns 1 if op is a float-producing or call instruction whose result lives
+// in an XMM register that emit_save_pool does NOT preserve across CALLs.
+fn rd_is_xmm_op(op: i64) -> i64 {
+    if op == OP_CALL or op == OP_CALL_IND or op == OP_SYSCALL { ret 1 }
+    if op == OP_FADD or op == OP_FSUB or op == OP_FMUL or op == OP_FDIV { ret 1 }
+    if op == OP_FNEG or op == OP_FSQRT or op == OP_FABS or op == OP_I2F { ret 1 }
+    if op == OP_FEXP or op == OP_FLOG or op == OP_FSIN or op == OP_FCOS { ret 1 }
+    if op == OP_FTANH or op == OP_FPOW or op == OP_F2I { ret 1 }
+    if op == OP_F64X2_BIN or op == OP_F64X4_BIN or op == OP_F64X8_BIN { ret 1 }
+    ret 0
+}
+
+// Returns 1 if val_id is the result of a call or float op (unsafe to propagate across calls).
+fn rd_val_is_xmm(jfn: &JirFunction, val_id: i64) -> i64 {
+    if val_id < 0 { ret 1 }
+    let b2 = 0
+    loop b2 < jfn.block_cnt {
+        let i2 = 0
+        loop i2 < jfn.blocks[b2].instr_cnt {
+            if jfn.blocks[b2].instrs[i2].id == val_id {
+                ret rd_is_xmm_op(jfn.blocks[b2].instrs[i2].op)
+            }
+            i2 = i2 + 1
+        }
+        b2 = b2 + 1
+    }
+    ret 1
+}
+
+fn rd_compute_gen(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let base = bi * 128
+        let si = 0
+        loop si < 128 { g_rd_blk_gen[base + si] = -1; si = si + 1 }
+        let ii = 0
+        loop ii < jfn.blocks[bi].instr_cnt {
+            let op = jfn.blocks[bi].instrs[ii].op
+            let dead = jfn.blocks[bi].instrs[ii].dead
+            if dead == 0 and op == OP_TGET {
+                let kg = 0
+                loop kg < 128 { g_rd_blk_gen[base + kg] = -2; kg = kg + 1 }
+            }
+            if dead == 0 and op == OP_STORE {
+                let si2 = jfn.blocks[bi].instrs[ii].operand1 / 8 - 512
+                let val0 = jfn.blocks[bi].instrs[ii].operand0
+                if si2 >= 0 and si2 < 128 {
+                    if rd_val_is_xmm(jfn, val0) == 0 {
+                        g_rd_blk_gen[base + si2] = val0
+                    }
+                }
+            }
+            if dead == 0 and op == OP_ADDR {
+                let si2 = jfn.blocks[bi].instrs[ii].operand0 / 8 - 512
+                if si2 >= 0 and si2 < 128 { g_rd_blk_gen[base + si2] = -2 }
+            }
+            ii = ii + 1
+        }
+        bi = bi + 1
+    }
+}
+
+fn rd_intersect_preds(bi: i64, si: i64) -> i64 {
+    let pcnt = g_rd_pred_cnt[bi]
+    if pcnt == 0 { ret -1 }
+    let agreed = -1
+    let bad = 0
+    let pi = 0
+    loop pi < pcnt {
+        let pred = g_rd_pred[bi * 8 + pi]
+        let pv = g_rd_blk_out[pred * 128 + si]
+        if pv < 0 { bad = 1 }
+        if agreed < 0 { agreed = pv }
+        if pv != agreed { bad = 1 }
+        pi = pi + 1
+    }
+    if bad == 1 { ret -1 }
+    ret agreed
+}
+
+fn rd_compute_out_bi(bi: i64) -> i64 {
+    let base = bi * 128
+    let changed = 0
+    let si = 0
+    loop si < 128 {
+        let gen_v = g_rd_blk_gen[base + si]
+        let new_out = -1
+        if gen_v >= 0 { new_out = gen_v }
+        if gen_v == -1 { new_out = rd_intersect_preds(bi, si) }
+        if new_out != g_rd_blk_out[base + si] {
+            g_rd_blk_out[base + si] = new_out
+            changed = 1
+        }
+        si = si + 1
+    }
+    ret changed
+}
+
+fn rd_run_dataflow(jfn: &JirFunction) {
+    let bi = 0
+    loop bi < jfn.block_cnt {
+        let si = 0
+        loop si < 128 { g_rd_blk_out[bi * 128 + si] = -1; si = si + 1 }
+        bi = bi + 1
+    }
+    let itr = 0
+    let chg = 1
+    loop chg == 1 and itr < 8 {
+        chg = 0
+        bi = 0
+        loop bi < jfn.block_cnt {
+            let c = rd_compute_out_bi(bi)
+            if c == 1 { chg = 1 }
+            bi = bi + 1
+        }
+        itr = itr + 1
+    }
+}
+
+fn rd_seed_in_bi(jfn: &JirFunction, bi: i64) {
+    let si = 0
+    loop si < 128 {
+        let in_v = rd_intersect_preds(bi, si)
+        if in_v >= 0 {
+            let cv = find_const(jfn, in_v)
+            if cv.found == 1 {
+                let idx = si + 512
+                g_cp_slot_val[idx] = in_v
+            }
+        }
+        si = si + 1
+    }
+}
+
+// Task B+C: global copy-prop — seed each block's initial slot→val map from
+// reaching definitions before running intra-block cp_scan_block.
+// Only constants are seeded cross-block; non-const values may be in caller-saved
+// registers that get clobbered by calls in predecessor blocks.
+fn copy_prop_global(jfn: &JirFunction) {
+    rd_compute_preds(jfn)
+    rd_compute_gen(jfn)
+    rd_run_dataflow(jfn)
+    copy_prop(jfn)
 }
 
 fn copy_prop(jfn: &JirFunction) {
@@ -15274,7 +15467,6 @@ fn loop_promote_scan(jfn: &JirFunction) {
                 let cnl = jfn.blocks[lb].instrs[li].str_len
                 let is_safe = 0
                 if cnl == 3 { if streq(g_src_buf_ptr, cns, 3, "_sb") == 1 { is_safe = 1 } }
-                if cnl == 9 { if streq(g_src_buf_ptr, cns, 9, "poke_byte") == 1 { is_safe = 1 } }
                 if is_safe == 0 { has_call = 1 }
             }
             if lop == OP_CALL_IND { has_call = 1 }
@@ -17086,7 +17278,7 @@ fn lower_syscall_consume_arg(ins: &Instr, ctx: &LowerCtx, idx: i64) {
 fn lower_syscall(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_push_r(out, pos, PHYS_R12)
     emit_save_pool(ctx.ra, out, pos)
-    
+
     // Push in order (always at least the nr)
     let nr_r = get_or_load(ctx.ra, out, pos, ins.operand0)
     emit_push_r(out, pos, nr_r)
@@ -25481,6 +25673,35 @@ fn nop_fallthrough_jmps(out: &i8, start: i64, end_pos: i64) {
     }
 }
 
+fn macos_xlat_sc_lo(nr: i64) -> i64 {
+    if nr == 0 { ret 0x2000003 }  // read
+    if nr == 1 { ret 0x2000004 }  // write
+    if nr == 2 { ret 0x2000005 }  // open
+    if nr == 3 { ret 0x2000006 }  // close
+    if nr == 9 { ret 0x20000C5 }  // mmap
+    ret 0
+}
+
+fn macos_xlat_syscall(nr: i64) -> i64 {
+    let lo = macos_xlat_sc_lo(nr)
+    if lo != 0 { ret lo }
+    if nr == 11 { ret 0x2000049 }  // munmap
+    if nr == 60 { ret 0x2000001 }  // exit
+    if nr == 96 { ret 0x2000074 }  // gettimeofday
+    if nr == 231 { ret 0x2000001 } // exit_group
+    ret nr
+}
+
+fn macos_xlat_nr_id(jfn: &JirFunction, bb: i64, nr_id: i64) -> i64 {
+    if g_target_macos == 0 { ret nr_id }
+    let cv = ConstVal{}
+    cv = find_const(jfn, nr_id)
+    if cv.found == 0 { ret nr_id }
+    let mac_nr = macos_xlat_syscall(cv.val)
+    if mac_nr == cv.val { ret nr_id }
+    ret emit_const(jfn, bb, TYPE_I64, mac_nr)
+}
+
 fn p_sys_mmap() -> i64 {
     if g_target_macos == 1 { ret 0x20000C5 }
     ret 9
@@ -25527,7 +25748,7 @@ fn p_load_va() -> i64 {
 }
 
 fn p_hdr_size() -> i64 {
-    if g_target_macos == 1 { ret 560 }
+    if g_target_macos == 1 { ret 712 }  // 560 + 152 for __DATA LC_SEGMENT_64
     ret 120
 }
 
@@ -25627,15 +25848,42 @@ fn write_macho_seg_link(buf: &i8, pos: &i64, va: i64, vmsz: i64, foff: i64, fsz:
     emit_i32_le(buf, pos, 0)
 }
 
+fn write_macho_data_seg(buf: &i8, pos: &i64, va: i64, vmsz: i64, foff: i64) {
+    // LC_SEGMENT_64 __DATA with 1 section (cmdsize=152), initprot=3 (r+w)
+    emit_i32_le(buf, pos, 0x19)
+    emit_i32_le(buf, pos, 152)
+    write_macho_segname(buf, pos, "__DATA")
+    emit_i64_le(buf, pos, va)
+    emit_i64_le(buf, pos, vmsz)
+    emit_i64_le(buf, pos, foff)
+    emit_i64_le(buf, pos, vmsz)
+    emit_i32_le(buf, pos, 3)
+    emit_i32_le(buf, pos, 3)
+    emit_i32_le(buf, pos, 1)
+    emit_i32_le(buf, pos, 0)
+    write_macho_segname(buf, pos, "__data")
+    write_macho_segname(buf, pos, "__DATA")
+    emit_i64_le(buf, pos, va)
+    emit_i64_le(buf, pos, vmsz)
+    emit_i32_le(buf, pos, foff)
+    emit_i32_le(buf, pos, 0)
+    emit_i32_le(buf, pos, 0)
+    emit_i32_le(buf, pos, 0)
+    emit_i32_le(buf, pos, 0)
+    emit_i32_le(buf, pos, 0)
+    emit_i32_le(buf, pos, 0)
+    emit_i32_le(buf, pos, 0)
+}
+
 fn write_macho_text_seg(hdr: &i8, hp: &i64, link_off: i64, clen: i64, hdr_sz: i64) {
     // LC_SEGMENT_64 with 1 section: cmdsize = 72 + 80 = 152
     emit_i32_le(hdr, hp, 0x19)
     emit_i32_le(hdr, hp, 152)
     write_macho_segname(hdr, hp, "__TEXT")
     emit_i64_le(hdr, hp, 0x100000000)
-    emit_i64_le(hdr, hp, link_off)
+    emit_i64_le(hdr, hp, g_mac_text_pages)
     emit_i64_le(hdr, hp, 0)
-    emit_i64_le(hdr, hp, link_off)
+    emit_i64_le(hdr, hp, g_mac_text_pages)
     emit_i32_le(hdr, hp, 5)
     emit_i32_le(hdr, hp, 5)
     emit_i32_le(hdr, hp, 1)
@@ -25673,7 +25921,7 @@ fn write_macho_thread_state(buf: &i8, pos: &i64) {
     loop i < 42 {
         if i == 32 {
             // rip = base_va + header_size = 0x100000000 + 560 = 0x100000230
-            emit_i32_le(buf, pos, 0x230)
+            emit_i32_le(buf, pos, 0x2C8)
             emit_i32_le(buf, pos, 0x1)
             i = i + 2
         } else {
@@ -25683,24 +25931,35 @@ fn write_macho_thread_state(buf: &i8, pos: &i64) {
     }
 }
 
-fn write_macho_body(fd: i64, code: &i8, clen: i64, strtab: &i8, slen: i64, pad_total: i64) {
+fn write_macho_body(fd: i64, code: &i8, clen: i64, strtab: &i8, slen: i64, text_pages: i64) {
+    let zero_blk = alloc_pages(2)
+    // Write code, then pad to text_pages boundary
     syscall(1, fd, code, clen)
+    let hdr_sz = p_hdr_size()
+    let code_pad = text_pages - hdr_sz
+    code_pad = code_pad - clen
+    fill_bytes(zero_blk, code_pad, 0)
+    syscall(1, fd, zero_blk, code_pad)
+    // Write strtab + globals into __DATA
     syscall(1, fd, strtab, slen)
     if g_emit_glob_len > 0 {
         syscall(1, fd, g_emit_glob_buf, g_emit_glob_len)
     }
-    let zero_blk = alloc_pages(1)
-    fill_bytes(zero_blk, pad_total, 0)
-    syscall(1, fd, zero_blk, pad_total)
+    // Pad data section to data_pages, then write LINKEDIT (16 bytes)
+    let data_len = slen + g_emit_glob_len
+    let data_pad = g_mac_data_pages - data_len
+    let link_pad = data_pad + 16
+    fill_bytes(zero_blk, link_pad, 0)
+    syscall(1, fd, zero_blk, link_pad)
 }
 
 fn write_macho_header(hdr: &i8, hp: &i64, link_off: i64, sig_sz: i64, clen: i64, hdr_sz: i64) {
-    // Mach-O header: 5 load commands (no LC_CODE_SIGNATURE — codesign adds it)
+    // Mach-O header: 6 load commands (no LC_CODE_SIGNATURE — codesign adds it)
     emit_i32_le(hdr, hp, 0xFEEDFACF)
     emit_i32_le(hdr, hp, 0x01000007)
     emit_i32_le(hdr, hp, 3)
     emit_i32_le(hdr, hp, 2)
-    emit_i32_le(hdr, hp, 5)
+    emit_i32_le(hdr, hp, 6)
     let soc_off = hp[0]
     emit_i32_le(hdr, hp, 0)
     emit_i32_le(hdr, hp, 0x00000001)
@@ -25709,6 +25968,9 @@ fn write_macho_header(hdr: &i8, hp: &i64, link_off: i64, sig_sz: i64, clen: i64,
     write_macho_seg_pz(hdr, hp)
     // LC_SEGMENT_64 __TEXT with 1 section (cmdsize=152)
     write_macho_text_seg(hdr, hp, link_off, clen, hdr_sz)
+    // LC_SEGMENT_64 __DATA with 1 section (cmdsize=152), r+w
+    let data_va = 0x100000000 + g_mac_text_pages
+    write_macho_data_seg(hdr, hp, data_va, g_mac_data_pages, g_mac_text_pages)
     // LC_SEGMENT_64 __LINKEDIT (cmdsize=72), page-aligned vmsize
     let link_va = 0x100000000 + link_off
     let link_vmsz = 0x1000
@@ -25731,20 +25993,23 @@ fn write_macho_header(hdr: &i8, hp: &i64, link_off: i64, sig_sz: i64, clen: i64,
 }
 
 fn write_macho(fd: i64, code: &i8, clen: i64, strtab: &i8, slen: i64) {
-    let data_len = slen + g_emit_glob_len
-    let content_sz = clen + data_len
     let hdr_sz = p_hdr_size()
-    let raw_end = hdr_sz + content_sz
-    // Page-align __TEXT segment: vmsize and filesize = text_pages
-    let text_pages = (raw_end + 0xFFF) and (0 - 0x1000)
-    let text_pad = text_pages - raw_end
+    // __TEXT: header + code only (r+x)
+    let text_raw = hdr_sz + clen
+    let text_pages = (text_raw + 0xFFF) and (0 - 0x1000)
+    // __DATA: strtab + globals (r+w)
+    let data_len = slen + g_emit_glob_len
+    let data_pages = (data_len + 0xFFF) and (0 - 0x1000)
+    if data_len == 0 { data_pages = 0 }
+    g_mac_text_pages = text_pages
+    g_mac_data_pages = data_pages
+    let link_off = text_pages + data_pages
     let link_sz = 16
-    let pad_total = text_pad + link_sz
     let hdr = alloc_pages(1)
     let hp = 0
-    write_macho_header(hdr, &hp, text_pages, link_sz, clen, hdr_sz)
+    write_macho_header(hdr, &hp, link_off, link_sz, clen, hdr_sz)
     syscall(1, fd, hdr, hdr_sz)
-    write_macho_body(fd, code, clen, strtab, slen, pad_total)
+    write_macho_body(fd, code, clen, strtab, slen, text_pages)
 }
 
 fn get_argv(base: &i64, n: i64) -> &i8 {
@@ -26196,9 +26461,9 @@ fn compile_lambda_params_and_body(toks: &Token, src: &i8, jfn: &JirFunction, ctx
     ri.op = OP_RET
     ri.operand0 = rv
     emit(jfn, fb, &ri)
-    copy_prop(jfn)
+    copy_prop_global(jfn)
     fold_constants(jfn)
-    copy_prop(jfn)
+    copy_prop_global(jfn)
     fold_constants(jfn)
     dead_store_elim(jfn)
     dce(jfn)
@@ -26760,6 +27025,28 @@ fn defer_emit_calls(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFuncti
     }
 }
 
+fn calc_str_va(fix_va: i64, fix_hdr: i64, code_len: i64) -> i64 {
+    let str_va = fix_va + fix_hdr + code_len
+    if g_target_macos == 1 {
+        let text_raw = fix_hdr + code_len
+        let text_pages_fix = (text_raw + 0xFFF) and (0 - 0x1000)
+        str_va = fix_va + text_pages_fix
+    }
+    ret str_va
+}
+
+fn do_emit_and_exit(code_buf: &i8, code_len: i64, merged_str: &i8, merged_pos: i64, glob_buf: &i8) {
+    let out_fd = syscall(2, g_out_path_ptr, 577, 493)
+    if out_fd < 0 { panic("open output failed") }
+    g_emit_glob_buf = glob_buf
+    g_emit_glob_len = g_glob_total_sz
+    if g_glob_total_sz > 0 { fill_bytes(glob_buf, g_glob_total_sz, 0) }
+    emit_output(out_fd, code_buf, code_len, merged_str, merged_pos)
+    syscall(3, out_fd, 0, 0)
+    syscall(90, g_out_path_ptr, 493, 0)
+    syscall(60, 0, 0, 0)
+}
+
 fn main(argc: i64, argv_ptr: &i64) {
     let src_path: &i8 = 0
     let out_path: &i8 = 0
@@ -27073,6 +27360,10 @@ fn main(argc: i64, argv_ptr: &i64) {
     ls_init_globals()
     // Copy propagation arrays
     g_cp_slot_val = alloc_pages(4) as &i64
+    g_rd_blk_gen = alloc_pages(64) as &i64
+    g_rd_blk_out = alloc_pages(64) as &i64
+    g_rd_pred = alloc_pages(16) as &i64
+    g_rd_pred_cnt = alloc_pages(1) as &i64
     g_block_indeg = alloc_pages(1) as &i64
     // Bootstrap: alloc_pages gives zero-initialized memory so entry 0 is already zero.
     // Just set the count and total size to skip slot 0 (dummy entry).
@@ -27217,9 +27508,9 @@ fn main(argc: i64, argv_ptr: &i64) {
                         if jfn.block_cnt > 512 { panic("lex_handle_minus block blowup") }
                     }
                 }
-                // copy_prop(jfn)  -- BASELINE
+                // copy_prop_global(jfn)  -- BASELINE
                 fold_constants(jfn)
-                // copy_prop(jfn)  -- BASELINE
+                // copy_prop_global(jfn)  -- BASELINE
                 fold_constants(jfn)
                 dead_store_elim(jfn)
                 dce(jfn)
@@ -27315,7 +27606,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     // ---- Global Fixups (String/Calls) ----
     let fix_va = p_load_va()
     let fix_hdr = p_hdr_size()
-    let str_va = fix_va + fix_hdr + code_len
+    let str_va = calc_str_va(fix_va, fix_hdr, code_len)
     let si_f = 0
     loop si_f < gf_strtab_cnt {
         let co = gf_strtab_co[si_f]
@@ -27378,16 +27669,5 @@ fn main(argc: i64, argv_ptr: &i64) {
         }
         ci_f = ci_f + 1
     }
-    let out_fd = syscall(2, g_out_path_ptr, 577, 493)
-    if out_fd < 0 { panic("open output failed") }
-    g_emit_glob_buf = glob_buf
-    g_emit_glob_len = g_glob_total_sz
-    if g_glob_total_sz > 0 { fill_bytes(glob_buf, g_glob_total_sz, 0) }
-    emit_output(out_fd, code_buf, code_len, merged_str, merged_pos)
-    syscall(3, out_fd, 0, 0)
-
-    // chmod +x the output
-    syscall(90, g_out_path_ptr, 493, 0)
-
-    syscall(60, 0, 0, 0)
+    do_emit_and_exit(code_buf, code_len, merged_str, merged_pos, glob_buf)
 }
