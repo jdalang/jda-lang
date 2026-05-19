@@ -7,6 +7,7 @@
 <p align="center"><strong>A high-performance systems language with built-in concurrency and ML — without GC.</strong><br>Bootstrapped from raw x86-64 assembly. The compiler compiles itself.</p>
 
 <p align="center">
+  <a href="https://www.jdalang.org">Website</a> &bull;
   <a href="#installation">Install</a> &bull;
   <a href="docs/language/syntax.md">Docs</a> &bull;
   <a href="docs/language/stdlib.md">Stdlib</a> &bull;
@@ -23,13 +24,15 @@
 - **Self-hosted** — the compiler is written entirely in Jda (zero C/C++/Rust)
 - **Bootstrapped from assembly** — no external compiler dependency
 - **33x faster compilation than Rust** — 42ms average compile time ([benchmarks](benchmarks/RESULTS.md))
-- **Beats C on 2 of 4 benchmarks** — faster than gcc -O2 on sieve and sum loop
+- **Beats C on sudoku and LZ77** — 41ms vs 62ms (sudoku), 277ms vs 1830ms (LZ77) — even running via Rosetta 2 x86-64
+- **6.6× faster than C on LZ77** — hash-chain compression with source-level optimizations outperforms all languages tested
 - **24–53x faster than Python/Ruby** — compiled performance with scripting-speed iteration
 - **117 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, debugging, profiling, and more
 - **388 conformance tests** — all passing
 - **Cross-platform** — native on Linux, Docker-based on macOS/Windows
 - **Built-in concurrency** — goroutine-style green threads with channels
 - **ML primitives** — tensors, autograd, neural networks, AVX-512 acceleration
+- **Jda Forge** — high-performance web framework built entirely in Jda ([Website](https://www.jdalang.org/forge/))
 
 ## Current Status
 
@@ -107,6 +110,15 @@ fn index_directory(root: &i8) -> &HashMap {
 All three compile to **< 1.1 MB static ELF binaries** with zero external dependencies.
 
 **[→ Getting Started Guides](docs/getting-started/)** — build a CLI tool, an HTTP server, or train a neural network step by step.
+
+## Ecosystem
+
+### Jda Forge
+**[Jda Forge](https://www.jdalang.org/forge/)** is a high-performance web and application framework built entirely in Jda. It leverages the language's native concurrency and systems-level efficiency to provide a modern, type-safe foundation for scalable services.
+
+- **Website**: [jdalang.org/forge](https://www.jdalang.org/forge/)
+- **GitHub**: [jdalang/jda-forge](https://github.com/jdalang/jda-forge)
+- **Built in Jda**: The framework is 100% Jda code, showcasing the language's capability for building complex, high-level abstractions.
 
 ## Language Features
 
@@ -284,31 +296,50 @@ See [docs/language/structs.md](docs/language/structs.md) for the full OOP guide.
 
 Jda: **zero external dependencies** — bootstrapped from assembly, single static binary.
 
-### Complex Benchmarks (Full Source Code)
+### Complex Benchmarks — macOS Native (ms, lower is better)
 
-Real-world problems with complete source in all 6 languages — [full analysis with code](benchmarks/COMPLEX_BENCHMARKS.md):
+Real algorithms with full source in all 6 languages. Measured on macOS Apple Silicon — C/Rust/Go compile to native ARM64; **Jda runs x86-64 via Rosetta 2** (ISA handicap).
 
-| Problem | C | Jda | Rust | Go | Python | Ruby |
-|---------|----:|--------:|------:|----:|-------:|-----:|
-| JSON parse+filter 100K | 18 | **16** | 19 | 42 | 189 | 312 |
-| Sieve 10M | 38 | **34** | 42 | 48 | 4,820 | 3,910 |
-| Levenshtein 5Kx5K | 42 | 45 | 40 | 58 | 12,400 | 8,900 |
-| SHA-256 chain 100K | 85 | 92 | 82 | 110 | 38,500 | 22,100 |
-| N-Queens N=14 | 210 | 245 | 195 | 320 | 82,000 | 41,500 |
-| HTTP parse 50K | 12 | 14 | 11 | 28 | 420 | 680 |
+| Problem | C | Rust | Go | **Jda** | Ruby | Python |
+|---------|--:|-----:|---:|--------:|-----:|-------:|
+| Sudoku — 500 puzzles | 62 | 62 | 66 | **41** | 3,854 | 1,753 |
+| LZ77 — 1 MB compress | 1,830 | 2,185 | 2,721 | **277** | 222,424 | — |
+| Regex — 8 pats × 100K | 98 | 221 | 813 | 186 | 7,940 | 7,406 |
+| B-Tree — 1M insert/lookup | 282 | 297 | 318 | 586 | 11,529 | 10,955 |
+| Raytracer — 800×600 | 19 | 21 | 35 | 331 | 3,301 | 4,080 |
 
-**Jda wins 2/6 vs C**, **6/6 vs Go**, **208x faster than Python**, **116x faster than Ruby**. Within 8-17% of C on all problems.
+**Highlights:**
+- **Sudoku**: Jda **1.5× faster than C/Rust** (source-level constraint propagation + DCE)
+- **LZ77**: Jda **6.6× faster than C** — MOD→AND strength reduction + hash-chain hoisting eliminate the bottleneck entirely
+- **Regex**: Jda beats Go (813ms) and Rust (221ms); Thompson NFA + DFA subset construction
+- **BTree / Raytracer**: gap to C remains — Rosetta 2 overhead + scalar x86 vs ARM SIMD
 
 <details>
-<summary>Reproduce</summary>
+<summary>Reproduce locally</summary>
 
 ```bash
-docker build --platform linux/amd64 -t jda-bench benchmarks/
+# Compile Jda benchmarks (requires jda1 binary in bootstrap/stage0/)
 docker run --rm --platform linux/amd64 --ulimit stack=524288000:524288000 \
-  -v $(pwd):/jda -w /jda jda-bench bash /jda/benchmarks/run.sh
+  -v $(PWD):/jda -w /jda/bootstrap/stage0 jda-build \
+  sh -c "./jda1 build --macos /jda/benchmarks/complex/sudoku/sudoku.jda -o sudoku_mac"
+codesign -s - sudoku_mac && ./sudoku_mac < benchmarks/complex/sudoku/puzzles.txt
+
+# C, Go, Rust — compile natively
+clang -O2 -o sudoku_c benchmarks/complex/sudoku/sudoku.c
+go build -o sudoku_go benchmarks/complex/sudoku/sudoku.go
+rustc -O  -o sudoku_rs benchmarks/complex/sudoku/sudoku.rs
 ```
 
 </details>
+
+## Jda Forge
+
+**[Jda Forge](https://www.jdalang.org/forge/)** is a full-stack web framework built entirely in Jda — no C, no dependencies. It provides HTTP routing, middleware, templating, and a database layer, all written in the language itself.
+
+- Website: [jdalang.org/forge](https://www.jdalang.org/forge/)
+- GitHub: [github.com/jdalang/jda-forge](https://github.com/jdalang/jda-forge)
+
+Because Forge is written in Jda, it serves as a real-world proof that the language is ready for production web development — and benefits directly from every compiler improvement.
 
 ## Tooling
 
@@ -380,6 +411,9 @@ docker/            Dockerfile for build environment
 ```
 
 ## Documentation
+
+### Official Website
+- **[jdalang.org](https://www.jdalang.org)** — Official Jda language website, documentation, and resources.
 
 ### Getting Started
 - [Build a CLI Tool](docs/getting-started/cli-tool.md) — word-count tool with args, file I/O
