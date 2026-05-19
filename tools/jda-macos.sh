@@ -765,7 +765,7 @@ function arm64_parse_postfix(    fname_f, foff, nargs, saved_lt) {
                 if (foff >= 0) {
                     if (_is_arr) {
                         # Inline array field: result is address of field, not a load
-                        if (foff == 0) { /* x0 already points to the field */ }
+                        if (foff == 0) { } # x0 already points to the field
                         else if (foff <= 4095) emit("  add x0, x0, #" foff)
                         else { emit("  mov x9, #" foff); emit("  add x0, x0, x9") }
                     } else {
