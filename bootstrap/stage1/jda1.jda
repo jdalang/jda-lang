@@ -596,6 +596,9 @@ let g_ls_active_cnt: i64 = 0
 let g_ls_free_cnt: i64 = 0
 let g_spill_free: &i64 = 0
 let g_spill_free_cnt: i64 = 0
+// Instruction scheduling reuses g_ls_active page (idle after linear_scan pre-pass).
+//   [0..63]=order [64..127]=in_deg [128..191]=ready_q [192..255]=prod_val
+//   [256..319]=lat [320..383]=done [384..447]=bar_succ [511]=rq_cnt
 let g_cand_slots: &i64 = 0
 let g_cand_load: &i64 = 0
 let g_cand_store: &i64 = 0
@@ -2897,7 +2900,7 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     }
     if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
-    if gidx >= 256 { panic("Too many globals") }
+    if gidx >= 512 { panic("Too many globals") }
     g_glob_name_off[gidx] = name_start
     g_glob_name_len[gidx] = name_len
     g_glob_off[gidx] = g_glob_total_sz
@@ -17581,7 +17584,7 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
             consume_use(ctx, ins.operand0)
             consume_use(ctx, ins.operand1)
             if ctx.use_cnt[ins.id] == 1 {
-                let fre_ni = g_cur_instr_idx + 1
+                let fre_ni = g_ls_active[g_cur_instr_idx] + 1
                 let fre_cnt = jfn.blocks[g_cur_block_idx].instr_cnt
                 loop fre_ni < fre_cnt {
                     if jfn.blocks[g_cur_block_idx].instrs[fre_ni].dead == 0 {
@@ -17635,7 +17638,7 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
         // and let BR emit jcc directly using CPU flags
         if ctx.use_cnt[ins.id] == 1 {
             let can_fuse = 0
-            let ni = g_cur_instr_idx + 1
+            let ni = g_ls_active[g_cur_instr_idx] + 1
             let blk_cnt = jfn.blocks[g_cur_block_idx].instr_cnt
             loop ni < blk_cnt {
                 if jfn.blocks[g_cur_block_idx].instrs[ni].dead == 0 {
@@ -22519,15 +22522,252 @@ fn lower_instr(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction,
 
 }
 
+// Instruction scheduling helpers — list scheduling with latency-priority heuristic
+
+fn sched_lat_hi(op: i64) -> i64 {
+    if op == OP_DIV { ret 20 }
+    if op == OP_MOD { ret 20 }
+    ret 0
+}
+
+fn sched_lat(op: i64) -> i64 {
+    if op == OP_LOAD_MEM { ret 4 }
+    if op == OP_LOAD_MEM_SIB { ret 4 }
+    if op == OP_LOAD { ret 4 }
+    if op == OP_MUL { ret 3 }
+    if op == OP_FMUL { ret 3 }
+    let h = sched_lat_hi(op)
+    if h > 0 { ret h }
+    ret 1
+}
+
+fn sched_is_bar1(op: i64) -> i64 {
+    if op == OP_STORE { ret 1 }
+    if op == OP_STORE_MEM { ret 1 }
+    if op == OP_STORE_MEM_SIB { ret 1 }
+    if op == OP_CALL { ret 1 }
+    ret 0
+}
+
+fn sched_is_barrier(op: i64) -> i64 {
+    if sched_is_bar1(op) == 1 { ret 1 }
+    if op == OP_TAIL_CALL { ret 1 }
+    if op == OP_CALL_IND { ret 1 }
+    if op == OP_SYSCALL { ret 1 }
+    if op == OP_RET { ret 1 }
+    if op == OP_BR { ret 1 }
+    if op == OP_JMP { ret 1 }
+    ret 0
+}
+
+fn sched_is_load(op: i64) -> i64 {
+    if op == OP_LOAD_MEM { ret 1 }
+    if op == OP_LOAD_MEM_SIB { ret 1 }
+    if op == OP_LOAD { ret 1 }
+    ret 0
+}
+
+// After sched_bb, rewrite g_val_last_use for vals whose last use is in this BB
+// to use scheduled-position coordinates instead of original-position coordinates.
+// This keeps RA eviction correct when instructions are reordered.
+fn sched_fix_last_use(bb_id: i64, jfn: &JirFunction, n: i64) {
+    let base = g_cur_block_idx * 128
+    let sp = 0
+    loop sp < n {
+        let orig = g_ls_active[sp]
+        let o0 = jfn.blocks[bb_id].instrs[orig].operand0
+        let o1 = jfn.blocks[bb_id].instrs[orig].operand1
+        let o2 = jfn.blocks[bb_id].instrs[orig].operand2
+        let o3 = jfn.blocks[bb_id].instrs[orig].operand3
+        if o0 >= 0 and o0 < 8192 {
+            if g_val_last_use[o0] / 128 == g_cur_block_idx {
+                g_val_last_use[o0] = base + sp
+            }
+        }
+        if o1 >= 0 and o1 < 8192 {
+            if g_val_last_use[o1] / 128 == g_cur_block_idx {
+                g_val_last_use[o1] = base + sp
+            }
+        }
+        if o2 >= 0 and o2 < 8192 {
+            if g_val_last_use[o2] / 128 == g_cur_block_idx {
+                g_val_last_use[o2] = base + sp
+            }
+        }
+        if o3 >= 0 and o3 < 8192 {
+            if g_val_last_use[o3] / 128 == g_cur_block_idx {
+                g_val_last_use[o3] = base + sp
+            }
+        }
+        sp = sp + 1
+    }
+}
+
+// Phase 1: init per-instruction scheduling arrays
+fn sched_bb_init(bb_id: i64, jfn: &JirFunction, n: i64) {
+    let i = 0
+    loop i < n {
+        let op = jfn.blocks[bb_id].instrs[i].op
+        g_ls_active[i] = i
+        g_ls_active[192 + i] = jfn.blocks[bb_id].instrs[i].id
+        g_ls_active[64 + i] = 0
+        g_ls_active[256 + i] = sched_lat(op)
+        g_ls_active[320 + i] = 0
+        g_ls_active[384 + i] = -1
+        i = i + 1
+    }
+}
+
+// Phase 2a: add in_deg edges for data dependencies (O(N^2))
+fn sched_bb_data_deps(bb_id: i64, jfn: &JirFunction, n: i64) {
+    let j = 0
+    loop j < n {
+        let o0 = jfn.blocks[bb_id].instrs[j].operand0
+        let o1 = jfn.blocks[bb_id].instrs[j].operand1
+        let o2 = jfn.blocks[bb_id].instrs[j].operand2
+        let o3 = jfn.blocks[bb_id].instrs[j].operand3
+        let i = 0
+        loop i < j {
+            let pv = g_ls_active[192 + i]
+            if pv >= 0 {
+                let m = 0
+                if o0 == pv { m = 1 }
+                if o1 == pv { m = 1 }
+                if o2 == pv { m = 1 }
+                if o3 == pv { m = 1 }
+                if m == 1 {
+                    g_ls_active[64 + j] = g_ls_active[64 + j] + 1
+                }
+            }
+            i = i + 1
+        }
+        j = j + 1
+    }
+}
+
+// Phase 2b: barrier chain — loads and barriers must preserve their relative order
+fn sched_bb_bar_chain(bb_id: i64, jfn: &JirFunction, n: i64) {
+    let last_bar = -1
+    let i = 0
+    loop i < n {
+        let op = jfn.blocks[bb_id].instrs[i].op
+        let is_bar = sched_is_barrier(op)
+        let is_ld = sched_is_load(op)
+        let is_mem = 0
+        if is_bar == 1 { is_mem = 1 }
+        if is_ld == 1 { is_mem = 1 }
+        if is_mem == 1 and last_bar >= 0 {
+            g_ls_active[64 + i] = g_ls_active[64 + i] + 1
+            g_ls_active[384 + last_bar] = i
+        }
+        if is_mem == 1 {
+            last_bar = i
+        }
+        i = i + 1
+    }
+}
+
+// Decrement in_deg of successors of chosen; add to ready queue when in_deg reaches 0
+fn sched_update_succ(chosen: i64, n: i64, bb_id: i64, jfn: &JirFunction) {
+    let pv = g_ls_active[192 + chosen]
+    let bs = g_ls_active[384 + chosen]
+    let j = 0
+    loop j < n {
+        if g_ls_active[320 + j] == 0 {
+            let dep = 0
+            if pv >= 0 {
+                if jfn.blocks[bb_id].instrs[j].operand0 == pv { dep = 1 }
+                if jfn.blocks[bb_id].instrs[j].operand1 == pv { dep = 1 }
+                if jfn.blocks[bb_id].instrs[j].operand2 == pv { dep = 1 }
+                if jfn.blocks[bb_id].instrs[j].operand3 == pv { dep = 1 }
+            }
+            let bar_dep = 0
+            if j == bs { bar_dep = 1 }
+            let total = dep + bar_dep
+            if total > 0 {
+                let nd = g_ls_active[64 + j] - total
+                g_ls_active[64 + j] = nd
+                if nd == 0 {
+                    g_ls_active[128 + g_ls_active[511]] = j
+                    g_ls_active[511] = g_ls_active[511] + 1
+                }
+            }
+        }
+        j = j + 1
+    }
+}
+
+// Phase 3+4: init ready queue then run list schedule
+fn sched_bb_run(n: i64, bb_id: i64, jfn: &JirFunction) {
+    g_ls_active[511] = 0
+    let i = 0
+    loop i < n {
+        if g_ls_active[64 + i] == 0 {
+            g_ls_active[128 + g_ls_active[511]] = i
+            g_ls_active[511] = g_ls_active[511] + 1
+        }
+        i = i + 1
+    }
+    let out = 0
+    loop out < n {
+        if g_ls_active[511] == 0 { ret ok(0) }
+        // Pick highest-latency; break ties by lowest original index (keeps flag-reuse safe)
+        let best_k = 0
+        let best_l = -1
+        let best_i = 9999
+        let k = 0
+        loop k < g_ls_active[511] {
+            let ci = g_ls_active[128 + k]
+            let cl = g_ls_active[256 + ci]
+            let better = 0
+            if cl > best_l { better = 1 }
+            if cl == best_l and ci < best_i { better = 1 }
+            if better == 1 {
+                best_l = cl
+                best_k = k
+                best_i = ci
+            }
+            k = k + 1
+        }
+        let chosen = g_ls_active[128 + best_k]
+        g_ls_active[out] = chosen
+        g_ls_active[320 + chosen] = 1
+        g_ls_active[511] = g_ls_active[511] - 1
+        g_ls_active[128 + best_k] = g_ls_active[128 + g_ls_active[511]]
+        sched_update_succ(chosen, n, bb_id, jfn)
+        out = out + 1
+    }
+}
+
+// Fill g_ls_active[0..n) with a latency-priority list schedule for block bb_id.
+// Blocks with >64 instructions use identity order (too large to schedule safely).
+fn sched_bb(bb_id: i64, jfn: &JirFunction, n: i64) {
+    // Identity order (fallback and initial state)
+    let i = 0
+    loop i < n {
+        g_ls_active[i] = i
+        i = i + 1
+    }
+    if n > 64 { ret ok(0) }
+    if n <= 1 { ret ok(0) }
+    sched_bb_init(bb_id, jfn, n)
+    sched_bb_data_deps(bb_id, jfn, n)
+    sched_bb_bar_chain(bb_id, jfn, n)
+    sched_bb_run(n, bb_id, jfn)
+}
+
 fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
                out: &i8, pos: &i64) {
     bb.label_off = pos[0]
     xmm_reset()
+    sched_bb(bb.id, jfn, bb.instr_cnt)
+    sched_fix_last_use(bb.id, jfn, bb.instr_cnt)
     let i = 0
     loop i < bb.instr_cnt {
+        let orig = g_ls_active[i]
         g_cur_instr_idx = i
-        if jfn.blocks[bb.id].instrs[i].dead == 0 {
-            lower_instr(jfn.blocks[bb.id].instrs[i], ctx, jfn, out, pos)
+        if jfn.blocks[bb.id].instrs[orig].dead == 0 {
+            lower_instr(jfn.blocks[bb.id].instrs[orig], ctx, jfn, out, pos)
         }
         i = i + 1
     }
