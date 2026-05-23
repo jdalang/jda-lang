@@ -1,0 +1,51 @@
+// Tests OP_F64X8_BIN: 8-wide AVX-512 VMOVUPD+VMULPD via slp_widen8 (with AVX2 fallback)
+fn dot8(a: &i64, b: &i64) -> f64 {
+    let a0: f64 = f64_bitcast(a[0])
+    let a1: f64 = f64_bitcast(a[1])
+    let a2: f64 = f64_bitcast(a[2])
+    let a3: f64 = f64_bitcast(a[3])
+    let a4: f64 = f64_bitcast(a[4])
+    let a5: f64 = f64_bitcast(a[5])
+    let a6: f64 = f64_bitcast(a[6])
+    let a7: f64 = f64_bitcast(a[7])
+    let b0: f64 = f64_bitcast(b[0])
+    let b1: f64 = f64_bitcast(b[1])
+    let b2: f64 = f64_bitcast(b[2])
+    let b3: f64 = f64_bitcast(b[3])
+    let b4: f64 = f64_bitcast(b[4])
+    let b5: f64 = f64_bitcast(b[5])
+    let b6: f64 = f64_bitcast(b[6])
+    let b7: f64 = f64_bitcast(b[7])
+    let r0: f64 = a0 * b0
+    let r1: f64 = a1 * b1
+    let r2: f64 = a2 * b2
+    let r3: f64 = a3 * b3
+    let r4: f64 = a4 * b4
+    let r5: f64 = a5 * b5
+    let r6: f64 = a6 * b6
+    let r7: f64 = a7 * b7
+    ret r0 + r1 + r2 + r3 + r4 + r5 + r6 + r7
+}
+
+fn main() {
+    let a: &i64 = alloc_pages(1)
+    let b: &i64 = alloc_pages(1)
+    a[0] = f64_from_int(1)
+    a[1] = f64_from_int(2)
+    a[2] = f64_from_int(3)
+    a[3] = f64_from_int(4)
+    a[4] = f64_from_int(5)
+    a[5] = f64_from_int(6)
+    a[6] = f64_from_int(7)
+    a[7] = f64_from_int(8)
+    b[0] = f64_from_int(2)
+    b[1] = f64_from_int(2)
+    b[2] = f64_from_int(2)
+    b[3] = f64_from_int(2)
+    b[4] = f64_from_int(2)
+    b[5] = f64_from_int(2)
+    b[6] = f64_from_int(2)
+    b[7] = f64_from_int(2)
+    let r = dot8(a, b)
+    print_int(f64_to_int(r))
+}
