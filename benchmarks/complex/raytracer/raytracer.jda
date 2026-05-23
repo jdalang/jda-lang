@@ -8,9 +8,9 @@
 let mem: &i64
 
 fn now_ms(ts: &i64) -> i64 {
-    syscall(228, 1, ts, 0, 0)
-    let s = ts[0]; let ns = ts[1]
-    ret s * 1000 + ns / 1000000
+    syscall(96, ts, 0, 0, 0)
+    let s = ts[0]; let us = ts[1]
+    ret s * 1000 + us / 1000
 }
 
 // Sphere data: 8 fields per sphere (cx,cy,cz,r, cr,cg,cb,spec) as i64 * 10000
@@ -48,7 +48,8 @@ fn intersect(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> f64 {
     let dot_ococ: f64 = ocx * ocx + ocy * ocy + ocz * ocz
     let rr: f64 = rad * rad
     let disc: f64 = dot_ocd * dot_ocd - dot_ococ + rr
-    let big: f64 = 100000000000000000.0
+    let big_b: f64 = 100000000.0
+    let big: f64 = big_b * 1000000000.0
     if disc < 0.0 { ret big }
     let sq: f64 = f64_sqrt(disc)
     let neg_dot: f64 = f64_neg(dot_ocd)
@@ -60,7 +61,8 @@ fn intersect(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> f64 {
 }
 
 fn find_hit(ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> i64 {
-    let big: f64 = 100000000000000000.0
+    let big_b: f64 = 100000000.0
+    let big: f64 = big_b * 1000000000.0
     let closest: f64 = big; let hit: i64 = 0 - 1; let i: i64 = 0
     loop i < 5 {
         g_si = i
@@ -78,7 +80,8 @@ fn shadow_check(px: f64, py: f64, pz: f64, lx: f64, ly: f64, lz: f64) -> i64 {
         if si != g_skip {
             g_si = si
             let st: f64 = intersect(px, py, pz, lx, ly, lz)
-            if st < 10000000000000000.0 { ret 1 }
+            let big_c: f64 = 100000000.0
+            if st < big_c * big_c { ret 1 }
         }
         si = si + 1
     }

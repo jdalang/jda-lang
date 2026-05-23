@@ -32,9 +32,9 @@ let g_dfa_n = 0
 fn _sb(buf: &i8, idx: i64) -> i64 { ret buf[idx] }
 
 fn now_ms(ts: &i64) -> i64 {
-    syscall(228, 1, ts, 0, 0)
-    let s = ts[0]; let ns = ts[1]
-    ret s * 1000 + ns / 1000000
+    syscall(96, ts, 0, 0, 0)
+    let s = ts[0]; let us = ts[1]
+    ret s * 1000 + us / 1000
 }
 
 fn st_sc(i: i64, v: i64) { mem[i * 3] = v }
@@ -234,13 +234,15 @@ fn match_nfa(str: &i8, slen: i64) -> i64 {
     ret 0
 }
 
+fn gen_str_wb(i: i64, c: i64) { poke_byte(g_strbuf, i, c) }
+
 fn gen_str(seed: i64, slen: i64) {
     let rng = (seed * 2654435761 + 1) & 2147483647
     let seed_add = 12345 + seed
     let i = 0
     loop i < slen {
         rng = (rng * 1103515245 + seed_add) & 2147483647
-        poke_byte(g_strbuf, i, 97 + rng % 26)
+        gen_str_wb(i, 97 + rng % 26)
         i = i + 1
     }
 }
