@@ -77,32 +77,34 @@ jobs:
       - name: Stdlib index is current
         run: python3 tools/jda-index.py --check
 
-      - name: Self-host convergence (native)
+      # A compiler produced natively from jda1.jda goes runaway and OOM-killed
+      # the runner, which fails the job regardless of continue-on-error. Bound
+      # address space and wall time so a runaway process dies instead.
+      - name: Self-host convergence (native, bounded)
         continue-on-error: true
+        timeout-minutes: 5
         run: |
-          ulimit -s unlimited
+          set +e
+          ulimit -v 4000000
           echo "=== Stage 2: committed jda1 -> jda1_a ==="
-          timeout 300 bootstrap/stage0/jda1 bootstrap/stage1/jda1.jda /tmp/jda1_a; echo "rc=$?"
-          chmod +x /tmp/jda1_a
-          echo "=== jda1_a compiling hello ==="
-          timeout 60 /tmp/jda1_a examples/hello.jda /tmp/h_a >/dev/null 2>&1; echo "rc=$?"
-          chmod +x /tmp/h_a 2>/dev/null && echo "ran: $(timeout 10 /tmp/h_a)" || echo "no binary"
-          echo "=== Stage 3: jda1_a -> jda1_b ==="
-          timeout 300 /tmp/jda1_a bootstrap/stage1/jda1.jda /tmp/jda1_b; echo "rc=$?"
-          chmod +x /tmp/jda1_b 2>/dev/null
-          cmp /tmp/jda1_a /tmp/jda1_b && echo "CONVERGED" || echo "DIVERGED or incomplete"
-
-      # Known-failing: proves the native rebuild bug is still present.
-      - name: Native bootstrap rebuild (known issue, non-gating)
-        continue-on-error: true
-        run: |
-          ulimit -s unlimited
-          timeout 300 bootstrap/bin/jda1-bootstrap bootstrap/stage1/jda1.jda /tmp/jda1_native; echo "build rc=$?"
-          chmod +x /tmp/jda1_native
-          timeout 30 /tmp/jda1_native examples/hello.jda /tmp/h_native >/dev/null 2>&1
+          timeout -k 5 120 bootstrap/stage0/jda1 bootstrap/stage1/jda1.jda /tmp/jda1_a
+          echo "  rc=$?"
+          chmod +x /tmp/jda1_a 2>/dev/null
+          echo "=== jda1_a compiling hello (known to hang natively) ==="
+          timeout -k 5 30 /tmp/jda1_a examples/hello.jda /tmp/h_a >/dev/null 2>&1
           rc=$?
-          echo "compile rc=$rc"
-          if [ $rc -eq 124 ]; then echo "KNOWN ISSUE: natively-rebuilt jda1 hangs"; fi
+          echo "  rc=$rc  (124=timeout: natively-built compiler hangs)"
+          if [ $rc -eq 0 ]; then
+            chmod +x /tmp/h_a
+            echo "  ran: $(timeout -k 5 10 /tmp/h_a)"
+            echo "=== Stage 3: jda1_a -> jda1_b ==="
+            timeout -k 5 120 /tmp/jda1_a bootstrap/stage1/jda1.jda /tmp/jda1_b
+            echo "  rc=$?"
+            cmp /tmp/jda1_a /tmp/jda1_b && echo "  CONVERGED" || echo "  DIVERGED"
+          else
+            echo "  skipping stage 3: stage-2 output is not usable natively"
+          fi
+          exit 0
 
   test-arm64:
     name: Test (ARM64 Linux)
