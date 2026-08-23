@@ -13,6 +13,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # TEMPORARY diagnostic. The conformance suite passes under linux/amd64
+      # emulation but every test times out on a native x86-64 runner, which the
+      # old workflow hid behind `|| true`. This isolates where the hang is:
+      # in the committed compiler, in jda1-bootstrap, or in what it emits here.
+      # Remove once the native hang is understood.
+      - name: Diagnose native compiler behaviour
+        continue-on-error: true
+        run: |
+          ulimit -s unlimited
+          echo "=== 1. committed bootstrap/stage0/jda1 compiling hello ==="
+          timeout 20 bootstrap/stage0/jda1 examples/hello.jda /tmp/h1 >/dev/null 2>&1; echo "  compile rc=$?"
+          chmod +x /tmp/h1 2>/dev/null && { echo "  ran: $(timeout 10 /tmp/h1 2>&1)"; } || echo "  no binary"
+          echo "=== 2. jda1-bootstrap compiling hello directly ==="
+          timeout 60 bootstrap/bin/jda1-bootstrap examples/hello.jda /tmp/h2 >/dev/null 2>&1; echo "  compile rc=$?"
+          chmod +x /tmp/h2 2>/dev/null && { echo "  ran: $(timeout 10 /tmp/h2 2>&1)"; } || echo "  no binary"
+          echo "=== 3. jda1-bootstrap rebuilding jda1, then compiling hello ==="
+          timeout 300 bootstrap/bin/jda1-bootstrap bootstrap/stage1/jda1.jda /tmp/jda1new >/dev/null 2>&1; echo "  build rc=$?"
+          chmod +x /tmp/jda1new 2>/dev/null
+          timeout 20 /tmp/jda1new examples/hello.jda /tmp/h3 >/dev/null 2>&1; echo "  compile rc=$?"
+          chmod +x /tmp/h3 2>/dev/null && { echo "  ran: $(timeout 10 /tmp/h3 2>&1)"; } || echo "  no binary"
+          echo "=== sizes ==="
+          ls -l bootstrap/stage0/jda1 /tmp/jda1new 2>&1 | awk '{print "  "$5, $9}'
+
       - name: Build jda1 from bootstrap
         run: |
           ulimit -s unlimited
