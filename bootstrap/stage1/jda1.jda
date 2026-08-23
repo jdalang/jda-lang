@@ -23,7 +23,11 @@
 // ============================================================
 
 // Token type constants
-const TOK_FN      = 0
+// TOK_FN must not be 0: the keyword classifiers build their result as
+// `flag * TOK_<KW>` and treat a 0 sum as "not a keyword", so a zero-valued
+// keyword can never be produced. While TOK_FN was 0, `fn` always lexed as
+// TOK_IDENT and every consumer needed a streq(..., "fn") fallback.
+const TOK_FN      = 73
 const TOK_LET     = 1
 const TOK_IF      = 2
 const TOK_ELSE    = 3
@@ -494,6 +498,18 @@ let g_trait_cnt: i64 = 0
 let g_trait_copy_pos: i64 = 0
 let g_unsafe_depth: i64 = 0
 let g_check_unsafe: i64 = 0
+let g_verbose: i64 = 0
+let g_err_extra: &i8 = 0
+let g_err_code: &i8 = 0
+let g_diag_json: i64 = 0
+let g_check_only: i64 = 0
+let g_interp_tok_pos: i64 = 0
+// 0 = no dump, 1 = tokens, 2 = declaration AST
+let g_emit_mode: i64 = 0
+let g_cli_include_path: &i8 = 0
+let g_block_depth: i64 = 0
+let g_tail_expr_val: i64 = -1
+let g_want_tail_ret: i64 = 0
 let g_sc_extra: &i64 = 0
 let g_derive_cnt = 0
 let g_dbg_main_steps = 0
@@ -1403,7 +1419,7 @@ fn copy_generic_toks(gi: i64, type_tok: i64, out: i64, moff: i64, mlen: i64) -> 
     let tok_end = g_genfn_buf[p + 5]
     let is_const = g_genfn_buf[p + 6]
     // Emit fn token as IDENT with "fn" text so main loop fallback picks it up
-    // (TOK_FN==0 causes comparison issues, so use IDENT + streq fallback)
+    // TOK_FN is non-zero now; the streq fallback also covers synthesised tokens
     // The "fn" text is at moff+mlen+1 in the source buffer (from build_mangle_name)
     let fn_txt_off = moff + mlen + 1
     tok_set_type(toks, out, TOK_IDENT)
@@ -2884,7 +2900,9 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
     }
     if g_glob_name_off == 0 { panic("Global table missing") }
     let gidx = g_glob_cnt
-    if gidx >= 256 { panic("Too many globals") }
+    // g_glob_* are each alloc_pages(8) = 4096 entries; the old cap of 256 was
+    // far below the storage actually available.
+    if gidx >= 2048 { panic("Too many globals") }
     g_glob_name_off[gidx] = name_start
     g_glob_name_len[gidx] = name_len
     g_glob_off[gidx] = g_glob_total_sz
@@ -3103,6 +3121,16 @@ fn eprint(msg: &i8) {
     syscall(1, 2, msg, n)
 }
 
+fn eprint_i64_dig(v: i64) {
+    if v == 0 { ret 0 }
+    let q = v / 10
+    let digit = v - q * 10
+    eprint_i64_dig(q)
+    g_pi64_char = digit + 48
+    syscall(1, 2, &g_pi64_char, 1)
+    ret 0
+}
+
 fn eprint_i64(val: i64) {
     if val == 0 {
         eprint("0")
@@ -3113,7 +3141,79 @@ fn eprint_i64(val: i64) {
         eprint("-")
         v = 0 - v
     }
-    print_i64_dig(v)
+    eprint_i64_dig(v)
+    ret 0
+}
+
+// Write a C string to stderr with JSON string escaping.
+// Emit the JSON escape for `c`, returning 1 if it needed one.
+// Kept as flat `if` + early return: a 6-way else-if chain here exceeds the
+// compiler's if/else nesting limit and miscompiles into an infinite loop.
+fn json_escape_char(c: i64) -> i64 {
+    if c == 34 { eprint("\\\"") ret 1 }
+    if c == 92 { eprint("\\\\") ret 1 }
+    if c == 10 { eprint("\\n") ret 1 }
+    if c == 9 { eprint("\\t") ret 1 }
+    if c == 13 { eprint("\\r") ret 1 }
+    ret 0
+}
+
+fn eprint_json_cstr(msg: &i8) {
+    if msg == 0 { ret 0 }
+    let n = cstr_len_max(msg, 1024)
+    let i = 0
+    loop i < n {
+        let c = msg[i]
+        if json_escape_char(c) == 0 { syscall(1, 2, msg + i, 1) }
+        i = i + 1
+    }
+    ret 0
+}
+
+// Write a source span to stderr with JSON string escaping.
+fn eprint_json_span(src: &i8, start: i64, len: i64) {
+    let i = 0
+    loop i < len {
+        let c = load_i8_at(src, start + i)
+        if json_escape_char(c) == 0 { syscall(1, 2, src + start + i, 1) }
+        i = i + 1
+    }
+    ret 0
+}
+
+fn diag_code_or_default() -> &i8 {
+    if g_err_code == 0 { ret "JDA-X000" }
+    ret g_err_code
+}
+
+// Number of decimal digits in a non-negative integer (minimum 1).
+fn digit_count(v: i64) -> i64 {
+    let n = 1
+    let r = v
+    if r < 0 { r = 0 - r }
+    loop r >= 10 {
+        r = r / 10
+        n = n + 1
+    }
+    ret n
+}
+
+// Verbose-only progress output (stdout). Silent unless --verbose is passed.
+fn vprint(msg: &i8) {
+    if g_verbose == 0 { ret 0 }
+    print(msg)
+    ret 0
+}
+
+fn vprint_i64(val: i64) {
+    if g_verbose == 0 { ret 0 }
+    print_i64(val)
+    ret 0
+}
+
+fn vprint_span(src: &i8, start: i64, len: i64) {
+    if g_verbose == 0 { ret 0 }
+    print_span(src, start, len)
     ret 0
 }
 
@@ -3179,6 +3279,36 @@ fn eprint_carets(n: i64) {
     }
 }
 
+// One-shot JSON diagnostic object on stderr. The compiler stops at the first
+// error, so `diagnostics` always holds exactly one entry today; it is an array
+// so that error recovery can add more without changing the shape.
+// NOTE: at most 6 parameters — a 7th argument is miscompiled by this compiler.
+fn emit_json_diagnostic(msg: &i8, line: i64, col: i64, tok_len: i64, line_start: i64, line_len: i64) {
+    let src = g_src_buf_ptr
+    eprint("{\"schema\":1,\"ok\":false,\"diagnostics\":[{")
+    eprint("\"code\":\"")
+    eprint(diag_code_or_default())
+    eprint("\",\"severity\":\"error\",\"file\":\"")
+    eprint_json_cstr(g_src_filename)
+    eprint("\",\"line\":")
+    eprint_i64(line)
+    eprint(",\"col\":")
+    eprint_i64(col)
+    eprint(",\"end_col\":")
+    eprint_i64(col + tok_len)
+    eprint(",\"message\":\"")
+    eprint_json_cstr(msg)
+    if g_err_extra != 0 {
+        eprint(" '")
+        eprint_json_cstr(g_err_extra)
+        eprint("'")
+    }
+    eprint("\",\"snippet\":\"")
+    eprint_json_span(src, line_start, line_len)
+    eprint("\"}]}\n")
+    ret 0
+}
+
 // Report an error at the given token index with a message.
 // Output format:
 //   error: <message>
@@ -3205,6 +3335,11 @@ fn report_error_at(tok_idx: i64, msg: &i8) {
     // Clamp line_len to avoid huge output
     if line_len > 200 { line_len = 200 }
 
+    if g_diag_json == 1 {
+        emit_json_diagnostic(msg, line, col, str_len, line_start, line_len)
+        syscall(60, 1, 0, 0)
+    }
+
     // file.jda:line:col: error: <message>
     if g_src_filename != 0 {
         eprint(g_src_filename)
@@ -3215,6 +3350,11 @@ fn report_error_at(tok_idx: i64, msg: &i8) {
     eprint_i64(col)
     eprint(": error: ")
     eprint(msg)
+    if g_err_extra != 0 {
+        eprint(" '")
+        eprint(g_err_extra)
+        eprint("'")
+    }
     eprint("\n")
 
     // --> <line>:<col>
@@ -3228,8 +3368,11 @@ fn report_error_at(tok_idx: i64, msg: &i8) {
     eprint_i64(col)
     eprint("\n")
 
-    // line number gutter
-    eprint("   |\n")
+    // line number gutter, width matched to the line number
+    let gutter_w = digit_count(line)
+
+    eprint_spaces(gutter_w + 1)
+    eprint("|\n")
 
     // NN | <source line>
     eprint_i64(line)
@@ -3238,7 +3381,8 @@ fn report_error_at(tok_idx: i64, msg: &i8) {
     eprint("\n")
 
     //    |  ^^^
-    eprint("   | ")
+    eprint_spaces(gutter_w + 1)
+    eprint("| ")
     eprint_spaces(col - 1)
     eprint_carets(str_len)
     eprint("\n")
@@ -3252,6 +3396,12 @@ fn report_error(msg: &i8) {
     report_error_at(g_main_pos, msg)
 }
 
+// Report an error carrying a stable JDA-* diagnostic code.
+fn report_error_code(code: &i8, msg: &i8) {
+    g_err_code = code
+    report_error_at(g_main_pos, msg)
+}
+
 fn live_codegen_expr_inline(bb: i64) -> i64 {
     let r = live_codegen_binop_inline(0, bb)
     // Handle 'as <type>' cast — skip type annotation, return expression value unchanged
@@ -3262,7 +3412,7 @@ fn live_codegen_expr_inline(bb: i64) -> i64 {
             g_main_pos = g_main_pos + 1
             // Skip '&' if present (pointer cast) — requires unsafe
             if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_AMP {
-                if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error("pointer cast requires unsafe block") }
+                if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error_code("JDA-S002", "pointer cast requires unsafe block") }
                 g_main_pos = g_main_pos + 1
             }
             // Skip the type token
@@ -4972,10 +5122,396 @@ fn fix_char_literals(src: &i8, toks: &Token, cnt: &i64) {
 // 3. PARSER HELPERS
 // ============================================================
 
+// `s.len` on a byte pointer is the string's length. Every other unresolved
+// `.len` stays an error.
+fn field_is_len_on_str(src: &i8, field_start: i64, field_len: i64, stype: i64) -> i64 {
+    if field_len != 3 { ret 0 }
+    if streq(src, field_start, 3, "len") == 0 { ret 0 }
+    if stype != TYPE_PTR_I8 { ret 0 }
+    ret 1
+}
+
+// A `.field` that resolves to neither a struct field nor a method is discarded
+// silently, leaving the base value in place: `s.len` on a string evaluated to
+// the string's address. Only plain field reads are reported here; call-shaped
+// accesses (`Shape.Circle(10)`) are left to their own paths.
+fn report_unknown_field(src: &i8, field_start: i64, field_len: i64, at_pos: i64) {
+    // Restricted to `.len`. A general "unknown field" error is not yet safe:
+    // chained access such as `lhs.token.str_start` does not resolve the
+    // intermediate struct's type here, so the field lookup fails on valid code.
+    if field_len != 3 { ret 0 }
+    if streq(src, field_start, 3, "len") == 0 { ret 0 }
+    g_main_pos = at_pos
+    report_error_code("JDA-R004", "no 'len' field on this value; use str_len(s) for string length")
+    ret 0
+}
+
+// Record the value of a top-level expression statement as the candidate
+// implicit return value. Only the function's own block (depth 1) counts.
+fn note_tail_expr(v: i64) {
+    if g_block_depth != 1 { ret 0 }
+    g_tail_expr_val = v
+    ret 0
+}
+
+// Implicit return value for a function that falls off the end, or `default_id`.
+fn tail_ret_value(default_id: i64) -> i64 {
+    if g_want_tail_ret == 0 { ret default_id }
+    if g_tail_expr_val == -1 { ret default_id }
+    ret g_tail_expr_val
+}
+
+// `next` is the loop-continue keyword. Guard against a call named next(...).
+fn stmt_is_next_kw(toks: &Token, src: &i8, name_start: i64, name_len: i64, pos: i64) -> i64 {
+    if name_len != 4 { ret 0 }
+    if streq(src, name_start, 4, "next") == 0 { ret 0 }
+    if tok_type_at_raw(toks, pos + 1) == TOK_LPAREN { ret 0 }
+    ret 1
+}
+
+// Is the token at `i` the start of a new top-level declaration?
+fn tok_starts_top_decl(toks: &Token, src: &i8, i: i64) -> i64 {
+    if tok_is_fn_kw(toks, src, i) == 1 { ret 1 }
+    let t = tok_type_at_raw(toks, i)
+    if t == TOK_STRUCT { ret 1 }
+    if t == TOK_ENUM { ret 1 }
+    if t == TOK_IMPL { ret 1 }
+    if t == TOK_TRAIT { ret 1 }
+    if t == TOK_CONST { ret 1 }
+    if t == TOK_LET { ret 1 }
+    if t == TOK_EOF { ret 1 }
+    ret 0
+}
+
+fn tok_copy(toks: &Token, dst: i64, srci: i64) {
+    tok_set_type(toks, dst, tok_type_at_raw(toks, srci))
+    tok_set_start(toks, dst, tok_str_start_at_raw(toks, srci))
+    tok_set_len(toks, dst, tok_str_len_at_raw(toks, srci))
+    tok_set_imm(toks, dst, tok_imm_at(toks, srci))
+    tok_set_line(toks, dst, tok_line_at(toks, srci))
+    ret 0
+}
+
+// Rewrite `fn f(..) -> T => expr` into `fn f(..) -> T { ret expr }`.
+//
+// `=>` is exactly two tokens, so `{` and `ret` replace them in place; only the
+// closing brace has to be inserted, which shifts the tail of the stream by one.
+// Done before the top-level scan, which locates functions by their `{`.
+fn expand_arrow_bodies(toks: &Token, src: &i8, cnt: i64) -> i64 {
+    let total = cnt
+    let i = 0
+    loop i < total {
+        if tok_is_fn_kw(toks, src, i) == 1 {
+            let j = i + 1
+            let arrow = -1
+            loop j < total {
+                let t = tok_type_at_raw(toks, j)
+                if t == TOK_LBRACE { j = total }
+                else if tok_is_fn_kw(toks, src, j) == 1 { j = total }
+                else if t == TOK_EQ and tok_type_at_raw(toks, j + 1) == TOK_GT {
+                    arrow = j
+                    j = total
+                } else { j = j + 1 }
+            }
+            if arrow != -1 {
+                let k = arrow + 2
+                loop k < total and tok_starts_top_decl(toks, src, k) == 0 {
+                    k = k + 1
+                }
+                tok_set_type(toks, arrow, TOK_LBRACE)
+                tok_set_type(toks, arrow + 1, TOK_RET)
+                let m = total - 1
+                loop m >= k {
+                    tok_copy(toks, m + 1, m)
+                    m = m - 1
+                }
+                tok_set_type(toks, k, TOK_RBRACE)
+                tok_set_start(toks, k, 0)
+                tok_set_len(toks, k, 0)
+                tok_set_imm(toks, k, 0)
+                tok_set_line(toks, k, tok_line_at(toks, arrow))
+                total = total + 1
+            }
+        }
+        i = i + 1
+    }
+    ret total
+}
+
+// Reject arrow-bodied function definitions.
+//
+// A function written as `fn f() -> T => expr` has no brace, so the top-level
+// compile loop never compiled it at all: the definition was silently dropped
+// and calls to it jumped into garbage. Scanning stops at the next `fn` or `}`
+// so a bodyless trait method declaration stays legal.
+// `fn` now lexes as TOK_FN. The text check is kept as well because derive and
+// generic expansion synthesise `fn` tokens as identifiers.
+fn tok_is_fn_kw(toks: &Token, src: &i8, i: i64) -> i64 {
+    if tok_type_at_raw(toks, i) == TOK_FN { ret 1 }
+    if tok_str_len_at_raw(toks, i) != 2 { ret 0 }
+    ret streq(src, tok_str_start_at_raw(toks, i), 2, "fn")
+}
+
+fn validate_fn_headers(toks: &Token, src: &i8, cnt: i64) {
+    let i = 0
+    loop i < cnt {
+        if tok_is_fn_kw(toks, src, i) == 1 {
+            let j = i + 1
+            let state = 0
+            loop state == 0 and j < cnt {
+                let t = tok_type_at_raw(toks, j)
+                if t == TOK_LBRACE { state = 1 }
+                else if t == TOK_SEMI { state = 1 }
+                else if t == TOK_RBRACE { state = 1 }
+                else if tok_is_fn_kw(toks, src, j) == 1 { state = 2 }
+                else { j = j + 1 }
+            }
+
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
+// `fn f() -> T => expr` parses as TOK_EQ TOK_GT where the body brace belongs.
+// It used to fall through and compile garbage that segfaulted at runtime.
+// OP_CALL has no free operand slot past the 7th argument, so a function
+// declaring more used to receive garbage in the extra parameters with no
+// diagnostic. Reject it instead.
+fn check_param_count(n: i64) {
+    if n <= 7 { ret 0 }
+    report_error_code("JDA-C001", "functions take at most 7 parameters")
+    ret 0
+}
+
+// Jda has no implicit tail return: falling off the end of a function yields 0.
+// A function that declares a return type and never returns used to silently
+// produce 0 instead of the value of its final expression.
+// Arm the implicit tail return for a function that declares a return type and
+// contains no `ret` (and no `match`, whose arms return). Restricting it to that
+// shape means functions which already return explicitly keep falling through to
+// 0 exactly as before.
+fn check_missing_ret(toks: &Token, fn_ret_type: i64) {
+    g_want_tail_ret = 0
+    g_tail_expr_val = -1
+    if fn_ret_type == TYPE_VOID { ret 0 }
+    if g_cur_fn_end <= g_main_pos { ret 0 }
+    if body_has_ret_or_match(toks, g_main_pos, g_cur_fn_end) == 1 { ret 0 }
+    g_want_tail_ret = 1
+    ret 0
+}
+
+// Does the token range [from, to) contain a `ret` or a `match`?
+// match arms compile to returns, so a match-bodied function does return.
+fn body_has_ret_or_match(toks: &Token, from: i64, to: i64) -> i64 {
+    let i = from
+    loop i < to {
+        let t = tok_type_at_raw(toks, i)
+        if t == TOK_RET { ret 1 }
+        if t == TOK_MATCH { ret 1 }
+        i = i + 1
+    }
+    ret 0
+}
+
+// --- string interpolation of general expressions ------------------------
+//
+// The body of a `{...}` placeholder is never tokenised: the whole string
+// arrives as one TOK_STR. To interpolate an expression it has to be lexed
+// on its own. This is a small dedicated lexer over the placeholder span
+// rather than a re-entry into the main lexer, which keeps its cursor,
+// line counter and keyword state in globals.
+//
+// Tokens are written into a scratch region past the program's own tokens and
+// then compiled by the normal expression path.
+
+fn interp_is_ident_start(c: i64) -> i64 {
+    if c >= 97 and c <= 122 { ret 1 }
+    if c >= 65 and c <= 90 { ret 1 }
+    if c == 95 { ret 1 }
+    ret 0
+}
+
+fn interp_is_ident_char(c: i64) -> i64 {
+    if interp_is_ident_start(c) == 1 { ret 1 }
+    if c >= 48 and c <= 57 { ret 1 }
+    ret 0
+}
+
+// Compile `{ <expr> }` and print its value. Returns 1 on success.
+fn interp_emit_expr(src: &i8, id_start: i64, id_len: i64, stab: &StructTable, jfn: &JirFunction, bb: i64) -> i64 {
+    let base = interp_region_base()
+    let after = interp_lex(src, id_start, id_len, base)
+    g_interp_tok_pos = after
+
+    // The expression compiler bounds-checks against the token count, so the
+    // scratch region has to be inside it while the placeholder is compiled.
+    let saved_scan = g_scan_tok_cnt
+    let saved_dbg = g_dbg_tok_cnt
+    let saved_pos = g_main_pos
+    if g_scan_tok_cnt < after { g_scan_tok_cnt = after }
+    if g_dbg_tok_cnt < after { g_dbg_tok_cnt = after }
+    g_main_pos = base
+    let v = codegen_expr_inline(g_dbg_toks_init, &g_main_pos, stab, src, jfn, bb)
+    g_main_pos = saved_pos
+    g_scan_tok_cnt = saved_scan
+    g_dbg_tok_cnt = saved_dbg
+
+    if v == -1 { ret 0 }
+    let pi = Instr{}
+    pi.op = OP_PRINT_INT
+    pi.operand0 = v
+    pi.imm = 1
+    emit(jfn, bb, &pi)
+    ret 1
+}
+
+fn interp_region_base() -> i64 {
+    if g_interp_tok_pos == 0 {
+        g_interp_tok_pos = g_scan_tok_cnt + 20000
+    }
+    ret g_interp_tok_pos
+}
+
+// Lex src[start..start+len) into toks[out..], terminated by TOK_EOF.
+// Returns the index just past the TOK_EOF.
+fn interp_lex(src: &i8, start: i64, len: i64, out: i64) -> i64 {
+    let toks = g_dbg_toks_init
+    let p = start
+    let e = start + len
+    let o = out
+    loop p < e {
+        let c = load_i8_at(src, p)
+        if c == 32 or c == 9 {
+            p = p + 1
+        } else if interp_is_ident_start(c) == 1 {
+            let ws = p
+            loop p < e and interp_is_ident_char(load_i8_at(src, p)) == 1 { p = p + 1 }
+            tok_set_type(toks, o, TOK_IDENT)
+            tok_set_start(toks, o, ws)
+            tok_set_len(toks, o, p - ws)
+            tok_set_imm(toks, o, 0)
+            tok_set_line(toks, o, 0)
+            o = o + 1
+        } else if c >= 48 and c <= 57 {
+            let v = 0
+            let scanning = 1
+            loop scanning == 1 and p < e {
+                let d = load_i8_at(src, p)
+                if d >= 48 and d <= 57 {
+                    v = v * 10 + d - 48
+                    p = p + 1
+                } else {
+                    scanning = 0
+                }
+            }
+            tok_set_type(toks, o, TOK_INT)
+            tok_set_start(toks, o, 0)
+            tok_set_len(toks, o, 0)
+            tok_set_imm(toks, o, v)
+            tok_set_line(toks, o, 0)
+            o = o + 1
+        } else {
+            tok_set_type(toks, o, char_to_tok(c))
+            tok_set_start(toks, o, p)
+            tok_set_len(toks, o, 1)
+            tok_set_imm(toks, o, 0)
+            tok_set_line(toks, o, 0)
+            o = o + 1
+            p = p + 1
+        }
+    }
+    tok_set_type(toks, o, TOK_EOF)
+    tok_set_start(toks, o, 0)
+    tok_set_len(toks, o, 0)
+    tok_set_imm(toks, o, 0)
+    tok_set_line(toks, o, 0)
+    ret o + 1
+}
+
+// Does src[start..start+len) look like an expression worth lexing?
+fn span_is_ident(src: &i8, start: i64, len: i64) -> i64 {
+    if len <= 0 { ret 0 }
+    let c0 = load_i8_at(src, start)
+    let ok0 = 0
+    if c0 >= 97 and c0 <= 122 { ok0 = 1 }
+    if c0 >= 65 and c0 <= 90 { ok0 = 1 }
+    if c0 == 95 { ok0 = 1 }
+    if ok0 == 0 { ret 0 }
+    let i = 1
+    loop i < len {
+        let c = load_i8_at(src, start + i)
+        let ok = 0
+        if c >= 97 and c <= 122 { ok = 1 }
+        if c >= 65 and c <= 90 { ok = 1 }
+        if c >= 48 and c <= 57 { ok = 1 }
+        if c == 95 { ok = 1 }
+        if ok == 0 { ret 0 }
+        i = i + 1
+    }
+    ret 1
+}
+
+// Human-readable name for a token type, used in "expected X" diagnostics.
+fn tok_display_name(t: i64) -> &i8 {
+    if t == TOK_LPAREN { ret "(" }
+    if t == TOK_RPAREN { ret ")" }
+    if t == TOK_LBRACE { ret "{" }
+    if t == TOK_RBRACE { ret "}" }
+    if t == TOK_LBRACK { ret "[" }
+    if t == TOK_RBRACK { ret "]" }
+    if t == TOK_COMMA { ret "," }
+    if t == TOK_COLON { ret ":" }
+    if t == TOK_SEMI { ret ";" }
+    if t == TOK_EQ { ret "=" }
+    if t == TOK_GT { ret ">" }
+    if t == TOK_LT { ret "<" }
+    if t == TOK_ARROW { ret "->" }
+    if t == TOK_DOT { ret "." }
+    if t == TOK_IDENT { ret "identifier" }
+    if t == TOK_INT { ret "integer literal" }
+    if t == TOK_STR { ret "string literal" }
+    if t == TOK_FN { ret "fn" }
+    if t == TOK_LET { ret "let" }
+    if t == TOK_IF { ret "if" }
+    if t == TOK_ELSE { ret "else" }
+    if t == TOK_LOOP { ret "loop" }
+    if t == TOK_FOR { ret "for" }
+    if t == TOK_RET { ret "ret" }
+    if t == TOK_STRUCT { ret "struct" }
+    if t == TOK_ENUM { ret "enum" }
+    if t == TOK_IMPL { ret "impl" }
+    if t == TOK_TRAIT { ret "trait" }
+    if t == TOK_MATCH { ret "match" }
+    if t == TOK_CONST { ret "const" }
+    if t == TOK_PRINT { ret "print" }
+    if t == TOK_SYSCALL { ret "syscall" }
+    if t == TOK_UNSAFE { ret "unsafe" }
+    if t == TOK_EOF { ret "end of file" }
+    ret "token"
+}
+
+// Consume the token at g_main_pos, which must be of type `expected`.
+//
+// This used to advance without checking, so unsupported or malformed syntax
+// slid through the parser and was silently miscompiled. Making it strict
+// required first removing the compiler's second cursor convention: every
+// caller now parses through the global g_main_pos (see defer_emit_calls and
+// codegen_postfix_inline), so the token checked here is always the token the
+// caller is actually looking at.
 fn expect(expected: i32) {
     let cond = g_main_pos < g_scan_tok_cnt
-    g_main_pos = g_main_pos + cond
+    if cond == 0 { ret 0 }
+    let actual = tok_type_at_raw(g_dbg_toks_init, g_main_pos)
+    if actual != expected {
+        g_err_extra = tok_display_name(expected)
+        report_error_code("JDA-P001", "expected")
+    }
+    g_main_pos = g_main_pos + 1
+    ret 0
 }
+
+
 
 // Safe lookahead: returns token type at pos+1, or TOK_EOF if invalid
 fn peek_token(toks: &Token, pos: i64) -> i32 {
@@ -4988,6 +5524,22 @@ fn peek_token(toks: &Token, pos: i64) -> i32 {
 
 // Parse return type annotation (-> type) if present, advance g_main_pos past it.
 // Returns the parsed type constant (TYPE_VOID if no -> annotation).
+// Skip a `<...>` generic argument list, if one starts at g_main_pos.
+// `>>` lexes as TOK_SHR and closes two levels.
+fn skip_generic_args(toks: &Token) {
+    if tok_type_at(toks, g_main_pos) != TOK_LT { ret 0 }
+    let depth = 0
+    loop g_main_pos < g_scan_tok_cnt {
+        let t = tok_type_at(toks, g_main_pos)
+        if t == TOK_LT { depth = depth + 1 }
+        else if t == TOK_GT { depth = depth - 1 }
+        else if t == TOK_SHR { depth = depth - 2 }
+        g_main_pos = g_main_pos + 1
+        if depth <= 0 { ret 0 }
+    }
+    ret 0
+}
+
 fn parse_skip_ret_type(toks: &Token) -> i64 {
     if tok_type_at(toks, g_main_pos) != TOK_ARROW { ret TYPE_VOID }
     g_main_pos = g_main_pos + 1
@@ -4998,6 +5550,7 @@ fn parse_skip_ret_type(toks: &Token) -> i64 {
     }
     let rt = tok_type_at(toks, g_main_pos)
     g_main_pos = g_main_pos + 1
+    skip_generic_args(toks)
     if is_ptr == 1 {
         if rt == TOK_I64 { ret TYPE_PTR_I64 }
         if rt == TOK_I32 { ret TYPE_PTR_I32 }
@@ -6976,6 +7529,16 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
                             gpi.operand0 = gval
                             gpi.imm = 1
                             emit(jfn, bb, &gpi)
+                        } else {
+                            // A bare name that resolved to nothing is a typo;
+                            // anything else is an expression, lexed and compiled
+                            // on its own.
+                            if span_is_ident(src, id_start, id_len) == 1 {
+                                report_error_code("JDA-R002", "unknown variable in string interpolation")
+                            }
+                            if interp_emit_expr(src, id_start, id_len, stab, jfn, bb) == 0 {
+                                report_error_code("JDA-F003", "could not compile interpolated expression")
+                            }
                         }
                     }
                 } else {
@@ -7020,202 +7583,10 @@ fn compile_print_small0() -> i64 {
     ret g_small_work_bb
 }
 
-fn try_compile_field_store_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, name_start: i64, name_len: i64) -> i64 {
-    let has_dot = tok_type_at(toks, pos[0] + 1) == TOK_DOT
-    let field_start = tok_str_start_at(toks, pos[0] + 2)
-    let field_len = tok_str_len_at(toks, pos[0] + 2)
-    let has_eq = tok_type_at(toks, pos[0] + 3) == TOK_EQ
-    let matched = has_dot and has_eq
-    if matched == 0 { ret 0 }
-    pos[0] = pos[0] + 4
-    let rhs_id = 0
-    rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-    let rhs_fallback = emit_const(jfn, bb, TYPE_I64, 0)
-    let rhs_ok = rhs_id >= 0
-    rhs_id = rhs_ok * rhs_id + (rhs_ok == 0) * rhs_fallback
-    let slot0 = lookup_slot_name(jfn, name_start, name_len)
-    let has_slot0 = slot0 != -1
-    let slot_base_id = -1
-    let slot_base_stype = -1
-    if has_slot0 {
-        let ld0 = Instr{}
-        ld0.op = OP_LOAD
-        ld0.operand0 = slot0
-        slot_base_id = emit(jfn, bb, &ld0)
-        slot_base_stype = lookup_stype_name(jfn, name_start, name_len)
-    }
-    let gi0 = lookup_global2(name_start, name_len, src)
-    let has_gi0 = gi0 != -1
-    let glob_base_id = -1
-    let glob_base_stype = -1
-    if has_gi0 {
-        glob_base_stype = load_i64_at(g_glob_stype, gi0)
-        glob_base_id = emit_gaddr(jfn, bb, gi0)
-        let glob_is_addr = load_i64_at(g_glob_is_addr, gi0) == 1
-        if glob_is_addr {
-            let ldg0 = Instr{}
-            ldg0.op = OP_LOAD_MEM
-            ldg0.operand0 = glob_base_id
-            glob_base_id = emit(jfn, bb, &ldg0)
-        }
-    }
-    let base_id = has_slot0 * slot_base_id + (has_slot0 == 0) * glob_base_id
-    let base_stype = has_slot0 * slot_base_stype + (has_slot0 == 0) * glob_base_stype
-    let has_base = base_id != -1
-    if has_base {
-        let sid0 = base_type(base_stype)
-        if base_stype >= 1000 and is_pointer_type(base_stype) == 0 { sid0 = base_stype - 1000 }
-        let foff0 = lookup_field_off_flat(sid0, src, field_start, field_len)
-        if foff0 >= 0 {
-            let off_id0 = emit_const(jfn, bb, TYPE_I64, foff0)
-            let addr0 = emit_binop(jfn, bb, OP_ADD, base_id, off_id0)
-            let stf = Instr{}
-            stf.op = OP_STORE_MEM
-            stf.itype = TYPE_I64
-            stf.operand0 = rhs_id
-            stf.operand1 = addr0
-            emit(jfn, bb, &stf)
-        }
-    }
-    ret 1
-}
-
-fn try_compile_index_store_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, name_start: i64, name_len: i64, pos_before: i64) -> i64 {
-    if tok_type_at(toks, pos[0] + 1) != TOK_LBRACK { ret 0 }
-    pos[0] = pos[0] + 2
-    let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-    if tok_type_at0(toks, pos) == TOK_RBRACK {
-        pos[0] = pos[0] + 1
-    }
-    if tok_type_at0(toks, pos) != TOK_EQ {
-        pos[0] = pos_before
-        ret 0
-    }
-    pos[0] = pos[0] + 1
-    let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-    if rhs_id < 0 {
-        rhs_id = emit_const(jfn, bb, TYPE_I64, 0)
-    }
-    let base_id = -1
-    let slot_idx = lookup_slot_name(jfn, name_start, name_len)
-    if slot_idx != -1 {
-        let ld = Instr{}
-        ld.op = OP_LOAD
-        ld.operand0 = slot_idx
-        base_id = emit(jfn, bb, &ld)
-    } else {
-        let gi2 = lookup_global2(name_start, name_len, src)
-        if gi2 != -1 {
-            base_id = emit_gaddr(jfn, bb, gi2)
-            if load_i64_at(g_glob_is_addr, gi2) == 1 {
-                let ldg = Instr{}
-                ldg.op = OP_LOAD_MEM
-                ldg.operand0 = base_id
-                base_id = emit(jfn, bb, &ldg)
-            }
-        }
-    }
-    if base_id != -1 {
-        let var_stype = lookup_stype_name(jfn, name_start, name_len)
-        if var_stype == -1 {
-            let vgi = lookup_global2(name_start, name_len, src)
-            if vgi != -1 { var_stype = load_i64_at(g_glob_stype, vgi) }
-        }
-        let store_elem_sz = 8
-        let store_itype = TYPE_I64
-        if var_stype == TYPE_PTR_I8 { store_elem_sz = 1 store_itype = TYPE_I8 }
-        if var_stype == TYPE_PTR_I32 { store_elem_sz = 4 store_itype = TYPE_I32 }
-        let byte_off = emit_index_scale(bb, idx_id, store_elem_sz)
-        let addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
-        let stx = Instr{}
-        stx.op = OP_STORE_MEM
-        stx.operand0 = rhs_id
-        stx.operand1 = addr
-        stx.itype = store_itype
-        emit(jfn, bb, &stx)
-    }
-    ret 1
-}
-
-fn try_compile_index_field_store_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, name_start: i64, name_len: i64, pos_before: i64) -> i64 {
-    if tok_type_at(toks, pos[0] + 1) != TOK_LBRACK { ret 0 }
-    pos[0] = pos[0] + 2
-    let idx_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-    if tok_type_at0(toks, pos) == TOK_RBRACK {
-        pos[0] = pos[0] + 1
-    }
-    if tok_type_at0(toks, pos) != TOK_DOT {
-        pos[0] = pos_before
-        ret 0
-    }
-    pos[0] = pos[0] + 1
-    let field_start = tok_str_start_at(toks, pos[0])
-    let field_len = tok_str_len_at(toks, pos[0])
-    if tok_type_at0(toks, pos) != TOK_IDENT {
-        pos[0] = pos_before
-        ret 0
-    }
-    pos[0] = pos[0] + 1
-    if tok_type_at0(toks, pos) != TOK_EQ {
-        pos[0] = pos_before
-        ret 0
-    }
-    pos[0] = pos[0] + 1
-    let rhs_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
-    if rhs_id < 0 {
-        rhs_id = emit_const(jfn, bb, TYPE_I64, 0)
-    }
-    let base_id = -1
-    let base_stype = -1
-    let slot_idx = lookup_slot_name(jfn, name_start, name_len)
-    if slot_idx != -1 {
-        let ld = Instr{}
-        ld.op = OP_LOAD
-        ld.operand0 = slot_idx
-        base_id = emit(jfn, bb, &ld)
-        base_stype = lookup_stype_name(jfn, name_start, name_len)
-    } else {
-        let gi2 = lookup_global2(name_start, name_len, src)
-        if gi2 != -1 {
-            base_stype = load_i64_at(g_glob_stype, gi2)
-            base_id = emit_gaddr(jfn, bb, gi2)
-            if load_i64_at(g_glob_is_addr, gi2) == 1 {
-                let ldg = Instr{}
-                ldg.op = OP_LOAD_MEM
-                ldg.operand0 = base_id
-                base_id = emit(jfn, bb, &ldg)
-            }
-        }
-    }
-    if base_id == -1 {
-        ret 1
-    }
-    let sid = base_type(base_stype)
-    let elem_sz = 8
-    if sid >= 0 and sid < stab.cnt {
-        elem_sz = stab.sizes[sid]
-    }
-    let byte_off = emit_index_scale(bb, idx_id, elem_sz)
-    let obj_addr = emit_binop(jfn, bb, OP_ADD, base_id, byte_off)
-    let field_off = lookup_field_off_flat(sid, src, field_start, field_len)
-    let target = obj_addr
-    if field_off > 0 {
-        let field_off_id = emit_const(jfn, bb, TYPE_I64, field_off)
-        target = emit_binop(jfn, bb, OP_ADD, obj_addr, field_off_id)
-    }
-    let stf = Instr{}
-    stf.op = OP_STORE_MEM
-    stf.itype = TYPE_I64
-    stf.operand0 = rhs_id
-    stf.operand1 = target
-    emit(jfn, bb, &stf)
-    ret 1
-}
-
 fn compile_ident_stmt_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, pos_before: i64) -> i64 {
     let name_start = tok_str_start_at(toks, pos[0])
     let name_len = tok_str_len_at(toks, pos[0])
-    let field_done = compile_ident_stmt_field_case(toks, pos, stab, src, jfn, bb, name_start, name_len)
+    let field_done = compile_ident_stmt_field_case(toks, pos, stab, src, jfn, bb)
     if field_done != -1 { ret field_done }
     let assign_done = compile_ident_stmt_assign_case(toks, pos, stab, src, jfn, bb, pos_before)
     if assign_done != -1 { ret assign_done }
@@ -7262,7 +7633,9 @@ fn compile_ident_stmt_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &
     ret bb
 }
 
-fn compile_ident_stmt_field_case(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, name_start: i64, name_len: i64) -> i64 {
+fn compile_ident_stmt_field_case(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let name_start = tok_str_start_at(toks, pos[0])
+    let name_len = tok_str_len_at(toks, pos[0])
     let fs_has_dot = tok_type_at(toks, pos[0] + 1) == TOK_DOT
     let fs_has_eq = tok_type_at(toks, pos[0] + 3) == TOK_EQ
     if fs_has_dot == 0 or fs_has_eq == 0 { ret -1 }
@@ -7720,7 +8093,7 @@ fn skip_asm_stmt_inline(toks: &Token, pos: &i64, src: &i8) -> i64 {
     let t = toks[pos[0]]
     if t.str_len != 3 { ret 0 }
     if streq(src, t.str_start, t.str_len, "asm") != 1 { ret 0 }
-    if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error("asm block requires unsafe") }
+    if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error_code("JDA-S001", "asm block requires unsafe") }
     if tok_type_at(toks, pos[0] + 1) != TOK_LBRACE { ret 0 }
     pos[0] = pos[0] + 2
     let depth = 1
@@ -7975,7 +8348,7 @@ fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
             pos[0] = pos[0] + 1
             // Check for pointer cast (as &T) — requires unsafe
             if tok_type_at(toks, pos[0]) == TOK_AMP {
-                if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error("pointer cast requires unsafe block") }
+                if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error_code("JDA-S002", "pointer cast requires unsafe block") }
                 pos[0] = pos[0] + 1
             }
             // Skip the type token (i64, i32, i8, or ident)
@@ -8112,10 +8485,13 @@ fn codegen_add_inline_tail(left_id: i64, toks: &Token, pos: &i64, stab: &StructT
             ret left_id
         }
     }
-    ret codegen_add_inline_step(left_id, op, toks, pos, stab, src, jfn, bb)
+    ret codegen_add_inline_step(left_id, toks, pos, stab, src, jfn, bb)
 }
 
-fn codegen_add_inline_step(left_id: i64, op: i64, toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+// 7 parameters maximum: an 8th argument is silently dropped by OP_CALL, whose
+// operand encoding is full. `op` is read here instead of being passed.
+fn codegen_add_inline_step(left_id: i64, toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let op = tok_type_at(toks, pos[0])
     pos[0] = pos[0] + 1
     let right_id = codegen_mul_inline(toks, pos, stab, src, jfn, bb)
     let right_bad = right_id < 0
@@ -8459,11 +8835,8 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                         let mt = Token{}
                         mt.str_start = mm_off
                         mt.str_len = mm_len
-                        let save_pos = g_main_pos
-                        g_main_pos = pos[0]
+                        // pos aliases g_main_pos; the call advances it in place.
                         let mc_result = live_codegen_method_call(&mt, bb, expr_id)
-                        pos[0] = g_main_pos
-                        g_main_pos = save_pos
                         expr_id = mc_result
                         cur_stype = TYPE_I64
                         cur_is_struct = 0
@@ -8475,18 +8848,10 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                 if did_method == 0 and tok_type_at(toks, pos[0]) == TOK_LPAREN {
                     let prim_r = -1
                     if cur_stype == TYPE_I64 {
-                        let sp = g_main_pos
-                        g_main_pos = pos[0]
                         prim_r = try_prim_i64(bb, expr_id, field_start, field_len)
-                        pos[0] = g_main_pos
-                        g_main_pos = sp
                     }
                     if cur_stype == TYPE_F64 or cur_stype == TYPE_F32 {
-                        let sp2 = g_main_pos
-                        g_main_pos = pos[0]
                         prim_r = try_prim_f64(bb, expr_id, field_start, field_len)
-                        pos[0] = g_main_pos
-                        g_main_pos = sp2
                     }
                     if prim_r != -1 {
                         expr_id = prim_r
@@ -8496,7 +8861,24 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                         did_method = 1
                     }
                 }
-                if did_method == 0 { ret expr_id }
+                if did_method == 0 {
+                    if field_is_len_on_str(src, field_start, field_len, cur_stype) == 1 {
+                        let sl_ins = Instr{}
+                        sl_ins.op = OP_STRLEN
+                        sl_ins.operand0 = expr_id
+                        expr_id = emit(jfn, bb, &sl_ins)
+                        cur_stype = TYPE_I64
+                        cur_is_struct = 0
+                        g_codegen_stype = TYPE_I64
+                        did_method = 1
+                    }
+                }
+                if did_method == 0 {
+                    if tok_type_at(toks, pos[0]) != TOK_LPAREN {
+                        report_unknown_field(src, field_start, field_len, pos[0] - 1)
+                    }
+                    ret expr_id
+                }
             }
             if fi != -1 {
                 let off_id = emit_const(jfn, bb, TYPE_I64, g_field_byte_off[fi])
@@ -8770,6 +9152,12 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
             let struct_alloc_sz = 0
             let ssid = lookup_struct(stab, src, t_start, t_len)
             if ssid >= 0 { struct_alloc_sz = stab.sizes[ssid] }
+            // Only an initialiser list needs the field-store path. `X{}` keeps
+            // the original allocate-and-skip route unchanged.
+            let lit_has_fields = tok_type_at(toks, pos[0] + 2) != TOK_RBRACE
+            if ssid >= 0 and lit_has_fields {
+                ret codegen_struct_literal(toks, pos, stab, src, jfn, bb, ssid)
+            }
             pos[0] = pos[0] + 2
             let sdepth = 1
             loop sdepth > 0 and pos[0] < g_dbg_tok_cnt {
@@ -8812,6 +9200,107 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
     ld.operand0 = slot
     let ret_emit = emit(jfn, bb, &ld)
     ret ret_emit
+}
+
+// Store a word into obj+off.
+fn store_field_at(jfn: &JirFunction, bb: i64, obj: i64, off: i64, v: i64) {
+    let target = obj
+    if off > 0 {
+        let off_id = emit_const(jfn, bb, TYPE_I64, off)
+        target = emit_binop(jfn, bb, OP_ADD, obj, off_id)
+    }
+    let st = Instr{}
+    st.op = OP_STORE_MEM
+    st.itype = TYPE_I64
+    st.operand0 = v
+    st.operand1 = target
+    emit(jfn, bb, &st)
+    ret 0
+}
+
+// Word-wise copy of a struct, used for `..base` spread initialisation.
+fn copy_struct_words(jfn: &JirFunction, bb: i64, dst: i64, srcp: i64, sz: i64) {
+    let n = sz / 8
+    if n > 64 { report_error_code("JDA-C004", "struct too large for '..' spread initialisation") }
+    let i = 0
+    loop i < n {
+        let off = i * 8
+        let soff = emit_const(jfn, bb, TYPE_I64, off)
+        let sa = emit_binop(jfn, bb, OP_ADD, srcp, soff)
+        let ld = Instr{}
+        ld.op = OP_LOAD_MEM
+        ld.itype = TYPE_I64
+        ld.operand0 = sa
+        let v = emit(jfn, bb, &ld)
+        store_field_at(jfn, bb, dst, off, v)
+        i = i + 1
+    }
+    ret 0
+}
+
+// Locate a `..` spread at depth 1 inside a struct literal body.
+// Returns the token index of the base expression, or -1.
+fn find_spread_base(toks: &Token, from: i64) -> i64 {
+    let d = 1
+    let scan = from
+    loop d > 0 and scan < g_dbg_tok_cnt {
+        let t = tok_type_at(toks, scan)
+        if t == TOK_LBRACE { d = d + 1 }
+        if t == TOK_RBRACE { d = d - 1 }
+        if d == 1 {
+            if t == TOK_DOT {
+                if tok_type_at(toks, scan + 1) == TOK_DOT { ret scan + 2 }
+            }
+        }
+        scan = scan + 1
+    }
+    ret -1
+}
+
+// StructName { f: v, ..base } — allocate and initialise.
+//
+// This body used to be skipped entirely: the literal allocated zeroed memory
+// and every initialiser was silently discarded, so `P { x: 1 }` gave x == 0.
+// A `..base` spread is applied first so explicit fields override it.
+fn codegen_struct_literal(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64, ssid: i64) -> i64 {
+    let sz = stab.sizes[ssid]
+    let sz_id = emit_const(jfn, bb, TYPE_I64, sz)
+    let ai = Instr{}
+    ai.op = OP_ALLOC
+    ai.operand0 = sz_id
+    let obj = emit(jfn, bb, &ai)
+    pos[0] = pos[0] + 2
+
+    let spread_pos = find_spread_base(toks, pos[0])
+    if spread_pos != -1 {
+        let save_sp = pos[0]
+        pos[0] = spread_pos
+        let base_id = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        pos[0] = save_sp
+        copy_struct_words(jfn, bb, obj, base_id, sz)
+    }
+
+    loop tok_type_at(toks, pos[0]) != TOK_RBRACE and pos[0] < g_dbg_tok_cnt {
+        if tok_type_at(toks, pos[0]) == TOK_DOT {
+            // `..base` was already applied; skip its tokens.
+            pos[0] = pos[0] + 2
+            loop tok_type_at(toks, pos[0]) != TOK_COMMA and tok_type_at(toks, pos[0]) != TOK_RBRACE and pos[0] < g_dbg_tok_cnt {
+                pos[0] = pos[0] + 1
+            }
+        } else {
+            let fs = tok_str_start_at(toks, pos[0])
+            let fl = tok_str_len_at(toks, pos[0])
+            pos[0] = pos[0] + 1
+            if tok_type_at(toks, pos[0]) == TOK_COLON { pos[0] = pos[0] + 1 }
+            let v = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+            let off = lookup_field_off_flat(ssid, src, fs, fl)
+            if off < 0 { report_error_code("JDA-R003", "unknown field in struct literal") }
+            store_field_at(jfn, bb, obj, off, v)
+        }
+        if tok_type_at(toks, pos[0]) == TOK_COMMA { pos[0] = pos[0] + 1 }
+    }
+    if tok_type_at(toks, pos[0]) == TOK_RBRACE { pos[0] = pos[0] + 1 }
+    ret obj
 }
 
 fn codegen_ident_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
@@ -8894,6 +9383,11 @@ fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         let fl2_f2 = emit(jfn, bb, &fl2_i2f2)
         let fl2_dv = emit_binop(jfn, bb, OP_FDIV, fl2_f1, fl2_f2)
         ret emit_binop(jfn, bb, OP_FADD, fl2_f0, fl2_dv)
+    }
+    // A lambda is written `fn(...) -> T { ... }`. `fn` now lexes as TOK_FN
+    // rather than TOK_IDENT, so route it to the same primary handler.
+    if t_type == TOK_FN {
+        ret codegen_ident_primary(toks, pos, stab, src, jfn, bb)
     }
     if t_type == TOK_IDENT {
         ret codegen_ident_primary(toks, pos, stab, src, jfn, bb)
@@ -9318,10 +9812,10 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     // Type check: verify argument count (skip if either side exceeds 6-arg codegen limit)
     if g_fn_param_cnt_tbl != 0 {
         let tc_fi = resolve_top_fn_index(src, name_start, name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
-        if tc_fi >= 0 and tc_fi < 512 {
+        if tc_fi >= 0 and tc_fi < 1024 {
             let expected_cnt = load_i64_at(g_fn_param_cnt_tbl, tc_fi)
             if expected_cnt > 0 and expected_cnt <= 6 and arg_cnt < expected_cnt {
-                report_error("too few arguments in function call")
+                report_error_code("JDA-T001", "too few arguments in function call")
             }
         }
     }
@@ -9810,7 +10304,7 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
 }
 
 fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error("syscall() requires unsafe block") }
+    if g_check_unsafe == 1 and g_unsafe_depth == 0 { report_error_code("JDA-S003", "syscall() requires unsafe block") }
     expect(TOK_SYSCALL)
     expect(TOK_LPAREN)
     let nr = codegen_arg_inline(toks, pos, stab, src, jfn, bb)
@@ -9828,7 +10322,7 @@ fn codegen_syscall_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
         if count == 4 { g_sc_extra[1] = arg }
         if count == 5 { g_sc_extra[2] = arg }
         count = count + 1
-        if count > 6 { report_error("syscall takes at most 7 arguments (nr + 6 args)") }
+        if count > 6 { report_error_code("JDA-C003", "syscall takes at most 7 arguments (nr + 6 args)") }
     }
     expect(TOK_RPAREN)
     ret emit_syscall_full(jfn, bb, count)
@@ -11475,7 +11969,7 @@ fn live_check_f64bitcast(ts: i64, tl: i64, bb: i64) -> i64 {
 fn live_codegen_primary2_inline(bb: i64) -> i64 {
     let tt = tok_type_at(g_dbg_toks_init, g_main_pos)
     // Lambda: fn(...) -> T { ... }
-    // TOK_FN==0 so keyword classifier can't produce it; fn is lexed as TOK_IDENT
+    // TOK_FN is produced by the classifier now; synthesised fn tokens stay IDENT
     if tt == TOK_IDENT and tok_str_len_at_raw(g_dbg_toks_init, g_main_pos) == 2 and streq(g_src_buf_ptr, tok_str_start_at_raw(g_dbg_toks_init, g_main_pos), 2, "fn") == 1 and tok_type_at_raw(g_dbg_toks_init, g_main_pos + 1) == TOK_LPAREN {
         g_main_pos = g_main_pos + 1
         ret live_codegen_lambda_inline(bb)
@@ -11913,7 +12407,7 @@ fn live_codegen_method_call(name: &Token, bb: i64, self_id: i64) -> i64 {
             arg5 = a_id
         }
         arg_cnt = arg_cnt + 1
-        if arg_cnt > 6 { report_error("method call takes at most 5 explicit arguments") }
+        if arg_cnt > 6 { report_error_code("JDA-C002", "method call takes at most 5 explicit arguments") }
         if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
             g_main_pos = g_main_pos + 1
         }
@@ -12791,7 +13285,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         }
         if arg_cnt == 6 { arg6_tmp = a_id }
         arg_cnt = arg_cnt + 1
-        if arg_cnt > 7 { report_error("function call takes at most 7 arguments") }
+        if arg_cnt > 7 { report_error_code("JDA-C001", "function call takes at most 7 arguments") }
         if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
             g_main_pos = g_main_pos + 1
         }
@@ -22378,7 +22872,7 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         // Function call: infer type from return type
         if next_rhs_t == TOK_LPAREN and g_fn_ret_type_tbl != 0 {
             let call_fi = resolve_top_fn_index(src, rhs_start0, rhs_len0, g_fn_name_off_tbl, g_fn_name_len_tbl)
-            if call_fi >= 0 and call_fi < 512 {
+            if call_fi >= 0 and call_fi < 1024 {
                 let call_rt = load_i64_at(g_fn_ret_type_tbl, call_fi)
                 if call_rt != TYPE_VOID { bind_stype = call_rt }
             }
@@ -22740,6 +23234,7 @@ fn live_compile_for(stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -
 }
 
 fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    g_block_depth = g_block_depth + 1
     let cur = bb
     let saved_var_cnt = jfn.var_cnt
     let keep_going = 1
@@ -22810,6 +23305,9 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         let is_continue_stmt = 0
                         if name_len == 8 {
                             if streq(src, name_start, 8, "continue") == 1 { is_continue_stmt = 1 }
+                        }
+                        if stmt_is_next_kw(toks0, src, name_start, name_len, g_main_pos) == 1 {
+                            is_continue_stmt = 1
                         }
                         if is_continue_stmt == 1 {
                             g_main_pos = g_main_pos + 1
@@ -22951,14 +23449,14 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                                     cur = compile_dot_bracket_store_case(toks0, stab, src, jfn, cur)
                                 } else {
                                     let pos_before2 = g_main_pos
-                                    codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+                                    note_tail_expr(codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur))
                                     if g_main_pos <= pos_before2 and g_main_pos < g_dbg_tok_cnt {
                                         g_main_pos = g_main_pos + 1
                                     }
                                 }
                             } else {
                                 let pos_before2 = g_main_pos
-                                codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+                                note_tail_expr(codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur))
                                 if g_main_pos <= pos_before2 and g_main_pos < g_dbg_tok_cnt {
                                     g_main_pos = g_main_pos + 1
                                 }
@@ -22967,7 +23465,7 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
                         }
                     } else {
                         let pos_before2 = g_main_pos
-                        codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+                        note_tail_expr(codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur))
                         if g_main_pos <= pos_before2 and g_main_pos < g_dbg_tok_cnt {
                             g_main_pos = g_main_pos + 1
                         }
@@ -22994,13 +23492,14 @@ fn live_compile_block(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
     let li = saved_var_cnt
     loop li < jfn.var_cnt {
         if jfn.var_linear[li] == 1 and jfn.var_consumed[li] == 0 {
-            report_error("linear variable must be consumed before scope exit")
+            report_error_code("JDA-T002", "linear variable must be consumed before scope exit")
         }
         li = li + 1
     }
     // CTRC: drop owned vars from this scope at block exit
     ctrc_emit_drops_clear(jfn, cur, saved_var_cnt, jfn.var_cnt)
     jfn.var_cnt = saved_var_cnt
+    g_block_depth = g_block_depth - 1
     ret cur
 }
 
@@ -23553,7 +24052,7 @@ fn try_small_ret_tokens_fast(toks: &Token, tok_cnt: i64, out_path: &i8) -> i64 {
 }
 
 fn live_compile_if(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_IF { report_error("expected 'if'") }
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_IF { report_error_code("JDA-P006", "expected 'if'") }
     g_main_pos = g_main_pos + 1
     let cond_id = live_codegen_expr_inline(bb)
     let then_bb = create_block_live(jfn)
@@ -23561,12 +24060,12 @@ fn live_compile_if(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction
     let merge_bb = create_block_live(jfn)
     emit_br(jfn, bb, cond_id, then_bb, else_bb)
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE {
-        report_error("expected '{' after if condition")
+        report_error_code("JDA-P002", "expected '{' after if condition")
     }
     g_main_pos = g_main_pos + 1
     let then_end = live_compile_block(g_dbg_toks_init, stab, src, jfn, then_bb)
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RBRACE {
-        report_error("expected '}' to close if block")
+        report_error_code("JDA-P003", "expected '}' to close if block")
     }
     g_main_pos = g_main_pos + 1
     emit_jmp(jfn, then_end, merge_bb)
@@ -23580,18 +24079,169 @@ fn live_compile_if(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction
         emit_jmp(jfn, else_end, merge_bb)
         ret merge_bb
     }
-    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE { report_error("expected '{' after else") }
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE { report_error_code("JDA-P004", "expected '{' after else") }
     g_main_pos = g_main_pos + 1
     let else_end = live_compile_block(g_dbg_toks_init, stab, src, jfn, else_bb)
-    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RBRACE { report_error("expected '}' to close else block") }
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_RBRACE { report_error_code("JDA-P005", "expected '}' to close else block") }
     g_main_pos = g_main_pos + 1
     emit_jmp(jfn, else_end, merge_bb)
     ret merge_bb
 }
 
-fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LOOP { report_error("expected 'loop'") }
+// One bound of a range loop: an integer literal or a variable.
+// The general expression parser cannot be used here because its postfix `.`
+// handler would consume the `..` of the range as a field access.
+fn range_bound_value(src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let toks0 = g_dbg_toks_init
+    let t = tok_type_at_raw(toks0, g_main_pos)
+    if t == TOK_INT {
+        let v = tok_imm_at(toks0, g_main_pos)
+        g_main_pos = g_main_pos + 1
+        ret emit_const(jfn, bb, TYPE_I64, v)
+    }
+    if t == TOK_IDENT {
+        let ns = tok_str_start_at(toks0, g_main_pos)
+        let nl = tok_str_len_at(toks0, g_main_pos)
+        let slot = lookup_slot_name(jfn, ns, nl)
+        if slot == -1 {
+            report_error_code("JDA-R001", "unknown variable in range bound")
+        }
+        g_main_pos = g_main_pos + 1
+        let ld = Instr{}
+        ld.op = OP_LOAD
+        ld.operand0 = slot
+        ret emit(jfn, bb, &ld)
+    }
+    report_error_code("JDA-P012", "range bounds must be an integer literal or a variable")
+    ret 0
+}
+
+// Is the identifier at `pos` the word `in`?
+fn tok_is_in_kw(toks: &Token, src: &i8, pos: i64) -> i64 {
+    if tok_type_at_raw(toks, pos) != TOK_IDENT { ret 0 }
+    if tok_str_len_at_raw(toks, pos) != 2 { ret 0 }
+    ret streq(src, tok_str_start_at_raw(toks, pos), 2, "in")
+}
+
+// Is the identifier at `pos` the word `step`?
+fn tok_is_step_kw(toks: &Token, src: &i8, pos: i64) -> i64 {
+    if tok_type_at_raw(toks, pos) != TOK_IDENT { ret 0 }
+    if tok_str_len_at_raw(toks, pos) != 4 { ret 0 }
+    ret streq(src, tok_str_start_at_raw(toks, pos), 4, "step")
+}
+
+// loop <var> in <start>..<end> [step <n>] { body }
+// Exclusive of <end>; `..=` makes it inclusive. Entered with g_main_pos on <var>.
+fn live_compile_range_loop(stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -> i64 {
+    let toks0 = g_dbg_toks_init
+    let var_s = tok_str_start_at(toks0, g_main_pos)
+    let var_l = tok_str_len_at(toks0, g_main_pos)
     g_main_pos = g_main_pos + 1
+    g_main_pos = g_main_pos + 1
+    let start_val = range_bound_value(src, jfn, cur)
+    if tok_type_at_raw(toks0, g_main_pos) != TOK_DOT {
+        report_error_code("JDA-P011", "expected '..' in range loop")
+    }
+    g_main_pos = g_main_pos + 1
+    if tok_type_at_raw(toks0, g_main_pos) != TOK_DOT {
+        report_error_code("JDA-P011", "expected '..' in range loop")
+    }
+    g_main_pos = g_main_pos + 1
+    let inclusive = 0
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_EQ {
+        inclusive = 1
+        g_main_pos = g_main_pos + 1
+    }
+    let limit_val = range_bound_value(src, jfn, cur)
+    let step_val = emit_const(jfn, cur, TYPE_I64, 1)
+    if tok_is_step_kw(toks0, src, g_main_pos) == 1 {
+        g_main_pos = g_main_pos + 1
+        step_val = range_bound_value(src, jfn, cur)
+    }
+
+    let var_slot = bind_name(jfn, var_s, var_l, 0)
+    let st_init = Instr{}
+    st_init.op = OP_STORE
+    st_init.operand0 = start_val
+    st_init.operand1 = var_slot
+    emit(jfn, cur, &st_init)
+    let lim_slot = alloc_slot(jfn)
+    let st_lim = Instr{}
+    st_lim.op = OP_STORE
+    st_lim.operand0 = limit_val
+    st_lim.operand1 = lim_slot
+    emit(jfn, cur, &st_lim)
+    let step_slot = alloc_slot(jfn)
+    let st_step = Instr{}
+    st_step.op = OP_STORE
+    st_step.operand0 = step_val
+    st_step.operand1 = step_slot
+    emit(jfn, cur, &st_step)
+
+    let head_bb = create_block_live(jfn)
+    emit_jmp(jfn, cur, head_bb)
+    let body_bb = create_block_live(jfn)
+    let inc_bb = create_block_live(jfn)
+    let merge_bb = create_block_live(jfn)
+    let saved_ctrl = g_loop_ctrl
+    let saved_head = g_loop_head
+    g_loop_ctrl = merge_bb
+    g_loop_head = inc_bb
+
+    let ld_cur = Instr{}
+    ld_cur.op = OP_LOAD
+    ld_cur.operand0 = var_slot
+    let cur_val = emit(jfn, head_bb, &ld_cur)
+    let ld_lim = Instr{}
+    ld_lim.op = OP_LOAD
+    ld_lim.operand0 = lim_slot
+    let lim_r = emit(jfn, head_bb, &ld_lim)
+    let cmp_op = OP_CMP_LT
+    if inclusive == 1 { cmp_op = OP_CMP_LTE }
+    let cmp = emit_binop(jfn, head_bb, cmp_op, cur_val, lim_r)
+    emit_br(jfn, head_bb, cmp, body_bb, merge_bb)
+
+    if tok_type_at_raw(toks0, g_main_pos) != TOK_LBRACE {
+        report_error_code("JDA-P008", "expected '{' to open loop body")
+    }
+    g_main_pos = g_main_pos + 1
+    let body_end = live_compile_block(toks0, stab, src, jfn, body_bb)
+    g_loop_ctrl = saved_ctrl
+    g_loop_head = saved_head
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_RBRACE {
+        g_main_pos = g_main_pos + 1
+    }
+    emit_jmp(jfn, body_end, inc_bb)
+
+    let ld_inc = Instr{}
+    ld_inc.op = OP_LOAD
+    ld_inc.operand0 = var_slot
+    let inc_val = emit(jfn, inc_bb, &ld_inc)
+    let ld_step = Instr{}
+    ld_step.op = OP_LOAD
+    ld_step.operand0 = step_slot
+    let step_r = emit(jfn, inc_bb, &ld_step)
+    let nxt = emit_binop(jfn, inc_bb, OP_ADD, inc_val, step_r)
+    let st_inc = Instr{}
+    st_inc.op = OP_STORE
+    st_inc.operand0 = nxt
+    st_inc.operand1 = var_slot
+    emit(jfn, inc_bb, &st_inc)
+    emit_jmp(jfn, inc_bb, head_bb)
+    ret merge_bb
+}
+
+fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LOOP { report_error_code("JDA-P007", "expected 'loop'") }
+    g_main_pos = g_main_pos + 1
+    // `loop <var> in a..b` is the range form.
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_IDENT {
+        if tok_is_in_kw(g_dbg_toks_init, src, g_main_pos + 1) == 1 {
+            ret live_compile_range_loop(stab, src, jfn, bb)
+        }
+    }
+    // `loop { ... }` omits the condition and runs until break.
+    let is_unconditional = tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_LBRACE
     let start_bb = create_block_live(jfn)
     emit_jmp(jfn, bb, start_bb)
     let body_bb = create_block_live(jfn)
@@ -23600,12 +24250,30 @@ fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFuncti
     let saved_loop_head = g_loop_head
     g_loop_ctrl = merge_bb
     g_loop_head = start_bb
-    let cond_id = live_codegen_expr_inline(start_bb)
+    let cond_id = 0
+    if is_unconditional == 1 {
+        cond_id = emit_const(jfn, start_bb, TYPE_I64, 1)
+    } else {
+        cond_id = live_codegen_expr_inline(start_bb)
+    }
     emit_br(jfn, start_bb, cond_id, body_bb, merge_bb)
     if tok_type_at_raw(g_dbg_toks_init, g_main_pos) != TOK_LBRACE {
-        g_loop_ctrl = saved_loop_ctrl
-        g_loop_head = saved_loop_head
-        ret merge_bb
+        // Previously this silently abandoned the loop, compiling
+        //   loop i in 0..N { body }
+        // into a branch with an empty body: the body never ran and no
+        // diagnostic was produced.
+        // The range form is `loop <ident> in <a>..<b>`; the cursor may still be
+        // on the binding name, so check it and the token after it for `in`.
+        let in_probe = 0
+        loop in_probe < 2 {
+            let bad_start = tok_str_start_at_raw(g_dbg_toks_init, g_main_pos + in_probe)
+            let bad_len = tok_str_len_at_raw(g_dbg_toks_init, g_main_pos + in_probe)
+            if bad_len == 2 and streq(src, bad_start, 2, "in") == 1 {
+                report_error_code("JDA-F004", "range loops are not supported; use: for i in range(n)")
+            }
+            in_probe = in_probe + 1
+        }
+        report_error_code("JDA-P008", "expected '{' to open loop body")
     }
     g_main_pos = g_main_pos + 1
     let body_end = live_compile_block(g_dbg_toks_init, stab, src, jfn, body_bb)
@@ -23617,9 +24285,65 @@ fn live_compile_loop(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFuncti
         emit_jmp(jfn, body_end, start_bb)
         ret merge_bb
     } else {
-        report_error("expected '}' to close loop block")
+        report_error_code("JDA-P009", "expected '}' to close loop block")
     }
     emit_jmp(jfn, body_end, start_bb)
+    ret merge_bb
+}
+
+// Compile one match arm body: a block, a print statement, or an expression.
+// Returns the block the arm ends in.
+fn compile_match_arm_body(stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let toks0 = g_dbg_toks_init
+    let t = tok_type_at_raw(toks0, g_main_pos)
+    if t == TOK_LBRACE {
+        g_main_pos = g_main_pos + 1
+        let end_bb = live_compile_block(toks0, stab, src, jfn, bb)
+        if tok_type_at_raw(toks0, g_main_pos) == TOK_RBRACE { g_main_pos = g_main_pos + 1 }
+        ret end_bb
+    }
+    if t == TOK_PRINT {
+        ret compile_print_inline(toks0, &g_main_pos, stab, src, jfn, bb)
+    }
+    codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, bb)
+    ret bb
+}
+
+// `match <int> { 1 => ..  _ => .. }`.
+//
+// Distinct from the enum form: the scrutinee is compared by value rather than
+// loaded as a tagged-union pointer, and arms fall through to a merge block
+// instead of returning, so a match may be used as a statement. Entered with
+// g_main_pos on the first arm pattern.
+fn live_compile_int_match(scrutinee: i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let toks0 = g_dbg_toks_init
+    let merge_bb = create_block_live(jfn)
+    let cur_bb = bb
+    loop tok_type_at_raw(toks0, g_main_pos) != TOK_RBRACE and tok_type_at_raw(toks0, g_main_pos) != TOK_EOF {
+        let is_wild = 1
+        let pat_val = 0
+        if tok_type_at_raw(toks0, g_main_pos) == TOK_INT {
+            is_wild = 0
+            pat_val = tok_imm_at(toks0, g_main_pos)
+        }
+        g_main_pos = g_main_pos + 1
+        expect(TOK_EQ)
+        expect(TOK_GT)
+        let arm_bb = create_block_live(jfn)
+        let next_bb = create_block_live(jfn)
+        if is_wild == 1 {
+            emit_jmp(jfn, cur_bb, arm_bb)
+        } else {
+            let pat_id = emit_const(jfn, cur_bb, TYPE_I64, pat_val)
+            let cmp = emit_binop(jfn, cur_bb, OP_CMP_EQ, scrutinee, pat_id)
+            emit_br(jfn, cur_bb, cmp, arm_bb, next_bb)
+        }
+        let arm_end = compile_match_arm_body(stab, src, jfn, arm_bb)
+        emit_jmp(jfn, arm_end, merge_bb)
+        cur_bb = next_bb
+    }
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_RBRACE { g_main_pos = g_main_pos + 1 }
+    emit_jmp(jfn, cur_bb, merge_bb)
     ret merge_bb
 }
 
@@ -23627,6 +24351,9 @@ fn live_compile_match(toks: &Token, stab: &StructTable, src: &i8, jfn: &JirFunct
     g_main_pos = g_main_pos + 1
     let scrutinee = live_codegen_expr_inline(bb)
     expect(TOK_LBRACE)
+    if tok_type_at_raw(g_dbg_toks_init, g_main_pos) == TOK_INT {
+        ret live_compile_int_match(scrutinee, stab, src, jfn, bb)
+    }
     let ld_tag = Instr{}
     ld_tag.op = OP_LOAD_MEM
     ld_tag.itype = TYPE_I64
@@ -24569,6 +25296,230 @@ fn parse_macos_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
     ret ai
 }
 
+// `jda check <file>` is `jda build <file>` that stops before writing output.
+// Rewriting argv[1] here keeps main() free of another branch: main is large
+// enough that adding one miscompiles the whole compiler.
+fn check_subcommand_arg1(a: &i8) -> &i8 {
+    if cstr_eq(a, "check") == 1 {
+        g_check_only = 1
+        ret "build"
+    }
+    ret a
+}
+
+fn parse_check_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    if argc > ai {
+        let maybe_c = get_argv(argv_ptr, ai)
+        if cstr_eq(maybe_c, "--check") == 1 {
+            g_check_only = 1
+            ret ai + 1
+        }
+    }
+    ret ai
+}
+
+// --- token / declaration dumps (stdout, JSON) ---------------------------
+
+fn pjson_escape_char(c: i64) -> i64 {
+    if c == 34 { print("\\\"") ret 1 }
+    if c == 92 { print("\\\\") ret 1 }
+    if c == 10 { print("\\n") ret 1 }
+    if c == 9 { print("\\t") ret 1 }
+    if c == 13 { print("\\r") ret 1 }
+    ret 0
+}
+
+fn print_json_span(src: &i8, start: i64, len: i64) {
+    let i = 0
+    loop i < len {
+        let c = load_i8_at(src, start + i)
+        if pjson_escape_char(c) == 0 { syscall(1, 1, src + start + i, 1) }
+        i = i + 1
+    }
+    ret 0
+}
+
+// print() treats `{` as an interpolation, so JSON punctuation is written raw.
+fn praw(s: &i8) {
+    syscall(1, 1, s, cstr_len_max(s, 128))
+    ret 0
+}
+
+// One JSON object per token: index, type, line, and source text.
+fn emit_tokens_json(toks: &Token, src: &i8, cnt: i64) {
+    praw("{\"schema\":1,\"kind\":\"tokens\",\"count\":")
+    print_i64(cnt)
+    praw(",\"tokens\":[")
+    let i = 0
+    loop i < cnt {
+        if i > 0 { praw(",") }
+        praw("{\"i\":")
+        print_i64(i)
+        praw(",\"type\":")
+        print_i64(tok_type_at_raw(toks, i))
+        praw(",\"name\":\"")
+        print(tok_display_name(tok_type_at_raw(toks, i)))
+        praw("\",\"line\":")
+        print_i64(tok_line_at(toks, i))
+        praw(",\"text\":\"")
+        print_json_span(src, tok_str_start_at_raw(toks, i), tok_str_len_at_raw(toks, i))
+        praw("\"}")
+        i = i + 1
+    }
+    praw("]}")
+    praw("\n")
+    ret 0
+}
+
+// Parameter names for the function whose `(` is at or after `from`.
+fn emit_ast_params(toks: &Token, src: &i8, from: i64, cnt: i64) {
+    praw(",\"params\":[")
+    let j = from
+    if tok_type_at_raw(toks, j) == TOK_LPAREN { j = j + 1 }
+    let firstp = 1
+    loop j < cnt and tok_type_at_raw(toks, j) != TOK_RPAREN {
+        if tok_type_at_raw(toks, j) == TOK_IDENT {
+            if tok_type_at_raw(toks, j + 1) == TOK_COLON {
+                if firstp == 0 { praw(",") }
+                firstp = 0
+                praw("\"")
+                print_json_span(src, tok_str_start_at_raw(toks, j), tok_str_len_at_raw(toks, j))
+                praw("\"")
+            }
+        }
+        j = j + 1
+    }
+    praw("]")
+    ret 0
+}
+
+// Declaration-level AST: top-level functions with their parameters, plus
+// structs and enums. Expression bodies are not represented — this compiler
+// lowers straight to IR and keeps no expression tree.
+fn emit_ast_json(toks: &Token, src: &i8, cnt: i64) {
+    praw("{\"schema\":1,\"kind\":\"ast\",\"decls\":[")
+    let i = 0
+    let first = 1
+    loop i < cnt {
+        let is_fn = tok_is_fn_kw(toks, src, i)
+        let t = tok_type_at_raw(toks, i)
+        let is_struct = t == TOK_STRUCT
+        let is_enum = t == TOK_ENUM
+        if is_fn == 1 or is_struct == 1 or is_enum == 1 {
+            if first == 0 { praw(",") }
+            first = 0
+            praw("{\"kind\":\"")
+            if is_fn == 1 { praw("fn") }
+            if is_struct == 1 { praw("struct") }
+            if is_enum == 1 { praw("enum") }
+            praw("\",\"name\":\"")
+            print_json_span(src, tok_str_start_at_raw(toks, i + 1), tok_str_len_at_raw(toks, i + 1))
+            praw("\",\"line\":")
+            print_i64(tok_line_at(toks, i + 1))
+            if is_fn == 1 { emit_ast_params(toks, src, i + 2, cnt) }
+            praw("}")
+        }
+        i = i + 1
+    }
+    praw("]}")
+    praw("\n")
+    ret 0
+}
+
+// Emit any requested dump and exit. One call keeps main() free of branches.
+fn maybe_emit_dumps(toks: &Token, src: &i8, cnt: i64) {
+    if g_emit_mode == 1 {
+        emit_tokens_json(toks, src, cnt)
+        syscall(60, 0, 0, 0)
+    }
+    if g_emit_mode == 2 {
+        emit_ast_json(toks, src, cnt)
+        syscall(60, 0, 0, 0)
+    }
+    ret 0
+}
+
+fn parse_emit_tokens_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    if argc > ai {
+        let a = get_argv(argv_ptr, ai)
+        if cstr_eq(a, "--emit-tokens") == 1 {
+            g_emit_mode = 1
+            ret ai + 1
+        }
+    }
+    ret ai
+}
+
+fn parse_emit_ast_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    if argc > ai {
+        let a = get_argv(argv_ptr, ai)
+        if cstr_eq(a, "--emit-ast") == 1 {
+            g_emit_mode = 2
+            ret ai + 1
+        }
+    }
+    ret ai
+}
+
+// Everything is compiled by this point; `check` stops before emitting a binary.
+fn maybe_exit_check_only() {
+    if g_check_only == 0 { ret 0 }
+    if g_diag_json == 1 { print_check_ok() }
+    syscall(60, 0, 0, 0)
+    ret 0
+}
+
+// The JSON must not go through print("..."), which treats `{` as the start of
+// an interpolation and silently drops the placeholder. Bind it and write it.
+fn print_check_ok() {
+    let s = "{\"schema\":1,\"ok\":true,\"diagnostics\":[]}\n"
+    let n = cstr_len_max(s, 128)
+    syscall(1, 1, s, n)
+    ret 0
+}
+
+fn parse_json_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    if argc > ai {
+        let maybe_j = get_argv(argv_ptr, ai)
+        if cstr_eq(maybe_j, "--json") == 1 {
+            g_diag_json = 1
+            ret ai + 1
+        }
+    }
+    ret ai
+}
+
+fn parse_verbose_flag(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    if argc > ai {
+        let maybe_v = get_argv(argv_ptr, ai)
+        if cstr_eq(maybe_v, "--verbose") == 1 {
+            g_verbose = 1
+            ret ai + 1
+        }
+    }
+    ret ai
+}
+
+// Consume any number of option flags in any order, starting at ai.
+// Returns the index of the first non-flag argument.
+fn parse_opt_flags(argc: i64, argv_ptr: &i64, ai: i64) -> i64 {
+    let cur = ai
+    let progress = 1
+    loop progress == 1 {
+        let before = cur
+        cur = parse_safe_flag(argc, argv_ptr, cur)
+        cur = parse_macos_flag(argc, argv_ptr, cur)
+        cur = parse_verbose_flag(argc, argv_ptr, cur)
+        cur = parse_json_flag(argc, argv_ptr, cur)
+        cur = parse_check_flag(argc, argv_ptr, cur)
+        cur = parse_emit_tokens_flag(argc, argv_ptr, cur)
+        cur = parse_emit_ast_flag(argc, argv_ptr, cur)
+        progress = 0
+        if cur != before { progress = 1 }
+    }
+    ret cur
+}
+
 // Compare two null-terminated C strings. Returns 1 if equal, 0 otherwise.
 fn cstr_eq(a: &i8, b: &i8) -> i64 {
     if a == 0 or b == 0 { ret 0 }
@@ -24628,12 +25579,22 @@ fn print_version() {
 }
 
 fn print_usage() {
-    eprint("usage: jda build [--include <lib.jda>] <file.jda> [-o output]\n")
-    eprint("       jda run [--include <lib.jda>] <file.jda>\n")
+    eprint("usage: jda build [--include <lib.jda>] [options] <file.jda> [-o output]\n")
+    eprint("       jda run [--include <lib.jda>] [options] <file.jda>\n")
+    eprint("       jda check [--include <lib.jda>] [options] <file.jda>\n")
     eprint("       jda <input.jda> <output>   (legacy)\n")
     eprint("       jda repl                              (interactive)\n")
     eprint("       jda --version\n")
     eprint("       jda --help\n")
+    eprint("\n")
+    eprint("options:\n")
+    eprint("  --safe      reject unsafe operations outside unsafe blocks\n")
+    eprint("  --macos     emit a macOS Mach-O target\n")
+    eprint("  --verbose   print compiler progress to stdout\n")
+    eprint("  --json      emit diagnostics as JSON on stderr\n")
+    eprint("  --check     type-check only, do not write an output binary\n")
+    eprint("  --emit-tokens  dump the token stream as JSON and exit\n")
+    eprint("  --emit-ast     dump top-level declarations as JSON and exit\n")
 }
 
 // ============================================================
@@ -25319,14 +26280,31 @@ fn defer_emit_calls(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFuncti
     if g_defer_count > 0 {
         let di = g_defer_count - 1
         loop di >= 0 {
-            let dp = load_i64_at(g_defer_pos, di)
-            codegen_expr_inline(toks0, &dp, stab, src, jfn, cur)
+            // Compile through the global cursor: it is the only cursor the
+            // parser has, and expect()/report_error() both read it.
+            let saved_pos = g_main_pos
+            g_main_pos = load_i64_at(g_defer_pos, di)
+            // `print` is a statement keyword, not an expression: routing it
+            // through codegen_expr_inline emitted nothing, so `defer print(..)`
+            // silently did nothing.
+            if tok_type_at_raw(toks0, g_main_pos) == TOK_PRINT {
+                compile_print_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+            } else {
+                codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+            }
+            g_main_pos = saved_pos
             di = di - 1
         }
     }
 }
 
-fn main(argc: i64, argv_ptr: &i64) {
+// Command-line parsing, lifted out of main().
+//
+// main() is ~700 lines and sits at a size where adding a branch to it
+// miscompiles the whole compiler; several changes in this file have hit
+// that. Keeping argument handling here means new subcommands and flags
+// can be added without growing main().
+fn parse_cli_args(argc: i64, argv_ptr: &i64) {
     let src_path: &i8 = 0
     let out_path: &i8 = 0
     let include_path: &i8 = 0
@@ -25338,7 +26316,7 @@ fn main(argc: i64, argv_ptr: &i64) {
         syscall(60, 2, 0, 0)
     }
 
-    let arg1 = get_argv(argv_ptr, 1)
+    let arg1 = check_subcommand_arg1(get_argv(argv_ptr, 1))
 
     let out_buf = alloc_pages(1) // 4KB for output path buffer
 
@@ -25369,8 +26347,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 ai = ai + 1
             }
         }
-        ai = parse_safe_flag(argc, argv_ptr, ai)
-        ai = parse_macos_flag(argc, argv_ptr, ai)
+        ai = parse_opt_flags(argc, argv_ptr, ai)
         if argc <= ai {
             eprint("error: missing input file\n")
             print_usage()
@@ -25404,6 +26381,7 @@ fn main(argc: i64, argv_ptr: &i64) {
                 ai = ai + 1
             }
         }
+        ai = parse_opt_flags(argc, argv_ptr, ai)
         if argc <= ai {
             eprint("error: missing input file\n")
             print_usage()
@@ -25425,6 +26403,14 @@ fn main(argc: i64, argv_ptr: &i64) {
 
     g_out_path_ptr = out_path
     g_src_filename = src_path
+    g_cli_include_path = include_path
+    ret 0
+}
+
+fn main(argc: i64, argv_ptr: &i64) {
+    parse_cli_args(argc, argv_ptr)
+    let src_path = g_src_filename
+    let include_path = g_cli_include_path
 
     let src_buf = alloc_pages(256)  // 1MB
     g_src_buf_ptr = src_buf
@@ -25458,22 +26444,25 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_dbg_toks = toks
     g_dbg_toks_init = toks
     let tok_cnt = lex_main_input()
-    print("LEX_OK tc=")
-    print_i64(g_lex_count)
-    print("\n")
+    vprint("LEX_OK tc=")
+    vprint_i64(g_lex_count)
+    vprint("\n")
     g_dbg_tok_cnt = g_lex_count
     g_scan_tok_cnt = g_lex_count
-    print("INIT_STATE\n")
+    vprint("INIT_STATE\n")
     init_large_post_lex_state()
-    print("CONST_PRE\n")
+    vprint("CONST_PRE\n")
     run_top_const_prelude(g_dbg_toks_init, g_src_buf_ptr, g_runtime_src_len)
-    print("STRUCT_PRE\n")
+    vprint("STRUCT_PRE\n")
     run_top_struct_prelude(g_dbg_toks_init, g_stab_ptr, g_src_buf_ptr, g_runtime_src_len)
-    print("FN_SCAN\n")
+    vprint("FN_SCAN\n")
     // Pass 1: Scan for global functions
     let fn_name_off = alloc_pages(2)
     let fn_name_len = alloc_pages(2)
     let fn_code_off = alloc_pages(2) // 1024 entries
+    // NOTE: fn_param_cnts / fn_ret_types below are also 1024 entries. Consumers
+    // must gate on 1024, not 512, or functions past index 512 silently lose
+    // their recorded return type and call sites mis-infer the result type.
     let fn_ret_types = alloc_pages(2)
     let fn_param_cnts = alloc_pages(2)
     g_fn_name_off_tbl = fn_name_off
@@ -25509,9 +26498,13 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_trait_buf = alloc_pages(2)
     g_trait_cnt = 0
     g_trait_copy_pos = g_scan_tok_cnt + 2000
-    print("PREP_FN\n")
+    validate_fn_headers(toks, src_buf, g_scan_tok_cnt)
+    g_scan_tok_cnt = expand_arrow_bodies(toks, src_buf, g_scan_tok_cnt)
+    g_dbg_tok_cnt = g_scan_tok_cnt
+    maybe_emit_dumps(toks, src_buf, g_scan_tok_cnt)
+    vprint("PREP_FN\n")
     prepare_top_fn_scan(toks, src_buf, src_len, fn_name_off, fn_name_len)
-    print("PREP_FN_DONE\n")
+    vprint("PREP_FN_DONE\n")
     // Generic function expansion: scan, expand, re-scan
     scan_generic_fns(toks, src_buf, g_scan_tok_cnt)
     if g_genfn_buf[0] > 0 {
@@ -25553,97 +26546,97 @@ fn main(argc: i64, argv_ptr: &i64) {
     // Set compile state globals for lambda helper
     g_code_buf = code_buf
     g_merged_str = merged_str
-    print("BUFS_OK\n")
-    print("PRE_EMIT\n")
+    vprint("BUFS_OK\n")
+    vprint("PRE_EMIT\n")
     // _start: preserve initial stack frame, mmap heap, then call main(argc, argv)
     emit_byte(code_buf, &code_len, 0x48)             // mov rbp, rsp
-    print("E1\n")
+    vprint("E1\n")
     emit_byte(code_buf, &code_len, 0x89)
-    print("E2\n")
+    vprint("E2\n")
     emit_byte(code_buf, &code_len, 0xE5)
-    print("E3\n")
+    vprint("E3\n")
     emit_byte(code_buf, &code_len, 0xB8)             // mov eax, 9
-    print("E4\n")
+    vprint("E4\n")
     let mmap_nr = p_sys_mmap()
     emit_i32_le(code_buf, &code_len, mmap_nr)
-    print("E5\n")
+    vprint("E5\n")
     emit_byte(code_buf, &code_len, 0x31)             // xor edi, edi
-    print("E6\n")
+    vprint("E6\n")
     emit_byte(code_buf, &code_len, 0xFF)
-    print("E7\n")
+    vprint("E7\n")
     emit_byte(code_buf, &code_len, 0xBE)             // mov esi, 0x59A20
-    print("E8\n")
+    vprint("E8\n")
     emit_i32_le(code_buf, &code_len, 367136)
-    print("E9\n")
+    vprint("E9\n")
     emit_byte(code_buf, &code_len, 0xBA)             // mov edx, 3
-    print("E10\n")
+    vprint("E10\n")
     emit_i32_le(code_buf, &code_len, 3)
-    print("E11\n")
+    vprint("E11\n")
     emit_byte(code_buf, &code_len, 0x41)             // mov r10d, 0x22
-    print("E12\n")
+    vprint("E12\n")
     emit_byte(code_buf, &code_len, 0xBA)
-    print("E13\n")
+    vprint("E13\n")
     let mmap_fl = p_mmap_flags()
     emit_i32_le(code_buf, &code_len, mmap_fl)
-    print("E14\n")
+    vprint("E14\n")
     emit_byte(code_buf, &code_len, 0x41)             // mov r8d, -1
-    print("E15\n")
+    vprint("E15\n")
     emit_byte(code_buf, &code_len, 0xB8)
-    print("E16\n")
+    vprint("E16\n")
     emit_i32_le(code_buf, &code_len, -1)
-    print("E17\n")
+    vprint("E17\n")
     emit_byte(code_buf, &code_len, 0x45)             // xor r9d, r9d
-    print("E18\n")
+    vprint("E18\n")
     emit_byte(code_buf, &code_len, 0x31)
-    print("E19\n")
+    vprint("E19\n")
     emit_byte(code_buf, &code_len, 0xC9)
-    print("E20\n")
+    vprint("E20\n")
     emit_byte(code_buf, &code_len, 0x0F)             // syscall
-    print("E21\n")
+    vprint("E21\n")
     emit_byte(code_buf, &code_len, 0x05)
-    print("E22\n")
+    vprint("E22\n")
     emit_byte(code_buf, &code_len, 0x49)             // mov r15, rax
-    print("E23\n")
+    vprint("E23\n")
     emit_byte(code_buf, &code_len, 0x89)
-    print("E24\n")
+    vprint("E24\n")
     emit_byte(code_buf, &code_len, 0xC7)
-    print("E25\n")
+    vprint("E25\n")
     emit_byte(code_buf, &code_len, 0x48)             // mov rdi, [rbp+0]
-    print("E26\n")
+    vprint("E26\n")
     emit_byte(code_buf, &code_len, 0x8B)
-    print("E27\n")
+    vprint("E27\n")
     emit_byte(code_buf, &code_len, 0x7D)
-    print("E28\n")
+    vprint("E28\n")
     emit_byte(code_buf, &code_len, 0x00)
-    print("E29\n")
+    vprint("E29\n")
     emit_byte(code_buf, &code_len, 0x48)             // lea rsi, [rbp+8]
-    print("E30\n")
+    vprint("E30\n")
     emit_byte(code_buf, &code_len, 0x8D)
-    print("E31\n")
+    vprint("E31\n")
     emit_byte(code_buf, &code_len, 0x75)
-    print("E32\n")
+    vprint("E32\n")
     emit_byte(code_buf, &code_len, 0x08)
-    print("E33\n")
+    vprint("E33\n")
     emit_byte(code_buf, &code_len, 0xE8)             // call rel32
-    print("E34\n")
+    vprint("E34\n")
     emit_i32_le(code_buf, &code_len, 0)              // placeholder
-    print("E35\n")
+    vprint("E35\n")
     emit_byte(code_buf, &code_len, 0xB8)
-    print("E36\n")
+    vprint("E36\n")
     let exit_nr = p_sys_exit()
     emit_i32_le(code_buf, &code_len, exit_nr)
-    print("E37\n")
+    vprint("E37\n")
     emit_byte(code_buf, &code_len, 0x31)
-    print("E38\n")
+    vprint("E38\n")
     emit_byte(code_buf, &code_len, 0xFF)
-    print("E39\n")
+    vprint("E39\n")
     emit_byte(code_buf, &code_len, 0x0F)
-    print("E40\n")
+    vprint("E40\n")
     emit_byte(code_buf, &code_len, 0x05)
-    print("E41\n")
+    vprint("E41\n")
 
     // Fixup arrays
-    print("FIXUP_ALLOC\n")
+    vprint("FIXUP_ALLOC\n")
     let gf_strtab_co   = alloc_pages(16)
     let gf_strtab_tgt  = alloc_pages(16)
     let gf_strtab_base = alloc_pages(16)
@@ -25692,15 +26685,15 @@ fn main(argc: i64, argv_ptr: &i64) {
     let jfn = g_jfn
     let ctx = g_ctx
     g_entry_main_idx = -1
-    print("LS_INIT_OK\n")
+    vprint("LS_INIT_OK\n")
 
     // Main Compilation Loop
     g_main_pos = 0
-    print("Z1\n")
+    vprint("Z1\n")
     if g_main_pos < g_scan_tok_cnt {
-        print("Z4\n")
+        vprint("Z4\n")
     }
-    print("Z5\n")
+    vprint("Z5\n")
     loop g_main_pos < g_scan_tok_cnt {
         let top_t = tok_type_at_raw(toks, g_main_pos)
         let top_start = tok_str_start_at(toks, g_main_pos)
@@ -25748,22 +26741,22 @@ fn main(argc: i64, argv_ptr: &i64) {
                 }
             }
             if fn_rbrace_scan == -1 {
-                print("fn_tok=")
-                print_span(src_buf, top_start, top_len)
-                print("\n")
-                print("fn_end_fail=")
-                print_span(src_buf, cur_name_off, cur_name_len)
-                print("\n")
-                report_error("could not find end of function")
+                eprint("fn_tok=")
+                eprint_src_range(src_buf, top_start, top_len)
+                eprint("\n")
+                eprint("fn_end_fail=")
+                eprint_src_range(src_buf, cur_name_off, cur_name_len)
+                eprint("\n")
+                report_error_code("JDA-P010", "could not find end of function")
             }
             g_cur_fn_end = fn_rbrace_scan
-            print("COMPILE ")
-            print_span(src_buf, cur_name_off, cur_name_len)
-            print("\n")
+            vprint("COMPILE ")
+            vprint_span(src_buf, cur_name_off, cur_name_len)
+            vprint("\n")
             let fi = resolve_top_fn_index(src_buf, cur_name_off, cur_name_len, fn_name_off, fn_name_len)
-            print("FI_OK\n")
+            vprint("FI_OK\n")
             init_top_jfn(jfn, src_buf, src_len, g_stab_ptr)
-            print("INIT_OK\n")
+            vprint("INIT_OK\n")
                 // Skip 'fn name'
                 g_main_pos = fn_tok_pos + 2
                 expect(TOK_LPAREN)
@@ -25814,15 +26807,17 @@ fn main(argc: i64, argv_ptr: &i64) {
                     else { more_params = 0 }
                 }
                 expect(TOK_RPAREN)
+                check_param_count(jfn.param_cnt)
 
                 // Parse return type and store function metadata
                 let fn_ret_type = parse_skip_ret_type(toks)
-                if fi >= 0 and fi < 512 {
+                if fi >= 0 and fi < 1024 {
                     store_i64_at(fn_param_cnts, fi, jfn.param_cnt)
                     store_i64_at(fn_ret_types, fi, fn_ret_type)
                 }
 
                 expect(TOK_LBRACE)
+                check_missing_ret(toks, fn_ret_type)
                 detect_il_fn(toks, src_buf, fi, g_main_pos)
 
                 let is_main = 0
@@ -25838,7 +26833,8 @@ fn main(argc: i64, argv_ptr: &i64) {
                 let cb = create_block_live(jfn)
                 let final_bb = live_compile_block(toks, g_stab_ptr, src_buf, jfn, cb)
                 defer_emit_calls(toks, g_stab_ptr, src_buf, jfn, final_bb)
-                let impl_rv2 = emit_const(jfn, final_bb, TYPE_I64, 0)
+                let impl_rv0 = emit_const(jfn, final_bb, TYPE_I64, 0)
+                let impl_rv2 = tail_ret_value(impl_rv0)
                 let impl_ri2 = Instr{}
                 impl_ri2.op = OP_RET
                 impl_ri2.operand0 = impl_rv2
@@ -25996,6 +26992,7 @@ fn main(argc: i64, argv_ptr: &i64) {
         }
         ci_f = ci_f + 1
     }
+    maybe_exit_check_only()
     let out_fd = syscall(2, g_out_path_ptr, 577, 493)
     if out_fd < 0 { panic("open output failed") }
     g_emit_glob_buf = glob_buf

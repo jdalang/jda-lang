@@ -4,7 +4,7 @@ This is a complete, self-contained reference for the Jda programming language. I
 
 ## What is Jda?
 
-Jda is a compiled systems language that produces static x86-64 Linux ELF binaries. No runtime, no garbage collector, no libc. The compiler is self-hosted (written in Jda). It has 114 stdlib packages and compiles in ~42ms.
+Jda is a compiled systems language that produces static x86-64 Linux ELF binaries. No runtime, no garbage collector, no libc. The compiler is self-hosted (written in Jda). It has 136 stdlib packages and compiles in ~42ms.
 
 ## Quick Start
 
@@ -117,6 +117,12 @@ loop i < 10 {
     print_i64(i)
     print("\n")
     i = i + 1
+}
+
+; Range loop (exclusive; `..=` for inclusive, `step n` to stride)
+loop i in 0..10 {
+    print_i64(i)
+    print("\n")
 }
 
 ; For-range loop
@@ -413,7 +419,7 @@ let path = r"C:\Users\file.txt"
 
 ---
 
-## Standard Library (114 packages)
+## Standard Library (136 packages)
 
 Use `import` in source (preferred):
 ```jda
@@ -654,6 +660,129 @@ fn main() -> i64 {
 
 ---
 
+## Loops
+
+```jda
+loop i < n { }                  // while-style
+loop { if done { break } }      // until break
+loop i in 0..5 { }              // range, exclusive of 5
+loop i in 1..=5 { }             // range, inclusive
+loop i in 0..10 step 2 { }      // stepped range
+for i in range(n) { }           // counted
+```
+
+Range bounds must be an integer literal or a variable (`0..n`), not a compound
+expression — write `let hi = n + 1` first. `continue` and `next` are the same
+keyword; `break` exits. Neither may be followed by dead code in the same block.
+
+## Returns
+
+A function that declares a return type and contains **no** `ret` returns the
+value of its final expression:
+
+```jda
+fn sq(x: i64) -> i64 { x * x }        // returns x*x
+
+fn calc(a: i64, b: i64) -> i64 {
+    let s = a + b
+    s * 2                              // returns (a+b)*2
+}
+```
+
+This applies only when the function has no explicit `ret` anywhere. A function
+that returns explicitly somewhere still falls through to `0` at the end:
+
+```jda
+fn f(x: i64) -> i64 {
+    if x > 0 { ret 1 }
+    x                                  // NOT returned — f(-5) is 0
+}
+```
+
+Prefer an explicit `ret` when a function has more than one exit.
+
+## Structs
+
+```jda
+struct P { x: i64
+ y: i64 }
+
+let a = P { x: 1, y: 2 }       // initialisers are applied
+let b = P { x: 9, ..a }        // spread: b.x == 9, b.y == 2
+let c = P {}                   // zeroed; assign fields afterwards
+c.x = 5
+```
+
+A `..base` spread copies the whole base struct first, so explicit fields
+written alongside it win regardless of their order in the literal.
+
+`defer` works with user functions and with the `print` builtin:
+
+```jda
+fn main() {
+    defer print("second\n")
+    print("first\n")          // prints first, then second
+}
+```
+
+## Interpolation
+
+`print("...")` interpolates `{...}` placeholders. Any expression works:
+
+```jda
+let a = 4
+let b = 3
+print("{a}\n")            // variable
+print("{a + b}\n")        // arithmetic
+print("{sq(5)}\n")        // call
+print("{p.x}\n")          // field
+print("n={a} sq={a * a}\n")
+```
+
+Values print as integers. An unknown bare name is `JDA-R002`.
+
+## Shorthand Function Bodies
+
+```jda
+fn sq(x: i64) -> i64 => x * x        // same as { ret x * x }
+```
+
+## Match
+
+`match` works on enums and on integers. The integer form is a statement —
+control continues after it:
+
+```jda
+match x {
+    1 => print("one\n")
+    2 => print("two\n")
+    _ => print("other\n")
+}
+print("after\n")          // reached
+```
+
+Enum arms return from the enclosing function; integer arms fall through.
+Arm bodies may be an expression, a `print`, or a `{ ... }` block.
+
+## Syntax That Does NOT Exist (compiler rejects it)
+
+Almost everything the older `syntax/cheatsheet.jda` and `syntax/spec.jda`
+describe now works. What remains unsupported:
+
+| Do not write | Instead |
+|---|---|
+| `\|x\| => expr` closures | `fn(x: i64) -> i64 { ret ... }` |
+| `?T` optionals / `some(v)` | `Result` + `?`, or a sentinel |
+| 8+ function parameters (`JDA-C001`) | pass a struct pointer |
+
+Closures must capture at least one variable:
+
+```jda
+let d = 0
+let double = fn(x: i64) -> i64 { ret x * 2 + d }
+let r = call_closure(double, 21)                    // 42
+```
+
 ## Critical Rules (Read Carefully)
 
 These are compiler constraints that will cause bugs or crashes if ignored:
@@ -666,11 +795,16 @@ These are compiler constraints that will cause bugs or crashes if ignored:
    let x = tmp - c
    ```
 
-2. **Max 6 function arguments.** The 7th argument gets garbage. Split into multiple calls or pass a struct pointer.
+2. **Up to 7 function parameters.** 7 work correctly (older docs claimed 6).
+   An 8th is rejected with `JDA-C001` — it used to compile and silently drop
+   every argument past the 7th. Pass a struct pointer if you need more.
 
-3. **Max 5 levels of if/else nesting.** Deeper nesting causes compiler issues. Extract to helper functions.
+3. **Nested if/else is fine.** Six levels of nesting and six-way `else if` chains
+   both compile and run correctly. The real constraint is total function size:
+   very large functions (the compiler's own `main`) miscompile when branches are
+   added. Extract helpers to keep functions small, not to avoid nesting depth.
 
-4. **No unconditional loops.** `loop { ... }` does not work. Always use `loop condition { ... }`.
+4. **`loop { ... }` runs until `break`.** It no longer compiles to an empty body. See the Loops section for the range forms.
 
 5. **Closures must capture at least one variable.** Otherwise segfault.
 
@@ -703,6 +837,45 @@ These are compiler constraints that will cause bugs or crashes if ignored:
     ```
 
 ---
+
+## Diagnostics
+
+Errors go to **stderr** with a `file:line:col` prefix; a successful build prints
+nothing. Exit status is `0` ok, `1` compile error, `2` usage error.
+
+```
+$ jda build bad.jda -o bad
+bad.jda:4:9: error: expected '{' after if condition
+  --> bad.jda:4:9
+  |
+4 |         print("hi")
+  |         ^^^^^
+```
+
+`--json` emits machine-readable diagnostics instead, and `jda check` compiles
+without writing a binary:
+
+```
+$ jda check --json bad.jda
+{"schema":1,"ok":false,"diagnostics":[{"code":"JDA-P002","severity":"error",
+ "file":"bad.jda","line":4,"col":9,"end_col":14,
+ "message":"expected '{' after if condition","snippet":"        print(\"hi\")"}]}
+
+$ jda check --json good.jda
+{"schema":1,"ok":true,"diagnostics":[]}
+```
+
+Failure JSON goes to stderr, success JSON to stdout. `diagnostics` is an array
+though the compiler stops at the first error today.
+
+`--emit-tokens` and `--emit-ast` dump the token stream and the top-level
+declarations as JSON and exit. The AST is declaration-level only (functions with
+their parameters, structs, enums) — this compiler lowers straight to IR and
+keeps no expression tree.
+
+Codes are stable: `JDA-P###` parse, `JDA-R###` name resolution, `JDA-T###` type,
+`JDA-S###` unsafe/safety, `JDA-C###` capacity limits, `JDA-F###` unsupported
+syntax.
 
 ## Build Commands
 

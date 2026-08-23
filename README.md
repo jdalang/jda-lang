@@ -25,8 +25,8 @@
 - **33x faster compilation than Rust** — 42ms average compile time ([benchmarks](benchmarks/RESULTS.md))
 - **Beats C on 2 of 4 benchmarks** — faster than gcc -O2 on sieve and sum loop
 - **24–53x faster than Python/Ruby** — compiled performance with scripting-speed iteration
-- **117 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, debugging, profiling, and more
-- **388 conformance tests** — all passing
+- **136 stdlib packages** — data structures, networking, crypto, JSON, HTTP, ML/AI, debugging, profiling, and more
+- **421 conformance tests** — all passing
 - **Cross-platform** — native on Linux, Docker-based on macOS/Windows
 - **Built-in concurrency** — goroutine-style green threads with channels
 - **ML primitives** — tensors, autograd, neural networks, AVX-512 acceleration
