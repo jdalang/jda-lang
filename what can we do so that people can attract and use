@@ -1,0 +1,10 @@
+what can we do so that people can attract and use it. right now people see repo but not using it maybe they are not found something interesting . right now people attract on AI related news work
+
+
+Most impactful remaining work
+
+- Fix capture-less closures, then add |x| => expr. Remove the cap_cnt == 0 early return in both copies of codegen_lambda_inline so lambdas always wrap in a closure object; verify the 16 lambda/closure/iter/comp tests still pass. Then desugar |x| => e → fn(x: i64) -> i64 { ret e } in the same token pre-pass as expand_arrow_bodies (5 source tokens → 11, so ~6 inserted per closure).
+
+- 8+ parameters needs stack-passed arguments. Every Instr field is consumed by OP_CALL (operand0-2, bb_target0/1, imm, itype), so this needs a side table keyed by instruction id plus SysV stack-slot lowering in the callee prologue. Largest and riskiest of the three — currently rejected cleanly with JDA-C001, so it fails loudly rather than silently.
+
+- ?T optionals. Mirror the existing Result lowering (a {tag, val} pair, which ? already unwraps): accept ?T in type position, add some(v)/none. Smallest of the three; some currently fails honestly with undefined function.

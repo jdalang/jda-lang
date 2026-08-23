@@ -771,16 +771,26 @@ describe now works. What remains unsupported:
 
 | Do not write | Instead |
 |---|---|
-| `\|x\| => expr` closures | `fn(x: i64) -> i64 { ret ... }` |
+| `\|x\| => expr` closures (`JDA-F005`) | `fn(x: i64) -> i64 { ret ... }` |
 | `?T` optionals / `some(v)` | `Result` + `?`, or a sentinel |
 | 8+ function parameters (`JDA-C001`) | pass a struct pointer |
 
-Closures must capture at least one variable:
+Closures no longer need to capture anything — a lambda is always a closure
+object, so `call_closure` works on all of them:
 
 ```jda
-let d = 0
-let double = fn(x: i64) -> i64 { ret x * 2 + d }
+let double = fn(x: i64) -> i64 { ret x * 2 }        // no capture needed
 let r = call_closure(double, 21)                    // 42
+```
+
+**`call_fn` and `call_closure` are not interchangeable.** `call_fn` takes a raw
+code pointer from `fn_addr`; `call_closure` takes a lambda:
+
+```jda
+let p = fn_addr(add)
+let a = call_fn(p, 3, 4)                            // fn_addr -> call_fn
+let f = fn(x: i64) -> i64 { ret x * 2 }
+let b = call_closure(f, 21)                         // lambda  -> call_closure
 ```
 
 ## Critical Rules (Read Carefully)

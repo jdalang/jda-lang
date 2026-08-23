@@ -5192,6 +5192,80 @@ fn tok_copy(toks: &Token, dst: i64, srci: i64) {
     ret 0
 }
 
+// Shift tokens [from, total) right by `by`, making room for an insertion.
+fn tok_shift_right(toks: &Token, from: i64, total: i64, by: i64) {
+    let m = total - 1
+    loop m >= from {
+        tok_copy(toks, m + by, m)
+        m = m - 1
+    }
+    ret 0
+}
+
+fn tok_put(toks: &Token, at: i64, typ: i64, st: i64, ln: i64, line: i64) {
+    tok_set_type(toks, at, typ)
+    tok_set_start(toks, at, st)
+    tok_set_len(toks, at, ln)
+    tok_set_imm(toks, at, 0)
+    tok_set_line(toks, at, line)
+    ret 0
+}
+
+// End of a closure body expression: the rest of the line, stopping at a comma
+// or a closing bracket that belongs to an enclosing call.
+fn closure_body_end(toks: &Token, from: i64, total: i64, line: i64) -> i64 {
+    let k = from
+    let depth = 0
+    loop k < total {
+        let t = tok_type_at_raw(toks, k)
+        if t == TOK_LPAREN or t == TOK_LBRACK or t == TOK_LBRACE { depth = depth + 1 }
+        if t == TOK_RPAREN or t == TOK_RBRACK or t == TOK_RBRACE {
+            if depth == 0 { ret k }
+            depth = depth - 1
+        }
+        if depth == 0 and t == TOK_COMMA { ret k }
+        if tok_line_at(toks, k) != line { ret k }
+        if t == TOK_EOF { ret k }
+        k = k + 1
+    }
+    ret k
+}
+
+// Reject `|x| => expr` closure shorthand.
+//
+// Desugaring it to `fn(x: i64) -> i64 { ret expr }` produces a token stream
+// that is byte-for-byte equivalent in type and text to the hand-written form,
+// yet the synthesised lambda binds only its first parameter, and a second
+// shorthand closure in the same scope loses its parameter entirely. Until
+// that is understood, reject it rather than emit code that computes on zeros.
+fn expand_closure_shorthand(toks: &Token, src: &i8, cnt: i64) -> i64 {
+    let i = 0
+    loop i < cnt {
+        if tok_type_at_raw(toks, i) == TOK_PIPE {
+            let j = i + 1
+            let nparams = 0
+            let ok = 1
+            loop ok == 1 and j < cnt and tok_type_at_raw(toks, j) != TOK_PIPE {
+                if tok_type_at_raw(toks, j) == TOK_IDENT { nparams = nparams + 1 }
+                else if tok_type_at_raw(toks, j) != TOK_COMMA { ok = 0 }
+                j = j + 1
+            }
+            if ok == 1 and nparams > 0 and j + 2 < cnt {
+                if tok_type_at_raw(toks, j) == TOK_PIPE {
+                    if tok_type_at_raw(toks, j + 1) == TOK_EQ {
+                        if tok_type_at_raw(toks, j + 2) == TOK_GT {
+                            g_main_pos = i
+                            report_error_code("JDA-F005", "closure shorthand is not supported; use fn(x: i64) -> i64 { ret ... }")
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    ret cnt
+}
+
 // Rewrite `fn f(..) -> T => expr` into `fn f(..) -> T { ret expr }`.
 //
 // `=>` is exactly two tokens, so `{` and `ret` replace them in place; only the
@@ -9589,10 +9663,11 @@ fn codegen_lambda_inline(toks: &Token, pos: &i64, src: &i8, jfn: &JirFunction, b
     fins.str_start = nm_off
     fins.str_len = nm_len
     let fn_id = emit(jfn, bb, &fins)
-    // If no captures and not forced, return fn_addr directly
-    if cap_cnt == 0 and g_force_closure_wrap == 0 { ret fn_id }
-    // Mark force-wrapped zero-capture lambdas with -1 sentinel
-    if cap_cnt == 0 and g_force_closure_wrap == 1 {
+    // Always wrap, even with no captures. A bare function pointer is
+    // indistinguishable from a closure object at the call site, so
+    // call_closure() dereferenced it as one and read code bytes as an
+    // address: a capture-less lambda segfaulted at runtime.
+    if cap_cnt == 0 {
         g_lambda_starts[64 + li] = -1
     }
     // Wrap in closure object: [fn_ptr, cap0, cap1, ...]
@@ -9755,7 +9830,8 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         fins.str_len = fa_len
         ret emit(jfn, bb, &fins)
     }
-    // call_fn(fn_ptr, args...) — indirect call via OP_CALL_IND
+    // call_fn(fn_ptr, args...) — raw code pointer from fn_addr, via OP_CALL_IND.
+    // A lambda is a closure object and must go through call_closure.
     if name_len == 7 and streq(src, name_start, 7, "call_fn") == 1 {
         ret codegen_call_fn_inline(toks, pos, stab, src, jfn, bb)
     }
@@ -12542,10 +12618,11 @@ fn live_codegen_lambda_inline(bb: i64) -> i64 {
     fins.str_start = nm_off
     fins.str_len = nm_len
     let fn_id = emit(g_jfn, bb, &fins)
-    // If no captures and not forced, return fn_addr directly
-    if cap_cnt == 0 and g_force_closure_wrap == 0 { ret fn_id }
-    // Mark force-wrapped zero-capture lambdas with -1 sentinel
-    if cap_cnt == 0 and g_force_closure_wrap == 1 {
+    // Always wrap, even with no captures. A bare function pointer is
+    // indistinguishable from a closure object at the call site, so
+    // call_closure() dereferenced it as one and read code bytes as an
+    // address: a capture-less lambda segfaulted at runtime.
+    if cap_cnt == 0 {
         g_lambda_starts[64 + li] = -1
     }
     // Wrap in closure object: [fn_ptr, cap0, ...]
@@ -13232,7 +13309,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         fins.str_len = fa_len
         ret emit(g_jfn, bb, &fins)
     }
-    // call_fn(fn_ptr, args...) — indirect call via OP_CALL_IND
+    // call_fn(fn_ptr, args...) — raw code pointer; see the note in the other copy.
     if name.str_len == 7 and streq(g_src_buf_ptr, name.str_start, 7, "call_fn") == 1 {
         ret live_codegen_call_fn_inline(bb)
     }
@@ -26499,6 +26576,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_trait_cnt = 0
     g_trait_copy_pos = g_scan_tok_cnt + 2000
     validate_fn_headers(toks, src_buf, g_scan_tok_cnt)
+    g_scan_tok_cnt = expand_closure_shorthand(toks, src_buf, g_scan_tok_cnt)
     g_scan_tok_cnt = expand_arrow_bodies(toks, src_buf, g_scan_tok_cnt)
     g_dbg_tok_cnt = g_scan_tok_cnt
     maybe_emit_dumps(toks, src_buf, g_scan_tok_cnt)
