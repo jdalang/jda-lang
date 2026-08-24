@@ -771,9 +771,18 @@ describe now works. What remains unsupported:
 
 | Do not write | Instead |
 |---|---|
-| `\|x\| => expr` closures (`JDA-F005`) | `fn(x: i64) -> i64 { ret ... }` |
+| `\|a, b\| => expr` multi-param closures (`JDA-F005`) | `fn(a: i64, b: i64) -> i64 { ret ... }` |
 | `?T` optionals / `some(v)` | `Result` + `?`, or a sentinel |
 | 8+ function parameters (`JDA-C001`) | pass a struct pointer |
+
+The **single-parameter** shorthand `|x| => expr` does work, and desugars to
+`fn(x: i64) -> i64 { ret expr }` — so both the parameter and the result are
+`i64`. Anything else still needs the explicit `fn(...)` form:
+
+```jda
+let double = |x| => x * 2
+let r = call_closure(double, 21)                    // 42
+```
 
 Closures no longer need to capture anything — a lambda is always a closure
 object, so `call_closure` works on all of them:

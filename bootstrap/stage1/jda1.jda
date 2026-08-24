@@ -453,6 +453,9 @@ let g_cur_fn_end = 0
 let g_top_fn_cnt = 0
 // Lambda stash for deferred compilation
 let g_lambda_cnt = 0
+// Source offsets of the "fn"/"i64"/"ret" text the closure-shorthand
+// desugaring points its synthesised tokens at (0 = not yet appended).
+let g_cs_text_off = 0
 // Compile state globals for lambda compilation helper
 let g_code_buf: &i8 = 0
 let g_merged_str: &i8 = 0
@@ -751,6 +754,10 @@ fn tok_type_at_raw(toks: &Token, idx: i64) -> i64 {
 
 fn tok_str_start_at_raw(toks: &Token, idx: i64) -> i64 {
     ret toks[idx].str_start
+}
+
+fn tok_imm_at_raw(toks: &Token, idx: i64) -> i64 {
+    ret toks[idx].imm
 }
 
 fn tok_str_len_at_raw(toks: &Token, idx: i64) -> i64 {
@@ -5187,7 +5194,12 @@ fn tok_copy(toks: &Token, dst: i64, srci: i64) {
     tok_set_type(toks, dst, tok_type_at_raw(toks, srci))
     tok_set_start(toks, dst, tok_str_start_at_raw(toks, srci))
     tok_set_len(toks, dst, tok_str_len_at_raw(toks, srci))
-    tok_set_imm(toks, dst, tok_imm_at(toks, srci))
+    // Raw read on purpose. tok_imm_at() range-checks against g_dbg_tok_cnt,
+    // which the token-rewriting passes run ahead of: once an earlier expansion
+    // has grown the stream, a later shift reads past that stale bound and the
+    // checked accessor quietly hands back token 0's immediate, zeroing every
+    // literal it moves. Every other field here is already read raw.
+    tok_set_imm(toks, dst, tok_imm_at_raw(toks, srci))
     tok_set_line(toks, dst, tok_line_at(toks, srci))
     ret 0
 }
@@ -5231,6 +5243,28 @@ fn closure_body_end(toks: &Token, from: i64, total: i64, line: i64) -> i64 {
     ret k
 }
 
+// Append "fni64ret" to the source buffer and remember where it landed.
+//
+// The tokens this pass synthesises must carry a real source range, not just the
+// right type: several consumers identify a token by its text (the lambda head
+// test in codegen_ident_primary, for one), and a zero-length range additionally
+// makes every synthesised lambda look like the same anonymous name.
+fn init_closure_shorthand_text(src: &i8) {
+    if g_cs_text_off != 0 { ret 0 }
+    let off = g_runtime_src_len
+    poke_byte(src, off, 102)
+    poke_byte(src, off + 1, 110)
+    poke_byte(src, off + 2, 105)
+    poke_byte(src, off + 3, 54)
+    poke_byte(src, off + 4, 52)
+    poke_byte(src, off + 5, 114)
+    poke_byte(src, off + 6, 101)
+    poke_byte(src, off + 7, 116)
+    g_cs_text_off = off
+    g_runtime_src_len = off + 8
+    ret 0
+}
+
 // Rewrite the single-param closure shorthand `|x| => e` starting at `i`
 // (already confirmed: PIPE IDENT PIPE EQ GT) into `fn(x: i64) -> i64 { ret e }`
 // in place. Returns the new total token count.
@@ -5240,7 +5274,11 @@ fn closure_body_end(toks: &Token, from: i64, total: i64, line: i64) -> i64 {
 // functions as branches accumulate (see docs/llm-context.md), and folding
 // this transform's ten tok_put calls plus two shifts into the scan loop's
 // already-branchy body reproduced exactly that failure as a silent hang.
-fn desugar_closure_shorthand_one(toks: &Token, i: i64, total: i64) -> i64 {
+fn desugar_closure_shorthand_one(toks: &Token, src: &i8, i: i64, total: i64) -> i64 {
+    init_closure_shorthand_text(src)
+    let t_fn = g_cs_text_off
+    let t_i64 = g_cs_text_off + 2
+    let t_ret = g_cs_text_off + 5
     let p_start = tok_str_start_at_raw(toks, i + 1)
     let p_len = tok_str_len_at_raw(toks, i + 1)
     let line = tok_line_at(toks, i)
@@ -5254,16 +5292,16 @@ fn desugar_closure_shorthand_one(toks: &Token, i: i64, total: i64) -> i64 {
     let new_total = total + 5
     body_end = body_end + 5
 
-    tok_put(toks, i, TOK_FN, 0, 0, line)
+    tok_put(toks, i, TOK_FN, t_fn, 2, line)
     tok_put(toks, i + 1, TOK_LPAREN, 0, 0, line)
     tok_put(toks, i + 2, TOK_IDENT, p_start, p_len, line)
     tok_put(toks, i + 3, TOK_COLON, 0, 0, line)
-    tok_put(toks, i + 4, TOK_I64, 0, 0, line)
+    tok_put(toks, i + 4, TOK_I64, t_i64, 3, line)
     tok_put(toks, i + 5, TOK_RPAREN, 0, 0, line)
     tok_put(toks, i + 6, TOK_ARROW, 0, 0, line)
-    tok_put(toks, i + 7, TOK_I64, 0, 0, line)
+    tok_put(toks, i + 7, TOK_I64, t_i64, 3, line)
     tok_put(toks, i + 8, TOK_LBRACE, 0, 0, line)
-    tok_put(toks, i + 9, TOK_RET, 0, 0, line)
+    tok_put(toks, i + 9, TOK_RET, t_ret, 3, line)
 
     // Close the synthesised block right after the body expression.
     tok_shift_right(toks, body_end, new_total, 1)
@@ -5285,7 +5323,7 @@ fn expand_closure_shorthand(toks: &Token, src: &i8, cnt: i64) -> i64 {
     loop i < total {
         if tok_type_at_raw(toks, i) == TOK_PIPE {
             if tok_type_at_raw(toks, i + 1) == TOK_IDENT and tok_type_at_raw(toks, i + 2) == TOK_PIPE and tok_type_at_raw(toks, i + 3) == TOK_EQ and tok_type_at_raw(toks, i + 4) == TOK_GT {
-                total = desugar_closure_shorthand_one(toks, i, total)
+                total = desugar_closure_shorthand_one(toks, src, i, total)
             } else {
                 let j = i + 1
                 let nparams = 0
@@ -9423,8 +9461,19 @@ fn codegen_struct_literal(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
     ret obj
 }
 
+// A lambda head is `fn (`. Match on TOK_FN as well as on the literal text:
+// tokens synthesised by a desugaring pass (closure shorthand) carry the type
+// but no source range, so a text-only test misses them and the `fn` is then
+// mistaken for a call to a zero-length function name.
+fn tok_is_lambda_head(toks: &Token, src: &i8, p: i64) -> i64 {
+    if tok_type_at(toks, p + 1) != TOK_LPAREN { ret 0 }
+    if tok_type_at(toks, p) == TOK_FN { ret 1 }
+    if tok_str_len_at(toks, p) != 2 { ret 0 }
+    ret streq(src, tok_str_start_at(toks, p), 2, "fn")
+}
+
 fn codegen_ident_primary(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    if tok_str_len_at(toks, pos[0]) == 2 and streq(src, tok_str_start_at(toks, pos[0]), 2, "fn") == 1 and tok_type_at(toks, pos[0] + 1) == TOK_LPAREN {
+    if tok_is_lambda_head(toks, src, pos[0]) == 1 {
         ret codegen_lambda_inline(toks, pos, src, jfn, bb)
     }
     let ci_ts = tok_str_start_at(toks, pos[0])
