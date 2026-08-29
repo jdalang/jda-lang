@@ -19,10 +19,10 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Clear as of 2026-08-29**, with 1.6 open but loud. Note how the last two were
-found: not by reading source, but by running programs and checking *values*. 1.4
-was hidden behind a clean compile, and 1.5 was actively protected by five
-passing tests that had recorded its wrong output.
+**Clear as of 2026-08-29** — all six fixed. Note how the last two were found:
+not by reading source, but by running programs and checking *values*. 1.4 hid
+behind a clean compile, and 1.5 was actively protected by five passing tests
+that had recorded its wrong output. Only 1.6 announced itself.
 
 These matter more than everything below combined. The compiler accepts the
 program, emits a binary, and the binary is wrong. Nothing reports anything, so
@@ -160,18 +160,25 @@ in five places, so the bug was not merely unnoticed, it was protected.
 
 Covered by `tests/conformance/stage1/pass/negative_print.jda`.
 
-### 1.6 String interpolation does not resolve constants
+### 1.6 String interpolation did not resolve constants ✅
 
-**Status: OPEN.** Lower severity — it fails loudly.
+**Status: FIXED.**
 
 ```jda
 const PORT = 8080
 print("{PORT}\n")     // error: unknown variable in string interpolation
 ```
 
-Interpolation resolves locals only, so a constant has to be copied into a `let`
-first. Not a miscompile, but it is a sharp edge in the most common way to print
-anything, and it is undocumented.
+Interpolation resolved locals, then globals, then reported an error —
+constants were missing from the chain entirely, so a constant had to be copied
+into a `let` first, in the most common way to print anything.
+
+Constants now resolve after globals. A **string** constant is written like a
+literal segment; only an integer one goes through `PRINT_INT`. Locals still
+shadow a constant of the same name, an unknown bare name is still `JDA-R002`,
+and `"{a + 4}"` still compiles as an expression.
+
+Covered by `tests/conformance/stage1/pass/interp_constants.jda`.
 
 ---
 

@@ -7930,6 +7930,33 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
                             gpi.imm = 1
                             emit(jfn, bb, &gpi)
                         } else {
+                            // Constants were missing from this chain entirely,
+                            // so `print("{PORT}")` reported an unknown variable
+                            // and a constant had to be copied into a `let`
+                            // first -- in the most common way to print anything.
+                            //
+                            // A string constant is written like a literal
+                            // segment; only an integer one goes to PRINT_INT.
+                            let ci = const_idx_of(src, id_start, id_len)
+                            if ci >= 0 {
+                                let csl = g_const_str_len_tbl[ci]
+                                if csl >= 0 {
+                                    let csv = emit_strlit_raw(jfn, bb, g_const_val_tbl[ci], csl)
+                                    let cs = Instr{}
+                                    cs.op = OP_STRLEN
+                                    cs.operand0 = csv
+                                    let cslen = emit(jfn, bb, &cs)
+                                    let cfd = emit_const(jfn, bb, TYPE_I64, 1)
+                                    emit_syscall3(jfn, bb, p_sys_write(), cfd, csv, cslen)
+                                } else {
+                                    let cval = emit_const(jfn, bb, TYPE_I64, g_const_val_tbl[ci])
+                                    let cpi = Instr{}
+                                    cpi.op = OP_PRINT_INT
+                                    cpi.operand0 = cval
+                                    cpi.imm = 1
+                                    emit(jfn, bb, &cpi)
+                                }
+                            } else {
                             // A bare name that resolved to nothing is a typo;
                             // anything else is an expression, lexed and compiled
                             // on its own.
@@ -7938,6 +7965,7 @@ fn compile_print_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, j
                             }
                             if interp_emit_expr(src, id_start, id_len, stab, jfn, bb) == 0 {
                                 report_error_code("JDA-F003", "could not compile interpolated expression")
+                            }
                             }
                         }
                     }

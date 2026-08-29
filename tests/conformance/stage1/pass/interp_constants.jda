@@ -1,0 +1,29 @@
+// String interpolation resolves constants.
+//
+// The chain went local -> global -> error, with constants missing entirely, so
+// `print("{PORT}")` reported an unknown variable and a constant had to be
+// copied into a `let` first -- in the most common way to print anything.
+//
+// A string constant is written like a literal segment; only an integer one
+// goes through PRINT_INT.
+const PORT = 8080
+const HOST = "0.0.0.0"
+const NEG  = 0 - 42
+const CALC = 32 / 2
+const V    = 100
+
+fn main() {
+    print("{PORT}\n")
+    print("{HOST}\n")
+    print("{NEG}\n")
+    print("{CALC}\n")
+
+    // Mixed with literal segments and a local.
+    let local = 7
+    print("host={HOST} port={PORT} calc={CALC}\n")
+    print("{local} {PORT}\n")
+
+    // A local shadows a constant of the same name: locals are resolved first.
+    let V = 7
+    print("{V}\n")
+}
