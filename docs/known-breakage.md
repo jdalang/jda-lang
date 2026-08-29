@@ -19,10 +19,10 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Clear as of 2026-08-29.** Note how the last two were
-found: not by reading source, but by running programs and checking *values*. 1.4
-was hidden behind a clean compile, and 1.5 was actively protected by five
-passing tests that had recorded its wrong output.
+**Clear as of 2026-08-29** — all six fixed. Note how the last two were found:
+not by reading source, but by running programs and checking *values*. 1.4 hid
+behind a clean compile, and 1.5 was actively protected by five passing tests
+that had recorded its wrong output. Only 1.6 announced itself.
 
 These matter more than everything below combined. The compiler accepts the
 program, emits a binary, and the binary is wrong. Nothing reports anything, so
