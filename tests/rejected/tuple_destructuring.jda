@@ -1,0 +1,14 @@
+// `let (a, b) = f()` used to compile and bind nothing: the let handler reads a
+// single identifier for the name, so the `(` was taken as the name and the
+// elements never existed. The statement produced no diagnostic, and you only
+// found out at the first use of one of the names.
+//
+// There is nothing to destructure -- the language has no tuple type and OP_RET
+// carries one operand -- so a function returning several values returns a
+// struct and the caller reads its fields.
+fn f() -> i64 { ret 7 }
+
+fn main() {
+    let (a, b) = f()
+    print("{a}\n")
+}

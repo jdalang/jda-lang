@@ -19,6 +19,10 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
+**All clear as of 2026-08-29.** Every case below is fixed; the section is kept
+because it defines the bar, and because a regression here outranks anything in
+Tier 2 or 3.
+
 These matter more than everything below combined. The compiler accepts the
 program, emits a binary, and the binary is wrong. Nothing reports anything, so
 neither a person nor a model writing Jda has any signal that the code is bad.
@@ -56,24 +60,29 @@ Covered by `tests/conformance/stage1/pass/local_arrays.jda`, which segfaults on
 the previous compiler.
 
 
-### 1.2 Tuple destructuring binds nothing
+### 1.2 Tuple destructuring bound nothing ✅
 
-**Status: open.**
+**Status: FIXED — rejected, not implemented (`JDA-F008`).**
 
 ```jda
-fn f() -> i64 { ret 7 }
-fn main() {
-    let (a, b) = f()
-    print("{a}\n")       // error: unknown variable in string interpolation
-}
+let (a, b) = f()     // now: error: tuple destructuring is not supported
 ```
 
-`let (a, b) = ...` is accepted and discarded — the names are never bound. The
-statement itself produces no diagnostic; you only find out when you use one of
-the variables, and only then if you use it somewhere that happens to check.
-`examples/mlp.jda:28` is a four-element version of this.
+The let handler reads a single identifier for the name, so the `(` was taken as
+the name and the elements were never bound. The statement compiled, emitted no
+diagnostic, and the variables simply did not exist — you found out at the first
+use, and only where that use happened to be checked.
 
-Either implement it or reject the `let (` form outright.
+Rejected rather than implemented because there is nothing to destructure: the
+language has no tuple type and `OP_RET` carries one operand. A function
+returning several values returns a **struct** and the caller reads its fields,
+which is what `stdlib/process.jda` already does (`-> WaitResult`, `-> ProcInfo`).
+Implementing the syntax would mean inventing both a tuple type and a
+multi-value calling convention — a real feature, not a bug fix, and one that
+should be decided on its own merits rather than smuggled in under this item.
+
+Covered by `tests/rejected/tuple_destructuring`.
+
 
 ### 1.3 Unknown methods evaluated to the receiver ✅
 
@@ -102,10 +111,18 @@ Anyone who clones the repo hits these before anything else.
 
 | File | Fails with | Cause |
 |---|---|---|
-| `examples/mlp.jda:28` | `expected 'identifier'` | tuple destructuring (1.2) |
+| `examples/mlp.jda:28` | `JDA-F008` | tuple destructuring (1.2) — **and at least six more**, see below |
 | `examples/transformer.jda:34` | `expected 'integer literal'` | `const D_HEAD = D_MODEL / N_HEADS` — see 2.3 |
 | `examples/web_server.jda:25` | `expected 'integer literal'` | `const LISTEN_ADDR = "0.0.0.0"` — see 2.3 |
 | `examples/stdlib_demo.jda` | `undefined function: fmt_i64` | see 2.2 |
+
+`mlp.jda` deserves a note. Fixing 1.2 improved its diagnostic but did not bring
+it closer to compiling: it also uses generic turbofish with associated functions
+(`Linear<2, 16>::new()`), named arguments (`Adam::new(lr: 0.01)`), range loops
+(`loop epoch in 0..1000`), `&mut` references, and calls `mse_loss_grad`, which
+does not exist anywhere in the tree. It is aspirational pseudo-code, not a
+program a fix will rescue. Rewrite it against the language that exists, or
+delete it — do not treat it as a bug list.
 
 Working: `hello.jda`, `multi_fn.jda`, `test_hello.jda`, `test_if.jda`.
 
@@ -202,10 +219,15 @@ which is why this was never caught.
    2.1: all four broken examples fail on 1.2, 2.2 and 2.3 instead. The claim
    here that 1.1 blocked them was wrong — the table in 2.1 already attributed
    them correctly.
-2. **1.2 tuple destructuring** — implement or reject. This is now the last
-   Tier 1 item, and it is what blocks `examples/mlp.jda`.
-3. **2.3 `const`**, then **2.2 `fmt_i64`** — together these unblock three of the
-   four broken examples.
+2. ~~**1.2 tuple destructuring**~~ — **done**, rejected with `JDA-F008`. As with
+   1.1, the "blocks `examples/mlp.jda`" claim here was wrong: mlp is blocked by
+   at least six unimplemented constructs, not by this one. **Tier 1 is now
+   clear** — the compiler no longer accepts a program and silently emits a wrong
+   binary in any case recorded in this file.
+3. **2.3 `const`**, then **2.2 `fmt_i64`** — these are the *first* errors in
+   three of the four broken examples. Verify rather than assume they are the
+   only ones: 1.1 and 1.2 both looked like they unblocked an example and
+   neither did. Fix, then recompile and see what the next error is.
 4. **2.1** — get all shipped examples compiling and running in CI, so this class
    of breakage cannot return.
 5. **2.4 / 2.5** — fix or remove the non-compiling files.
