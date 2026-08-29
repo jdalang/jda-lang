@@ -19,10 +19,10 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Not clear.** 1.1–1.3 are fixed, but working on 2.3 turned up two more, and
-one of them (1.5) is still open. That is the lesson of this section: Tier 1 bugs
-are found by *running* programs and checking the values, not by reading source
-or by watching the compiler exit 0.
+**Clear as of 2026-08-29**, with 1.6 open but loud. Note how the last two were
+found: not by reading source, but by running programs and checking *values*. 1.4
+was hidden behind a clean compile, and 1.5 was actively protected by five
+passing tests that had recorded its wrong output.
 
 These matter more than everything below combined. The compiler accepts the
 program, emits a binary, and the binary is wrong. Nothing reports anything, so
@@ -128,22 +128,37 @@ constant".
 
 Covered by `tests/conformance/stage1/pass/const_expressions.jda`.
 
-### 1.5 Negative integers print as unsigned
+### 1.5 Negative integers printed as unsigned ✅
 
-**Status: OPEN.**
+**Status: FIXED.**
 
 ```jda
 let x = 0 - 7
 print("{x}\n")      // 18446744073709551609
 ```
 
-The value is correct — arithmetic on it works — but `print` renders an `i64` as
-unsigned, so every negative number comes out as a 20-digit number. The program
-compiles, runs, exits 0, and prints something false.
+The value was correct — arithmetic on it worked — but `print` rendered an `i64`
+as unsigned, so every negative number came out as a 20-digit number. The program
+compiled, ran, exited 0, and printed something false.
 
-Pre-existing and unrelated to 1.4; found while testing it. This is the last
-known Tier 1 item and it is very visible: any program that subtracts past zero
-prints garbage.
+`lower_print_i64` emits the digit loop as machine code, and that loop divides
+with `DIV`, which is unsigned; nothing checked the sign. It now negates into the
+magnitude before the loop and prepends `-` afterwards, re-testing `r12`, which
+still holds the original — so no register has to be reserved across the loop.
+`INT64_MIN` needs no special case: negating it leaves the same bit pattern,
+which `DIV` reads as 9223372036854775808, and the sign makes that correct.
+
+**Five conformance expectations had encoded the bug.** `compress_basic`,
+`mmap_basic`, `netrc_basic`, `sched_basic` and `socketserver_basic` all assert
+on a `-1` sentinel returned by a stdlib "not found" or stub path, and their
+`.expected` files recorded `18446744073709551615`. Those five are corrected.
+`i128_basic` contains a similar-looking literal and was **left alone** — its
+value is 2^64+1, a genuine 128-bit result, not a sentinel.
+
+That is worth noting on its own: a passing suite had been pinning wrong output
+in five places, so the bug was not merely unnoticed, it was protected.
+
+Covered by `tests/conformance/stage1/pass/negative_print.jda`.
 
 ### 1.6 String interpolation does not resolve constants
 
@@ -290,8 +305,9 @@ which is why this was never caught.
    rather than the loud failure recorded here. Both examples it blocked moved on
    to their *next* error, exactly as this step warned: transformer to `JDA-F008`,
    web_server to `JDA-C005`. **2.2 `fmt_i64`** is next.
-4. **1.5 negative printing** — the last open Tier 1 item, and the most visible
-   bug left: any program that subtracts past zero prints a 20-digit number.
+4. ~~**1.5 negative printing**~~ — **done**. Fixing it exposed five conformance
+   expectations that had encoded the wrong output, which is the more useful
+   finding: a green suite was protecting the bug.
 5. **2.1** — get all shipped examples compiling and running in CI, so this class
    of breakage cannot return.
 6. **2.4 / 2.5** — fix or remove the non-compiling files.

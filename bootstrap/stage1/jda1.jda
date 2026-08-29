@@ -17464,6 +17464,23 @@ fn lower_print_i64(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     emit_byte(out, pos, 0x89)
     emit_byte(out, pos, 0xE0)
 
+    // The digit loop divides with DIV, which is unsigned, so a negative value
+    // used to be formatted as its two's-complement bit pattern: 0 - 7 printed
+    // as 18446744073709551609. Work with the magnitude here and put the sign
+    // back after the loop.
+    //
+    // test r8, r8
+    emit_byte(out, pos, 0x4D)
+    emit_byte(out, pos, 0x85)
+    emit_byte(out, pos, 0xC0)
+    // jns +3  (skip the neg when non-negative)
+    emit_byte(out, pos, 0x79)
+    emit_byte(out, pos, 3)
+    // neg r8
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xF7)
+    emit_byte(out, pos, 0xD8)
+
     // mov r9, 10    (divisor)
     emit_byte(out, pos, 0x49)
     emit_byte(out, pos, 0xC7)
@@ -17516,6 +17533,29 @@ fn lower_print_i64(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     let jnz_off = loop_top - (pos[0] + 2)
     emit_byte(out, pos, 0x75)
     emit_byte(out, pos, mod256(jnz_off))
+
+    // Prepend '-' when the original value was negative. r12 still holds it, so
+    // no register has to be reserved for the sign across the loop. Written
+    // before the length is computed, so rcx moving back covers the sign too.
+    //
+    // INT64_MIN needs no special case: negating it leaves the same bit pattern,
+    // which DIV reads as 9223372036854775808, and the '-' makes that correct.
+    //
+    // test r12, r12
+    emit_byte(out, pos, 0x4D)
+    emit_byte(out, pos, 0x85)
+    emit_byte(out, pos, 0xE4)
+    // jns +6  (skip dec rcx + mov byte [rcx], '-')
+    emit_byte(out, pos, 0x79)
+    emit_byte(out, pos, 6)
+    // dec rcx
+    emit_byte(out, pos, 0x48)
+    emit_byte(out, pos, 0xFF)
+    emit_byte(out, pos, 0xC9)
+    // mov byte [rcx], 45   ('-')
+    emit_byte(out, pos, 0xC6)
+    emit_byte(out, pos, 0x01)
+    emit_byte(out, pos, 45)
 
     // write(1, rcx, rsp+32-rcx)
     // mov rax, SYS_WRITE (platform-specific)
