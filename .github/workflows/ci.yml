@@ -74,6 +74,13 @@ jobs:
           ulimit -s unlimited
           bash tests/diagnostics-test.sh
 
+      # Every shipped example must compile, run, and match its recorded output.
+      # Four of eight had silently stopped compiling before this existed.
+      - name: Examples
+        run: |
+          ulimit -s unlimited
+          bash tests/examples-test.sh
+
       - name: Stdlib index is current
         run: python3 tools/jda-index.py --check
 
