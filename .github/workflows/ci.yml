@@ -156,6 +156,29 @@ jobs:
           echo "stack limit: $(ulimit -s)"
           bash tools/run_tests.sh 2>&1 | grep -E '^  (PASS|FAIL|KNOWN|SKIP|TOTAL):' 
 
+      # Narrowing probe. The previous run showed `p[0] = 12345` reading back as
+      # 0 on this runner while the identical binary returns 12345 under
+      # emulation, under BOTH stack limits -- so layout is not the cause. Both
+      # store and load are plain `mov` against a register holding the mmap
+      # result, and the pool save/restore around the intervening syscall is
+      # balanced in the disassembly. This asks the one question that separates
+      # the remaining possibilities: does the pointer itself survive the print?
+      - name: Probe whether the pointer survives a syscall
+        continue-on-error: true
+        run: |
+          set +e
+          printf 'fn main() {\n  let p = alloc_pages(1)\n  let a1 = p as i64\n  p[0] = 12345\n  let r1 = p[0]\n  print("before a1={a1} r1={r1}\\n")\n  let a2 = p as i64\n  let r2 = p[0]\n  print("after  a2={a2} r2={r2}\\n")\n}\n' > /tmp/surv.jda
+          bootstrap/stage0/jda1 /tmp/surv.jda /tmp/surv >/dev/null 2>&1
+          chmod +x /tmp/surv 2>/dev/null
+          echo "--- store+load BEFORE any print, then again after ---"
+          timeout 10 /tmp/surv; echo "  rc=$?"
+          printf 'fn main() {\n  let p = alloc_pages(1)\n  p[0] = 4242\n  let r = p[0]\n  print("noprint r={r}\\n")\n}\n' > /tmp/np.jda
+          bootstrap/stage0/jda1 /tmp/np.jda /tmp/np >/dev/null 2>&1
+          chmod +x /tmp/np 2>/dev/null
+          echo "--- single print at the end only ---"
+          timeout 10 /tmp/np; echo "  rc=$?"
+          exit 0
+
       - name: Probe one allocating and one plain program
         continue-on-error: true
         run: |
