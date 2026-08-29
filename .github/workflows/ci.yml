@@ -147,14 +147,14 @@ jobs:
         run: |
           ulimit -s unlimited
           echo "stack limit: $(ulimit -s)"
-          bash tools/run_tests.sh 2>&1 | tail -8
+          bash tools/run_tests.sh 2>&1 | grep -E '^  (PASS|FAIL|KNOWN|SKIP|TOTAL):' 
 
       - name: Conformance with default stack
         continue-on-error: true
         run: |
           ulimit -s 8192
           echo "stack limit: $(ulimit -s)"
-          bash tools/run_tests.sh 2>&1 | tail -8
+          bash tools/run_tests.sh 2>&1 | grep -E '^  (PASS|FAIL|KNOWN|SKIP|TOTAL):' 
 
       - name: Probe one allocating and one plain program
         continue-on-error: true
@@ -171,8 +171,10 @@ jobs:
             done
           done
           echo "--- one failing test, both limits ---"
-          t=tests/conformance/stage1/pass/comp_range.jda
-          bootstrap/stage0/jda1 "$t" /tmp/cr >/dev/null 2>&1
+          d=tests/conformance/stage1/pass
+          inc=""
+          [ -f "$d/comp_range.include" ] && inc="--include $(head -1 $d/comp_range.include)"
+          bootstrap/stage0/jda1 build $inc "$d/comp_range.jda" -o /tmp/cr >/dev/null 2>&1
           chmod +x /tmp/cr 2>/dev/null
           for lim in unlimited 8192; do
             out=$( (ulimit -s $lim; timeout 10 /tmp/cr) 2>&1 ); rc=$?
