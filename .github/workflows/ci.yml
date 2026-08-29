@@ -13,33 +13,98 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build jda1 from bootstrap
+      # bootstrap/stage0/jda1 is committed and verified. Do NOT rebuild it here:
+      # jda1-bootstrap run natively produces a jda1 that hangs on every input
+      # (build succeeds, the resulting compiler then times out), while the same
+      # bootstrap under linux/amd64 emulation produces a working compiler.
+      # Tracked separately; the rebuild is exercised below without gating.
+      - name: Verify committed compiler
         run: |
           ulimit -s unlimited
-          bootstrap/bin/jda1-bootstrap bootstrap/stage1/jda1.jda bootstrap/stage0/jda1
           chmod +x bootstrap/stage0/jda1
-          echo "jda1 built: $(wc -c < bootstrap/stage0/jda1) bytes"
+          echo "jda1: $(wc -c < bootstrap/stage0/jda1) bytes"
+          timeout 30 bootstrap/stage0/jda1 examples/hello.jda /tmp/hello
+          chmod +x /tmp/hello
+          test "$(/tmp/hello)" = "Hello Bare Metal"
+          echo "committed compiler OK"
 
-      - name: Run conformance tests
+      # NON-GATING: a pre-existing platform bug makes programs that allocate via
+      # mmap (alloc_pages / arena_new) produce no output on native x86-64, while
+      # the same compiler binary passes 423/425 under linux/amd64 emulation.
+      # 109 of 425 fail here, all of them allocating tests. This predates the
+      # branch (main fails identically) and is tracked separately; the results
+      # are printed in full rather than hidden.
+      - name: Run conformance tests (native, known platform bug)
+        continue-on-error: true
         run: |
-          # Trap SIGTERM: runner kills the step when jda1 spins at 100% CPU
-          # (bootstrap binary compiled from QEMU build hangs on native x86-64).
-          # Treat runner kill as a known limitation, not a CI failure.
-          trap 'echo "Conformance tests interrupted (bootstrap needs native x86-64 rebuild)"; exit 0' TERM INT
           ulimit -s unlimited
-          timeout 60 bash tools/run_tests.sh || true
+          bash tools/run_tests.sh
 
-      - name: Self-host convergence
+      # Probe for the native failure: exit status of one allocating program.
+      - name: Probe native allocation failure
+        continue-on-error: true
         run: |
           ulimit -s unlimited
-          echo "=== Stage 2: jda1 → jda1_a ==="
-          timeout 300 bootstrap/stage0/jda1 bootstrap/stage1/jda1.jda /tmp/jda1_a 2>/dev/null || { echo "Stage 2 FAILED/TIMEOUT — bootstrap needs native x86-64 rebuild"; exit 0; }
-          chmod +x /tmp/jda1_a || true
-          echo "=== Stage 3: jda1_a → jda1_b ==="
-          timeout 300 /tmp/jda1_a bootstrap/stage1/jda1.jda /tmp/jda1_b 2>/dev/null || { echo "Stage 3 FAILED/TIMEOUT"; exit 0; }
-          chmod +x /tmp/jda1_b || true
-          echo "=== Convergence check ==="
-          cmp /tmp/jda1_a /tmp/jda1_b && echo "CONVERGED — jda1_a == jda1_b ($(wc -c < /tmp/jda1_a) bytes)" || echo "DIVERGED or incomplete"
+          bootstrap/stage0/jda1 tests/conformance/stage1/pass/alloc_pages_rw.jda /tmp/ap >/dev/null 2>&1
+          chmod +x /tmp/ap
+          set +e
+          out=$(/tmp/ap 2>&1); rc=$?
+          set -e
+          echo "exit status : $rc   (139=SIGSEGV, 132=SIGILL, 0=clean)"
+          echo "stdout      : [$out]"
+          echo "--- dmesg tail (if permitted) ---"
+          dmesg 2>/dev/null | tail -5 || echo "  unavailable"
+          echo "--- /proc/sys/vm/mmap_min_addr ---"
+          cat /proc/sys/vm/mmap_min_addr 2>/dev/null || true
+          echo "--- cpu flags (avx512/avx2) ---"
+          grep -o -m1 -E "avx512[a-z]*|avx2" /proc/cpuinfo | sort -u | tr "\n" " "; echo
+
+      - name: Output hygiene
+        run: |
+          ulimit -s unlimited
+          bash tests/output-hygiene-test.sh
+
+      - name: Rejected syntax
+        run: |
+          ulimit -s unlimited
+          bash tests/rejected-syntax-test.sh
+
+      - name: Diagnostics contract
+        run: |
+          ulimit -s unlimited
+          bash tests/diagnostics-test.sh
+
+      - name: Stdlib index is current
+        run: python3 tools/jda-index.py --check
+
+      # A compiler produced natively from jda1.jda goes runaway and OOM-killed
+      # the runner, which fails the job regardless of continue-on-error. Bound
+      # address space and wall time so a runaway process dies instead.
+      - name: Self-host convergence (native, bounded)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          set +e
+          ulimit -v 4000000
+          echo "=== Stage 2: committed jda1 -> jda1_a ==="
+          timeout -k 5 120 bootstrap/stage0/jda1 bootstrap/stage1/jda1.jda /tmp/jda1_a
+          echo "  rc=$?"
+          chmod +x /tmp/jda1_a 2>/dev/null
+          echo "=== jda1_a compiling hello (known to hang natively) ==="
+          timeout -k 5 30 /tmp/jda1_a examples/hello.jda /tmp/h_a >/dev/null 2>&1
+          rc=$?
+          echo "  rc=$rc  (124=timeout: natively-built compiler hangs)"
+          if [ $rc -eq 0 ]; then
+            chmod +x /tmp/h_a
+            echo "  ran: $(timeout -k 5 10 /tmp/h_a)"
+            echo "=== Stage 3: jda1_a -> jda1_b ==="
+            timeout -k 5 120 /tmp/jda1_a bootstrap/stage1/jda1.jda /tmp/jda1_b
+            echo "  rc=$?"
+            cmp /tmp/jda1_a /tmp/jda1_b && echo "  CONVERGED" || echo "  DIVERGED"
+          else
+            echo "  skipping stage 3: stage-2 output is not usable natively"
+          fi
+          exit 0
 
   test-arm64:
     name: Test (ARM64 Linux)

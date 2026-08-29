@@ -1,0 +1,13 @@
+// Two shorthand closures in one scope stay independent, and the first is still
+// callable after the second is defined: the desugaring shifts the token stream
+// once per closure, which used to zero the immediates it moved.
+fn main() {
+    let f = |x| => x * 2
+    let r = call_closure(f, 21)
+    print("{r}\n")
+    let g = |y| => y + 1
+    let s = call_closure(g, 41)
+    print("{s}\n")
+    let r2 = call_closure(f, 10)
+    print("{r2}\n")
+}
