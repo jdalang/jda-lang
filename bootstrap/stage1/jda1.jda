@@ -2940,6 +2940,11 @@ fn skip_top_level_let(toks: &Token, stab: &StructTable, src: &i8) {
 }
 
 fn panic(msg: &i8) {
+    if g_diag_json == 1 {
+        eprint_json_diag_open("JDA-X001", msg)
+        eprint("\",\"snippet\":\"\"}]}\n")
+        syscall(60, 1, 0, 0)
+    }
     let has_msg = msg != 0
     if has_msg {
         let n = cstr_len_max(msg, 1024)
@@ -3192,6 +3197,40 @@ fn eprint_json_span(src: &i8, start: i64, len: i64) {
         if json_escape_char(c) == 0 { syscall(1, 2, src + start + i, 1) }
         i = i + 1
     }
+    ret 0
+}
+
+// Open a JSON diagnostic that has no token position.
+//
+// --json is a contract: a client parsing this stream must never receive a bare
+// line of prose. Two fatal paths have no token index to report -- the call
+// fixup loop, which runs after codegen holding only a source span, and panic(),
+// which fires from anywhere including before a file is open. Both still have to
+// produce an object. The caller appends the rest of the message and closes with
+// "\",\"snippet\":\"\"}]}".
+fn eprint_json_diag_open(code: &i8, msg: &i8) {
+    eprint("{\"schema\":1,\"ok\":false,\"diagnostics\":[{\"code\":\"")
+    eprint(code)
+    eprint("\",\"severity\":\"error\",\"file\":\"")
+    eprint_json_cstr(g_src_filename)
+    eprint("\",\"line\":0,\"col\":0,\"end_col\":0,\"message\":\"")
+    eprint_json_cstr(msg)
+    ret 0
+}
+
+// The call fixup loop runs after codegen with only the callee's source span in
+// hand, so this cannot go through report_error_at.
+fn report_undefined_function(src: &i8, name_off: i64, name_len: i64) {
+    if g_diag_json == 1 {
+        eprint_json_diag_open("JDA-C006", "undefined function: ")
+        eprint_json_span(src, name_off, name_len)
+        eprint("\",\"snippet\":\"\"}]}\n")
+    } else {
+        eprint("error: undefined function: ")
+        eprint_src_range(src, name_off, name_len)
+        eprint("\n")
+    }
+    syscall(60, 1, 0, 0)
     ret 0
 }
 
@@ -5167,6 +5206,20 @@ fn fix_char_literals(src: &i8, toks: &Token, cnt: &i64) {
 
 // `s.len` on a byte pointer is the string's length. Every other unresolved
 // `.len` stays an error.
+// A call-shaped access that resolved to no field, no impl method and no
+// primitive method used to fall through as the base value: `xs.sort()`
+// compiled clean and evaluated to 0. That is the exact shape a hallucinated
+// API takes, so it has to fail loudly rather than silently become a number.
+//
+// Only the call-shaped case is reported. Plain `.field` reads stay with
+// report_unknown_field, which is deliberately restricted, because chained
+// access does not resolve the intermediate struct's type at this point.
+fn report_unknown_method(at_pos: i64) {
+    g_main_pos = at_pos
+    report_error_code("JDA-C005", "unknown method")
+    ret 0
+}
+
 fn field_is_len_on_str(src: &i8, field_start: i64, field_len: i64, stype: i64) -> i64 {
     if field_len != 3 { ret 0 }
     if streq(src, field_start, 3, "len") == 0 { ret 0 }
@@ -9070,6 +9123,8 @@ fn codegen_postfix_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8,
                 if did_method == 0 {
                     if tok_type_at(toks, pos[0]) != TOK_LPAREN {
                         report_unknown_field(src, field_start, field_len, pos[0] - 1)
+                    } else {
+                        report_unknown_method(pos[0])
                     }
                     ret expr_id
                 }
@@ -12114,6 +12169,7 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
                     prim_r = try_prim_f64(bb, expr_id, field_ss, field_sl)
                 }
                 if prim_r != -1 { ret prim_r }
+                report_unknown_method(g_main_pos)
             }
             ret expr_id
         }
@@ -27194,10 +27250,7 @@ fn main(argc: i64, argv_ptr: &i64) {
             ti_f = ti_f + 1
         }
         if found == 0 {
-            eprint("error: undefined function: ")
-            eprint_src_range(src_buf, call_name, call_nlen)
-            eprint("\n")
-            syscall(60, 1, 0, 0)
+            report_undefined_function(src_buf, call_name, call_nlen)
         }
         ci_f = ci_f + 1
     }
