@@ -441,7 +441,6 @@ let g_field_total_cnt = 0
 let g_dbg_toks: &Token = 0
 let g_dbg_toks_init: &Token = 0
 let g_dbg_tok_cnt = 0
-let g_small_seeded = 0
 let g_small_has_main = 0
 let g_scan_tok_cnt = 0
 let g_more_top = 0
@@ -474,7 +473,6 @@ let g_lambda_starts: &i64 = 0
 let g_lambda_ends: &i64 = 0
 let g_lambda_name_offs: &i64 = 0
 let g_lambda_name_lens: &i64 = 0
-let g_top_main_idx = -1
 let g_lam_cur_idx = 0
 let g_dbg_main_lets = 0
 let g_const_gen_val = 0
@@ -515,9 +513,6 @@ let g_tail_expr_val: i64 = -1
 let g_want_tail_ret: i64 = 0
 let g_sc_extra: &i64 = 0
 let g_derive_cnt = 0
-let g_dbg_main_steps = 0
-let g_small_err_loop = 0
-let g_small_err_branch = 0
 let g_glob_name_off: &i64 = 0
 let g_glob_name_len: &i64 = 0
 let g_glob_off: &i64      = 0
@@ -531,14 +526,11 @@ let g_tmp_let_stype = 0
 let g_tmp_let_is_addr = 0
 let g_emit_glob_buf: &i8 = 0
 let g_emit_glob_len = 0
-let g_cmp_src: &i8 = 0
 let g_lex_tmp_emit = 0
 let g_lex_tmp_type = 0
 let g_lex_tmp_start = 0
 let g_lex_tmp_len = 0
 let g_cmp_name_start = 0
-let g_cmp_name_len = 0
-let g_lex_count_ptr = 0
 let g_lex_count = 0
 let g_lex_src_len = 0
 let g_lex_src_ptr: &i8 = 0
@@ -636,8 +628,6 @@ let g_ltw_val: i64 = 0
 let g_ltw_tmp: i64 = 0
 let g_lex_adv: i64 = 0
 let g_lex_line: i64 = 1
-let g_fn_lbrace_tmp = 0
-let g_fn_rbrace_tmp = -1
 // JIR-level inline metadata: kind=0 none, 1=read, 2=write, 3=read+idx2, 4=write+idx2
 let g_il_kind: &i64 = 0
 let g_il_gidx: &i64 = 0
@@ -645,8 +635,6 @@ let g_il_scale: &i64 = 0
 let g_il_offset: &i64 = 0
 let g_il_det_fi = 0
 let g_il_det_gi = 0
-let g_skip_fn_body_compile_tmp = 0
-let g_small_work_jfn: &JirFunction = 0
 let g_small_work_bb = 0
 let g_target_macos = 0
 let g_fn_name_off_tbl: &i64 = 0
@@ -654,29 +642,23 @@ let g_fn_name_len_tbl: &i64 = 0
 let g_fn_code_off_tbl: &i64 = 0
 let g_fn_ret_type_tbl: &i64 = 0
 let g_fn_param_cnt_tbl: &i64 = 0
-let g_last_fn_code_off: i64 = 0
-let g_cur_fn_ret_type: i64 = 0
 // Enum table — packed flat buffer: [name_off, name_len, var_cnt, v0_off, v0_len, v0_tag, ...]
 let g_enum_buf: &i64 = 0
 // Generic function table: packed buffer, 6 i64 per entry
 // [0]=fn_name_off [1]=fn_name_len [2]=tparam_off [3]=tparam_len [4]=tok_start [5]=tok_end
 let g_genfn_buf: &i64 = 0
 let g_entry_main_idx: i64 = -1
-let g_main_str_dbg: i64 = 0
 let g_stab_ptr: &StructTable = 0
 let g_loop_ctrl: i64 = 0
 let g_loop_head: i64 = 0
 let g_defer_pos: &i64 = 0
 let g_defer_count: i64 = 0
 let g_raw_str_mode: i64 = 0
-let g_fix_merged_pos: i64 = 0
 let g_argv_base: &i64 = 0
 let g_runtime_src_len: i64 = 0
 let g_src_buf_ptr: &i8 = 0
-let g_small_src_buf_ptr: &i8 = 0
 let g_out_path_ptr: &i8 = 0
 let g_src_filename: &i8 = 0
-let g_do_run: i64 = 0
 let g_jfn_heap: &i8 = 0
 let g_jfn: &JirFunction = 0
 let g_ctx_heap: &i8 = 0
@@ -3273,6 +3255,24 @@ fn find_line_start(src: &i8, pos: i64) -> i64 {
 }
 
 // Find end of line containing byte offset `pos` in source
+// Locate the first byte of line `want`, counting from the start of the buffer
+// the way the lexer numbers lines.
+//
+// A token records its line and its source offset independently, so the two can
+// disagree; the offset is what needs corroborating, not the line. Past the end
+// of the buffer this returns src_len, which renders as an empty snippet rather
+// than as some other line's text.
+fn find_line_start_of(src: &i8, src_len: i64, want: i64) -> i64 {
+    let ln = 1
+    let i = 0
+    loop i < src_len {
+        if ln == want { ret i }
+        if load_i8_at(src, i) == 10 { ln = ln + 1 }
+        i = i + 1
+    }
+    ret i
+}
+
 fn find_line_end(src: &i8, src_len: i64, pos: i64) -> i64 {
     let p = pos
     loop p < src_len {
@@ -3358,10 +3358,21 @@ fn report_error_at(tok_idx: i64, msg: &i8) {
     let str_start = tok_str_start_at_raw(toks, tok_idx)
     let str_len = tok_str_len_at_raw(toks, tok_idx)
 
-    // Compute column from str_start
-    let line_start = find_line_start(src, str_start)
-    let line_end = find_line_end(src, src_len, str_start)
-    let col = str_start - line_start + 1
+    // Render the snippet from `line`, not from `str_start`.
+    //
+    // The two are recorded independently, and punctuation and synthesised
+    // tokens can carry offset 0 alongside a real line -- TOK_PIPE does, which
+    // is what JDA-F005 reports on. Deriving the snippet from the offset then
+    // printed line 1's text under a gutter that said line 4, and pointed the
+    // caret at column 1 of the wrong line. The line number is the field the
+    // header already prints, so make everything else agree with it and take
+    // the column from the offset only when the offset really is on that line.
+    let line_start = find_line_start_of(src, src_len, line)
+    let line_end = find_line_end(src, src_len, line_start)
+    let col = 1
+    if str_start >= line_start and str_start <= line_end {
+        col = str_start - line_start + 1
+    }
     let line_len = line_end - line_start
 
     // Clamp line_len to avoid huge output
@@ -6644,7 +6655,6 @@ let g_let_cnt_buf = Node{}
 let g_parse_idx_buf = Node{}
 
 // Global args buffer for parse_call_rest. Avoids dangling stack pointer in n.children.
-let g_call_args = Node[16]
 
 fn parse_block(toks: &Token, pos: &i64, stab: &StructTable, src: &i8) -> &Node {
     expect(TOK_LBRACE)
