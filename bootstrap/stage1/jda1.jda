@@ -9594,11 +9594,102 @@ fn codegen_arr_primary(toks: &Token, pos: &i64, t_type: i64, jfn: &JirFunction, 
     ret emit(jfn, bb, &arr_ins)
 }
 
+fn arr_elem_size_for(t: i64) -> i64 {
+    if t == TOK_I32 { ret 4 }
+    if t == TOK_U32 { ret 4 }
+    if t == TOK_I8 { ret 1 }
+    if t == TOK_U8 { ret 1 }
+    ret 8
+}
+
+fn tok_is_type_kw(t: i64) -> i64 {
+    if t == TOK_I64 { ret 1 }
+    if t == TOK_I32 { ret 1 }
+    if t == TOK_I8 { ret 1 }
+    if t == TOK_F64 { ret 1 }
+    if t == TOK_U8 { ret 1 }
+    if t == TOK_U32 { ret 1 }
+    ret 0
+}
+
+// Count the elements of `[a, b, c]`, given the position just after the `[`.
+fn arr_literal_count(toks: &Token, from: i64) -> i64 {
+    let k = from
+    let depth = 0
+    let n = 0
+    loop k < g_dbg_tok_cnt {
+        let t = tok_type_at(toks, k)
+        if t == TOK_RBRACK {
+            if depth == 0 { ret n + 1 }
+            depth = depth - 1
+        } else {
+            if t == TOK_LPAREN or t == TOK_LBRACK or t == TOK_LBRACE { depth = depth + 1 }
+            if t == TOK_RPAREN or t == TOK_RBRACE { depth = depth - 1 }
+            if t == TOK_COMMA and depth == 0 { n = n + 1 }
+        }
+        k = k + 1
+    }
+    ret n
+}
+
+// `[N]T` and `[a, b, c]` in expression position.
+//
+// The type-first spelling `T[N]` already allocated, via codegen_arr_primary.
+// The bracket-first spellings -- which are what docs/llm-context.md, six stdlib
+// files and every newcomer actually write -- had no lowering at all: they fell
+// through the expression parser, compiled with no diagnostic, and produced a
+// binary that indexed into garbage and segfaulted. Both forms now allocate real
+// memory, so the two spellings finally agree.
+//
+// Elements of a literal are i64. A sized form whose count is not an integer
+// literal is rejected rather than silently treated as a one-element literal,
+// which is what the fallthrough below would otherwise do to `[N]i64`.
+fn codegen_bracket_array(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let after = pos[0] + 1
+
+    if tok_type_at(toks, after + 1) == TOK_RBRACK {
+        if tok_is_type_kw(tok_type_at(toks, after + 2)) == 1 {
+            if tok_type_at(toks, after) != TOK_INT {
+                g_main_pos = pos[0]
+                report_error_code("JDA-F007", "array length must be an integer literal")
+            }
+            let cnt = tok_imm_at(toks, after)
+            let esz = arr_elem_size_for(tok_type_at(toks, after + 2))
+            pos[0] = after + 3
+            let sz_id = emit_const(jfn, bb, TYPE_I64, cnt * esz)
+            let ai = Instr{}
+            ai.op = OP_ALLOC
+            ai.operand0 = sz_id
+            ret emit(jfn, bb, &ai)
+        }
+    }
+
+    let n = arr_literal_count(toks, after)
+    let asz_id = emit_const(jfn, bb, TYPE_I64, n * 8)
+    let li = Instr{}
+    li.op = OP_ALLOC
+    li.operand0 = asz_id
+    let obj = emit(jfn, bb, &li)
+    pos[0] = after
+    let idx = 0
+    loop tok_type_at(toks, pos[0]) != TOK_RBRACK and pos[0] < g_dbg_tok_cnt {
+        let v = codegen_expr_inline(toks, pos, stab, src, jfn, bb)
+        store_field_at(jfn, bb, obj, idx * 8, v)
+        idx = idx + 1
+        if tok_type_at(toks, pos[0]) == TOK_COMMA { pos[0] = pos[0] + 1 }
+    }
+    if tok_type_at(toks, pos[0]) == TOK_RBRACK { pos[0] = pos[0] + 1 }
+    ret obj
+}
+
 fn codegen_primary_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     if pos[0] < 0 or pos[0] >= g_dbg_tok_cnt {
         ret emit_const(jfn, bb, TYPE_I64, 0)
     }
     let t_type = tok_type_at(toks, pos[0])
+    if t_type == TOK_LBRACK {
+        ret codegen_bracket_array(toks, pos, stab, src, jfn, bb)
+    }
     if t_type == TOK_INT {
         let t_imm = tok_imm_at(toks, pos[0])
         pos[0] = pos[0] + 1

@@ -1,0 +1,30 @@
+// Local arrays in all three spellings.
+//
+// `i64[N]` allocated correctly. The bracket-first forms -- `[N]i64` and the
+// literal `[a, b, c]`, which are what the docs, six stdlib files and every
+// newcomer write -- had no lowering at all: they compiled with no diagnostic
+// and produced a binary that indexed into garbage and segfaulted. All three
+// now allocate real memory and agree with each other.
+fn main() {
+    let lit = [3, 1, 2]
+    print("{lit[0]} {lit[1]} {lit[2]}\n")
+
+    let sized = [4]i64
+    sized[0] = 10
+    sized[3] = 40
+    print("{sized[0]} {sized[3]}\n")
+
+    let type_first = i64[2]
+    type_first[1] = 99
+    print("{type_first[1]}\n")
+
+    // Elements are full expressions, evaluated left to right.
+    let computed = [lit[0] + 5, 7 * 3]
+    print("{computed[0]} {computed[1]}\n")
+
+    // Narrow element types size their allocation correctly.
+    let bytes = [8]i8
+    bytes[0] = 5
+    bytes[7] = 9
+    print("{bytes[0]} {bytes[7]}\n")
+}

@@ -24,44 +24,37 @@ program, emits a binary, and the binary is wrong. Nothing reports anything, so
 neither a person nor a model writing Jda has any signal that the code is bad.
 A language that wants to be written by an LLM cannot have these.
 
-### 1.1 Local array declarations compile clean and segfault
+### 1.1 Local array declarations compiled clean and segfaulted ✅
 
-**Status: open. No lowering exists for this at all.**
-
-```jda
-fn main() {
-    let nums = [3, 1, 2]
-    print("{nums[0]}\n")     // segfault
-}
-```
+**Status: FIXED.** All three spellings allocate real memory and agree.
 
 ```jda
 fn main() {
-    let buf = [8]i64
-    buf[0] = 42
-    print("{buf[0]}\n")      // segfault
+    let lit   = [3, 1, 2]     // literal
+    let sized = [4]i64        // bracket-first
+    let tf    = i64[2]        // type-first
 }
 ```
 
-Both forms parse, compile with **no diagnostic**, exit 0 from the compiler, and
-then crash at run time. There is no array-literal or local-array lowering in the
-compiler; the syntax falls through the expression parser and the resulting code
-is garbage. Array *fields* inside a struct (`data: i64[256]`) are a separate
-path and do work.
+The root cause was narrower than it looked. **`i64[N]` always worked** —
+`codegen_arr_primary` allocated for it correctly. The two *bracket-first*
+spellings had no lowering at all: they fell through the expression parser,
+compiled with no diagnostic, and produced a binary that indexed into garbage
+and crashed.
 
-This is the single most damaging item in the file. It is the first thing a
-newcomer writes, it is used in **32 places across 6 stdlib files**, and it is
-the one construct where the toolchain stays silent and wrong.
+Those are exactly the spellings that `docs/llm-context.md`, six stdlib files
+and every newcomer actually write, so the one working form was the one nobody
+used.
 
-Two ways out, in order of preference:
+`codegen_bracket_array` now handles both. `[N]T` allocates `N * sizeof(T)`,
+honouring narrow element types; `[a, b, c]` counts its elements, allocates, and
+stores each one, with full expressions allowed as elements. A sized form whose
+length is not an integer literal is rejected with `JDA-F007` rather than being
+silently misread as a one-element literal.
 
-1. Implement local arrays properly.
-2. Until then, **reject them** with a `JDA-F0xx` code. Rejecting breaks the 32
-   stdlib sites and `examples/mlp.jda` / `examples/transformer.jda`, which is
-   precisely why it has not been done yet — but those files do not work today
-   either. Failing loudly is strictly better than emitting a crashing binary.
+Covered by `tests/conformance/stage1/pass/local_arrays.jda`, which segfaults on
+the previous compiler.
 
-Recorded in `docs/llm-context.md` so models stop generating it.
 
 ### 1.2 Tuple destructuring binds nothing
 
@@ -82,9 +75,9 @@ the variables, and only then if you use it somewhere that happens to check.
 
 Either implement it or reject the `let (` form outright.
 
-### 1.3 Unknown methods evaluated to the receiver
+### 1.3 Unknown methods evaluated to the receiver ✅
 
-**Status: FIXED on `compiler/reject-unknown-methods-json-contract` (`JDA-C005`).**
+**Status: FIXED (`JDA-C005`, merged in #18).**
 
 ```jda
 let n = 42
@@ -175,7 +168,7 @@ produces a working compiler, which is the documented workaround.
 This is the first thing a Linux contributor hits, and the workaround means the
 native path is never exercised.
 
-### 3.2 The pinned bootstrap seed nearly stopped building the compiler
+### 3.2 The pinned bootstrap seed nearly stopped building the compiler ✅
 
 **Status: FIXED (merged in #16).**
 
@@ -190,9 +183,9 @@ next few additions will hit this again. Decide deliberately whether to refresh
 the seed or hold `jda1.jda` under the cap, and add a CI assertion on the count
 so it fails on the change that causes it rather than three commits later.
 
-### 3.3 `--json` only worked on one of three fatal paths
+### 3.3 `--json` only worked on one of three fatal paths ✅
 
-**Status: FIXED on `compiler/reject-unknown-methods-json-contract`.**
+**Status: FIXED (merged in #18).**
 
 `check --json` was advertised as machine-readable, but only `report_error_at`
 honoured it. Undefined functions and all 37 `panic()` sites printed prose, so a
@@ -205,9 +198,12 @@ which is why this was never caught.
 
 ## Suggested order
 
-1. **1.1 local arrays** — implement or reject. Nothing else in this file matters
-   as much, and it blocks 2.1.
-2. **1.2 tuple destructuring** — implement or reject.
+1. ~~**1.1 local arrays**~~ — **done**. Note that fixing it did *not* unblock
+   2.1: all four broken examples fail on 1.2, 2.2 and 2.3 instead. The claim
+   here that 1.1 blocked them was wrong — the table in 2.1 already attributed
+   them correctly.
+2. **1.2 tuple destructuring** — implement or reject. This is now the last
+   Tier 1 item, and it is what blocks `examples/mlp.jda`.
 3. **2.3 `const`**, then **2.2 `fmt_i64`** — together these unblock three of the
    four broken examples.
 4. **2.1** — get all shipped examples compiling and running in CI, so this class
