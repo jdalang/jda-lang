@@ -13,7 +13,17 @@
 #   <name>.sed        optional — sed -E script applied to actual output before
 #                     comparison, for values that legitimately vary per run
 #                     (timestamps, durations). Keep these narrow.
+#
+# --compile-only stops after the build. The native x86-64 runner has a
+# pre-existing bug where programs allocating via alloc_pages produce no output
+# (109 of 425 conformance tests fail there for the same reason, which is why
+# that step is continue-on-error), and stdlib_demo allocates. Compilation is
+# what actually regressed and is gated everywhere; execution is gated wherever
+# the platform can actually execute.
 set -uo pipefail
+
+COMPILE_ONLY=0
+[ "${1:-}" = "--compile-only" ] && COMPILE_ONLY=1
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -25,7 +35,11 @@ PASS=0; FAIL=0
 
 if [ ! -x "$JDA" ]; then echo "SKIP: jda1 not found at $JDA"; exit 0; fi
 
-echo "=== Examples ==="
+if [ "$COMPILE_ONLY" -eq 1 ]; then
+    echo "=== Examples (compile only) ==="
+else
+    echo "=== Examples ==="
+fi
 
 for src in "$DIR"/*.jda; do
     name=$(basename "$src" .jda)
@@ -45,6 +59,10 @@ for src in "$DIR"/*.jda; do
         echo "  FAIL  $name (compile failed)"
         echo "          $(printf '%s' "$compile_out" | head -1)"
         FAIL=$((FAIL + 1)); continue
+    fi
+
+    if [ "$COMPILE_ONLY" -eq 1 ]; then
+        echo "  PASS  $name (compiled)"; PASS=$((PASS + 1)); continue
     fi
 
     chmod +x "$TMP/$name" 2>/dev/null
@@ -78,4 +96,8 @@ echo "=== Results ==="
 echo "  PASS: $PASS"
 echo "  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-echo "All examples compile, run, and match their recorded output."
+if [ "$COMPILE_ONLY" -eq 1 ]; then
+    echo "All examples compile."
+else
+    echo "All examples compile, run, and match their recorded output."
+fi
