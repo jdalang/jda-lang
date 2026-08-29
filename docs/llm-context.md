@@ -775,6 +775,7 @@ describe now works. What remains unsupported:
 | `?T` optionals / `some(v)` | `Result` + `?`, or a sentinel |
 | 8+ function parameters (`JDA-C001`) | pass a struct pointer |
 | `.method()` that does not exist (`JDA-C005`) | check the stdlib index; there is no method inference |
+| `let (a, b) = f()` tuple destructuring (`JDA-F008`) | return a struct and read its fields |
 
 Local arrays work in all three spellings, and all three allocate real memory:
 

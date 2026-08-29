@@ -5500,6 +5500,32 @@ fn tok_is_fn_kw(toks: &Token, src: &i8, i: i64) -> i64 {
     ret streq(src, tok_str_start_at_raw(toks, i), 2, "fn")
 }
 
+// `let (a, b) = f()` parses and binds nothing.
+//
+// The let handler reads a single identifier for the name, so the `(` is taken
+// as the name and the elements are never bound. The statement compiles, emits
+// no diagnostic, and the variables simply do not exist -- you find out at the
+// first use, and only where that use happens to be checked.
+//
+// There is nothing to destructure: the language has no tuple type and OP_RET
+// carries one operand, so a function returning several values returns a struct
+// and the caller reads its fields. Implementing this would mean inventing both
+// a tuple type and a multi-value calling convention, so until that happens it
+// has to fail loudly instead of binding nothing.
+fn validate_no_tuple_destructure(toks: &Token, cnt: i64) {
+    let i = 0
+    loop i < cnt {
+        if tok_type_at_raw(toks, i) == TOK_LET {
+            if tok_type_at_raw(toks, i + 1) == TOK_LPAREN {
+                g_main_pos = i
+                report_error_code("JDA-F008", "tuple destructuring is not supported; return a struct and read its fields")
+            }
+        }
+        i = i + 1
+    }
+    ret 0
+}
+
 fn validate_fn_headers(toks: &Token, src: &i8, cnt: i64) {
     let i = 0
     loop i < cnt {
@@ -26854,6 +26880,7 @@ fn main(argc: i64, argv_ptr: &i64) {
     g_trait_cnt = 0
     g_trait_copy_pos = g_scan_tok_cnt + 2000
     validate_fn_headers(toks, src_buf, g_scan_tok_cnt)
+    validate_no_tuple_destructure(toks, g_scan_tok_cnt)
     g_scan_tok_cnt = expand_closure_shorthand(toks, src_buf, g_scan_tok_cnt)
     g_scan_tok_cnt = expand_arrow_bodies(toks, src_buf, g_scan_tok_cnt)
     g_dbg_tok_cnt = g_scan_tok_cnt
