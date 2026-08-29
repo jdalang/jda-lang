@@ -1,0 +1,26 @@
+// Both token-growth passes in one file, interleaved.
+//
+// expand_arrow_bodies and expand_closure_shorthand each insert tokens into the
+// stream. The checked token accessors bound against g_dbg_tok_cnt, which the
+// driver only re-syncs after a pass returns, so a checked read taken while a
+// pass was mid-flight measured against the pre-expansion count and silently
+// got a substitute value back. The passes keep that bound current now.
+//
+// No released compiler fails this file: both passes read raw throughout, so
+// the stale bound was never reached from here. It is coverage for the two
+// passes running over one another -- the arrangement the corruption needed --
+// so that a future pass that does take a checked read has something to fail.
+fn triple(x: i64) -> i64 => x * 3
+fn add_seven(x: i64) -> i64 => x + 7
+
+fn main() {
+    let a = |x| => x * 2
+    print("{triple(5)}\n")
+    let b = |y| => y + 1
+    print("{add_seven(30)}\n")
+    print("{call_closure(a, 21)}\n")
+    print("{call_closure(b, 41)}\n")
+    print("{call_closure(a, 10)}\n")
+    let last = 12345
+    print("{last}\n")
+}

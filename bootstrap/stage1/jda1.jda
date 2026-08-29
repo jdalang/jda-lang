@@ -984,6 +984,19 @@ fn tok_idx_in_range(idx: i64) -> i64 {
     ret idx >= 0 and idx < g_dbg_tok_cnt
 }
 
+// Raise the checked accessors' bound to a pass's running token count.
+//
+// The driver only re-syncs g_dbg_tok_cnt after an expansion pass returns, so
+// every checked read taken *during* a pass that has already inserted tokens is
+// measured against the pre-expansion count. The passes below therefore call
+// this each time their total grows, which keeps the bound ahead of the stream
+// rather than behind it. Never lowers the bound: passes run in sequence and a
+// later one must not shrink what an earlier one established.
+fn tok_bound_raise(total: i64) -> i64 {
+    if g_dbg_tok_cnt < total { g_dbg_tok_cnt = total }
+    ret total
+}
+
 fn tok_type_at0(toks: &Token, pos: &i64) {
     let idx = pos[0]
     let ok = tok_idx_in_range(idx)
@@ -1001,7 +1014,12 @@ fn tok_imm_at0(toks: &Token, pos: &i64) {
     let idx = pos[0]
     let ok = tok_idx_in_range(idx)
     let safe_idx = idx * ok
-    ret toks[safe_idx].imm
+    // Fold `ok` into the result. Clamping the index alone made an out-of-range
+    // read return token 0's immediate, which is indistinguishable from a real
+    // one; every literal a rewriting pass moved past the bound was silently
+    // rewritten to that value. Out of range now reads as 0, like tok_type_at0
+    // reads as TOK_EOF.
+    ret ok * toks[safe_idx].imm
 }
 
 fn tok_imm_at(toks: &Token, idx: i64) {
@@ -1013,7 +1031,11 @@ fn tok_str_start_at0(toks: &Token, pos: &i64) {
     let idx = pos[0]
     let ok = tok_idx_in_range(idx)
     let safe_idx = idx * ok
-    ret tok_str_start_at_raw(toks, safe_idx)
+    // See tok_imm_at0. An out-of-range name lookup used to come back as token
+    // 0's span -- a real identifier -- so the miss resolved to the wrong name
+    // instead of to nothing. Paired with the zero length below, out of range
+    // is now an empty span, which matches no identifier.
+    ret ok * tok_str_start_at_raw(toks, safe_idx)
 }
 
 fn tok_str_start_at(toks: &Token, idx: i64) {
@@ -1025,7 +1047,10 @@ fn tok_str_len_at0(toks: &Token, pos: &i64) {
     let idx = pos[0]
     let ok = tok_idx_in_range(idx)
     let safe_idx = idx * ok
-    ret tok_str_len_at_raw(toks, safe_idx)
+    // See tok_str_start_at0. Token 0's length is frequently 2, so an
+    // out-of-range read could satisfy a `len != 2` guard and go on to compare
+    // token 0's text as if it were the token that was asked for.
+    ret ok * tok_str_len_at_raw(toks, safe_idx)
 }
 
 fn tok_str_len_at(toks: &Token, idx: i64) {
@@ -5194,11 +5219,12 @@ fn tok_copy(toks: &Token, dst: i64, srci: i64) {
     tok_set_type(toks, dst, tok_type_at_raw(toks, srci))
     tok_set_start(toks, dst, tok_str_start_at_raw(toks, srci))
     tok_set_len(toks, dst, tok_str_len_at_raw(toks, srci))
-    // Raw read on purpose. tok_imm_at() range-checks against g_dbg_tok_cnt,
-    // which the token-rewriting passes run ahead of: once an earlier expansion
-    // has grown the stream, a later shift reads past that stale bound and the
-    // checked accessor quietly hands back token 0's immediate, zeroing every
-    // literal it moves. Every other field here is already read raw.
+    // Raw read on purpose: a copy must reproduce the token verbatim, and the
+    // checked accessor substitutes a sentinel for anything it considers out of
+    // range. That used to be the only thing standing between this pass and
+    // silently zeroed literals, because the bound lagged the stream; the
+    // passes keep the bound current now (see tok_bound_raise), but a verbatim
+    // copy still wants the raw field. Every other field here is read raw too.
     tok_set_imm(toks, dst, tok_imm_at_raw(toks, srci))
     tok_set_line(toks, dst, tok_line_at(toks, srci))
     ret 0
@@ -5318,12 +5344,12 @@ fn desugar_closure_shorthand_one(toks: &Token, src: &i8, i: i64, total: i64) -> 
 // and a from-scratch encoding of that case is exactly the kind of change
 // that wants its own dedicated verification rather than riding in here.
 fn expand_closure_shorthand(toks: &Token, src: &i8, cnt: i64) -> i64 {
-    let total = cnt
+    let total = tok_bound_raise(cnt)
     let i = 0
     loop i < total {
         if tok_type_at_raw(toks, i) == TOK_PIPE {
             if tok_type_at_raw(toks, i + 1) == TOK_IDENT and tok_type_at_raw(toks, i + 2) == TOK_PIPE and tok_type_at_raw(toks, i + 3) == TOK_EQ and tok_type_at_raw(toks, i + 4) == TOK_GT {
-                total = desugar_closure_shorthand_one(toks, src, i, total)
+                total = tok_bound_raise(desugar_closure_shorthand_one(toks, src, i, total))
             } else {
                 let j = i + 1
                 let nparams = 0
@@ -5356,7 +5382,7 @@ fn expand_closure_shorthand(toks: &Token, src: &i8, cnt: i64) -> i64 {
 // closing brace has to be inserted, which shifts the tail of the stream by one.
 // Done before the top-level scan, which locates functions by their `{`.
 fn expand_arrow_bodies(toks: &Token, src: &i8, cnt: i64) -> i64 {
-    let total = cnt
+    let total = tok_bound_raise(cnt)
     let i = 0
     loop i < total {
         if tok_is_fn_kw(toks, src, i) == 1 {
@@ -5388,7 +5414,7 @@ fn expand_arrow_bodies(toks: &Token, src: &i8, cnt: i64) -> i64 {
                 tok_set_len(toks, k, 0)
                 tok_set_imm(toks, k, 0)
                 tok_set_line(toks, k, tok_line_at(toks, arrow))
-                total = total + 1
+                total = tok_bound_raise(total + 1)
             }
         }
         i = i + 1
