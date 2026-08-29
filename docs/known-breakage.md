@@ -19,9 +19,10 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**All clear as of 2026-08-29.** Every case below is fixed; the section is kept
-because it defines the bar, and because a regression here outranks anything in
-Tier 2 or 3.
+**Not clear.** 1.1–1.3 are fixed, but working on 2.3 turned up two more, and
+one of them (1.5) is still open. That is the lesson of this section: Tier 1 bugs
+are found by *running* programs and checking the values, not by reading source
+or by watching the compiler exit 0.
 
 These matter more than everything below combined. The compiler accepts the
 program, emits a binary, and the binary is wrong. Nothing reports anything, so
@@ -99,6 +100,66 @@ the exact shape a hallucinated API takes. Now a hard error.
 
 Kept here as the reference case for what Tier 1 means.
 
+### 1.4 `const` expressions were silently truncated ✅
+
+**Status: FIXED.**
+
+```jda
+const B = 32 / 2      // bound 32, not 16
+const C = 10 + 5      // bound 10, not 15
+```
+
+`parse_const_decl` read one integer literal and stopped, leaving the rest of the
+expression in the token stream for the top-level scanner to skip. No diagnostic,
+wrong binary. A constant could not refer to another constant at all.
+
+This was recorded in 2.3 as a *loud* failure ("`const` accepts only bare integer
+literals"), which was wrong: it failed loudly for strings, and silently produced
+a wrong number for arithmetic. It was found by checking a value, not by checking
+that something compiled — the earlier note here that `const B = 32 / 2` "works"
+came from watching it compile.
+
+`const_expr_add`/`_mul`/`_primary` now fold literals, declared constants, unary
+minus, parentheses and `+ - * / %` with the usual precedence, and reject
+anything else with `JDA-P013` rather than truncating. String constants are
+supported. A constant whose value is genuinely `-1` also resolves now; the three
+codegen sites tested `lookup_const(...) != -1`, so `-1` doubled as "not a
+constant".
+
+Covered by `tests/conformance/stage1/pass/const_expressions.jda`.
+
+### 1.5 Negative integers print as unsigned
+
+**Status: OPEN.**
+
+```jda
+let x = 0 - 7
+print("{x}\n")      // 18446744073709551609
+```
+
+The value is correct — arithmetic on it works — but `print` renders an `i64` as
+unsigned, so every negative number comes out as a 20-digit number. The program
+compiles, runs, exits 0, and prints something false.
+
+Pre-existing and unrelated to 1.4; found while testing it. This is the last
+known Tier 1 item and it is very visible: any program that subtracts past zero
+prints garbage.
+
+### 1.6 String interpolation does not resolve constants
+
+**Status: OPEN.** Lower severity — it fails loudly.
+
+```jda
+const PORT = 8080
+print("{PORT}\n")     // error: unknown variable in string interpolation
+```
+
+Interpolation resolves locals only, so a constant has to be copied into a `let`
+first. Not a miscompile, but it is a sharp edge in the most common way to print
+anything, and it is undocumented.
+
+---
+
 ---
 
 ## Tier 2 — the shipped surface does not work
@@ -112,8 +173,8 @@ Anyone who clones the repo hits these before anything else.
 | File | Fails with | Cause |
 |---|---|---|
 | `examples/mlp.jda:28` | `JDA-F008` | tuple destructuring (1.2) — **and at least six more**, see below |
-| `examples/transformer.jda:34` | `expected 'integer literal'` | `const D_HEAD = D_MODEL / N_HEADS` — see 2.3 |
-| `examples/web_server.jda:25` | `expected 'integer literal'` | `const LISTEN_ADDR = "0.0.0.0"` — see 2.3 |
+| `examples/transformer.jda:378` | `JDA-F008` | was `const` (1.4, fixed); now tuple destructuring, then range loops and associated fns |
+| `examples/web_server.jda:47` | `JDA-C005` | was string `const` (1.4, fixed); now an unknown method |
 | `examples/stdlib_demo.jda` | `undefined function: fmt_i64` | see 2.2 |
 
 `mlp.jda` deserves a note. Fixing 1.2 improved its diagnostic but did not bring
@@ -140,10 +201,11 @@ Something in the import/link path does not pick it up. Worth understanding
 before trusting the "136 stdlib packages" claim — that number is only meaningful
 if the packages are reachable from a user program.
 
-### 2.3 `const` accepts only bare integer literals
+### 2.3 `const` accepts only bare integer literals ✅
 
-**Status: open.** Not a miscompile — it fails loudly — but it is a sharp,
-undocumented edge that breaks real files.
+**Status: FIXED — see 1.4, which is what this actually was.** The half of it
+that broke real files was not the loud failure recorded here but a silent
+truncation of any `const` containing arithmetic.
 
 ```jda
 const A = "hi"        // error: expected 'integer literal'
@@ -221,18 +283,20 @@ which is why this was never caught.
    them correctly.
 2. ~~**1.2 tuple destructuring**~~ — **done**, rejected with `JDA-F008`. As with
    1.1, the "blocks `examples/mlp.jda`" claim here was wrong: mlp is blocked by
-   at least six unimplemented constructs, not by this one. **Tier 1 is now
-   clear** — the compiler no longer accepts a program and silently emits a wrong
-   binary in any case recorded in this file.
-3. **2.3 `const`**, then **2.2 `fmt_i64`** — these are the *first* errors in
-   three of the four broken examples. Verify rather than assume they are the
-   only ones: 1.1 and 1.2 both looked like they unblocked an example and
-   neither did. Fix, then recompile and see what the next error is.
-4. **2.1** — get all shipped examples compiling and running in CI, so this class
+   at least six unimplemented constructs, not by this one. This item also
+   claimed Tier 1 was then clear; that held for about an hour, until 1.4 and 1.5
+   turned up while working on 2.3.
+3. ~~**2.3 `const`**~~ — **done**; it turned out to be 1.4, a silent truncation
+   rather than the loud failure recorded here. Both examples it blocked moved on
+   to their *next* error, exactly as this step warned: transformer to `JDA-F008`,
+   web_server to `JDA-C005`. **2.2 `fmt_i64`** is next.
+4. **1.5 negative printing** — the last open Tier 1 item, and the most visible
+   bug left: any program that subtracts past zero prints a 20-digit number.
+5. **2.1** — get all shipped examples compiling and running in CI, so this class
    of breakage cannot return.
-5. **2.4 / 2.5** — fix or remove the non-compiling files.
-6. **3.2** — CI assertion on the global count.
-7. **3.1** — native self-host.
+6. **2.4 / 2.5** — fix or remove the non-compiling files.
+7. **3.2** — CI assertion on the global count.
+8. **3.1** — native self-host.
 
 ## A note on the README
 

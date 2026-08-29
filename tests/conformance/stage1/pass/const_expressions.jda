@@ -1,0 +1,42 @@
+// Constant expressions fold correctly.
+//
+// parse_const_decl used to read one integer literal and stop, leaving the rest
+// of the expression for the top-level scanner to skip: `const B = 32 / 2` bound
+// 32 and `const C = 10 + 5` bound 10, silently and with no diagnostic. A
+// constant could not refer to another constant at all.
+//
+// NEG is checked by arithmetic rather than by printing, because printing a
+// negative i64 is separately broken -- see known-breakage 1.4.
+const B      = 32 / 2
+const C      = 10 + 5
+const D      = 100
+const M      = 64
+const N      = 4
+const D_HEAD = M / N
+const PREC   = 2 + 3 * 4
+const PAREN  = (2 + 3) * 4
+const NEG    = 0 - 7
+const MOD    = 17 % 5
+const CHAIN  = D_HEAD * 2 + PREC
+const HOST   = "0.0.0.0"
+// A constant whose value is genuinely -1 used to be unreachable: the codegen
+// sites tested `lookup_const(...) != -1`, so -1 doubled as "not a constant".
+const NEG1   = 0 - 1
+
+fn main() {
+    let b = B
+    let c = C
+    let d = D
+    let dh = D_HEAD
+    let p = PREC
+    let pa = PAREN
+    let md = MOD
+    let ch = CHAIN
+    let ng = NEG + 10
+    let n1 = NEG1 + 5
+    let h = HOST
+    print("{b} {c} {d} {dh}\n")
+    print("{p} {pa} {md} {ch} {ng} {n1}\n")
+    print(h)
+    print("\n")
+}
