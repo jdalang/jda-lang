@@ -9005,10 +9005,11 @@ fn codegen_lambda_inline(toks: &Token, pos: &i64, src: &i8, jfn: &JirFunction, b
     fins.str_start = nm_off
     fins.str_len = nm_len
     let fn_id = emit(jfn, bb, &fins)
-    // If no captures and not forced, return fn_addr directly
-    if cap_cnt == 0 and g_force_closure_wrap == 0 { ret fn_id }
-    // Mark force-wrapped zero-capture lambdas with -1 sentinel
-    if cap_cnt == 0 and g_force_closure_wrap == 1 {
+    // Always wrap, even with no captures. A bare function pointer is
+    // indistinguishable from a closure object at the call site, so
+    // call_closure() dereferenced it as one and read code bytes as an
+    // address: a capture-less lambda segfaulted at runtime.
+    if cap_cnt == 0 {
         g_lambda_starts[64 + li] = -1
     }
     // Wrap in closure object: [fn_ptr, cap0, cap1, ...]
@@ -11925,10 +11926,11 @@ fn live_codegen_lambda_inline(bb: i64) -> i64 {
     fins.str_start = nm_off
     fins.str_len = nm_len
     let fn_id = emit(g_jfn, bb, &fins)
-    // If no captures and not forced, return fn_addr directly
-    if cap_cnt == 0 and g_force_closure_wrap == 0 { ret fn_id }
-    // Mark force-wrapped zero-capture lambdas with -1 sentinel
-    if cap_cnt == 0 and g_force_closure_wrap == 1 {
+    // Always wrap, even with no captures. A bare function pointer is
+    // indistinguishable from a closure object at the call site, so
+    // call_closure() dereferenced it as one and read code bytes as an
+    // address: a capture-less lambda segfaulted at runtime.
+    if cap_cnt == 0 {
         g_lambda_starts[64 + li] = -1
     }
     // Wrap in closure object: [fn_ptr, cap0, ...]
