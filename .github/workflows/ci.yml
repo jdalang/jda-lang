@@ -124,6 +124,62 @@ jobs:
           fi
           exit 0
 
+  native-diagnosis:
+    name: Native failure diagnosis (non-gating)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      # 110 of 430 conformance tests fail on this runner while all pass under
+      # linux/amd64 emulation. ci.yml has long attributed that to programs that
+      # allocate producing no output, but 48 of the 110 do not allocate at all
+      # (comprehensions, contexts, channels, epoll), so the recorded cause is
+      # incomplete at best.
+      #
+      # The one setting that plausibly affects both allocation and threads is
+      # `ulimit -s unlimited`, which switches Linux to the legacy bottom-up mmap
+      # layout. This job runs the suite both ways so the difference, if any, is
+      # attributable. Non-gating: it exists to produce evidence, not to pass.
+      # Delete it once 3.1 is diagnosed.
+      - name: Conformance with unlimited stack (current CI setting)
+        continue-on-error: true
+        run: |
+          ulimit -s unlimited
+          echo "stack limit: $(ulimit -s)"
+          bash tools/run_tests.sh 2>&1 | tail -8
+
+      - name: Conformance with default stack
+        continue-on-error: true
+        run: |
+          ulimit -s 8192
+          echo "stack limit: $(ulimit -s)"
+          bash tools/run_tests.sh 2>&1 | tail -8
+
+      - name: Probe one allocating and one plain program
+        continue-on-error: true
+        run: |
+          set +e
+          printf 'fn main() {\n  let p = alloc_pages(1)\n  let a = p as i64\n  print("addr={a}\\n")\n  p[0] = 12345\n  print("rt={p[0]}\\n")\n}\n' > /tmp/ptr.jda
+          printf 'fn main() {\n  let x = 2 + 3\n  print("plain={x}\\n")\n}\n' > /tmp/plain.jda
+          for n in ptr plain; do
+            bootstrap/stage0/jda1 /tmp/$n.jda /tmp/$n >/dev/null 2>&1
+            chmod +x /tmp/$n 2>/dev/null
+            for lim in unlimited 8192; do
+              out=$( (ulimit -s $lim; timeout 10 /tmp/$n) 2>&1 ); rc=$?
+              echo "  $n [stack=$lim] rc=$rc out=[$out]"
+            done
+          done
+          echo "--- one failing test, both limits ---"
+          t=tests/conformance/stage1/pass/comp_range.jda
+          bootstrap/stage0/jda1 "$t" /tmp/cr >/dev/null 2>&1
+          chmod +x /tmp/cr 2>/dev/null
+          for lim in unlimited 8192; do
+            out=$( (ulimit -s $lim; timeout 10 /tmp/cr) 2>&1 ); rc=$?
+            echo "  comp_range [stack=$lim] rc=$rc out=[$out]"
+          done
+          exit 0
+
   test-arm64:
     name: Test (ARM64 Linux)
     runs-on: ubuntu-24.04-arm
