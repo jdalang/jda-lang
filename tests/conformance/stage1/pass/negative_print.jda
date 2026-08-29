@@ -1,0 +1,29 @@
+// Printing a negative i64.
+//
+// The digit loop divides with DIV, which is unsigned, and nothing checked the
+// sign -- so a negative value was formatted as its two's-complement bit
+// pattern and `0 - 7` printed 18446744073709551609. The value was right; only
+// the rendering was wrong, which is what made it invisible.
+fn main() {
+    let a = 0 - 7
+    let b = 5 - 12
+    let c = 42
+    let z = 0
+    let f = 1000000 - 2000000
+    print("{a}\n")
+    print("{b}\n")
+    print("{c}\n")
+    print("{z}\n")
+    print("{f}\n")
+
+    // No-newline form (interpolation mid-string) takes the same path.
+    print("{a} {c} {b}\n")
+
+    // INT64_MIN needs no special case: negating it leaves the same bit
+    // pattern, which DIV reads as 9223372036854775808, and the sign makes it
+    // correct.
+    let big = 0 - 9223372036854775807
+    let m = big - 1
+    print("{big}\n")
+    print("{m}\n")
+}
