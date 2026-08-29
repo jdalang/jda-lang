@@ -775,15 +775,20 @@ describe now works. What remains unsupported:
 | `?T` optionals / `some(v)` | `Result` + `?`, or a sentinel |
 | 8+ function parameters (`JDA-C001`) | pass a struct pointer |
 | `.method()` that does not exist (`JDA-C005`) | check the stdlib index; there is no method inference |
-| **local array declarations** — `let xs = [3, 1, 2]`, `let buf = [8]i64` | `alloc_pages()`, or a struct field `data: i64[256]` |
 
-> **Local arrays currently miscompile — do not use them.** `let xs = [3, 1, 2]`
-> and `let buf = [8]i64` are accepted by the parser, compile without any
-> diagnostic, and then **segfault at run time**. There is no array-literal or
-> local-array lowering in the compiler. Array *fields* inside a struct
-> (`data: i64[256]`) are a separate, working path. This is the one construct
-> where the toolchain will not tell you that you are wrong, so it has to be
-> avoided by rule rather than caught by the compiler.
+Local arrays work in all three spellings, and all three allocate real memory:
+
+```jda
+let lit   = [3, 1, 2]     // literal; elements are i64, full expressions allowed
+let sized = [4]i64        // bracket-first, uninitialised
+let tf    = i64[2]        // type-first, uninitialised
+lit[0] = 42               // index to read and write
+```
+
+A sized form reserves space without initialising it — assign before you
+read. `[N]T` honours narrow element types (`[8]i8` allocates 8 bytes). The length in
+a sized form must be an integer literal — `[N]i64` with a named constant is
+rejected with `JDA-F007` rather than being misread as a one-element literal.
 
 Unknown methods now fail loudly. `n.to_string()` or `xs.sort()` used to compile
 clean and evaluate to the receiver, so the program ran and printed `0`; they now
