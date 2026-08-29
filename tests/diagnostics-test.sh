@@ -94,6 +94,34 @@ if command -v python3 >/dev/null 2>&1; then
     else bad "--emit-ast: valid JSON declaration list" "got: $(printf '%s' "$out" | head -c 120)"; fi
 fi
 
+# 10. Every rejected-syntax case answers --json with contract-shaped JSON.
+#
+# The two fixtures above both fail through report_error_at, which was the only
+# path that honoured --json; undefined functions and panic() printed prose, so a
+# client parsing the stream got a bare line instead of an object. Sweeping the
+# whole rejected/ corpus is what keeps that from coming back.
+if command -v python3 >/dev/null 2>&1; then
+    sweep_fail=0
+    for src in "$ROOT"/tests/rejected/*.jda; do
+        name=$(basename "$src" .jda)
+        out=$("$JDA" check --json "$src" 2>&1 >/dev/null)
+        if ! printf '%s' "$out" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+assert d.get("schema")==1
+assert d.get("ok") is False
+assert d.get("diagnostics")
+for x in d["diagnostics"]:
+    assert str(x.get("code","")).startswith("JDA-")
+    for k in ("severity","file","line","col","message"): assert k in x
+' 2>/dev/null; then
+            bad "rejected/$name answers --json with contract JSON" "got: $(printf '%s' "$out" | head -c 160)"
+            sweep_fail=1
+        fi
+    done
+    [ "$sweep_fail" -eq 0 ] && ok "every rejected/ case answers --json with contract JSON"
+fi
+
 echo ""
 echo "=== Results ==="
 echo "  PASS: $PASS"
