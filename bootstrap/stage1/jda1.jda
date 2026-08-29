@@ -422,6 +422,9 @@ struct StructTable {
 let g_const_name_off_tbl: &i64 = 0
 let g_const_name_len_tbl: &i64 = 0
 let g_const_val_tbl: &i64 = 0
+// -1 for an integer constant; for a string constant this is the literal's
+// length and g_const_val_tbl holds its source offset.
+let g_const_str_len_tbl: &i64 = 0
 let g_const_cnt = 0
 // Flat struct name/size tables (avoids jda0 struct-array-field offset bug)
 let g_struct_name_off: &i64 = 0
@@ -1045,18 +1048,127 @@ fn span_in_src(start: i64, len: i64, src_len: i64) -> i64 {
     ret start >= 0 and len >= 0 and start <= src_len and len <= src_len and end >= start and end <= src_len
 }
 
+// Index of a declared constant, or -1. lookup_const returns the *value* and
+// uses -1 for "not found", which is indistinguishable from a constant that is
+// genuinely -1; the constant-expression evaluator needs the difference so an
+// undeclared name fails instead of silently folding to -1.
+fn const_idx_of(src: &i8, name_start: i64, name_len: i64) -> i64 {
+    let i = 0
+    loop i < g_const_cnt {
+        if g_const_name_len_tbl[i] == name_len {
+            if str_match(src, g_const_name_off_tbl[i], name_start, name_len) == 1 { ret i }
+        }
+        i = i + 1
+    }
+    ret -1
+}
+
+// Integer constant expressions.
+//
+// parse_const_decl used to read one integer literal and stop, leaving the rest
+// of the expression in the token stream for the top-level scanner to skip. So
+// `const B = 32 / 2` bound 32 and `const C = 10 + 5` bound 10 -- silently, with
+// no diagnostic and a wrong binary -- and a constant could not refer to another
+// constant at all.
+//
+// These fold literals, previously declared constants, unary minus, parentheses
+// and + - * / % with the usual precedence. Anything else is an error rather
+// than a truncation.
+fn const_expr_primary(toks: &Token, src: &i8) -> i64 {
+    let t = tok_type_at(toks, g_main_pos)
+    if t == TOK_MINUS {
+        g_main_pos = g_main_pos + 1
+        ret 0 - const_expr_primary(toks, src)
+    }
+    if t == TOK_LPAREN {
+        g_main_pos = g_main_pos + 1
+        let v = const_expr_add(toks, src)
+        expect(TOK_RPAREN)
+        ret v
+    }
+    if t == TOK_INT {
+        let v = tok_imm_at(toks, g_main_pos)
+        g_main_pos = g_main_pos + 1
+        ret v
+    }
+    if t == TOK_IDENT {
+        let ns = tok_str_start_at(toks, g_main_pos)
+        let nl = tok_str_len_at(toks, g_main_pos)
+        let ci = const_idx_of(src, ns, nl)
+        if ci < 0 {
+            report_error_code("JDA-P013", "constant expression refers to a name that is not a declared constant")
+        }
+        g_main_pos = g_main_pos + 1
+        ret g_const_val_tbl[ci]
+    }
+    report_error_code("JDA-P013", "constant expression expects an integer literal, a declared constant, or (")
+    ret 0
+}
+
+fn const_expr_mul(toks: &Token, src: &i8) -> i64 {
+    let acc = const_expr_primary(toks, src)
+    let go = 1
+    loop go == 1 {
+        let t = tok_type_at(toks, g_main_pos)
+        if t == TOK_STAR {
+            g_main_pos = g_main_pos + 1
+            acc = acc * const_expr_primary(toks, src)
+        } else if t == TOK_SLASH {
+            g_main_pos = g_main_pos + 1
+            let d = const_expr_primary(toks, src)
+            if d == 0 { report_error_code("JDA-P013", "division by zero in constant expression") }
+            acc = acc / d
+        } else if t == TOK_PERCENT {
+            g_main_pos = g_main_pos + 1
+            let m = const_expr_primary(toks, src)
+            if m == 0 { report_error_code("JDA-P013", "division by zero in constant expression") }
+            acc = acc % m
+        } else {
+            go = 0
+        }
+    }
+    ret acc
+}
+
+fn const_expr_add(toks: &Token, src: &i8) -> i64 {
+    let acc = const_expr_mul(toks, src)
+    let go = 1
+    loop go == 1 {
+        let t = tok_type_at(toks, g_main_pos)
+        if t == TOK_PLUS {
+            g_main_pos = g_main_pos + 1
+            acc = acc + const_expr_mul(toks, src)
+        } else if t == TOK_MINUS {
+            g_main_pos = g_main_pos + 1
+            acc = acc - const_expr_mul(toks, src)
+        } else {
+            go = 0
+        }
+    }
+    ret acc
+}
+
 fn parse_const_decl(toks: &Token) {
     expect(TOK_CONST)
     let c_name_start = tok_str_start_at(toks, g_main_pos)
     let c_name_len = tok_str_len_at(toks, g_main_pos)
     expect(TOK_IDENT)
     expect(TOK_EQ)
-    let c_val = tok_imm_at(toks, g_main_pos)
-    expect(TOK_INT)
+    let c_val = 0
+    let c_slen = -1
+    let vt = tok_type_at(toks, g_main_pos)
+    if vt == TOK_STR or vt == TOK_RAW_STR {
+        c_val = tok_str_start_at(toks, g_main_pos)
+        c_slen = tok_str_len_at(toks, g_main_pos)
+        g_main_pos = g_main_pos + 1
+    } else {
+        c_val = const_expr_add(toks, g_src_buf_ptr)
+    }
     let idx = g_const_cnt
     g_const_name_off_tbl[idx] = c_name_start
     g_const_name_len_tbl[idx] = c_name_len
     g_const_val_tbl[idx] = c_val
+    g_const_str_len_tbl[idx] = c_slen
     g_const_cnt = idx + 1
 }
 
@@ -3096,6 +3208,20 @@ fn lookup_const(src: &i8, name_start: i64, name_len: i64) {
     ret -1
 }
 
+// Emit a reference to a declared constant, or -1 if the name is not one.
+//
+// Integer constants fold to a literal; string constants emit the same string a
+// literal would, from the span recorded at declaration. Callers used to test
+// `lookup_const(...) != -1`, which also meant a constant whose value is
+// genuinely -1 never resolved; going through the index avoids that.
+fn emit_const_ref(src: &i8, jfn: &JirFunction, bb: i64, ns: i64, nl: i64) -> i64 {
+    let ci = const_idx_of(src, ns, nl)
+    if ci < 0 { ret -1 }
+    let sl = g_const_str_len_tbl[ci]
+    if sl >= 0 { ret emit_strlit_raw(jfn, bb, g_const_val_tbl[ci], sl) }
+    ret emit_const(jfn, bb, TYPE_I64, g_const_val_tbl[ci])
+}
+
 fn print_span(src: &i8, start: i64, len: i64) {
     let has_len = len > 0
     if has_len == 0 { ret 0 }
@@ -4982,6 +5108,7 @@ fn init_large_post_lex_state() {
     g_const_name_off_tbl = alloc_pages(8)
     g_const_name_len_tbl = alloc_pages(8)
     g_const_val_tbl = alloc_pages(8)
+    g_const_str_len_tbl = alloc_pages(8)
     g_const_cnt = 0
     g_glob_name_off = alloc_pages(8)
     g_glob_name_len = alloc_pages(8)
@@ -9309,10 +9436,10 @@ fn codegen_primary_ident_inline(toks: &Token, pos: &i64, stab: &StructTable, src
             ldg.itype = TYPE_I64
             ret emit(jfn, bb, &ldg)
         }
-        let cval = lookup_const(src, t_start, t_len)
-        if cval != -1 {
+        let cref = emit_const_ref(src, jfn, bb, t_start, t_len)
+        if cref != -1 {
             pos[0] = pos[0] + 1
-            ret emit_const(jfn, bb, TYPE_I64, cval)
+            ret cref
         }
         // null literal
         if t_len == 4 and streq(src, t_start, 4, "null") == 1 {
@@ -9829,9 +9956,9 @@ fn codegen_arg_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn
             aldg.operand0 = aaddr
             ret emit(jfn, bb, &aldg)
         }
-        let acval = lookup_const(src, a_start, a_len)
-        if acval != -1 {
-            ret emit_const(jfn, bb, TYPE_I64, acval)
+        let acref = emit_const_ref(src, jfn, bb, a_start, a_len)
+        if acref != -1 {
+            ret acref
         }
         // null literal
         if a_len == 4 and streq(src, a_start, 4, "null") == 1 {
@@ -12707,12 +12834,12 @@ fn live_codegen_primary_ident_inline(t: &Token, bb: i64) -> i64 {
     let slot_missing = 0
     if slot == -1 { slot_missing = 1 }
     if slot_missing == 1 {
-        let cval = lookup_const(g_src_buf_ptr, t.str_start, t.str_len)
+        let cref = emit_const_ref(g_src_buf_ptr, g_jfn, bb, t.str_start, t.str_len)
         let have_const = 0
-        if cval != -1 { have_const = 1 }
+        if cref != -1 { have_const = 1 }
         if have_const == 1 {
             g_main_pos = g_main_pos + 1
-            ret emit_const(g_jfn, bb, TYPE_I64, cval)
+            ret cref
         }
         let is_null_lit = 0
         if t.str_len == 4 { if streq(g_src_buf_ptr, t.str_start, 4, "null") == 1 { is_null_lit = 1 } }
