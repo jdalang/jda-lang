@@ -81,13 +81,13 @@ jobs:
           ulimit -s unlimited
           bash tests/examples-test.sh --compile-only
 
-      # NON-GATING here for the same reason the conformance step above is:
-      # stdlib_demo allocates via alloc_pages, which produces no output on this
-      # native runner. Under linux/amd64 emulation the full suite passes, so the
-      # output comparison is real coverage -- just not coverage this platform can
-      # provide. Gate it here once the native allocation bug is fixed.
+      # Gating. This was briefly non-gating on the theory that stdlib_demo's
+      # alloc_pages calls would hit the native failure described above, but the
+      # evidence says otherwise: run 33257838481 passed both example steps on
+      # this runner, and the allocation probe below exits 0. Whatever causes the
+      # 110 native conformance failures, it is not simply "allocating programs
+      # produce no output" -- see known-breakage 3.1.
       - name: Examples (run and compare output)
-        continue-on-error: true
         run: |
           ulimit -s unlimited
           bash tests/examples-test.sh
