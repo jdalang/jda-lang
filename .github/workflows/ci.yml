@@ -74,6 +74,24 @@ jobs:
           ulimit -s unlimited
           bash tests/diagnostics-test.sh
 
+      # Every shipped example must compile. Four of eight had silently stopped
+      # compiling before this existed, which is the regression worth gating.
+      - name: Examples (compile)
+        run: |
+          ulimit -s unlimited
+          bash tests/examples-test.sh --compile-only
+
+      # NON-GATING here for the same reason the conformance step above is:
+      # stdlib_demo allocates via alloc_pages, which produces no output on this
+      # native runner. Under linux/amd64 emulation the full suite passes, so the
+      # output comparison is real coverage -- just not coverage this platform can
+      # provide. Gate it here once the native allocation bug is fixed.
+      - name: Examples (run and compare output)
+        continue-on-error: true
+        run: |
+          ulimit -s unlimited
+          bash tests/examples-test.sh
+
       - name: Stdlib index is current
         run: python3 tools/jda-index.py --check
 

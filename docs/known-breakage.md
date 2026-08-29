@@ -188,40 +188,56 @@ Covered by `tests/conformance/stage1/pass/interp_constants.jda`.
 
 Anyone who clones the repo hits these before anything else.
 
-### 2.1 Half the examples do not compile
+### 2.1 Half the examples did not compile ✅
 
-4 of 8 fail. Two of them are the ML showcase the README's headline claims rest on.
+**Status: FIXED**, and now enforced.
 
-| File | Fails with | Cause |
-|---|---|---|
-| `examples/mlp.jda:28` | `JDA-F008` | tuple destructuring (1.2) — **and at least six more**, see below |
-| `examples/transformer.jda:378` | `JDA-F008` | was `const` (1.4, fixed); now tuple destructuring, then range loops and associated fns |
-| `examples/web_server.jda:47` | `JDA-C005` | was string `const` (1.4, fixed); now an unknown method |
-| `examples/stdlib_demo.jda` | `undefined function: fmt_i64` | see 2.2 |
+Four of eight had stopped compiling, including the two the README's ML claims
+rest on. `tests/examples-test.sh` compiles **and runs** every file in `examples/`,
+diffing against a recorded `.expected`. An example with no `.expected` fails
+too, so one cannot be added without coverage.
 
-`mlp.jda` deserves a note. Fixing 1.2 improved its diagnostic but did not bring
-it closer to compiling: it also uses generic turbofish with associated functions
-(`Linear<2, 16>::new()`), named arguments (`Adam::new(lr: 0.01)`), range loops
-(`loop epoch in 0..1000`), `&mut` references, and calls `mse_loss_grad`, which
-does not exist anywhere in the tree. It is aspirational pseudo-code, not a
-program a fix will rescue. Rewrite it against the language that exists, or
-delete it — do not treat it as a bug list.
+CI runs it as two steps. **`--compile-only` gates everywhere** — compilation is
+what actually regressed. The run-and-compare step is non-gating on the native
+x86-64 runner for the same reason the conformance step there is: `stdlib_demo`
+allocates via `alloc_pages`, which produces no output on that platform (see
+3.1). Under emulation the full suite passes, so the output comparison is real
+coverage, just not coverage that runner can provide. Gate it there once 3.1 is
+fixed.
 
-Working: `hello.jda`, `multi_fn.jda`, `test_hello.jda`, `test_if.jda`.
+Per-example build flags live beside the file: `<name>.include` for a required
+`--include`, and `<name>.sed` to normalise values that legitimately vary per run
+(timestamps). Both are narrow by design.
 
-Worth noting what that leaves. `test_hello.jda` and `test_if.jda` are trivial
-smoke files, so the repo ships exactly **two** examples that both work and
-demonstrate anything — `hello.jda` and `multi_fn.jda`. Every example that shows
-Jda doing something a person would actually want to do is in the broken table
-above.
+Three of the four were never fixable. `mlp.jda`, `transformer.jda` and
+`web_server.jda` are design sketches in a Rust-like dialect this language does
+not implement — associated functions, turbofish generics, range loops, `&mut`,
+`.unwrap_or_else(|e| ...)`. They are moved to `examples/aspirational/` with a
+README stating plainly that they do not compile, rather than deleted, so nothing
+is lost and no visitor reads them as working code.
 
-### 2.2 `fmt_i64` is defined in stdlib but not reachable
+The fourth, `stdlib_demo.jda`, was never broken at all — see 2.2.
 
-`examples/stdlib_demo.jda` fails on `undefined function: fmt_i64`, yet the
-function exists in **both** `stdlib/fmt.jda:17` and `stdlib/prelude.jda:22`.
-Something in the import/link path does not pick it up. Worth understanding
-before trusting the "136 stdlib packages" claim — that number is only meaningful
-if the packages are reachable from a user program.
+### 2.2 `fmt_i64` is unreachable — **this was wrong**
+
+**Status: NOT A BUG. Retracted.**
+
+`stdlib_demo.jda` compiles and runs correctly:
+
+```bash
+jda build --include stdlib/prelude.jda examples/stdlib_demo.jda -o /tmp/sd && /tmp/sd
+```
+
+Its second line has always said exactly that. This entry existed because the
+survey that produced this file compiled every example bare, without the
+`--include` the file documents, and recorded the resulting `undefined function:
+fmt_i64` as a defect.
+
+Left in place rather than deleted, because it is the third claim in this file to
+fail — after 1.1 and 1.2 each "blocking" an example they did not — and all three
+failed the same way: by reasoning from one command's output instead of checking
+what the program actually needed. The examples suite now runs it with its
+documented flags on every push.
 
 ### 2.3 `const` accepts only bare integer literals ✅
 
@@ -315,8 +331,9 @@ which is why this was never caught.
 4. ~~**1.5 negative printing**~~ — **done**. Fixing it exposed five conformance
    expectations that had encoded the wrong output, which is the more useful
    finding: a green suite was protecting the bug.
-5. **2.1** — get all shipped examples compiling and running in CI, so this class
-   of breakage cannot return.
+5. ~~**2.1**~~ — **done**. `tests/examples-test.sh` gates every example in CI.
+   Three unfixable sketches moved to `examples/aspirational/`; the fourth was
+   never broken (2.2, retracted).
 6. **2.4 / 2.5** — fix or remove the non-compiling files.
 7. **3.2** — CI assertion on the global count.
 8. **3.1** — native self-host.
