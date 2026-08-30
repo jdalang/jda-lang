@@ -500,6 +500,11 @@ let g_pre_build_srclen = 0
 // Safe across nesting: the value is written only after an argument expression
 // is fully compiled and read immediately after the argument loop, so an inner
 // call has already consumed its own 7th argument before the outer one writes.
+let g_cb_a0 = -1
+let g_cb_a1 = -1
+let g_cb_a2 = -1
+let g_cb_a3 = -1
+
 let g_call_arg6 = -1
 
 let g_iter_exit_bb = -1
@@ -4625,6 +4630,187 @@ fn tok_line_at(toks: &Token, idx: i64) -> i64 {
     ret toks[idx].line
 }
 
+// The single-and-two-character operators, lifted out of lex_global_fast. It
+// sat at 250 of the 256 blocks a function may have (JDA-C007), and everything
+// this needs is already in globals, so the split costs nothing.
+fn lex_global_operators() {
+    if g_lex_handled == 0 and g_lex_cur_char == 45 {
+        g_ltw_val = TOK_MINUS
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let minus_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if minus_nxt == 62 {
+                g_ltw_val = TOK_ARROW
+                g_lex_adv = 2
+            }
+            if minus_nxt == 61 {
+                g_ltw_val = TOK_MINUS_EQ
+                g_lex_adv = 2
+            }
+        }
+        if g_lex_count >= 262143 {
+            panic("Token buffer overflow")
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+    if g_lex_handled == 0 and g_lex_cur_char == 61 {
+        g_ltw_val = TOK_EQ
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let eq_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if eq_nxt == 61 {
+                g_ltw_val = TOK_EQEQ
+                g_lex_adv = 2
+            }
+        }
+        if g_lex_count >= 262143 {
+            panic("Token buffer overflow")
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+    if g_lex_handled == 0 and g_lex_cur_char == 33 {
+        g_ltw_val = char_to_tok(33)
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let bang_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if bang_nxt == 61 {
+                g_ltw_val = TOK_NEQ
+                g_lex_adv = 2
+            }
+        }
+        if g_lex_count >= 262143 {
+            panic("Token buffer overflow")
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+    if g_lex_handled == 0 and g_lex_cur_char == 62 {
+        g_ltw_val = TOK_GT
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let gt_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if gt_nxt == 62 {
+                g_ltw_val = TOK_SHR
+                g_lex_adv = 2
+            }
+            if gt_nxt == 61 {
+                g_ltw_val = TOK_GTE
+                g_lex_adv = 2
+            }
+        }
+        if g_lex_count >= 262143 {
+            panic("Token buffer overflow")
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+    if g_lex_handled == 0 and g_lex_cur_char == 60 {
+        g_ltw_val = TOK_LT
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let lt_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if lt_nxt == 60 {
+                g_ltw_val = TOK_SHL
+                g_lex_adv = 2
+            }
+            if lt_nxt == 61 {
+                g_ltw_val = TOK_LTE
+                g_lex_adv = 2
+            }
+        }
+        if g_lex_count >= 262143 {
+            panic("Token buffer overflow")
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+    if g_lex_handled == 0 and g_lex_cur_char == 37 {
+        // Handle % and %=
+        g_ltw_val = TOK_PERCENT
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let pct_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if pct_nxt == 61 {
+                g_ltw_val = TOK_PERCENT_EQ
+                g_lex_adv = 2
+            }
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+    // Handle + and +=  (ASCII 43)
+    if g_lex_handled == 0 and g_lex_cur_char == 43 {
+        g_ltw_val = TOK_PLUS
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let plus_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if plus_nxt == 61 {
+                g_ltw_val = TOK_PLUS_EQ
+                g_lex_adv = 2
+            }
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+    // Handle * and *=  (ASCII 42)
+    if g_lex_handled == 0 and g_lex_cur_char == 42 {
+        g_ltw_val = TOK_STAR
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let star_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if star_nxt == 61 {
+                g_ltw_val = TOK_STAR_EQ
+                g_lex_adv = 2
+            }
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+    // Handle / and /=  (ASCII 47)
+    if g_lex_handled == 0 and g_lex_cur_char == 47 {
+        g_ltw_val = TOK_SLASH
+        g_lex_adv = 1
+        if g_lex_pos_i + 1 < g_lex_src_len {
+            let slash_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
+            if slash_nxt == 61 {
+                g_ltw_val = TOK_SLASH_EQ
+                g_lex_adv = 2
+            }
+        }
+        tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
+        tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
+        g_lex_count = g_lex_count + 1
+        g_lex_pos_i = g_lex_pos_i + g_lex_adv
+        g_lex_handled = 1
+    }
+}
+
 fn lex_global_fast() -> i32 {
     g_lex_src_ptr = g_src_buf_ptr
     g_lex_src_len = g_runtime_src_len
@@ -4835,181 +5021,7 @@ fn lex_global_fast() -> i32 {
                 }
             }
         }
-        if g_lex_handled == 0 and g_lex_cur_char == 45 {
-            g_ltw_val = TOK_MINUS
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let minus_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if minus_nxt == 62 {
-                    g_ltw_val = TOK_ARROW
-                    g_lex_adv = 2
-                }
-                if minus_nxt == 61 {
-                    g_ltw_val = TOK_MINUS_EQ
-                    g_lex_adv = 2
-                }
-            }
-            if g_lex_count >= 262143 {
-                panic("Token buffer overflow")
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
-        if g_lex_handled == 0 and g_lex_cur_char == 61 {
-            g_ltw_val = TOK_EQ
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let eq_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if eq_nxt == 61 {
-                    g_ltw_val = TOK_EQEQ
-                    g_lex_adv = 2
-                }
-            }
-            if g_lex_count >= 262143 {
-                panic("Token buffer overflow")
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
-        if g_lex_handled == 0 and g_lex_cur_char == 33 {
-            g_ltw_val = char_to_tok(33)
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let bang_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if bang_nxt == 61 {
-                    g_ltw_val = TOK_NEQ
-                    g_lex_adv = 2
-                }
-            }
-            if g_lex_count >= 262143 {
-                panic("Token buffer overflow")
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
-        if g_lex_handled == 0 and g_lex_cur_char == 62 {
-            g_ltw_val = TOK_GT
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let gt_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if gt_nxt == 62 {
-                    g_ltw_val = TOK_SHR
-                    g_lex_adv = 2
-                }
-                if gt_nxt == 61 {
-                    g_ltw_val = TOK_GTE
-                    g_lex_adv = 2
-                }
-            }
-            if g_lex_count >= 262143 {
-                panic("Token buffer overflow")
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
-        if g_lex_handled == 0 and g_lex_cur_char == 60 {
-            g_ltw_val = TOK_LT
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let lt_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if lt_nxt == 60 {
-                    g_ltw_val = TOK_SHL
-                    g_lex_adv = 2
-                }
-                if lt_nxt == 61 {
-                    g_ltw_val = TOK_LTE
-                    g_lex_adv = 2
-                }
-            }
-            if g_lex_count >= 262143 {
-                panic("Token buffer overflow")
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
-        if g_lex_handled == 0 and g_lex_cur_char == 37 {
-            // Handle % and %=
-            g_ltw_val = TOK_PERCENT
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let pct_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if pct_nxt == 61 {
-                    g_ltw_val = TOK_PERCENT_EQ
-                    g_lex_adv = 2
-                }
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
-        // Handle + and +=  (ASCII 43)
-        if g_lex_handled == 0 and g_lex_cur_char == 43 {
-            g_ltw_val = TOK_PLUS
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let plus_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if plus_nxt == 61 {
-                    g_ltw_val = TOK_PLUS_EQ
-                    g_lex_adv = 2
-                }
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
-        // Handle * and *=  (ASCII 42)
-        if g_lex_handled == 0 and g_lex_cur_char == 42 {
-            g_ltw_val = TOK_STAR
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let star_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if star_nxt == 61 {
-                    g_ltw_val = TOK_STAR_EQ
-                    g_lex_adv = 2
-                }
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
-        // Handle / and /=  (ASCII 47)
-        if g_lex_handled == 0 and g_lex_cur_char == 47 {
-            g_ltw_val = TOK_SLASH
-            g_lex_adv = 1
-            if g_lex_pos_i + 1 < g_lex_src_len {
-                let slash_nxt = load_i8_at(g_lex_src_ptr, g_lex_pos_i + 1)
-                if slash_nxt == 61 {
-                    g_ltw_val = TOK_SLASH_EQ
-                    g_lex_adv = 2
-                }
-            }
-            tok_set_type(g_dbg_toks_init, g_lex_count, g_ltw_val)
-            tok_set_line(g_dbg_toks_init, g_lex_count, g_lex_line)
-            g_lex_count = g_lex_count + 1
-            g_lex_pos_i = g_lex_pos_i + g_lex_adv
-            g_lex_handled = 1
-        }
+        lex_global_operators()
         if g_lex_handled == 0 {
             g_ltw_val = char_to_tok(g_lex_cur_char)
             if g_lex_count >= 262143 {
@@ -7550,9 +7562,24 @@ fn new_block(jfn: &JirFunction) -> i64 {
     ret create_block_live(jfn)
 }
 
+// A function is capped at 256 basic blocks because JirFunction holds them
+// inline. Past that, this used to return block 255 -- a block already in use --
+// and say nothing. An `if` whose then-block and end-block both came back as 255
+// produced a branch with two identical targets and a back-edge into the loop
+// body, so the compiled program spun forever with no diagnostic anywhere. That
+// was known-breakage 1.12, and it is what made the first attempt at 1.8 look
+// like the fix itself was wrong.
+//
+// Overflow is now a hard error. It has to be: aliasing a block silently is
+// always a miscompile, and there is no correct code to fall back on.
+fn block_limit_exceeded() {
+    report_error_code("JDA-C007", "function too complex: more than 256 basic blocks")
+}
+
 fn create_block_live(jfn: &JirFunction) -> i64 {
     let id = jfn.block_cnt
     let ok = id < 256
+    if ok == 0 { block_limit_exceeded() }
     let out_id = ok * id + (ok == 0) * 255
     bb_init(&jfn.blocks[out_id], out_id)
     jfn.block_cnt = id + ok
@@ -7564,6 +7591,7 @@ fn create_block(jfn: &JirFunction) -> i64 {
     let nonneg = id >= 0
     let clamped_lo = nonneg * id
     let ok = clamped_lo < 256
+    if ok == 0 { block_limit_exceeded() }
     let out_id = ok * clamped_lo + (ok == 0) * 255
     bb_init(&jfn.blocks[out_id], out_id)
     jfn.block_cnt = id + (nonneg and ok)
@@ -10343,6 +10371,141 @@ fn codegen_iter_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i
     ret g_iter_result
 }
 
+// Concurrency, atomics and epoll builtins, lifted out of codegen_call_inline.
+// That function sat exactly on the 256-block cap (JDA-C007), so any edit to it
+// -- including the one that fixed 1.8 -- was one `if` away from aliasing a
+// block. Arguments arrive in globals because five of the six parameter slots
+// are already spent, the same trick the neighbouring cg_*_bi helpers use.
+fn cg_conc_bi(src: &i8, name_start: i64, name_len: i64, jfn: &JirFunction, bb: i64) -> i64 {
+    if name_len == 11 and streq(src, name_start, 11, "atomic_load") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_LOAD
+        ins.operand0 = g_cb_a0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 12 and streq(src, name_start, 12, "atomic_store") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_STORE
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 14 and streq(src, name_start, 14, "atomic_cmpxchg") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_CAS
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ins.operand2 = g_cb_a2
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 16 and streq(src, name_start, 16, "atomic_fetch_add") == 1 {
+        let ins = Instr{}
+        ins.op = OP_ATOMIC_ADD
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 5 and streq(src, name_start, 5, "rdtsc") == 1 {
+        let ins = Instr{}
+        ins.op = OP_RDTSC
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "ctx_switch") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CTX_SWITCH
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ret emit(jfn, bb, &ins)
+    }
+
+    // Channel builtins
+    if name_len == 8 and streq(src, name_start, 8, "chan_new") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_NEW
+        ins.operand0 = g_cb_a0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 9 and streq(src, name_start, 9, "chan_send") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_SEND
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 9 and streq(src, name_start, 9, "chan_recv") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_RECV
+        ins.operand0 = g_cb_a0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "chan_close") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CHAN_CLOSE
+        ins.operand0 = g_cb_a0
+        ret emit(jfn, bb, &ins)
+    }
+
+    // Thread pool builtins (M6)
+    if name_len == 10 and streq(src, name_start, 10, "get_nprocs") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GET_NPROCS
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 12 and streq(src, name_start, 12, "clone_thread") == 1 {
+        let ins = Instr{}
+        ins.op = OP_CLONE_THREAD
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "futex_wait") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FUTEX_WAIT
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "futex_wake") == 1 {
+        let ins = Instr{}
+        ins.op = OP_FUTEX_WAKE
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 7 and streq(src, name_start, 7, "get_tid") == 1 {
+        let ins = Instr{}
+        ins.op = OP_GET_TID
+        ret emit(jfn, bb, &ins)
+    }
+
+    // Epoll builtins (M7)
+    if name_len == 13 and streq(src, name_start, 13, "epoll_create1") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_CREATE
+        ins.operand0 = g_cb_a0
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 9 and streq(src, name_start, 9, "epoll_ctl") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_CTL
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ins.operand2 = g_cb_a2
+        ins.bb_target0 = g_cb_a3
+        ret emit(jfn, bb, &ins)
+    }
+    if name_len == 10 and streq(src, name_start, 10, "epoll_wait") == 1 {
+        let ins = Instr{}
+        ins.op = OP_EPOLL_WAIT
+        ins.operand0 = g_cb_a0
+        ins.operand1 = g_cb_a1
+        ins.operand2 = g_cb_a2
+        ins.bb_target0 = g_cb_a3
+        ret emit(jfn, bb, &ins)
+    }
+    ret -1
+}
+
 fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
     if pos[0] <= 0 or pos[0] >= g_dbg_tok_cnt {
         ret emit_const(jfn, bb, TYPE_I64, 0)
@@ -10473,132 +10636,12 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     }
 
     // Atomic builtins
-    if name_len == 11 and streq(src, name_start, 11, "atomic_load") == 1 {
-        let ins = Instr{}
-        ins.op = OP_ATOMIC_LOAD
-        ins.operand0 = arg0
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 12 and streq(src, name_start, 12, "atomic_store") == 1 {
-        let ins = Instr{}
-        ins.op = OP_ATOMIC_STORE
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 14 and streq(src, name_start, 14, "atomic_cmpxchg") == 1 {
-        let ins = Instr{}
-        ins.op = OP_ATOMIC_CAS
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ins.operand2 = arg2
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 16 and streq(src, name_start, 16, "atomic_fetch_add") == 1 {
-        let ins = Instr{}
-        ins.op = OP_ATOMIC_ADD
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 5 and streq(src, name_start, 5, "rdtsc") == 1 {
-        let ins = Instr{}
-        ins.op = OP_RDTSC
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 10 and streq(src, name_start, 10, "ctx_switch") == 1 {
-        let ins = Instr{}
-        ins.op = OP_CTX_SWITCH
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ret emit(jfn, bb, &ins)
-    }
-
-    // Channel builtins
-    if name_len == 8 and streq(src, name_start, 8, "chan_new") == 1 {
-        let ins = Instr{}
-        ins.op = OP_CHAN_NEW
-        ins.operand0 = arg0
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 9 and streq(src, name_start, 9, "chan_send") == 1 {
-        let ins = Instr{}
-        ins.op = OP_CHAN_SEND
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 9 and streq(src, name_start, 9, "chan_recv") == 1 {
-        let ins = Instr{}
-        ins.op = OP_CHAN_RECV
-        ins.operand0 = arg0
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 10 and streq(src, name_start, 10, "chan_close") == 1 {
-        let ins = Instr{}
-        ins.op = OP_CHAN_CLOSE
-        ins.operand0 = arg0
-        ret emit(jfn, bb, &ins)
-    }
-
-    // Thread pool builtins (M6)
-    if name_len == 10 and streq(src, name_start, 10, "get_nprocs") == 1 {
-        let ins = Instr{}
-        ins.op = OP_GET_NPROCS
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 12 and streq(src, name_start, 12, "clone_thread") == 1 {
-        let ins = Instr{}
-        ins.op = OP_CLONE_THREAD
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 10 and streq(src, name_start, 10, "futex_wait") == 1 {
-        let ins = Instr{}
-        ins.op = OP_FUTEX_WAIT
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 10 and streq(src, name_start, 10, "futex_wake") == 1 {
-        let ins = Instr{}
-        ins.op = OP_FUTEX_WAKE
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 7 and streq(src, name_start, 7, "get_tid") == 1 {
-        let ins = Instr{}
-        ins.op = OP_GET_TID
-        ret emit(jfn, bb, &ins)
-    }
-
-    // Epoll builtins (M7)
-    if name_len == 13 and streq(src, name_start, 13, "epoll_create1") == 1 {
-        let ins = Instr{}
-        ins.op = OP_EPOLL_CREATE
-        ins.operand0 = arg0
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 9 and streq(src, name_start, 9, "epoll_ctl") == 1 {
-        let ins = Instr{}
-        ins.op = OP_EPOLL_CTL
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ins.operand2 = arg2
-        ins.bb_target0 = arg3
-        ret emit(jfn, bb, &ins)
-    }
-    if name_len == 10 and streq(src, name_start, 10, "epoll_wait") == 1 {
-        let ins = Instr{}
-        ins.op = OP_EPOLL_WAIT
-        ins.operand0 = arg0
-        ins.operand1 = arg1
-        ins.operand2 = arg2
-        ins.bb_target0 = arg3
-        ret emit(jfn, bb, &ins)
-    }
+    g_cb_a0 = arg0
+    g_cb_a1 = arg1
+    g_cb_a2 = arg2
+    g_cb_a3 = arg3
+    let concr = cg_conc_bi(src, name_start, name_len, jfn, bb)
+    if concr != -1 { ret concr }
     // Deadlock detection (M8)
     if name_len == 14 and streq(src, name_start, 14, "deadlock_check") == 1 {
         let ins = Instr{}
@@ -14817,6 +14860,110 @@ fn dce_mark_call_arg7(jfn: &JirFunction, bi: i64, ii: i64, used: &i32) {
     if a6 >= 0 { used[a6] = 1 }
 }
 
+// The whole marking chain, lifted out of dce(). It lives in its own function
+// because a function is capped at 256 basic blocks (JDA-C007) and dce() sat
+// exactly on that cap: one more `if` anywhere in it used to alias a block and
+// hang the compiler, which is what made the first attempt at 1.8 look wrong.
+fn dce_mark_instr(jfn: &JirFunction, bi: i64, ii: i64, used: &i32) {
+    let o0 = jfn.blocks[bi].instrs[ii].operand0
+    let o1 = jfn.blocks[bi].instrs[ii].operand1
+    let o2 = jfn.blocks[bi].instrs[ii].operand2
+    let o3 = jfn.blocks[bi].instrs[ii].operand3
+    let bt0 = jfn.blocks[bi].instrs[ii].bb_target0
+    let bt1 = jfn.blocks[bi].instrs[ii].bb_target1
+    let imm0 = jfn.blocks[bi].instrs[ii].imm
+    let op = jfn.blocks[bi].instrs[ii].op
+    let id = jfn.blocks[bi].instrs[ii].id
+        if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or op == OP_MOD or
+           op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
+           op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or op == OP_XOR or
+           op == OP_SHR or op == OP_SHL {
+            if o0 >= 0 { used[o0] = 1 }
+            if o1 >= 0 { used[o1] = 1 }
+        }
+        if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_PRINT_INT {
+            if o0 >= 0 { used[o0] = 1 }
+        }
+        if op == OP_STORE {
+            if o0 >= 0 { used[o0] = 1 }
+        }
+        if op == OP_LOAD_MEM or op == OP_COPY or op == OP_BITCAST {
+            if o0 >= 0 { used[o0] = 1 }
+        }
+        if op == OP_STORE_MEM {
+            if o0 >= 0 { used[o0] = 1 }
+            if o1 >= 0 { used[o1] = 1 }
+        }
+        if op == OP_SYSCALL or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT {
+            if o0 >= 0 { used[o0] = 1 }
+            if o1 >= 0 { used[o1] = 1 }
+            if o2 >= 0 { used[o2] = 1 }
+            if bt0 >= 0 { used[bt0] = 1 }
+        }
+        if op == OP_SYSCALL { dce_mark_syscall_extra(jfn, bi, ii, used) }
+        if op == OP_ALLOC {
+            if o0 >= 0 { used[o0] = 1 }
+        }
+        if op == OP_DROP {
+            if o0 >= 0 { used[o0] = 1 }
+            if o1 >= 0 { used[o1] = 1 }
+        }
+        if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID or op == OP_EPOLL_CREATE {
+            if o0 >= 0 { used[o0] = 1 }
+        }
+        dce_mark_float(op, o0, o1, used)
+        if op == OP_ATOMIC_STORE {
+            if o0 >= 0 { used[o0] = 1 }
+            if o1 >= 0 { used[o1] = 1 }
+        }
+        if op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK or op == OP_TSET {
+            if o0 >= 0 { used[o0] = 1 }
+            if o1 >= 0 { used[o1] = 1 }
+            if o2 >= 0 { used[o2] = 1 }
+        }
+        if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE {
+            if o0 >= 0 { used[o0] = 1 }
+            if o1 >= 0 { used[o1] = 1 }
+        }
+        if op == OP_CALL or op == OP_CALL_IND {
+            if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
+            if o3 >= 2 { if o1 >= 0 { used[o1] = 1 } }
+            if o3 >= 3 { if o2 >= 0 { used[o2] = 1 } }
+            if o3 >= 4 { if bt0 >= 0 { used[bt0] = 1 } }
+            if o3 >= 5 { if bt1 >= 0 { used[bt1] = 1 } }
+            if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }
+            dce_mark_call_arg7(jfn, bi, ii, used)
+        }
+        if op == OP_TAIL_CALL {
+            if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
+            if o3 >= 2 { if o1 >= 0 { used[o1] = 1 } }
+            if o3 >= 3 { if o2 >= 0 { used[o2] = 1 } }
+            if o3 >= 4 { if bt0 >= 0 { used[bt0] = 1 } }
+            if o3 >= 5 { if bt1 >= 0 { used[bt1] = 1 } }
+            if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }
+            dce_mark_call_arg7(jfn, bi, ii, used)
+        }
+        if op == OP_RET     { used[id] = 1 }
+        if op == OP_BR      { used[id] = 1 }
+        if op == OP_JMP     { used[id] = 1 }
+        if op == OP_SYSCALL { used[id] = 1 }
+        if op == OP_ALLOC   { used[id] = 1 }
+        if op == OP_DROP    { used[id] = 1 }
+        if op == OP_CALL or op == OP_CALL_IND { used[id] = 1 }
+        if op == OP_TAIL_CALL { used[id] = 1 }
+        if op == OP_STORE   { used[id] = 1 }
+        if op == OP_PRINT_INT { used[id] = 1 }
+        if op == OP_ARGV_BASE { used[id] = 1 }
+        if op == OP_ARGC_GET  { used[id] = 1 }
+        if op == OP_STORE_MEM { used[id] = 1 }
+        if op == OP_ATOMIC_LOAD  { used[id] = 1 }
+        if op == OP_ATOMIC_STORE { used[id] = 1 }
+        if op == OP_ATOMIC_CAS   { used[id] = 1 }
+        if op == OP_ATOMIC_ADD   { used[id] = 1 }
+        if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE or op == OP_GET_TID or op == OP_EPOLL_CREATE or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT or op == OP_DEADLOCK_CHK { used[id] = 1 }
+        if op == OP_PRINT_FLOAT or op == OP_TNEW1 or op == OP_TNEW2 or op == OP_TFREE or op == OP_TSET or op == OP_TFILL { used[id] = 1 }
+}
+
 fn dce(jfn: &JirFunction) {
     let used = i32[8192]
     let bi = 0
@@ -14824,104 +14971,7 @@ fn dce(jfn: &JirFunction) {
     loop bi < jfn.block_cnt {
         let ii = 0
         loop ii < jfn.blocks[bi].instr_cnt {
-            // Access fields directly - do NOT copy Instr by value
-            let o0 = jfn.blocks[bi].instrs[ii].operand0
-            let o1 = jfn.blocks[bi].instrs[ii].operand1
-            let o2 = jfn.blocks[bi].instrs[ii].operand2
-            let o3 = jfn.blocks[bi].instrs[ii].operand3
-            let bt0 = jfn.blocks[bi].instrs[ii].bb_target0
-            let bt1 = jfn.blocks[bi].instrs[ii].bb_target1
-            let imm0 = jfn.blocks[bi].instrs[ii].imm
-            let op = jfn.blocks[bi].instrs[ii].op
-            let id = jfn.blocks[bi].instrs[ii].id
-            if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or op == OP_MOD or
-               op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
-               op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or op == OP_XOR or
-               op == OP_SHR or op == OP_SHL {
-                if o0 >= 0 { used[o0] = 1 }
-                if o1 >= 0 { used[o1] = 1 }
-            }
-            if op == OP_RET or op == OP_BR or op == OP_STRLEN or op == OP_PRINT_INT {
-                if o0 >= 0 { used[o0] = 1 }
-            }
-            if op == OP_STORE {
-                if o0 >= 0 { used[o0] = 1 }
-            }
-            if op == OP_LOAD_MEM or op == OP_COPY or op == OP_BITCAST {
-                if o0 >= 0 { used[o0] = 1 }
-            }
-            if op == OP_STORE_MEM {
-                if o0 >= 0 { used[o0] = 1 }
-                if o1 >= 0 { used[o1] = 1 }
-            }
-            if op == OP_SYSCALL or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT {
-                if o0 >= 0 { used[o0] = 1 }
-                if o1 >= 0 { used[o1] = 1 }
-                if o2 >= 0 { used[o2] = 1 }
-                if bt0 >= 0 { used[bt0] = 1 }
-            }
-            if op == OP_SYSCALL { dce_mark_syscall_extra(jfn, bi, ii, used) }
-            if op == OP_ALLOC {
-                if o0 >= 0 { used[o0] = 1 }
-            }
-            if op == OP_DROP {
-                if o0 >= 0 { used[o0] = 1 }
-                if o1 >= 0 { used[o1] = 1 }
-            }
-            if op == OP_ATOMIC_LOAD or op == OP_CHAN_NEW or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_GET_TID or op == OP_EPOLL_CREATE {
-                if o0 >= 0 { used[o0] = 1 }
-            }
-            dce_mark_float(op, o0, o1, used)
-            if op == OP_ATOMIC_STORE {
-                if o0 >= 0 { used[o0] = 1 }
-                if o1 >= 0 { used[o1] = 1 }
-            }
-            if op == OP_ATOMIC_CAS or op == OP_DEADLOCK_CHK or op == OP_TSET {
-                if o0 >= 0 { used[o0] = 1 }
-                if o1 >= 0 { used[o1] = 1 }
-                if o2 >= 0 { used[o2] = 1 }
-            }
-            if op == OP_ATOMIC_ADD or op == OP_CTX_SWITCH or op == OP_CHAN_SEND or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE {
-                if o0 >= 0 { used[o0] = 1 }
-                if o1 >= 0 { used[o1] = 1 }
-            }
-            if op == OP_CALL or op == OP_CALL_IND {
-                if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
-                if o3 >= 2 { if o1 >= 0 { used[o1] = 1 } }
-                if o3 >= 3 { if o2 >= 0 { used[o2] = 1 } }
-                if o3 >= 4 { if bt0 >= 0 { used[bt0] = 1 } }
-                if o3 >= 5 { if bt1 >= 0 { used[bt1] = 1 } }
-                if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }
-                dce_mark_call_arg7(jfn, bi, ii, used)
-            }
-            if op == OP_TAIL_CALL {
-                if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
-                if o3 >= 2 { if o1 >= 0 { used[o1] = 1 } }
-                if o3 >= 3 { if o2 >= 0 { used[o2] = 1 } }
-                if o3 >= 4 { if bt0 >= 0 { used[bt0] = 1 } }
-                if o3 >= 5 { if bt1 >= 0 { used[bt1] = 1 } }
-                if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }
-                dce_mark_call_arg7(jfn, bi, ii, used)
-            }
-            if op == OP_RET     { used[id] = 1 }
-            if op == OP_BR      { used[id] = 1 }
-            if op == OP_JMP     { used[id] = 1 }
-            if op == OP_SYSCALL { used[id] = 1 }
-            if op == OP_ALLOC   { used[id] = 1 }
-            if op == OP_DROP    { used[id] = 1 }
-            if op == OP_CALL or op == OP_CALL_IND { used[id] = 1 }
-            if op == OP_TAIL_CALL { used[id] = 1 }
-            if op == OP_STORE   { used[id] = 1 }
-            if op == OP_PRINT_INT { used[id] = 1 }
-            if op == OP_ARGV_BASE { used[id] = 1 }
-            if op == OP_ARGC_GET  { used[id] = 1 }
-            if op == OP_STORE_MEM { used[id] = 1 }
-            if op == OP_ATOMIC_LOAD  { used[id] = 1 }
-            if op == OP_ATOMIC_STORE { used[id] = 1 }
-            if op == OP_ATOMIC_CAS   { used[id] = 1 }
-            if op == OP_ATOMIC_ADD   { used[id] = 1 }
-            if op == OP_RDTSC or op == OP_CTX_SWITCH or op == OP_CHAN_NEW or op == OP_CHAN_SEND or op == OP_CHAN_RECV or op == OP_CHAN_CLOSE or op == OP_GET_NPROCS or op == OP_CLONE_THREAD or op == OP_FUTEX_WAIT or op == OP_FUTEX_WAKE or op == OP_GET_TID or op == OP_EPOLL_CREATE or op == OP_EPOLL_CTL or op == OP_EPOLL_WAIT or op == OP_DEADLOCK_CHK { used[id] = 1 }
-            if op == OP_PRINT_FLOAT or op == OP_TNEW1 or op == OP_TNEW2 or op == OP_TFREE or op == OP_TSET or op == OP_TFILL { used[id] = 1 }
+            dce_mark_instr(jfn, bi, ii, used)
             ii = ii + 1
         }
         bi = bi + 1

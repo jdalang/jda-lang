@@ -167,14 +167,14 @@ With the argument being passed, the constant feeding it was still collected,
 because the DCE marking stopped at six. Adding the marking is what turned the
 remaining wrong answers into right ones.
 
-**Why the earlier "naive fix hangs" was a red herring.** It hangs, but not for
-the reason implied. `dce()` holds a 32KB `used` array and a dozen operand
-locals, and `codegen_call_inline` is larger still; adding a single local to
-either produces a compiler that hangs on *every* input, `hello.jda` included.
-Moving the same logic into a small helper function — `dce_mark_call_arg7`, next
-to the existing `dce_mark_syscall_extra` — compiles and works. The 7th argument
-here is carried in a global for the same reason. This is a compiler bug in its
-own right and is recorded as 1.12.
+**Why the earlier "naive fix hangs" was a red herring.** It does hang, but for
+a reason that has nothing to do with this bug: the naive fix added an `if`, and
+`dce()` sat at exactly 256 basic blocks, the maximum a function may hold. The
+257th block silently aliased block 255, and the resulting branch looped forever.
+That is 1.12, now fixed and a hard error — so the marking here could have been
+written inline after all. It stays in `dce_mark_call_arg7`, beside the existing
+`dce_mark_syscall_extra`, because that is where it reads best; the 7th argument
+still travels in a global for the parameter budget, not for block pressure.
 
 Tests: `tests/conformance/stage1/pass/call_seven_args.jda` covers the bare call,
 the pressured call, a 7-argument call nested as another's 7th argument, and
@@ -194,28 +194,80 @@ call_closure(f4, 1, 2, 3, 4)    // 106, not 110 -- d is lost
 
 Recorded here rather than fixed, because it is a different lowering path.
 
-### 1.12 One more local in a large function produces a compiler that hangs
+### 1.12 A function past 256 basic blocks silently aliased block 255 ✅
 
-**Status: OPEN — reproduced repeatedly, worked around, not fixed.**
+**Status: FIXED — now a hard error, `JDA-C007`.**
 
-Adding a single local variable to `dce()` or to `codegen_call_inline` yields a
-compiler that builds cleanly and then hangs on every input, including
-`examples/hello.jda`. Removing the local, or moving the same work into a small
-helper function, makes it compile and run correctly. Observed three times while
-fixing 1.8, in both directions — adding a *call* to a helper reduced pressure
-enough that the same function compiled again.
+The symptom recorded here was "one more local in a large function produces a
+compiler that hangs". That was the wrong variable. It is not locals, and it is
+not register pressure: it is **basic blocks**, and the number is 256.
 
-Both functions are unusually large: `dce()` holds a 32KB `i32[8192]` array plus
-a dozen operand locals and a hundred-line marking chain.
+`JirFunction` stores its blocks inline, so a function may hold at most 256.
+`create_block_live` — the path the live codegen actually uses — handled the
+overflow like this:
 
-This is almost certainly the same underlying defect as 1.11 — the register
-allocator mishandling a function past some pressure threshold — but it presents
-as a hang rather than a wrong value, so it is recorded separately until one fix
-is shown to close both.
+```
+    let ok = id < 256
+    let out_id = ok * id + (ok == 0) * 255
+```
 
-**Consequence for anyone working in this compiler:** if an edit to a large
-function produces a compiler that hangs, suspect this before suspecting the
-logic of the edit. Put the new work in a helper function instead.
+Past the cap it returned **block 255, a block already in use**, and said
+nothing. An `if` whose then-block and end-block both came back as 255 produced a
+branch with two identical targets, and the loop's back-edge landed inside its
+own body:
+
+```
+    cmp    $0x0,%rax
+    jne    0x8b601        <-- the body
+    nopl   0x0(%rax,%rax,1)
+    ...                   <-- the body, also reached by falling through
+    jmp    0x8b601        <-- back to the body, forever
+    add    $0x1,%rdx      <-- the loop increment, unreachable
+```
+
+The compiled program spun with no diagnostic anywhere.
+
+**Why it looked like locals.** Both triggers observed while fixing 1.8 added an
+`if`, not a local: the "naive fix" was `if o3 >= 7 { used[itype] = 1 }`. And two
+of the compiler's own functions — `dce` and `codegen_call_inline` — sat at
+**exactly 256 blocks**, right on the cap. One more `if` in either aliased a
+block. Moving the work into a helper function fixed it because a helper gets its
+own block budget, not because it relieved pressure.
+
+That the compiler happened to sit exactly on a silent cliff, in the two
+functions most likely to be edited, is why this cost so much: every edit to
+either looked like it had broken something unrelated.
+
+**The fix.** Overflow is a hard error. Aliasing a block is always a miscompile
+and there is no correct code to fall back on, so there is nothing to recover to:
+
+```
+JDA-C007: function too complex: more than 256 basic blocks
+```
+
+Raising the limit is not a cheap alternative — `BasicBlock` holds `Instr[2048]`,
+so the 256 blocks already cost tens of megabytes per function.
+
+**Headroom.** Three functions were split so the compiler is not one edit from
+failing to build: `dce_mark_instr` out of `dce`, `cg_conc_bi` out of
+`codegen_call_inline`, and `lex_global_operators` out of `lex_global_fast`
+(which had quietly become the tightest at 250). Peak block counts when the
+compiler compiles itself, highest first:
+
+| blocks | function |
+|---:|---|
+| 241 | `dce_mark_instr` |
+| 214 | `try_small_print_program_fast` |
+| 211 | `live_compile_let_stmt` |
+| 205 | `main`, `codegen_call_inline` |
+| 193 | `live_compile_block` |
+
+Nothing is at the cap any more, but `dce_mark_instr` is the next one to split if
+it grows. Test: `tests/rejected/block_limit.jda`.
+
+**Note on 1.11.** This was recorded as "almost certainly the same underlying
+defect as 1.11". It is not — 1.11 is a real register-allocation problem around
+`IDIV`, and it remains open.
 
 ### 1.13 Global initialisers are ignored; a global read before its declaration is 0
 
@@ -732,10 +784,10 @@ which is why this was never caught.
 9. ~~**1.8**~~ — **done**, and the diagnosis recorded for it was wrong: the
    7th argument was discarded during parsing, and the stack slot was released
    after the register pool had been restored. DCE was a third, smaller part.
-10. **1.12** — the widest blast radius of anything open: one extra local in a
-   large function yields a compiler that hangs on every input, so it silently
-   shapes how every other fix in this file has to be written. Likely the same
-   defect as **1.11**; fix them together.
+10. ~~**1.12**~~ — **done**, and it was basic blocks, not locals: a function
+   past 256 blocks silently aliased block 255, and the compiler's two most-edited
+   functions sat exactly on that cap. Now `JDA-C007`. Unrelated to **1.11**,
+   which stays open and is now the widest-reaching Tier 1 item.
 11. **1.13** — globals ignore their initialisers, and a global read above its
    declaration resolves to 0 with no diagnostic. Cheap to detect, and it makes
    otherwise-correct fixes look wrong.
