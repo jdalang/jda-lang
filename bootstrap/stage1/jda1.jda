@@ -25707,6 +25707,23 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
                 poke_byte(out, co + 1, i32_b1(rel))
                 poke_byte(out, co + 2, i32_b2(rel))
                 poke_byte(out, co + 3, i32_b3(rel))
+                // A JMP rel32 whose displacement is 0 falls through to the next
+                // instruction, so it can become a 5-byte NOP. This must key off
+                // the fixup table rather than scanning the byte stream: a blind
+                // scan for E9 00 00 00 00 also matches the immediate of
+                // `movabs reg, 0xE9xxxxxx`, and silently rewrote any integer
+                // literal in [0xE9000000, 0xE9FFFFFF] into a NOP pattern.
+                if rel == 0 and co >= 1 {
+                    let ob = out[co - 1]
+                    if ob < 0 { ob = ob + 256 }
+                    if ob == 0xE9 {
+                        poke_byte(out, co - 1, 0x0F)
+                        poke_byte(out, co,     0x1F)
+                        poke_byte(out, co + 1, 0x44)
+                        poke_byte(out, co + 2, 0x00)
+                        poke_byte(out, co + 3, 0x00)
+                    }
+                }
             }
         }
         fi = fi + 1
@@ -25782,42 +25799,6 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     lower_fn_emit_epilogue(out, pos, is_main)
     g_lower_is_main = 0
     lower_fn_patch_fixups(jfn, ctx, out, pos)
-    nop_fallthrough_jmps(out, fn_start, pos[0])
-}
-
-// Post-fixup: replace JMP rel32 with disp=0 (jumps to next instr) with NOPs
-fn nop_fallthrough_jmps(out: &i8, start: i64, end_pos: i64) {
-    let i = start
-    let lim = end_pos - 4
-    loop i < lim {
-        let b = out[i]
-        if b < 0 { b = b + 256 }
-        if b == 0xE9 {
-            // Check if the 4-byte displacement is 0
-            let d0 = out[i + 1]
-            let d1 = out[i + 2]
-            let d2 = out[i + 3]
-            let d3 = out[i + 4]
-            if d0 < 0 { d0 = d0 + 256 }
-            if d1 < 0 { d1 = d1 + 256 }
-            if d2 < 0 { d2 = d2 + 256 }
-            if d3 < 0 { d3 = d3 + 256 }
-            let disp = d0 + d1 * 256 + d2 * 65536 + d3 * 16777216
-            if disp == 0 {
-                // Replace 5-byte JMP with 5-byte NOP (0F 1F 44 00 00)
-                poke_byte(out, i, 0x0F)
-                poke_byte(out, i + 1, 0x1F)
-                poke_byte(out, i + 2, 0x44)
-                poke_byte(out, i + 3, 0x00)
-                poke_byte(out, i + 4, 0x00)
-                i = i + 5
-            } else {
-                i = i + 1
-            }
-        } else {
-            i = i + 1
-        }
-    }
 }
 
 fn p_sys_mmap() -> i64 {

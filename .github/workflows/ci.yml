@@ -190,6 +190,13 @@ jobs:
           ulimit -s unlimited
           bash tests/examples-test.sh
 
+      # pkg.jda holds the only SHA-256 and the only semver comparison in the
+      # tree, and it went a long time without compiling at all.
+      - name: Package tool selftest
+        run: |
+          ulimit -s unlimited
+          bash tests/pkg-selftest.sh
+
       - name: Stdlib index is current
         run: python3 tools/jda-index.py --check
 

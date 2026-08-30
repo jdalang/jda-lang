@@ -187,6 +187,96 @@ several lexer paths that legitimately pass characters it does not map, so the
 error has to go at the emit sites that mean "this really is a token", not in the
 shared classifier. Reverted; not committed.
 
+### 1.10 Integer literals in [0xE9000000, 0xE9FFFFFF] were rewritten into a NOP ✅
+
+**Status: FIXED.**
+
+Any integer literal whose value fell in `3909091328 .. 3925868543` came out
+wrong, always by the same offset `0x441E26000000`:
+
+```
+fn main() {
+    print("{3921009573}\n")     // printed 74900198251429
+}
+```
+
+The value is materialised as `movabs rax, imm64`, so `3921009573` is encoded as
+the bytes `A5 DB B5 E9 00 00 00 00`. A post-fixup pass, `nop_fallthrough_jmps`,
+scanned each emitted function byte by byte for `E9 00 00 00 00` — a `JMP rel32`
+whose displacement is zero, which merely falls through to the next instruction —
+and replaced it with the five-byte NOP `0F 1F 44 00 00`. With no instruction
+boundaries to work from, it matched the tail of that immediate and rewrote it,
+turning the constant into `0x441F0FB5DBA5`.
+
+The range is exactly the values whose most significant byte is `0xE9`, which is
+why it looked arbitrary: `0xE9000000` and `0xE9FFFFFF` are both corrupted,
+`0xE8FFFFFF` and `0xEA000000` are both fine, and `0xE9` sitting in any other
+byte position is harmless.
+
+The fix drops the byte scan. The fixup table already records the offset of every
+jump displacement the lowerer emitted, so the NOP rewrite now happens inside
+`lower_fn_patch_fixups`, keyed off a real jump site and applied only when the
+computed displacement is zero. Regression test:
+`tests/conformance/stage1/pass/literal_jmp_opcode_range.jda`.
+
+This one had teeth. `sha_k(3)` in a SHA-256 implementation returns
+`0xE9B5DBA5`, so the hash was silently wrong, and none of the 431 conformance
+tests happened to use a literal in that window.
+
+### 1.11 Division miscompiles: `x / (1 << n)`, and inline IDIV corrupts a pointer
+
+**Status: OPEN — reproduced, worked around in `tools/pkg.jda`, not fixed.**
+
+Two related failures, both around `IDIV`. `IDIV` reads and writes `RDX:RAX`, and
+the register allocator does not appear to model that fully.
+
+**(a) A shift as the divisor.** The divisor is computed as anything but a plain
+constant and the result is wrong:
+
+```
+fn a(m: i64, n: i64) -> i64 { ret m / (1 << n) }
+fn d(m: i64) -> i64 { ret m / (1 << 6) }
+fn c(m: i64) -> i64 { ret m / 64 }
+
+a(640, 6)   // 0    -- want 10
+d(640)      // 0    -- want 10
+c(640)      // 10   -- correct
+```
+
+`m + (1 << n)` is fine, so the shift itself is not the problem. Hoisting the
+divisor into a local sometimes helps and sometimes produces a different wrong
+answer, which is what makes it look like allocation rather than lowering.
+
+**(b) Several inline divisions in a loop that also stores through a pointer
+parameter.** This segfaults:
+
+```
+fn emit(h: &i64, out: &i8) {
+    let i = 0
+    loop i < 8 {
+        let v = h[i]
+        poke_byte(out, i * 4, (v / 16777216) % 256)
+        poke_byte(out, i * 4 + 1, (v / 65536) % 256)
+        poke_byte(out, i * 4 + 2, (v / 256) % 256)
+        poke_byte(out, i * 4 + 3, v % 256)
+        i = i + 1
+    }
+}
+```
+
+Reducing it to a single `poke_byte` per iteration, or moving each division into
+its own one-line function, makes it work — the pointer survives when the divide
+is not live across the store.
+
+**Workarounds in use.** `tools/pkg.jda` computes powers of two with a `pow2`
+helper instead of `1 << n`, and routes every byte extraction through
+`fn byte_of(v: i64, d: i64) -> i64 { ret (v / d) % 256 }`. Both are noted at
+their use sites.
+
+**Why it matters.** Nothing in the conformance suite divides by a computed
+power of two, so this is invisible today, and it silently produced a wrong
+SHA-256 rather than failing.
+
 ### 1.2 Tuple destructuring bound nothing ✅
 
 **Status: FIXED — rejected, not implemented (`JDA-F008`).**
