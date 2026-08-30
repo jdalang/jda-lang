@@ -19,7 +19,8 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Clear as of 2026-08-30** — seven fixed. 1.7 was found while investigating
+**Not clear.** Seven are fixed; **1.8 is open** — a seventh function argument
+is silently miscompiled, which is what caused 3.1. 1.7 was found while investigating
 3.1, which remains open and is a different bug. Note how the last two were found:
 not by reading source, but by running programs and checking *values*. 1.4 hid
 behind a clean compile, and 1.5 was actively protected by five passing tests
@@ -99,6 +100,38 @@ affected.
 
 Covered by `tests/conformance/stage1/pass/struct_field_compare.jda`, which fails
 on the previous compiler.
+
+### 1.8 A seventh function argument is silently miscompiled
+
+**Status: OPEN.** This is what caused 3.1.
+
+```jda
+fn seven(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 { ret g }
+
+fn stress() -> i64 {
+    let v0 = 10   let v1 = 11   let v2 = 12
+    let v3 = 13   let v4 = 14   let v5 = 15
+    let r1 = seven(v0, v1, v2, v3, v4, v5, 77)   // returns 13, the value of v3
+    let r2 = seven(v5, v4, v3, v2, v1, v0, 88)   // returns 11, the value of v1
+    ret r1 * 1000 + r2 + v0 + v1 + v2 + v3 + v4 + v5   // 13086, not 77163
+}
+```
+
+Six arguments are fine. The seventh is passed on the stack at `[rbp+16]`, and
+under register pressure the callee reads a different slot — it comes back
+holding one of the caller's locals. A simple call with no live values around it
+happens to work, which is why this survived: it fails only where it is hard to
+notice.
+
+The compiler's own source has warned about it all along, above
+`emit_json_diagnostic`: *"at most 6 parameters — a 7th argument is miscompiled
+by this compiler"*. That note was treated as a local style rule rather than a
+bug report, and eight emitters were written with seven parameters anyway.
+
+`JDA-C001` currently permits seven parameters, so the language accepts what it
+cannot compile. Two ways out: fix the stack-passing so seven works, or lower the
+limit to six and reject the seventh, which at least fails loudly. Until then,
+anything taking a seventh argument is suspect.
 
 ### 1.2 Tuple destructuring bound nothing ✅
 
@@ -339,59 +372,40 @@ port that is not built is already broken, it just has not been told yet.
 
 ## Tier 3 — infrastructure that hid the above
 
-### 3.1 Native x86-64 produces wrong code
+### 3.1 Native x86-64 produced wrong code ✅
 
-**Status: OPEN.** Two real bugs were found and fixed along the way; neither was
-the cause. The count is 321/110 with both in.
+**Status: FIXED.** 431/431 on the runner, from 321/110.
 
-110 of 430 conformance tests fail on a stock x86-64 runner while all pass under
-`linux/amd64` emulation. The cause recorded here for months — programs that
-allocate producing no output — is **wrong**; 48 of the 110 never allocate.
+110 of 430 conformance tests failed on a stock x86-64 runner while all passed
+under `linux/amd64` emulation. The cause recorded here for months — programs
+that allocate producing no output — was wrong, and it pointed every earlier
+investigation at the runtime rather than the compiler.
 
-**Closed by evidence. Do not re-test these.**
+**Root cause: a seventh function argument is miscompiled (see 1.8).** All eight
+SIB load/store emitters took seven parameters with the displacement last, so the
+displacement never arrived and the callee read whatever was on the stack at that
+slot. It now travels in `g_sib_disp` with six-parameter emitters. Stores set
+zero, which is correct by construction; loads set `ins.imm`, a real displacement
+that was equally being lost — so indexed loads with an offset were reading from
+the wrong address too.
 
-- Not the stack limit: 320/110 identically under `unlimited` and `8192`.
-- Not missing AVX-512 (runner has `avx512f/bw/cd/dq/vl`), not 32-bit pointer
-  truncation, not the native address family (`MAP_FIXED` at the native `0x15..`
-  address round-trips), not `r15` as a clobbered heap base (it is vestigial —
-  nothing reads it), not asymmetric pool save/restore (all three call sites
-  disassemble balanced).
-- **Not unzeroed memory.** `allocs=40000 nonzero=0` on the runner: struct
-  literals are reliably zeroed there. The earlier claim in this file that they
-  were not came from 1.7 reading a struct's *address* instead of its field.
-- Not 1.7, though the compiler's own source has 174 instances of that pattern.
+That single defect accounts for every observation:
 
-**Established.** The compiler binary is byte-identical on both machines
-(`b7bae529..`), and it is deterministic locally across repeated runs, stack
-limits and working directories — yet the binary it *produces* from identical
-source differs. So this is a compiler bug, not a platform one.
+- **The platform split.** Stale stack is 0 under emulation, where the address
+  space is fixed, so the compiler looked correct *and* deterministic there.
+- **The nondeterminism.** On the runner the stale value was 514 or 518
+  depending on the run, because stack contents vary with ASLR.
+- **Why disabling ASLR made it stable but not correct.** A fixed layout gives
+  fixed garbage, not right answers.
+- **Why two earlier fixes changed nothing.** Zeroing `imm` at the fusion, then
+  reading a literal zero in the lowering, both set a value that was discarded
+  before the emitter saw it.
 
-Block-hashing the produced binary narrows it to **1 of 257** 4KB blocks, every
-time, and byte-diffing that block gives **exactly two bytes**, at the same
-offsets each time:
-
-| | local | runner |
-|---|---|---|
-| before the `imm` fix | `00 00` | `06 02` (518) |
-| after the `imm` fix | `00 00` | `02 02` (514) |
-
-Both are the `disp32` of `mov [base + idx*8 + disp], val` at file offset
-`0x14d`. The store's next instruction reads `[base + 0]`, which was never
-written — so the program reads 0, which is what `r=0` and `late_roundtrip=0`
-are.
-
-**The open question is sharp.** `lea_fuse_store` now sets `imm = 0` explicitly,
-and that is the only producer of `OP_STORE_MEM_SIB`. Locally the emitted `disp32`
-is 0. On the runner, running *the same compiler binary*, it is 514. So something
-between the fusion and `lower_store_mem_sib` writes `imm`, and does so
-differently on the two machines.
-
-Candidate writers of `imm` on an in-block instruction, to audit in order:
-`set_const_imm` (guarded on `op == OP_CONST`), the two inliner restore sites at
-`instrs[ti].imm = g_inline_tbl[k + 7]` and `[k + 8]` — note they use *different*
-table offsets for the same field — and `slp_emit_pair`. The method that found
-the first two bugs works and is cheap: block-hash, diff, dump the one block, name
-the bytes.
+Found by testing the assumption underneath every hypothesis — that both machines
+run the same bytes. The compiler binary hashed identically while the binary it
+*produced* did not; block-hashing narrowed that to 1 of 257 4KB blocks and a byte
+diff to two bytes, the low half of a `disp32`. Disabling ASLR made the target
+hold still, which is what finally made the diff meaningful.
 
 ### 3.2 The pinned bootstrap seed nearly stopped building the compiler ✅
 
