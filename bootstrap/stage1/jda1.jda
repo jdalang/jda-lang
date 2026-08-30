@@ -15714,12 +15714,24 @@ fn lea_fuse_store(jfn: &JirFunction, bi: i64, ii: i64) {
     let idx = g_lea_vo0[shl_v]
     let k_v = g_lea_vo1[shl_v]
     // Rewrite: STORE_MEM(val, addr) → STORE_MEM_SIB(val, base, idx, k)
+    //
+    // imm must be cleared. lower_store_mem_sib emits it as the disp32 of
+    // `mov [base + idx*scale + disp], val`, but nothing ever sets imm on a
+    // STORE_MEM -- the plain lowering does not read it -- so whatever the slot
+    // happened to hold became a displacement. Locally that was 0 and the store
+    // was correct; on another machine it was 518, so `p[0] = x` wrote to
+    // p + 518 and the next read of p[0] returned 0 with no diagnostic.
+    //
+    // lea_fuse_load deliberately preserves imm: LOAD_MEM does carry a real
+    // displacement (see the `ld.imm = imm_off * elem_sz_i` site), so only the
+    // store side is cleared here.
     let val = jfn.blocks[bi].instrs[ii].operand0
     jfn.blocks[bi].instrs[ii].op = OP_STORE_MEM_SIB
     jfn.blocks[bi].instrs[ii].operand0 = val
     jfn.blocks[bi].instrs[ii].operand1 = base
     jfn.blocks[bi].instrs[ii].operand2 = idx
     jfn.blocks[bi].instrs[ii].operand3 = k
+    jfn.blocks[bi].instrs[ii].imm = 0
     lea_mark_dead_by_id(jfn, addr)
     lea_mark_dead_by_id(jfn, shl_v)
     if g_lea_uses[k_v] == 1 { lea_mark_dead_by_id(jfn, k_v) }

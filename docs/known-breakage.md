@@ -300,24 +300,45 @@ port that is not built is already broken, it just has not been told yet.
 
 ## Tier 3 — infrastructure that hid the above
 
-### 3.1 Native x86-64 self-host produces a broken compiler
+### 3.1 Native x86-64 produced wrong code — `lea_fuse_store` left `imm` unset
 
-**The recorded cause is wrong.** `ci.yml` attributes the native failures to
-programs that allocate via `alloc_pages` producing no output. On run
-33257838481 the allocation probe exits **0**, and `examples/stdlib_demo.jda` —
-which calls `alloc_pages` seven times — compiled, ran, and matched its expected
-output on that runner. Yet **110 of 430** conformance tests still fail there.
-So something real is wrong natively, but it is not what the comment says, and
-the comment has been steering people away from investigating it. Re-diagnose
-before attempting a fix.
+**Status: FIXED (pending native confirmation).** This was never a platform bug.
 
-`jda1-bootstrap` run natively yields a `jda1` that does not work on any input.
-CI records it as a hang — "build succeeds, the resulting compiler then times
-out" (`.github/workflows/ci.yml:16-19`); it has also been reported as a segfault
-on `examples/hello.jda`. The same bootstrap under `linux/amd64` emulation
-produces a working compiler, which is the documented workaround.
-This is the first thing a Linux contributor hits, and the workaround means the
-native path is never exercised.
+110 of 430 conformance tests failed on a stock x86-64 runner while all passed
+under `linux/amd64` emulation. The recorded cause — programs that allocate
+producing no output — was wrong, and it sent every previous look at the runtime.
+
+The actual cause is a **compiler** bug. `lea_fuse_store` rewrites
+`STORE_MEM(val, addr)` into `STORE_MEM_SIB(val, base, idx, scale)` in place when
+the address matches `base + (idx << k)`. It sets `op` and the four operands and
+**never sets `imm`** — but `lower_store_mem_sib` emits `imm` as the `disp32` of
+`mov [base + idx*scale + disp], val`. Nothing ever sets `imm` on a `STORE_MEM`,
+and the plain lowering does not read it, so the field held whatever the slot
+happened to contain.
+
+That value is environment-dependent. On this machine it was 0 and every store
+was correct; on the runner it was **518**, so `p[0] = x` wrote to `p + 518` and
+the next read of `p[0]` returned 0 — no crash, no diagnostic, just a wrong
+program. It explains all three observed signatures: wrong values where the
+displaced write was never read back, segfaults where `p + garbage` left the
+mapping, and empty output where a length or buffer pointer was the casualty. It
+also explains why failures tracked program size: more stores fused, more chances
+to hit a non-zero slot.
+
+`lea_fuse_load` deliberately preserves `imm` and is correct — `LOAD_MEM` does
+carry a real displacement (`ld.imm = imm_off * elem_sz_i`). Only the store side
+is cleared.
+
+How it was found, since the path matters more than the fix: the compiler binary
+hashes identically on both machines, but the binary it *produces* did not
+(`f064c959..` here, `273d42a6..` there) from identical source and identical
+paths, while being deterministic across repeated local runs. Block hashing the
+output narrowed it to one 4KB block out of 257, and a byte diff of that block to
+**two bytes** — the low half of that `disp32`.
+
+The fix is a no-op locally: the produced binary is byte-identical, because `imm`
+was already 0 here. That is the point — the bug was only ever observable where
+the uninitialised value was not 0.
 
 ### 3.2 The pinned bootstrap seed nearly stopped building the compiler ✅
 
@@ -372,7 +393,8 @@ which is why this was never caught.
    tuple destructuring first, then enum variant paths, then Option/Result
    combinators. Multi-PR language work.
 7. **3.2** — CI assertion on the global count.
-8. **3.1** — native self-host.
+8. ~~**3.1**~~ — **done**, and it was a compiler bug rather than a platform one:
+   a fused store took its displacement from an uninitialised field.
 
 ## A note on the README
 
