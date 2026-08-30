@@ -175,6 +175,19 @@ jobs:
       # deterministic across repeated local runs. So the compiler emits
       # different code here. This prints per-4KB-block hashes of its output so
       # the differing region can be located against the local ones.
+      # Exactly one 4KB block differs -- block 0, the ELF header, program
+      # headers and _start prologue -- with identical size and 256 identical
+      # blocks after it. Dump that block so the differing bytes can be named.
+      - name: Dump block 0 of the produced binary
+        continue-on-error: true
+        run: |
+          set +e
+          printf 'fn main() {\n  let p = alloc_pages(1)\n  p[0] = 4242\n  let r = p[0]\n  print("noprint r={r}\\n")\n}\n' > /tmp/np2.jda
+          bootstrap/stage0/jda1 /tmp/np2.jda /tmp/np2 >/dev/null 2>&1
+          head -c 4096 /tmp/np2 | base64 -w0
+          echo
+          exit 0
+
       - name: Block hashes of the produced binary
         continue-on-error: true
         run: |
