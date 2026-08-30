@@ -163,6 +163,24 @@ jobs:
       # result, and the pool save/restore around the intervening syscall is
       # balanced in the disassembly. This asks the one question that separates
       # the remaining possibilities: does the pointer itself survive the print?
+      # Same-bytes check. Locally the committed compiler hashes 9c321da1... and
+      # the binary it produces for this probe hashes f064c959... and prints
+      # r=4242. If both hashes match here and the output still differs, the
+      # divergence is genuinely the platform. If the produced binary differs,
+      # it is the compiler behaving differently and not a platform bug at all --
+      # the one assumption this investigation has never actually tested.
+      - name: Same-bytes check
+        continue-on-error: true
+        run: |
+          set +e
+          echo "  compiler sha: $(sha256sum bootstrap/stage0/jda1 | cut -c1-32)  (local: 9c321da1e4a5ea5943592900876fc0b2)"
+          printf 'fn main() {\n  let p = alloc_pages(1)\n  p[0] = 4242\n  let r = p[0]\n  print("noprint r={r}\\n")\n}\n' > /tmp/np2.jda
+          bootstrap/stage0/jda1 /tmp/np2.jda /tmp/np2 >/dev/null 2>&1
+          echo "  probe sha:    $(sha256sum /tmp/np2 | cut -c1-32)  (local: f064c95961c7be4d41060d3d84e99fe8)"
+          chmod +x /tmp/np2
+          echo -n "  result:       "; timeout 10 /tmp/np2; echo "  rc=$?  (local: r=4242)"
+          exit 0
+
       - name: Probe whether the pointer survives a syscall
         continue-on-error: true
         run: |
