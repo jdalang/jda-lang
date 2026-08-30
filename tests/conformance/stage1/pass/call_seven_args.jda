@@ -1,0 +1,35 @@
+// A 7th argument is passed on the stack at [rbp+16]. It used to be parsed and
+// thrown away: codegen_call_inline clamped the argument count back to 6, so the
+// callee read whatever the caller happened to leave above the return address.
+// Under register pressure that was one of the caller's own locals, which is why
+// a bare 7-argument call appeared to work -- known-breakage 1.8.
+fn seven(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 { ret g }
+fn sum7(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 {
+    ret a + b + c + d + e + f + g
+}
+fn first_of_seven(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 { ret a }
+
+fn stress() -> i64 {
+    let v0 = 10
+    let v1 = 11
+    let v2 = 12
+    let v3 = 13
+    let v4 = 14
+    let v5 = 15
+    let r1 = seven(v0, v1, v2, v3, v4, v5, 77)
+    let r2 = seven(v5, v4, v3, v2, v1, v0, 88)
+    // The locals are read after both calls: restoring the saved register pool
+    // across the pushed argument slot used to lose one of them.
+    ret r1 * 1000 + r2 + v0 + v1 + v2 + v3 + v4 + v5
+}
+
+fn main() {
+    print("{seven(1, 2, 3, 4, 5, 6, 99)}\n")
+    print("{sum7(1, 2, 3, 4, 5, 6, 7)}\n")
+    print("{first_of_seven(1, 2, 3, 4, 5, 6, 7)}\n")
+    print("{stress()}\n")
+    let a = 1
+    let b = 2
+    print("{seven(a, b, 3, 4, 5, 6, 88)}\n")
+    print("{seven(1, 2, 3, 4, 5, 6, sum7(1, 1, 1, 1, 1, 1, 1))}\n")
+}
