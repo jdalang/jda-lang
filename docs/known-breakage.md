@@ -197,13 +197,13 @@ rest on. `tests/examples-test.sh` compiles **and runs** every file in `examples/
 diffing against a recorded `.expected`. An example with no `.expected` fails
 too, so one cannot be added without coverage.
 
-CI runs it as two steps. **`--compile-only` gates everywhere** — compilation is
-what actually regressed. The run-and-compare step is non-gating on the native
-x86-64 runner for the same reason the conformance step there is: `stdlib_demo`
-allocates via `alloc_pages`, which produces no output on that platform (see
-3.1). Under emulation the full suite passes, so the output comparison is real
-coverage, just not coverage that runner can provide. Gate it there once 3.1 is
-fixed.
+CI runs it as two steps, **both gating**: `--compile-only` first, since
+compilation is what actually regressed, then run-and-compare.
+
+The run step was briefly made non-gating on the theory that `stdlib_demo`'s
+`alloc_pages` calls would hit the native failure in 3.1. The evidence says
+otherwise — run 33257838481 passed both steps on that runner — so it gates. See
+3.1, which is now known to be mis-diagnosed.
 
 Per-example build flags live beside the file: `<name>.include` for a required
 `--include`, and `<name>.sed` to normalise values that legitimately vary per run
@@ -259,23 +259,57 @@ not, and **string constants** do not exist. This breaks `web_server.jda`,
 
 ### 2.4 `tools/*.jda` do not compile
 
-- `tools/pkg.jda:41` — `const REGISTRY_HOST = "pkg.jdalang.org"` (2.3)
-- `tools/lsp.jda:35` — uses `;` as a line comment; Jda's comment is `//`
+**Status: OPEN — being fixed.** `tools/lsp.jda` and `tools/pkg.jda` are
+self-hosted rewrites of tools that already exist and work in bash
+(`tools/jda-lsp.sh`, 944 lines; `tools/jda-pkg.sh`, 716 lines). The README's
+`jda pkg` and `jda-lsp` claims rest on those bash implementations, so nothing
+user-facing is blocked by this.
 
-Neither is built or tested by CI. Either fix them, or move them out of the repo
-root so a visitor does not read them as working code.
+The `;` comments in both files are **not** a blocker — `;` is a valid comment
+today; converting them to `//` is a separate cosmetic migration.
 
-### 2.5 `bootstrap/stage1/jda1-mac.jda` is unbuilt and drifting
+What actually blocks them is language surface that does not exist yet:
 
-Nothing in the repo builds or tests it. It still carries defects since fixed in
-`jda1.jda` (the uncompensated token accessors), and does not have the diagnostic
-or `JDA-C005` fixes. Every commit widens the gap. Wire it into CI or delete it.
+| Needed | `lsp.jda` | `pkg.jda` |
+|---|---|---|
+| Tuple destructuring | 3 sites | 3 sites, one 8-element |
+| Option/Result combinators (`.unwrap_or`, `.map`) | **28 sites** | 1 site |
+| Enum variant paths (`JsonValue::Null`) | yes | — |
+| Associated functions (`X::y()`) | 2 sites | 11 sites |
+| `?` on a destructuring `let` | — | yes |
+
+This is a language roadmap, not a build fix, and is being done as a sequence of
+PRs rather than one. Tuple destructuring comes first: it is the largest shared
+blocker, and it replaces the `JDA-F008` rejection added under 1.2, which was
+explicitly "until a tuple type exists".
+
+### 2.5 `bootstrap/stage1/jda1-mac.jda` is unbuilt and drifting ✅
+
+**Status: ARCHIVED**, at `bootstrap/stage1/unmaintained/jda1-mac.jda`.
+
+Nothing built, tested or referenced it — `tools/jda-macos.sh` generates assembly
+through a separate path and never touches it. It still carries the clamping
+token accessors fixed in `jda1.jda`, and has none of the six Tier 1 fixes, so
+every change to the compiler widened the gap silently.
+
+Moved rather than deleted, with a README listing exactly what it is missing. To
+revive it, port those fixes **and wire it into CI in the same commit**: a macOS
+port that is not built is already broken, it just has not been told yet.
 
 ---
 
 ## Tier 3 — infrastructure that hid the above
 
 ### 3.1 Native x86-64 self-host produces a broken compiler
+
+**The recorded cause is wrong.** `ci.yml` attributes the native failures to
+programs that allocate via `alloc_pages` producing no output. On run
+33257838481 the allocation probe exits **0**, and `examples/stdlib_demo.jda` —
+which calls `alloc_pages` seven times — compiled, ran, and matched its expected
+output on that runner. Yet **110 of 430** conformance tests still fail there.
+So something real is wrong natively, but it is not what the comment says, and
+the comment has been steering people away from investigating it. Re-diagnose
+before attempting a fix.
 
 `jda1-bootstrap` run natively yields a `jda1` that does not work on any input.
 CI records it as a hang — "build succeeds, the resulting compiler then times
@@ -334,7 +368,9 @@ which is why this was never caught.
 5. ~~**2.1**~~ — **done**. `tests/examples-test.sh` gates every example in CI.
    Three unfixable sketches moved to `examples/aspirational/`; the fourth was
    never broken (2.2, retracted).
-6. **2.4 / 2.5** — fix or remove the non-compiling files.
+6. **2.4 / 2.5** — ~~2.5 archived~~. 2.4 is being *fixed* rather than removed:
+   tuple destructuring first, then enum variant paths, then Option/Result
+   combinators. Multi-PR language work.
 7. **3.2** — CI assertion on the global count.
 8. **3.1** — native self-host.
 
