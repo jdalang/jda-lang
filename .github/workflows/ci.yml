@@ -169,6 +169,28 @@ jobs:
       # divergence is genuinely the platform. If the produced binary differs,
       # it is the compiler behaving differently and not a platform bug at all --
       # the one assumption this investigation has never actually tested.
+      # The compiler binary is identical on both sides (9c321da1..) but the
+      # binary it PRODUCES differs -- f064c959.. under emulation, 273d42a6..
+      # here -- from the same source and the same paths, and the compiler is
+      # deterministic across repeated local runs. So the compiler emits
+      # different code here. This prints per-4KB-block hashes of its output so
+      # the differing region can be located against the local ones.
+      - name: Block hashes of the produced binary
+        continue-on-error: true
+        run: |
+          set +e
+          printf 'fn main() {\n  let p = alloc_pages(1)\n  p[0] = 4242\n  let r = p[0]\n  print("noprint r={r}\\n")\n}\n' > /tmp/np2.jda
+          bootstrap/stage0/jda1 /tmp/np2.jda /tmp/np2 >/dev/null 2>&1
+          python3 - <<'PYEOF'
+          import hashlib
+          d=open("/tmp/np2","rb").read()
+          print("size", len(d))
+          B=4096
+          for i in range(0,len(d),B):
+              print(f"{i//B:04d} {hashlib.sha256(d[i:i+B]).hexdigest()[:12]}")
+          PYEOF
+          exit 0
+
       - name: Same-bytes check
         continue-on-error: true
         run: |
