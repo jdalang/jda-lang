@@ -425,6 +425,15 @@ let g_const_val_tbl: &i64 = 0
 // -1 for an integer constant; for a string constant this is the literal's
 // length and g_const_val_tbl holds its source offset.
 let g_const_str_len_tbl: &i64 = 0
+// Displacement for the SIB load/store emitters.
+//
+// It cannot be a parameter: those emitters already take six, and a seventh
+// argument is miscompiled by this compiler -- the callee reads stale stack
+// instead of the value, so the displacement never arrived. See the note above
+// emit_json_diagnostic. Locally that stale value happened to be 0 and every
+// store looked correct; on another machine it was 514, so `p[0] = x` wrote to
+// p + 514 and reading p[0] gave 0.
+let g_sib_disp = 0
 let g_const_cnt = 0
 // Flat struct name/size tables (avoids jda0 struct-array-field offset bug)
 let g_struct_name_off: &i64 = 0
@@ -17094,7 +17103,8 @@ fn emit_load_mem_disp_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, disp: i64
 }
 
 // MOV r64, [base + idx*scale + disp32] — SIB addressing
-fn emit_load_mem_sib_reg(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
+fn emit_load_mem_sib_reg(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32) {
+    let disp = g_sib_disp
     let dst_hi = dst / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17111,7 +17121,8 @@ fn emit_load_mem_sib_reg(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, sca
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_load_mem_sib_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
+fn emit_load_mem_sib_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32) {
+    let disp = g_sib_disp
     let dst_hi = dst / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17129,7 +17140,8 @@ fn emit_load_mem_sib_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, 
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_load_mem_sib_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
+fn emit_load_mem_sib_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32) {
+    let disp = g_sib_disp
     emit_byte(out, pos, 0x66)
     let dst_hi = dst / 8
     let base_hi = base / 8
@@ -17147,7 +17159,8 @@ fn emit_load_mem_sib_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32,
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_load_mem_sib_reg32zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
+fn emit_load_mem_sib_reg32zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32) {
+    let disp = g_sib_disp
     let dst_hi = dst / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17165,7 +17178,8 @@ fn emit_load_mem_sib_reg32zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32,
 }
 
 // MOV [base + idx*scale + disp32], r64
-fn emit_store_mem_sib_reg(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
+fn emit_store_mem_sib_reg(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32) {
+    let disp = g_sib_disp
     let src_hi = src / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17182,7 +17196,8 @@ fn emit_store_mem_sib_reg(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, 
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_store_mem_sib_reg8(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
+fn emit_store_mem_sib_reg8(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32) {
+    let disp = g_sib_disp
     let src_hi = src / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17199,7 +17214,8 @@ fn emit_store_mem_sib_reg8(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32,
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_store_mem_sib_reg16(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
+fn emit_store_mem_sib_reg16(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32) {
+    let disp = g_sib_disp
     emit_byte(out, pos, 0x66)
     let src_hi = src / 8
     let base_hi = base / 8
@@ -17217,7 +17233,8 @@ fn emit_store_mem_sib_reg16(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_store_mem_sib_reg32(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
+fn emit_store_mem_sib_reg32(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32) {
+    let disp = g_sib_disp
     let src_hi = src / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17875,15 +17892,19 @@ fn lower_load_mem_sib(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let b = PHYS_R12
     if skip_r12 == 1 { b = base_r }
     if ld_sz == 1 {
-        emit_load_mem_sib_reg8zx(out, pos, dst, b, idx_r, scale, ins.imm)
+        g_sib_disp = ins.imm
+        emit_load_mem_sib_reg8zx(out, pos, dst, b, idx_r, scale)
     } else {
         if ld_sz == 2 {
-            emit_load_mem_sib_reg16zx(out, pos, dst, b, idx_r, scale, ins.imm)
+            g_sib_disp = ins.imm
+            emit_load_mem_sib_reg16zx(out, pos, dst, b, idx_r, scale)
         } else {
             if ld_sz == 4 {
-                emit_load_mem_sib_reg32zx(out, pos, dst, b, idx_r, scale, ins.imm)
+                g_sib_disp = ins.imm
+                emit_load_mem_sib_reg32zx(out, pos, dst, b, idx_r, scale)
             } else {
-                emit_load_mem_sib_reg(out, pos, dst, b, idx_r, scale, ins.imm)
+                g_sib_disp = ins.imm
+                emit_load_mem_sib_reg(out, pos, dst, b, idx_r, scale)
             }
         }
     }
@@ -17931,17 +17952,17 @@ fn lower_store_mem_sib(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 
     // The load side is deliberately different: LOAD_MEM does carry a real
     // displacement, so lea_fuse_load preserves imm and lower_load_mem_sib
     // still reads it.
-    let sib_disp = 0
+    g_sib_disp = 0
     if st_sz == 1 {
-        emit_store_mem_sib_reg8(out, pos, sb, idx_r, scale, val_r, sib_disp)
+        emit_store_mem_sib_reg8(out, pos, sb, idx_r, scale, val_r)
     } else {
         if st_sz == 2 {
-            emit_store_mem_sib_reg16(out, pos, sb, idx_r, scale, val_r, sib_disp)
+            emit_store_mem_sib_reg16(out, pos, sb, idx_r, scale, val_r)
         } else {
             if st_sz == 4 {
-                emit_store_mem_sib_reg32(out, pos, sb, idx_r, scale, val_r, sib_disp)
+                emit_store_mem_sib_reg32(out, pos, sb, idx_r, scale, val_r)
             } else {
-                emit_store_mem_sib_reg(out, pos, sb, idx_r, scale, val_r, sib_disp)
+                emit_store_mem_sib_reg(out, pos, sb, idx_r, scale, val_r)
             }
         }
     }
