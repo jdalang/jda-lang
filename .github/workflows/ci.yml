@@ -59,6 +59,51 @@ jobs:
           echo "--- cpu flags (avx512/avx2) ---"
           grep -o -m1 -E "avx512[a-z]*|avx2" /proc/cpuinfo | sort -u | tr "\n" " "; echo
 
+      # 3.1: the STORE_MEM_SIB disp fix did not move the native count (still
+      # 320/110), so the bad displacement was a symptom. copy_instr copies imm
+      # from a zeroed Instr{}, so imm cannot be garbage unless memory that
+      # should be zero is not zero here. Every struct literal is its own
+      # unchecked mmap and there are 456 Instr{} sites, so this checks whether
+      # fresh allocations stay zeroed and keep succeeding under load.
+      - name: Probe allocation zeroing and exhaustion
+        continue-on-error: true
+        run: |
+          set +e
+          echo "  vm.max_map_count: $(cat /proc/sys/vm/max_map_count 2>/dev/null)"
+          cat > /tmp/zero.jda <<'JDA'
+          struct T { a: i64 b: i64 }
+          fn main() {
+              let bad = 0
+              let firstbad = 0 - 1
+              let i = 0
+              loop i < 40000 {
+                  let t = T{}
+                  if t.a != 0 {
+                      bad = bad + 1
+                      if firstbad < 0 { firstbad = i }
+                  }
+                  if t.b != 0 { bad = bad + 1 }
+                  i = i + 1
+              }
+              print("allocs=40000 nonzero={bad} first={firstbad}\n")
+              let p = alloc_pages(1)
+              let a = p as i64
+              print("late_alloc_addr={a}\n")
+              p[0] = 777
+              print("late_roundtrip={p[0]}\n")
+          }
+          JDA
+          bootstrap/stage0/jda1 /tmp/zero.jda /tmp/zero 2>&1 | head -3
+          chmod +x /tmp/zero 2>/dev/null
+          timeout 60 /tmp/zero; echo "  rc=$?"
+          echo "  --- mappings held by a compile ---"
+          bootstrap/stage0/jda1 tests/conformance/stage1/pass/hello.jda /tmp/h >/dev/null 2>&1 &
+          cpid=$!
+          sleep 0.2
+          wc -l < /proc/$cpid/maps 2>/dev/null || echo "  (compile finished too fast to sample)"
+          wait $cpid
+          exit 0
+
       - name: Output hygiene
         run: |
           ulimit -s unlimited
