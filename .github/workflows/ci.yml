@@ -80,8 +80,16 @@ jobs:
           echo "  probe sha:    $(sha256sum /tmp/np2 | cut -c1-32)"
           chmod +x /tmp/np2
           echo -n "  result:       "; timeout 10 /tmp/np2
-          echo "  --- block 0, hex, marker-prefixed so extraction cannot pick the wrong line ---"
-          head -c 4096 /tmp/np2 | xxd -p -c 32 | sed 's/^/B0HEX /'
+          echo "  --- determinism: same compiler, same input, five times ---"
+          for i in 1 2 3 4 5; do
+            bootstrap/stage0/jda1 /tmp/np2.jda /tmp/det$i >/dev/null 2>&1
+            echo "  run $i: $(sha256sum /tmp/det$i | cut -c1-32)"
+          done
+          echo "  (local: all five are f064c95961c7be4d41060d3d84e99fe8)"
+          echo "  --- and the disp32 bytes each time ---"
+          for i in 1 2 3 4 5; do
+            echo "  run $i disp32: $(xxd -s 0x14d -l 4 -p /tmp/det$i)   (local: 00000000)"
+          done
           exit 0
 
       - name: Probe allocation zeroing and exhaustion
