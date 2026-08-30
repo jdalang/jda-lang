@@ -19,8 +19,8 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Not clear.** Six are fixed; **1.7 is open** and was found on 2026-08-30
-while investigating 3.1. Note how the last two were found:
+**Clear as of 2026-08-30** — seven fixed. 1.7 was found while investigating
+3.1, which remains open and is a different bug. Note how the last two were found:
 not by reading source, but by running programs and checking *values*. 1.4 hid
 behind a clean compile, and 1.5 was actively protected by five passing tests
 that had recorded its wrong output. Only 1.6 announced itself.
@@ -62,41 +62,43 @@ Covered by `tests/conformance/stage1/pass/local_arrays.jda`, which segfaults on
 the previous compiler.
 
 
-### 1.7 A struct field used directly in a comparison compares the address
+### 1.7 A struct field used directly in a comparison compared the address ✅
 
-**Status: OPEN.** Found while investigating 3.1. Reproduces locally.
+**Status: FIXED.**
 
 ```jda
 struct T { a: i64 b: i64 }
-fn main() {
-    let t = T{ a: 5, b: 9 }
-    print("{t.a}\n")                      // 5 -- correct
-    let s = t.a + 1                        // 6 -- correct
-    if t.a == 5 { } else { }               // takes the ELSE branch
-}
+let t = T{ a: 5, b: 9 }
+print("{t.a}")        // 5    always was correct
+let s = t.a + 1       // 6    always was correct
+if t.a == 5 { }       // took the ELSE branch
 ```
 
-`t.a` prints correctly and is correct in arithmetic, but as a **comparison
-operand** it evaluates to the struct's base address rather than the field. The
-emitted code never loads:
+Struct types are carried as `sid + 1000`. The **live** postfix path passed that
+value straight to `lookup_field_idx_flat`, which matches `g_field_owner` — a
+bare sid. The lookup never matched, the access fell through to returning the
+struct's base pointer, and the comparison compared an address:
 
 ```
 149: 48 81 f9 05 00 00 00    cmp rcx,0x5     ; rcx is the struct base
 ```
 
-So `t.a == 5` is false, `t.a != 0` is true, and every comparison against a small
-constant takes the wrong branch — silently. Both fields fail, both operand
-orders fail (`5 == t.a` too, which bypasses the CMP-immediate peephole, so the
-missing load is upstream in the JIR rather than in the lowering). Assigning to a
-local first (`let v = t.a; if v == 5`) is correct and is the workaround.
+The other copy of this path already normalised correctly (the
+`lookup_field_idx_any` site); the live copy handled only the negative
+struct-array encoding and not the `+ 1000` one.
 
-This is worse than most of Tier 1: comparisons drive control flow, so a wrong
-answer here silently takes the wrong branch rather than producing one wrong
-value. Anything of the shape `if node.kind == X` is affected.
+Why it stayed hidden: printing a field and using it in arithmetic were always
+correct, because `let` compiles its right-hand side through
+`codegen_expr_inline` while `if` goes through `live_codegen_expr_inline`. Only
+the `if` path was affected — so `let c = t.a == 5` gave the right answer while
+`if t.a == 5` did not, which is a difference almost nobody would think to test.
 
-Not yet fixed. The likely area is field resolution losing the struct type for a
-comparison operand, so `lookup_field_idx_flat` misses and the postfix path
-returns the base pointer.
+This one drove **control flow**, so it silently took the wrong branch rather
+than producing one wrong value. Anything shaped like `if node.kind == X` was
+affected.
+
+Covered by `tests/conformance/stage1/pass/struct_field_compare.jda`, which fails
+on the previous compiler.
 
 ### 1.2 Tuple destructuring bound nothing ✅
 
