@@ -85,11 +85,8 @@ jobs:
             bootstrap/stage0/jda1 /tmp/np2.jda /tmp/det$i >/dev/null 2>&1
             echo "  run $i: $(sha256sum /tmp/det$i | cut -c1-32)"
           done
-          echo "  (local: all five are f064c95961c7be4d41060d3d84e99fe8)"
-          echo "  --- and the disp32 bytes each time ---"
-          for i in 1 2 3 4 5; do
-            echo "  run $i disp32: $(xxd -s 0x14d -l 4 -p /tmp/det$i)   (local: 00000000)"
-          done
+          echo "  (local: all five are 376fec8482b157cf402b7e55efa30983)"
+          echo -n "  probe output: "; chmod +x /tmp/det1; timeout 10 /tmp/det1
           exit 0
 
       - name: Probe allocation zeroing and exhaustion

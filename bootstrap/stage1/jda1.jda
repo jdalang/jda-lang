@@ -25160,10 +25160,26 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0xF0)
     emit_byte(out, pos, 0xFF)
     emit_byte(out, pos, 0xFF)
-    // MOV [R11], R11
-    emit_byte(out, pos, 0x4B)
-    emit_byte(out, pos, 0x89)
-    emit_byte(out, pos, 0x1B)
+    // MOV QWORD [R11], 0
+    //
+    // This used to be MOV [R11], R11, which writes an *address* into the frame
+    // at every 4KB boundary. Stack addresses are randomised per process, so
+    // every frame carried ASLR-dependent bytes, and any stack slot read before
+    // it was written picked one up. Under emulation the stack sits at a fixed
+    // address, so those bytes were constant and the compiler was deterministic;
+    // on a real kernel they vary run to run, which is exactly the
+    // nondeterminism measured on the runner -- five compiles of one input
+    // producing two different binaries.
+    //
+    // Writing zero still faults in the page, which is all the probe is for,
+    // and leaves the frame holding a stable value instead of an address.
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
     // SUB R11, 4096
     emit_byte(out, pos, 0x49)
     emit_byte(out, pos, 0x81)
@@ -25176,15 +25192,23 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0x49)
     emit_byte(out, pos, 0x39)
     emit_byte(out, pos, 0xE3)
-    // JGE -15
+    // JGE -19  (the loop body grew from 15 to 19 bytes when the probe store
+    // became MOV QWORD [R11], 0)
     emit_byte(out, pos, 0x7D)
-    emit_byte(out, pos, 0xF1)
+    emit_byte(out, pos, 0xED)
     // After loop, R11 = RSP - 4096. Touch two more pages below RSP.
     // When RSP is page-aligned, next fn's probe starts 2 pages below us.
-    // Touch 1: MOV [R11], RBX  (R11 = RSP - 4096)
-    emit_byte(out, pos, 0x4B)
-    emit_byte(out, pos, 0x89)
-    emit_byte(out, pos, 0x1B)
+    // Touch 1: MOV QWORD [R11], 0  (R11 = RSP - 4096)
+    // Was MOV [R11], RBX -- the caller's RBX, which can hold an address. Same
+    // reason as the loop store: the page must be faulted in, but what lands
+    // there must not vary between runs.
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
     // SUB R11, 4096  (R11 = RSP - 8192)
     emit_byte(out, pos, 0x49)
     emit_byte(out, pos, 0x81)
@@ -25193,10 +25217,14 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0x10)
     emit_byte(out, pos, 0x00)
     emit_byte(out, pos, 0x00)
-    // Touch 2: MOV [R11], RBX  (R11 = RSP - 8192)
-    emit_byte(out, pos, 0x4B)
-    emit_byte(out, pos, 0x89)
-    emit_byte(out, pos, 0x1B)
+    // Touch 2: MOV QWORD [R11], 0  (R11 = RSP - 8192)
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
 }
 
 fn lower_fn_store_param7(jfn: &JirFunction, out: &i8, pos: &i64) {
@@ -25556,11 +25584,20 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
         poke_byte(out, patch_off + 2, i32_b2(real_frame))
         poke_byte(out, patch_off + 3, i32_b3(real_frame))
         // P4: Skip stack probe for small frames (<=65536 bytes)
-        // Probe is 35 bytes starting at fn_start+18. JMP rel8 at byte 18-19.
-        // IP after = 20, target = 53, disp = 33.
+        //
+        // The probe is 47 bytes starting at fn_start+18: LEA 7, then the loop
+        // (store 7 + SUB 7 + CMP 3 + JGE 2 = 19), then SUB 7 and two stores of
+        // 7. JMP rel8 occupies bytes 18-19, so IP after is 20, the target is
+        // 18 + 47 = 65, and the displacement is 45.
+        //
+        // This hardcodes the probe's length: changing any instruction in the
+        // probe above must change this displacement too, or the jump lands
+        // inside the probe and the function executes garbage. It was 33 when
+        // the three stores were 3-byte register stores instead of 7-byte
+        // immediate ones.
         if real_frame <= 65536 {
             poke_byte(out, fn_start + 18, 0xEB)
-            poke_byte(out, fn_start + 19, 0x21)
+            poke_byte(out, fn_start + 19, 0x2D)
         }
     }
     lower_fn_emit_epilogue(out, pos, is_main)
