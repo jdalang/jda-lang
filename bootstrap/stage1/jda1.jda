@@ -15074,6 +15074,20 @@ fn inline_capture_meta(jfn: &JirFunction) {
                 ret_id = jfn.blocks[bi].instrs[ii].operand0
                 saw_ret = 1
             } else {
+                // Each record is 256 slots: 16 of header, then 13 per
+                // instruction, so 18 instructions fit. There was no bound. A
+                // longer function wrote past its own record into the next
+                // one, and past the last record (base 3856 + 256 = 4112) into
+                // the scratch region at 4368 -- which is written and read with
+                // a different layout: `dead` at +3 and imm at +8 there, against
+                // imm at +7 here. An overflowed instruction's imm therefore
+                // came back as its str_start, a source offset.
+                //
+                // Abandon the capture rather than truncate it: g_inline_tbl[0]
+                // is only bumped at the end of this function, so returning here
+                // leaves this function simply uninlined, which is correct if
+                // slower.
+                if op_cnt >= 18 { ret }
                 let k = op_slot + op_cnt * 13
                 g_inline_tbl[k + 0] = op
                 g_inline_tbl[k + 1] = jfn.blocks[bi].instrs[ii].itype
