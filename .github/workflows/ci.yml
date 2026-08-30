@@ -91,11 +91,22 @@ jobs:
           # so if the compiler is address-dependent, disabling randomisation
           # makes it deterministic. setarch -R works natively; it is only under
           # QEMU that it cannot set the personality.
-          echo "  --- same five, with ASLR disabled ---"
-          for i in 1 2 3 4 5; do
-            setarch $(uname -m) -R bootstrap/stage0/jda1 /tmp/np2.jda /tmp/noaslr$i >/dev/null 2>&1
-            echo "  noaslr run $i: $(sha256sum /tmp/noaslr$i | cut -c1-32)"
-          done
+          # With ASLR off the compiler is deterministic here, so this is a
+          # stable target to diff against the local build. Same method that
+          # found the disp32: block-hash, then dump the block that differs.
+          echo "  --- ASLR off: deterministic target ---"
+          setarch $(uname -m) -R bootstrap/stage0/jda1 /tmp/np2.jda /tmp/noaslr >/dev/null 2>&1
+          echo "  noaslr sha: $(sha256sum /tmp/noaslr | cut -c1-32)  (local: 376fec8482b157cf402b7e55efa30983)"
+          python3 - <<'PYEOF'
+          import hashlib
+          d=open("/tmp/noaslr","rb").read()
+          print("BLK size", len(d))
+          B=4096
+          for i in range(0,len(d),B):
+              print(f"BLK {i//B:04d} {hashlib.sha256(d[i:i+B]).hexdigest()[:12]}")
+          PYEOF
+          echo "  --- block 0 hex (marker-prefixed) ---"
+          head -c 4096 /tmp/noaslr | xxd -p -c 32 | sed 's/^/B0HEX /'
           exit 0
 
       # If the compiler is address-dependent, the whole suite should pass with
