@@ -129,9 +129,34 @@ by this compiler"*. That note was treated as a local style rule rather than a
 bug report, and eight emitters were written with seven parameters anyway.
 
 `JDA-C001` currently permits seven parameters, so the language accepts what it
-cannot compile. Two ways out: fix the stack-passing so seven works, or lower the
-limit to six and reject the seventh, which at least fails loudly. Until then,
-anything taking a seventh argument is suspect.
+cannot compile.
+
+**Diagnosis, for whoever picks this up.** The stack mechanics are correct: the
+caller pushes the 7th argument last before the `CALL`, the argument setup for
+1-6 is push/pop balanced, and the callee reads `[rbp+16]`. Verified in the
+disassembly. What is wrong is *which register* gets pushed — the value 77 is
+materialised into `rdx`, and `lower_call_push_arg7` pushes `r9`.
+
+The cause is liveness. A call's 7th argument is carried in `itype`, because
+`OP_CALL` has no free operand slot past six. The `used[]` marking in the DCE
+pass walks call arguments and **stops at six**:
+
+```
+if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }     // and nothing for o3 >= 7
+```
+
+So the value feeding the 7th argument is never marked live, nothing keeps its
+register reserved across the call setup, and under register pressure the
+allocator reuses it. With few live values it survives by luck, which is exactly
+why a simple seven-argument call works and a busy one does not. The operand
+*renaming* pass does handle `itype` at `ac >= 7`, so the omission is only in the
+liveness marking.
+
+**A naive fix does not work.** Adding the missing `if o3 >= 7 { used[itype] = 1 }`
+to both `OP_CALL`/`OP_CALL_IND` and `OP_TAIL_CALL` builds a compiler that hangs
+on every input, `examples/hello.jda` included — so the marking interacts with
+something else, and the real fix needs to understand that interaction rather
+than just close the gap. Reverted; not committed.
 
 ### 1.2 Tuple destructuring bound nothing ✅
 
