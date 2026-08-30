@@ -60,6 +60,7 @@ const TOK_MINUS   = 29
 const TOK_STAR    = 30
 const TOK_SLASH   = 31
 const TOK_AMP     = 32
+const TOK_CARET   = 74   // bitwise XOR
 const TOK_DOT     = 33
 const TOK_F32     = 72
 const TOK_GTE     = 35
@@ -175,6 +176,7 @@ const OP_CMP_GT   = 9
 const OP_CMP_GTE  = 10
 const OP_CMP_LTE  = 11
 const OP_AND      = 12
+const OP_XOR      = 102  // bitwise XOR
 const OP_OR       = 13
 const OP_RET      = 14
 const OP_BR       = 15
@@ -3696,6 +3698,7 @@ fn char_to_tok_mid(c: i8) {
 }
 
 fn char_to_tok_hi(c: i8) {
+    if c == 94 { ret TOK_CARET }
     if c == 123 { ret TOK_LBRACE }
     if c == 124 { ret TOK_PIPE }
     if c == 125 { ret TOK_RBRACE }
@@ -5648,13 +5651,38 @@ fn tok_is_fn_kw(toks: &Token, src: &i8, i: i64) -> i64 {
 // and the caller reads its fields. Implementing this would mean inventing both
 // a tuple type and a multi-value calling convention, so until that happens it
 // has to fail loudly instead of binding nothing.
+// `let (a, b) = (x, y)` binds in parallel and is supported. `let (a, b) = f()`
+// is not: it needs multi-value return, and OP_RET carries one operand, so a
+// function returning several values returns a struct and the caller reads its
+// fields. Only the second form is rejected.
 fn validate_no_tuple_destructure(toks: &Token, cnt: i64) {
     let i = 0
     loop i < cnt {
         if tok_type_at_raw(toks, i) == TOK_LET {
             if tok_type_at_raw(toks, i + 1) == TOK_LPAREN {
-                g_main_pos = i
-                report_error_code("JDA-F008", "tuple destructuring is not supported; return a struct and read its fields")
+                // Find the `)` that closes the name list.
+                let j = i + 2
+                let depth = 0
+                let close = 0 - 1
+                loop j < cnt and close < 0 {
+                    let t = tok_type_at_raw(toks, j)
+                    if t == TOK_LPAREN { depth = depth + 1 }
+                    else if t == TOK_RPAREN {
+                        if depth == 0 { close = j }
+                        else { depth = depth - 1 }
+                    }
+                    j = j + 1
+                }
+                let rhs_ok = 0
+                if close >= 0 {
+                    if tok_type_at_raw(toks, close + 1) == TOK_EQ {
+                        if tok_type_at_raw(toks, close + 2) == TOK_LPAREN { rhs_ok = 1 }
+                    }
+                }
+                if rhs_ok == 0 {
+                    g_main_pos = i
+                    report_error_code("JDA-F008", "tuple destructuring from a call is not supported; return a struct and read its fields")
+                }
             }
         }
         i = i + 1
@@ -7172,7 +7200,12 @@ fn op_precedence(op: i32) -> i32 {
     let add_p = ((op == TOK_PLUS) or (op == TOK_MINUS) or (op == TOK_SHR) or (op == TOK_SHL)) * 5
     let cmp_p = ((op == TOK_LT) or (op == TOK_GT) or (op == TOK_LTE) or (op == TOK_GTE)) * 4
     let eq_p = ((op == TOK_EQEQ) or (op == TOK_NEQ)) * 3
-    let and_p = ((op == TOK_AND) or (op == TOK_AMP)) * 2
+    // XOR shares AND's level here. This table feeds precedence climbing, which
+    // steps by prec + 1, so the scale must stay consecutive -- rescaling it to
+    // open a slot broke import resolution. The live expression chain is an
+    // explicit ladder (codegen_xor_inline) and gives XOR its own level between
+    // OR and AND there, which is what actually governs emitted code.
+    let and_p = ((op == TOK_AND) or (op == TOK_AMP) or (op == TOK_CARET)) * 2
     let or_p = ((op == TOK_OR) or (op == TOK_PIPE)) * 1
     let prec = mul_p + add_p + cmp_p + eq_p + and_p + or_p
     ret prec + (prec == 0) * -1
@@ -8751,8 +8784,9 @@ fn op_precedence(tok: i32) -> i32 {
     let cmp_p = ((tok == TOK_LT) or (tok == TOK_GT) or (tok == TOK_LTE) or (tok == TOK_GTE)) * 40
     let eq_p = ((tok == TOK_EQEQ) or (tok == TOK_NEQ)) * 30
     let and_p = (tok == TOK_AND) * 20
+    let xor_p = (tok == TOK_CARET) * 15
     let or_p = (tok == TOK_OR) * 10
-    ret mul_p + add_p + cmp_p + eq_p + and_p + or_p
+    ret mul_p + add_p + cmp_p + eq_p + and_p + or_p + xor_p
 }
 
 fn is_cmp_tok(tok: i32) -> i64 {
@@ -8796,7 +8830,7 @@ fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
 }
 
 fn codegen_or_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    let left_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
+    let left_id = codegen_xor_inline(toks, pos, stab, src, jfn, bb)
     let or_more = 1
     loop or_more == 1 {
         let op = tok_type_at(toks, pos[0])
@@ -8807,9 +8841,29 @@ fn codegen_or_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn:
             }
         }
         pos[0] = pos[0] + 1
-        let right_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
+        let right_id = codegen_xor_inline(toks, pos, stab, src, jfn, bb)
         let jir_op = tok_to_jir_op(op)
         left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
+    }
+    ret left_id
+}
+
+// XOR sits between OR and AND, as in C. The expression chain is an explicit
+// ladder rather than a precedence table, so a new operator needs a level here;
+// adding it to op_precedence alone parses but never emits, which is why
+// `6 ^ 3` briefly evaluated to 6.
+fn codegen_xor_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let left_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
+    let xor_more = 1
+    loop xor_more == 1 {
+        let op = tok_type_at(toks, pos[0])
+        if op != TOK_CARET {
+            xor_more = 0
+            ret left_id
+        }
+        pos[0] = pos[0] + 1
+        let right_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
+        left_id = emit_binop(jfn, bb, OP_XOR, left_id, right_id)
     }
     ret left_id
 }
@@ -14220,6 +14274,7 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_LTE   { ret OP_CMP_LTE }
     if tok == TOK_GTE   { ret OP_CMP_GTE }
     if tok == TOK_AND or tok == TOK_AMP { ret OP_AND }  // Both logical and bitwise AND
+    if tok == TOK_CARET { ret OP_XOR }
     if tok == TOK_OR or tok == TOK_PIPE { ret OP_OR }  // Both logical and bitwise OR
     if tok == TOK_TILDE { ret OP_AND }  // Bitwise NOT - temporary: use AND (will be fixed later)
     if tok == TOK_SHR { ret OP_SHR }
@@ -14482,7 +14537,7 @@ fn coal_sub_bin(ins: &Instr) {
         if ins.operand0 == o { ins.operand0 = n }
         if ins.operand1 == o { ins.operand1 = n }
     }
-    if op == OP_DIV or op == OP_MOD or op == OP_AND or op == OP_OR {
+    if op == OP_DIV or op == OP_MOD or op == OP_AND or op == OP_OR or op == OP_XOR {
         if ins.operand0 == o { ins.operand0 = n }
         if ins.operand1 == o { ins.operand1 = n }
     }
@@ -14746,7 +14801,7 @@ fn dce(jfn: &JirFunction) {
             let id = jfn.blocks[bi].instrs[ii].id
             if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or op == OP_MOD or
                op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
-               op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
+               op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or op == OP_XOR or
                op == OP_SHR or op == OP_SHL {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
@@ -14958,6 +15013,7 @@ fn inline_op_arith_ok(op: i64) -> i64 {
 
 fn inline_op_bit_ok(op: i64) -> i64 {
     if op == OP_AND { ret 1 }
+    if op == OP_XOR { ret 1 }
     if op == OP_OR { ret 1 }
     if op == OP_SHL { ret 1 }
     if op == OP_SHR { ret 1 }
@@ -15193,6 +15249,7 @@ fn inline_remap_op(ins: &Instr) {
     if op == OP_MUL { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_DIV { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_AND { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
+    if op == OP_XOR { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_OR  { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_SHL { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_SHR { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
@@ -15587,6 +15644,7 @@ fn lea_count_instr_uses(ins: &Instr) {
     if op == OP_DIV { is_bin = 1 }
     if op == OP_MOD { is_bin = 1 }
     if op == OP_AND { is_bin = 1 }
+    if op == OP_XOR { is_bin = 1 }
     if op == OP_OR  { is_bin = 1 }
     if op == OP_SHR { is_bin = 1 }
     if op == OP_SHL { is_bin = 1 }
@@ -16689,6 +16747,12 @@ fn emit_sub_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
 }
 
 // AND r/m64, r64:  REX.W 21 /r
+fn emit_xor_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
+    emit_rex_w_rr(out, pos, src, dst)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, modrm_rr(src, dst))
+}
+
 fn emit_and_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
     emit_rex_w_rr(out, pos, src, dst)
     emit_byte(out, pos, 0x21)
@@ -18157,7 +18221,7 @@ fn lower_mod_magic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos: &i64) -> i64 {
     // All arithmetic ops modify CPU flags
     if ins.op == OP_ADD or ins.op == OP_SUB or ins.op == OP_MUL or ins.op == OP_DIV or ins.op == OP_MOD { g_flags_live = 0 }
-    if ins.op == OP_AND or ins.op == OP_OR or ins.op == OP_SHL or ins.op == OP_SHR { g_flags_live = 0 }
+    if ins.op == OP_AND or ins.op == OP_OR or ins.op == OP_XOR or ins.op == OP_SHL or ins.op == OP_SHR { g_flags_live = 0 }
     let is_add = 0
     if ins.op == OP_ADD { is_add = 1 }
     if is_add == 1 {
@@ -18579,6 +18643,25 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
             ra_set_sp_top(&ctx.ra, csp2)
             ra_set_spill(&ctx.ra, ins.id, csp2)
             emit_store_spill(out, pos, csp2, dst)
+        }
+        ret 1
+    }
+    let is_xor = 0
+    if ins.op == OP_XOR { is_xor = 1 }
+    if is_xor == 1 {
+        let xa = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_mov_rr(out, pos, PHYS_R12, xa)
+        let xb = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_xor_rr(out, pos, PHYS_R12, xb)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        let xdst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, xdst, PHYS_R12)
+        if ctx.use_cnt[ins.id] > 1 {
+            let xsp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, xsp)
+            ra_set_spill(&ctx.ra, ins.id, xsp)
+            emit_store_spill(out, pos, xsp, xdst)
         }
         ret 1
     }
@@ -23384,6 +23467,59 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     g_cur_instr_idx = -1
 }
 
+// `let (a, b, c) = (e1, e2, e3)` binds in parallel.
+//
+// No tuple type is introduced: the parentheses are syntax here, not a value.
+// Each element is evaluated and stored before the next is evaluated, which
+// matches how an ordinary let is ordered, and is why this cannot express a
+// swap -- `let (a, b) = (b, a)` reads the new `a`.
+//
+// The call form, `let (a, b) = f()`, is a different feature and is rejected in
+// validate_no_tuple_destructure: it needs multi-value return, and OP_RET
+// carries one operand.
+fn live_compile_let_tuple(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -> i64 {
+    g_main_pos = g_main_pos + 1
+    let names_start = i64[16]
+    let names_len = i64[16]
+    let n = 0
+    loop tok_type_at_raw(toks0, g_main_pos) != TOK_RPAREN and g_main_pos < g_scan_tok_cnt {
+        if tok_type_at_raw(toks0, g_main_pos) == TOK_COMMA {
+            g_main_pos = g_main_pos + 1
+        } else {
+            if n >= 16 {
+                report_error_code("JDA-F009", "a destructuring let binds at most 16 names")
+            }
+            names_start[n] = tok_str_start_at(toks0, g_main_pos)
+            names_len[n] = tok_str_len_at(toks0, g_main_pos)
+            n = n + 1
+            g_main_pos = g_main_pos + 1
+        }
+    }
+    expect(TOK_RPAREN)
+    expect(TOK_EQ)
+    expect(TOK_LPAREN)
+    let k = 0
+    loop k < n {
+        if tok_type_at_raw(toks0, g_main_pos) == TOK_RPAREN {
+            report_error_code("JDA-F009", "too few values on the right of a destructuring let")
+        }
+        let v = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+        let slot = bind_name(jfn, names_start[k], names_len[k], TYPE_I64)
+        let st = Instr{}
+        st.op = OP_STORE
+        st.operand0 = v
+        st.operand1 = slot
+        emit(jfn, cur, &st)
+        if tok_type_at_raw(toks0, g_main_pos) == TOK_COMMA { g_main_pos = g_main_pos + 1 }
+        k = k + 1
+    }
+    if tok_type_at_raw(toks0, g_main_pos) != TOK_RPAREN {
+        report_error_code("JDA-F009", "too many values on the right of a destructuring let")
+    }
+    expect(TOK_RPAREN)
+    ret cur
+}
+
 fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -> i64 {
     if g_cur_fn_name_len == 4 {
         if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
@@ -23391,6 +23527,9 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         }
     }
     g_main_pos = g_main_pos + 1
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_LPAREN {
+        ret live_compile_let_tuple(toks0, stab, src, jfn, cur)
+    }
     let name_start = tok_str_start_at(toks0, g_main_pos)
     let name_len = tok_str_len_at(toks0, g_main_pos)
     g_main_pos = g_main_pos + 1
@@ -25069,7 +25208,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
     let o3 = ins.operand3
     if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or op == OP_MOD or
        op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
-       op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
+       op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or op == OP_XOR or
        op == OP_SHR or op == OP_SHL {
         mark_use(ctx, o0)
         mark_use(ctx, o1)
@@ -25568,6 +25707,23 @@ fn lower_fn_patch_fixups(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64)
                 poke_byte(out, co + 1, i32_b1(rel))
                 poke_byte(out, co + 2, i32_b2(rel))
                 poke_byte(out, co + 3, i32_b3(rel))
+                // A JMP rel32 whose displacement is 0 falls through to the next
+                // instruction, so it can become a 5-byte NOP. This must key off
+                // the fixup table rather than scanning the byte stream: a blind
+                // scan for E9 00 00 00 00 also matches the immediate of
+                // `movabs reg, 0xE9xxxxxx`, and silently rewrote any integer
+                // literal in [0xE9000000, 0xE9FFFFFF] into a NOP pattern.
+                if rel == 0 and co >= 1 {
+                    let ob = out[co - 1]
+                    if ob < 0 { ob = ob + 256 }
+                    if ob == 0xE9 {
+                        poke_byte(out, co - 1, 0x0F)
+                        poke_byte(out, co,     0x1F)
+                        poke_byte(out, co + 1, 0x44)
+                        poke_byte(out, co + 2, 0x00)
+                        poke_byte(out, co + 3, 0x00)
+                    }
+                }
             }
         }
         fi = fi + 1
@@ -25643,42 +25799,6 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
     lower_fn_emit_epilogue(out, pos, is_main)
     g_lower_is_main = 0
     lower_fn_patch_fixups(jfn, ctx, out, pos)
-    nop_fallthrough_jmps(out, fn_start, pos[0])
-}
-
-// Post-fixup: replace JMP rel32 with disp=0 (jumps to next instr) with NOPs
-fn nop_fallthrough_jmps(out: &i8, start: i64, end_pos: i64) {
-    let i = start
-    let lim = end_pos - 4
-    loop i < lim {
-        let b = out[i]
-        if b < 0 { b = b + 256 }
-        if b == 0xE9 {
-            // Check if the 4-byte displacement is 0
-            let d0 = out[i + 1]
-            let d1 = out[i + 2]
-            let d2 = out[i + 3]
-            let d3 = out[i + 4]
-            if d0 < 0 { d0 = d0 + 256 }
-            if d1 < 0 { d1 = d1 + 256 }
-            if d2 < 0 { d2 = d2 + 256 }
-            if d3 < 0 { d3 = d3 + 256 }
-            let disp = d0 + d1 * 256 + d2 * 65536 + d3 * 16777216
-            if disp == 0 {
-                // Replace 5-byte JMP with 5-byte NOP (0F 1F 44 00 00)
-                poke_byte(out, i, 0x0F)
-                poke_byte(out, i + 1, 0x1F)
-                poke_byte(out, i + 2, 0x44)
-                poke_byte(out, i + 3, 0x00)
-                poke_byte(out, i + 4, 0x00)
-                i = i + 5
-            } else {
-                i = i + 1
-            }
-        } else {
-            i = i + 1
-        }
-    }
 }
 
 fn p_sys_mmap() -> i64 {

@@ -1,0 +1,29 @@
+// Bitwise XOR.
+//
+// `^` was not lexed at all: char_to_tok had no entry for it, so it produced an
+// unknown token and the statement loop silently dropped the rest of the
+// function. A program using it compiled, ran, exited 0, and printed nothing
+// after the first `^`. stdlib/crypto.jda uses it throughout, which is why that
+// module could not compile.
+fn xor2(a: i64, b: i64) -> i64 {
+    ret a ^ b
+}
+
+fn main() {
+    let x = 6
+    let y = 3
+    print("{x ^ y}\n")
+
+    // In a call argument, which is where stdlib/crypto.jda uses it.
+    print("{xor2(x, y)}\n")
+    print("{xor2(x ^ y, 0)}\n")
+
+    // Chained, and mixed with the operators around it in precedence.
+    let a = 0xF0
+    let b = 0x0F
+    print("{a ^ b}\n")
+    print("{1 ^ 2 ^ 3}\n")
+
+    // XOR with itself is zero; with zero is identity.
+    print("{x ^ x} {x ^ 0}\n")
+}

@@ -19,7 +19,7 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Not clear.** Seven are fixed; **1.8 is open** — a seventh function argument
+**Not clear.** Seven are fixed; **1.8 and 1.9 are open** — a seventh function argument
 is silently miscompiled, which is what caused 3.1. 1.7 was found while investigating
 3.1, which remains open and is a different bug. Note how the last two were found:
 not by reading source, but by running programs and checking *values*. 1.4 hid
@@ -157,6 +157,125 @@ to both `OP_CALL`/`OP_CALL_IND` and `OP_TAIL_CALL` builds a compiler that hangs
 on every input, `examples/hello.jda` included — so the marking interacts with
 something else, and the real fix needs to understand that interaction rather
 than just close the gap. Reverted; not committed.
+
+### 1.9 An unknown character silently truncates the function
+
+**Status: OPEN.**
+
+```jda
+fn main() {
+    print("before ")
+    let x = 6 $ 3      // any byte the lexer does not know
+    print("after\n")   // never runs, no diagnostic, exit 0
+}
+```
+
+`char_to_tok` returns `TOK_EOF` for a character it does not recognise, and the
+statement loop treats EOF as end of input — so everything after a stray byte is
+dropped. The program compiles, runs, exits 0, and simply stops producing output.
+
+This is how **`^` hid**: it was never lexed (see the `bitwise_xor` test), so
+every function using XOR was silently cut short at the first `^`. That is why
+`stdlib/crypto.jda` could not compile and why a program doing `let z = x ^ y`
+printed nothing after that line.
+
+`^` is fixed. The general case is not: any other unexpected byte still truncates.
+
+**A naive fix does not work.** Making `char_to_tok` report an error takes the
+whole suite from 431 passing to 0 — `char_to_tok` is called speculatively from
+several lexer paths that legitimately pass characters it does not map, so the
+error has to go at the emit sites that mean "this really is a token", not in the
+shared classifier. Reverted; not committed.
+
+### 1.10 Integer literals in [0xE9000000, 0xE9FFFFFF] were rewritten into a NOP ✅
+
+**Status: FIXED.**
+
+Any integer literal whose value fell in `3909091328 .. 3925868543` came out
+wrong, always by the same offset `0x441E26000000`:
+
+```
+fn main() {
+    print("{3921009573}\n")     // printed 74900198251429
+}
+```
+
+The value is materialised as `movabs rax, imm64`, so `3921009573` is encoded as
+the bytes `A5 DB B5 E9 00 00 00 00`. A post-fixup pass, `nop_fallthrough_jmps`,
+scanned each emitted function byte by byte for `E9 00 00 00 00` — a `JMP rel32`
+whose displacement is zero, which merely falls through to the next instruction —
+and replaced it with the five-byte NOP `0F 1F 44 00 00`. With no instruction
+boundaries to work from, it matched the tail of that immediate and rewrote it,
+turning the constant into `0x441F0FB5DBA5`.
+
+The range is exactly the values whose most significant byte is `0xE9`, which is
+why it looked arbitrary: `0xE9000000` and `0xE9FFFFFF` are both corrupted,
+`0xE8FFFFFF` and `0xEA000000` are both fine, and `0xE9` sitting in any other
+byte position is harmless.
+
+The fix drops the byte scan. The fixup table already records the offset of every
+jump displacement the lowerer emitted, so the NOP rewrite now happens inside
+`lower_fn_patch_fixups`, keyed off a real jump site and applied only when the
+computed displacement is zero. Regression test:
+`tests/conformance/stage1/pass/literal_jmp_opcode_range.jda`.
+
+This one had teeth. `sha_k(3)` in a SHA-256 implementation returns
+`0xE9B5DBA5`, so the hash was silently wrong, and none of the 431 conformance
+tests happened to use a literal in that window.
+
+### 1.11 Division miscompiles: `x / (1 << n)`, and inline IDIV corrupts a pointer
+
+**Status: OPEN — reproduced, worked around in `tools/pkg.jda`, not fixed.**
+
+Two related failures, both around `IDIV`. `IDIV` reads and writes `RDX:RAX`, and
+the register allocator does not appear to model that fully.
+
+**(a) A shift as the divisor.** The divisor is computed as anything but a plain
+constant and the result is wrong:
+
+```
+fn a(m: i64, n: i64) -> i64 { ret m / (1 << n) }
+fn d(m: i64) -> i64 { ret m / (1 << 6) }
+fn c(m: i64) -> i64 { ret m / 64 }
+
+a(640, 6)   // 0    -- want 10
+d(640)      // 0    -- want 10
+c(640)      // 10   -- correct
+```
+
+`m + (1 << n)` is fine, so the shift itself is not the problem. Hoisting the
+divisor into a local sometimes helps and sometimes produces a different wrong
+answer, which is what makes it look like allocation rather than lowering.
+
+**(b) Several inline divisions in a loop that also stores through a pointer
+parameter.** This segfaults:
+
+```
+fn emit(h: &i64, out: &i8) {
+    let i = 0
+    loop i < 8 {
+        let v = h[i]
+        poke_byte(out, i * 4, (v / 16777216) % 256)
+        poke_byte(out, i * 4 + 1, (v / 65536) % 256)
+        poke_byte(out, i * 4 + 2, (v / 256) % 256)
+        poke_byte(out, i * 4 + 3, v % 256)
+        i = i + 1
+    }
+}
+```
+
+Reducing it to a single `poke_byte` per iteration, or moving each division into
+its own one-line function, makes it work — the pointer survives when the divide
+is not live across the store.
+
+**Workarounds in use.** `tools/pkg.jda` computes powers of two with a `pow2`
+helper instead of `1 << n`, and routes every byte extraction through
+`fn byte_of(v: i64, d: i64) -> i64 { ret (v / d) % 256 }`. Both are noted at
+their use sites.
+
+**Why it matters.** Nothing in the conformance suite divides by a computed
+power of two, so this is invisible today, and it silently produced a wrong
+SHA-256 rather than failing.
 
 ### 1.2 Tuple destructuring bound nothing ✅
 
@@ -354,31 +473,47 @@ So: arithmetic on **literals** works; arithmetic on **other constants** does
 not, and **string constants** do not exist. This breaks `web_server.jda`,
 `transformer.jda` and `tools/pkg.jda`.
 
-### 2.4 `tools/*.jda` do not compile
+### 2.4 `tools/*.jda` do not compile ✅
 
-**Status: OPEN — being fixed.** `tools/lsp.jda` and `tools/pkg.jda` are
-self-hosted rewrites of tools that already exist and work in bash
-(`tools/jda-lsp.sh`, 944 lines; `tools/jda-pkg.sh`, 716 lines). The README's
-`jda pkg` and `jda-lsp` claims rest on those bash implementations, so nothing
-user-facing is blocked by this.
+**Status: FIXED.** Both files compile, run, and are gated in CI by
+`tests/pkg-selftest.sh` and `tests/lsp-selftest.sh`.
 
-The `;` comments in both files are **not** a blocker — `;` is a valid comment
-today; converting them to `//` is a separate cosmetic migration.
+They were written against a language that does not exist. Between them they
+used `impl` blocks, `own`/`ref` qualifiers, `bool`, `match`, `Result`/`Option`
+and their combinators, generics (`Vec<T>`), closures, slices (`s[a..b]`),
+enum variant paths (`JsonValue::Null`), associated functions (`X::y()`), the
+`?` operator, `for x in xs`, and multi-value return. None of that is
+implemented, and the earlier plan here — add each feature, then compile the
+files — was the wrong way round: it made two aspirational files the
+specification for the language.
 
-What actually blocks them is language surface that does not exist yet:
+They were rewritten against the language as it is instead, keeping the feature
+set rather than the syntax:
 
-| Needed | `lsp.jda` | `pkg.jda` |
-|---|---|---|
-| Tuple destructuring | 3 sites | 3 sites, one 8-element |
-| Option/Result combinators (`.unwrap_or`, `.map`) | **28 sites** | 1 site |
-| Enum variant paths (`JsonValue::Null`) | yes | — |
-| Associated functions (`X::y()`) | 2 sites | 11 sites |
-| `?` on a destructuring `let` | — | yes |
+| | before | after | covered by |
+|---|---|---|---|
+| `tools/pkg.jda` | 5 blocking features | semver, all five version-requirement forms, manifest parsing, SHA-256, `list`/`add`/`remove` | `pkg selftest` |
+| `tools/lsp.jda` | 6 blocking features | all nine LSP methods, framing, diagnostics, hover, completion, definition, symbols, formatting | `lsp selftest` plus a driven protocol session |
 
-This is a language roadmap, not a build fix, and is being done as a sequence of
-PRs rather than one. Tuple destructuring comes first: it is the largest shared
-blocker, and it replaces the `JDA-F008` rejection added under 1.2, which was
-explicitly "until a tuple type exists".
+What replaced what: `Vec<T>` and `HashMap` became parallel global arrays with an
+arena; `Result`/`Option` became sentinel returns (`-1` for absent) and, where a
+span had to come back, a pair of globals; `match` became `if` ladders; slices
+became `(base, offset, length)` argument triples; and the JSON value tree became
+a flat node arena for reading (`stdlib/json.jda`, also rewritten) and direct
+byte emission for writing.
+
+Two things worth keeping in mind for anything written next:
+
+- **The rewrites found compiler bugs the test corpus did not.** `pkg.jda`'s
+  SHA-256 turned up 1.10 and both halves of 1.11. Real programs exercise
+  combinations that a corpus of small conformance cases does not.
+- **`;` comments were never the blocker.** `;` is a valid comment today. The
+  rewrites use `//` throughout because the rest of the tree does, not because
+  they had to.
+
+The bash tools they duplicate (`tools/jda-lsp.sh`, `tools/jda-pkg.sh`) are
+untouched and still what the README's `jda pkg` and `jda-lsp` claims rest on.
+Switching those entry points over to the compiled versions is a separate change.
 
 ### 2.5 `bootstrap/stage1/jda1-mac.jda` is unbuilt and drifting ✅
 
@@ -481,12 +616,17 @@ which is why this was never caught.
 5. ~~**2.1**~~ — **done**. `tests/examples-test.sh` gates every example in CI.
    Three unfixable sketches moved to `examples/aspirational/`; the fourth was
    never broken (2.2, retracted).
-6. **2.4 / 2.5** — ~~2.5 archived~~. 2.4 is being *fixed* rather than removed:
-   tuple destructuring first, then enum variant paths, then Option/Result
-   combinators. Multi-PR language work.
+6. ~~**2.4 / 2.5**~~ — **done**. 2.5 archived; 2.4 fixed, but not the way this
+   list proposed. Adding tuple destructuring, then enum paths, then combinators
+   would have meant letting two aspirational files dictate the language. Both
+   were rewritten against the language as it is instead, keeping every feature,
+   and each now carries a selftest gated in CI.
 7. **3.2** — CI assertion on the global count.
 8. ~~**3.1**~~ — **done**, and it was a compiler bug rather than a platform one:
    a fused store took its displacement from an uninitialised field.
+9. **1.11 division** — the open Tier 1 item with the widest blast radius:
+   `x / (1 << n)` is silently wrong and nothing in the suite covers it.
+10. **1.8 / 1.9** — both diagnosed, both with naive fixes that break the world.
 
 ## A note on the README
 
@@ -498,3 +638,16 @@ The gap between those claims and Tier 1 is the real adoption problem. A visitor
 who clones this and writes `let xs = [1, 2, 3]` gets a segfault, and every
 headline number becomes suspect at once. Fix Tier 1 and Tier 2 before doing
 anything to attract traffic — the first impression is only available once.
+
+
+
+
+
+
+
+Two more bugs found, not fixed
+
+Both around IDIV, documented as known-breakage 1.11 with workarounds noted at their use sites:
+
+- m / (1 << n) returns 0 (m / 64 is fine). Hoisting the divisor sometimes helps and sometimes gives a different wrong answer — looks like allocation, not lowering.
+- Several inline divisions in a loop that also stores through a pointer parameter corrupt the pointer and segfault. One division per iteration, or moving each into its own function, works.

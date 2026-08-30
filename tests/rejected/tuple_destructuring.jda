@@ -3,9 +3,10 @@
 // elements never existed. The statement produced no diagnostic, and you only
 // found out at the first use of one of the names.
 //
-// There is nothing to destructure -- the language has no tuple type and OP_RET
-// carries one operand -- so a function returning several values returns a
-// struct and the caller reads its fields.
+// Only the call form is rejected. `let (a, b) = (x, y)` binds in parallel and
+// is supported -- see tests/conformance/stage1/pass/let_tuple_literal.jda. The
+// call form needs multi-value return, and OP_RET carries one operand, so a
+// function returning several values returns a struct.
 fn f() -> i64 { ret 7 }
 
 fn main() {

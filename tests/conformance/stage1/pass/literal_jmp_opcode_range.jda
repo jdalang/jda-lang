@@ -1,0 +1,21 @@
+// Integer literals whose low 32 bits fall in [0xE9000000, 0xE9FFFFFF] used to be
+// silently corrupted. `movabs reg, imm64` encodes such a value as the bytes
+// A5 DB B5 E9 00 00 00 00, and a post-fixup pass scanned the emitted bytes for
+// E9 00 00 00 00 -- a JMP rel32 that falls through -- and rewrote it as a 5-byte
+// NOP, landing inside the immediate. The NOP pass now keys off the fixup table,
+// so it only ever touches real jump sites.
+fn ident(x: i64) -> i64 { ret x }
+
+fn main() {
+    print("{3909091328}\n")
+    print("{3921009573}\n")
+    print("{3925868543}\n")
+    print("{3909091327}\n")
+    print("{3925868544}\n")
+    let v = 3921009573
+    print("{ident(v)}\n")
+    let t = i64[2]
+    t[0] = 3921009573
+    print("{t[0]}\n")
+    print("{3921009573 - 3921009000}\n")
+}
