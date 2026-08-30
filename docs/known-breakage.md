@@ -473,36 +473,47 @@ So: arithmetic on **literals** works; arithmetic on **other constants** does
 not, and **string constants** do not exist. This breaks `web_server.jda`,
 `transformer.jda` and `tools/pkg.jda`.
 
-### 2.4 `tools/*.jda` do not compile
+### 2.4 `tools/*.jda` do not compile ✅
 
-**Status: OPEN — in progress.** `tools/lsp.jda` and `tools/pkg.jda` are
-self-hosted rewrites of tools that already exist and work in bash
-(`tools/jda-lsp.sh`, 944 lines; `tools/jda-pkg.sh`, 716 lines), which is what
-the README's `jda pkg` and `jda-lsp` claims rest on. Nothing user-facing is
-blocked by this.
+**Status: FIXED.** Both files compile, run, and are gated in CI by
+`tests/pkg-selftest.sh` and `tests/lsp-selftest.sh`.
 
-The `;` comments in both files are **not** a blocker — `;` is a valid comment
-today; converting them to `//` is a separate cosmetic migration.
+They were written against a language that does not exist. Between them they
+used `impl` blocks, `own`/`ref` qualifiers, `bool`, `match`, `Result`/`Option`
+and their combinators, generics (`Vec<T>`), closures, slices (`s[a..b]`),
+enum variant paths (`JsonValue::Null`), associated functions (`X::y()`), the
+`?` operator, `for x in xs`, and multi-value return. None of that is
+implemented, and the earlier plan here — add each feature, then compile the
+files — was the wrong way round: it made two aspirational files the
+specification for the language.
 
-| Needed | `lsp.jda` | `pkg.jda` | state |
+They were rewritten against the language as it is instead, keeping the feature
+set rather than the syntax:
+
+| | before | after | covered by |
 |---|---|---|---|
-| Tuple destructuring from a **literal** | — | 1 site | **done** |
-| Tuple destructuring from a **call** | 3 sites | 2 sites | open — needs multi-value return |
-| Option/Result combinators (`.unwrap_or`, `.map`) | **28 sites** | 1 site | open |
-| Enum variant paths (`JsonValue::Null`) | 26 sites | 5 sites | open |
-| Associated functions (`X::y()`) | 2 sites | 11 sites | open |
-| `?` operator | — | **44 sites** | open |
+| `tools/pkg.jda` | 5 blocking features | semver, all five version-requirement forms, manifest parsing, SHA-256, `list`/`add`/`remove` | `pkg selftest` |
+| `tools/lsp.jda` | 6 blocking features | all nine LSP methods, framing, diagnostics, hover, completion, definition, symbols, formatting | `lsp selftest` plus a driven protocol session |
 
-`let (a, b) = (x, y)` now binds in parallel; the parentheses are syntax, not a
-value, so no tuple type was introduced. The call form still reports `JDA-F008`,
-because it needs multi-value return and `OP_RET` carries one operand.
+What replaced what: `Vec<T>` and `HashMap` became parallel global arrays with an
+arena; `Result`/`Option` became sentinel returns (`-1` for absent) and, where a
+span had to come back, a pair of globals; `match` became `if` ladders; slices
+became `(base, offset, length)` argument triples; and the JSON value tree became
+a flat node arena for reading (`stdlib/json.jda`, also rewritten) and direct
+byte emission for writing.
 
-**Neither file compiles yet**, and this increment does not change that: both hit
-a *call*-form destructure before anything else. The remaining features are
-independent of each other and each is a real language change, so this is a
-sequence of PRs rather than one. The honest order is call-form destructuring
-(the shared blocker), then `?` and associated functions for `pkg.jda`, then the
-combinators and enum paths that only `lsp.jda` needs.
+Two things worth keeping in mind for anything written next:
+
+- **The rewrites found compiler bugs the test corpus did not.** `pkg.jda`'s
+  SHA-256 turned up 1.10 and both halves of 1.11. Real programs exercise
+  combinations that a corpus of small conformance cases does not.
+- **`;` comments were never the blocker.** `;` is a valid comment today. The
+  rewrites use `//` throughout because the rest of the tree does, not because
+  they had to.
+
+The bash tools they duplicate (`tools/jda-lsp.sh`, `tools/jda-pkg.sh`) are
+untouched and still what the README's `jda pkg` and `jda-lsp` claims rest on.
+Switching those entry points over to the compiled versions is a separate change.
 
 ### 2.5 `bootstrap/stage1/jda1-mac.jda` is unbuilt and drifting ✅
 
@@ -605,12 +616,17 @@ which is why this was never caught.
 5. ~~**2.1**~~ — **done**. `tests/examples-test.sh` gates every example in CI.
    Three unfixable sketches moved to `examples/aspirational/`; the fourth was
    never broken (2.2, retracted).
-6. **2.4 / 2.5** — ~~2.5 archived~~. 2.4 is being *fixed* rather than removed:
-   tuple destructuring first, then enum variant paths, then Option/Result
-   combinators. Multi-PR language work.
+6. ~~**2.4 / 2.5**~~ — **done**. 2.5 archived; 2.4 fixed, but not the way this
+   list proposed. Adding tuple destructuring, then enum paths, then combinators
+   would have meant letting two aspirational files dictate the language. Both
+   were rewritten against the language as it is instead, keeping every feature,
+   and each now carries a selftest gated in CI.
 7. **3.2** — CI assertion on the global count.
 8. ~~**3.1**~~ — **done**, and it was a compiler bug rather than a platform one:
    a fused store took its displacement from an uninitialised field.
+9. **1.11 division** — the open Tier 1 item with the widest blast radius:
+   `x / (1 << n)` is silently wrong and nothing in the suite covers it.
+10. **1.8 / 1.9** — both diagnosed, both with naive fixes that break the world.
 
 ## A note on the README
 
@@ -622,3 +638,16 @@ The gap between those claims and Tier 1 is the real adoption problem. A visitor
 who clones this and writes `let xs = [1, 2, 3]` gets a segfault, and every
 headline number becomes suspect at once. Fix Tier 1 and Tier 2 before doing
 anything to attract traffic — the first impression is only available once.
+
+
+
+
+
+
+
+Two more bugs found, not fixed
+
+Both around IDIV, documented as known-breakage 1.11 with workarounds noted at their use sites:
+
+- m / (1 << n) returns 0 (m / 64 is fine). Hoisting the divisor sometimes helps and sometimes gives a different wrong answer — looks like allocation, not lowering.
+- Several inline divisions in a loop that also stores through a pointer parameter corrupt the pointer and segfault. One division per iteration, or moving each into its own function, works.

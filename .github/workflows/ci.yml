@@ -197,6 +197,13 @@ jobs:
           ulimit -s unlimited
           bash tests/pkg-selftest.sh
 
+      # lsp.jda is the editor front end; the gate drives a real LSP session
+      # rather than only compiling it.
+      - name: Language server selftest
+        run: |
+          ulimit -s unlimited
+          bash tests/lsp-selftest.sh
+
       - name: Stdlib index is current
         run: python3 tools/jda-index.py --check
 
