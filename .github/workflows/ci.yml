@@ -80,9 +80,15 @@ jobs:
           echo "  probe sha:    $(sha256sum /tmp/np2 | cut -c1-32)"
           chmod +x /tmp/np2
           echo -n "  result:       "; timeout 10 /tmp/np2
-          echo "  --- block 0 base64 ---"
-          head -c 4096 /tmp/np2 | base64 -w0
-          echo
+          echo "  --- per-4KB block hashes ---"
+          python3 - <<'PYEOF'
+          import hashlib
+          d=open("/tmp/np2","rb").read()
+          print("size", len(d))
+          B=4096
+          for i in range(0,len(d),B):
+              print(f"{i//B:04d} {hashlib.sha256(d[i:i+B]).hexdigest()[:12]}")
+          PYEOF
           exit 0
 
       - name: Probe allocation zeroing and exhaustion
