@@ -356,29 +356,34 @@ not, and **string constants** do not exist. This breaks `web_server.jda`,
 
 ### 2.4 `tools/*.jda` do not compile
 
-**Status: OPEN — being fixed.** `tools/lsp.jda` and `tools/pkg.jda` are
+**Status: OPEN — in progress.** `tools/lsp.jda` and `tools/pkg.jda` are
 self-hosted rewrites of tools that already exist and work in bash
-(`tools/jda-lsp.sh`, 944 lines; `tools/jda-pkg.sh`, 716 lines). The README's
-`jda pkg` and `jda-lsp` claims rest on those bash implementations, so nothing
-user-facing is blocked by this.
+(`tools/jda-lsp.sh`, 944 lines; `tools/jda-pkg.sh`, 716 lines), which is what
+the README's `jda pkg` and `jda-lsp` claims rest on. Nothing user-facing is
+blocked by this.
 
 The `;` comments in both files are **not** a blocker — `;` is a valid comment
 today; converting them to `//` is a separate cosmetic migration.
 
-What actually blocks them is language surface that does not exist yet:
+| Needed | `lsp.jda` | `pkg.jda` | state |
+|---|---|---|---|
+| Tuple destructuring from a **literal** | — | 1 site | **done** |
+| Tuple destructuring from a **call** | 3 sites | 2 sites | open — needs multi-value return |
+| Option/Result combinators (`.unwrap_or`, `.map`) | **28 sites** | 1 site | open |
+| Enum variant paths (`JsonValue::Null`) | 26 sites | 5 sites | open |
+| Associated functions (`X::y()`) | 2 sites | 11 sites | open |
+| `?` operator | — | **44 sites** | open |
 
-| Needed | `lsp.jda` | `pkg.jda` |
-|---|---|---|
-| Tuple destructuring | 3 sites | 3 sites, one 8-element |
-| Option/Result combinators (`.unwrap_or`, `.map`) | **28 sites** | 1 site |
-| Enum variant paths (`JsonValue::Null`) | yes | — |
-| Associated functions (`X::y()`) | 2 sites | 11 sites |
-| `?` on a destructuring `let` | — | yes |
+`let (a, b) = (x, y)` now binds in parallel; the parentheses are syntax, not a
+value, so no tuple type was introduced. The call form still reports `JDA-F008`,
+because it needs multi-value return and `OP_RET` carries one operand.
 
-This is a language roadmap, not a build fix, and is being done as a sequence of
-PRs rather than one. Tuple destructuring comes first: it is the largest shared
-blocker, and it replaces the `JDA-F008` rejection added under 1.2, which was
-explicitly "until a tuple type exists".
+**Neither file compiles yet**, and this increment does not change that: both hit
+a *call*-form destructure before anything else. The remaining features are
+independent of each other and each is a real language change, so this is a
+sequence of PRs rather than one. The honest order is call-form destructuring
+(the shared blocker), then `?` and associated functions for `pkg.jda`, then the
+combinators and enum paths that only `lsp.jda` needs.
 
 ### 2.5 `bootstrap/stage1/jda1-mac.jda` is unbuilt and drifting ✅
 

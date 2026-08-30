@@ -1,0 +1,30 @@
+// `let (a, b) = (x, y)` binds in parallel.
+//
+// No tuple type exists: the parentheses are syntax, not a value. Each element
+// is evaluated and stored before the next is evaluated, matching how an
+// ordinary let is ordered.
+//
+// The call form, `let (a, b) = f()`, is a separate feature and is still
+// rejected -- see tests/rejected/tuple_destructuring.
+fn main() {
+    let (a, b) = (10, 20)
+    print("{a} {b}\n")
+
+    // Elements are full expressions.
+    let (x, y, z) = (1 + 1, 2 * 3, 100)
+    print("{x} {y} {z}\n")
+
+    // Including indexed reads.
+    let arr = i64[8]
+    arr[0] = 5
+    arr[7] = 9
+    let (p, q) = (arr[0], arr[7])
+    print("{p} {q}\n")
+
+    // Eight names, the shape tools/pkg.jda uses.
+    let h = i64[8]
+    h[0] = 1
+    h[7] = 8
+    let (c0, c1, c2, c3, c4, c5, c6, c7) = (h[0], 2, 3, 4, 5, 6, 7, h[7])
+    print("{c0} {c7} {c3}\n")
+}

@@ -5648,13 +5648,38 @@ fn tok_is_fn_kw(toks: &Token, src: &i8, i: i64) -> i64 {
 // and the caller reads its fields. Implementing this would mean inventing both
 // a tuple type and a multi-value calling convention, so until that happens it
 // has to fail loudly instead of binding nothing.
+// `let (a, b) = (x, y)` binds in parallel and is supported. `let (a, b) = f()`
+// is not: it needs multi-value return, and OP_RET carries one operand, so a
+// function returning several values returns a struct and the caller reads its
+// fields. Only the second form is rejected.
 fn validate_no_tuple_destructure(toks: &Token, cnt: i64) {
     let i = 0
     loop i < cnt {
         if tok_type_at_raw(toks, i) == TOK_LET {
             if tok_type_at_raw(toks, i + 1) == TOK_LPAREN {
-                g_main_pos = i
-                report_error_code("JDA-F008", "tuple destructuring is not supported; return a struct and read its fields")
+                // Find the `)` that closes the name list.
+                let j = i + 2
+                let depth = 0
+                let close = 0 - 1
+                loop j < cnt and close < 0 {
+                    let t = tok_type_at_raw(toks, j)
+                    if t == TOK_LPAREN { depth = depth + 1 }
+                    else if t == TOK_RPAREN {
+                        if depth == 0 { close = j }
+                        else { depth = depth - 1 }
+                    }
+                    j = j + 1
+                }
+                let rhs_ok = 0
+                if close >= 0 {
+                    if tok_type_at_raw(toks, close + 1) == TOK_EQ {
+                        if tok_type_at_raw(toks, close + 2) == TOK_LPAREN { rhs_ok = 1 }
+                    }
+                }
+                if rhs_ok == 0 {
+                    g_main_pos = i
+                    report_error_code("JDA-F008", "tuple destructuring from a call is not supported; return a struct and read its fields")
+                }
             }
         }
         i = i + 1
@@ -23384,6 +23409,59 @@ fn lower_block(bb: &BasicBlock, ctx: &LowerCtx, jfn: &JirFunction,
     g_cur_instr_idx = -1
 }
 
+// `let (a, b, c) = (e1, e2, e3)` binds in parallel.
+//
+// No tuple type is introduced: the parentheses are syntax here, not a value.
+// Each element is evaluated and stored before the next is evaluated, which
+// matches how an ordinary let is ordered, and is why this cannot express a
+// swap -- `let (a, b) = (b, a)` reads the new `a`.
+//
+// The call form, `let (a, b) = f()`, is a different feature and is rejected in
+// validate_no_tuple_destructure: it needs multi-value return, and OP_RET
+// carries one operand.
+fn live_compile_let_tuple(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -> i64 {
+    g_main_pos = g_main_pos + 1
+    let names_start = i64[16]
+    let names_len = i64[16]
+    let n = 0
+    loop tok_type_at_raw(toks0, g_main_pos) != TOK_RPAREN and g_main_pos < g_scan_tok_cnt {
+        if tok_type_at_raw(toks0, g_main_pos) == TOK_COMMA {
+            g_main_pos = g_main_pos + 1
+        } else {
+            if n >= 16 {
+                report_error_code("JDA-F009", "a destructuring let binds at most 16 names")
+            }
+            names_start[n] = tok_str_start_at(toks0, g_main_pos)
+            names_len[n] = tok_str_len_at(toks0, g_main_pos)
+            n = n + 1
+            g_main_pos = g_main_pos + 1
+        }
+    }
+    expect(TOK_RPAREN)
+    expect(TOK_EQ)
+    expect(TOK_LPAREN)
+    let k = 0
+    loop k < n {
+        if tok_type_at_raw(toks0, g_main_pos) == TOK_RPAREN {
+            report_error_code("JDA-F009", "too few values on the right of a destructuring let")
+        }
+        let v = codegen_expr_inline(toks0, &g_main_pos, stab, src, jfn, cur)
+        let slot = bind_name(jfn, names_start[k], names_len[k], TYPE_I64)
+        let st = Instr{}
+        st.op = OP_STORE
+        st.operand0 = v
+        st.operand1 = slot
+        emit(jfn, cur, &st)
+        if tok_type_at_raw(toks0, g_main_pos) == TOK_COMMA { g_main_pos = g_main_pos + 1 }
+        k = k + 1
+    }
+    if tok_type_at_raw(toks0, g_main_pos) != TOK_RPAREN {
+        report_error_code("JDA-F009", "too many values on the right of a destructuring let")
+    }
+    expect(TOK_RPAREN)
+    ret cur
+}
+
 fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirFunction, cur: i64) -> i64 {
     if g_cur_fn_name_len == 4 {
         if streq(src, g_cur_fn_name_start, 4, "main") == 1 {
@@ -23391,6 +23469,9 @@ fn live_compile_let_stmt(toks0: &Token, stab: &StructTable, src: &i8, jfn: &JirF
         }
     }
     g_main_pos = g_main_pos + 1
+    if tok_type_at_raw(toks0, g_main_pos) == TOK_LPAREN {
+        ret live_compile_let_tuple(toks0, stab, src, jfn, cur)
+    }
     let name_start = tok_str_start_at(toks0, g_main_pos)
     let name_len = tok_str_len_at(toks0, g_main_pos)
     g_main_pos = g_main_pos + 1
