@@ -1,410 +1,434 @@
 // =============================================================================
-// jda::json — Zero-Copy JSON Parser & Serialiser
+// jda::json — Zero-Copy JSON Parser
 // =============================================================================
-// Parser:     slices point INTO the source buffer — zero allocations
-// Serialiser: writes directly to a caller-supplied buffer
-// Both are J-Thread safe (no global state)
-
+// Parser: string and number spans point INTO the source buffer — the parser
+// allocates only its node arena, never copies payload bytes.
+// No global state, so it is J-Thread safe as long as each thread parses into
+// its own arena.
+//
+// This is a rewrite of an earlier version written against a dialect this
+// compiler does not implement (tagged-union enums with payloads, slices,
+// generic Result). The data model is the same idea expressed with what the
+// language has: a flat node arena instead of a recursive tagged union, and
+// integer node handles instead of references.
+//
 // Usage:
-//   let val = json_parse(src)?
-//   let name = val.get("name")?.as_str()?
-//   let age  = val.get("age")?.as_i64()?
-
-//   let buf = [4096]i8
-//   let n = json_write(val, buf)
+//   let doc = json_parse(src, len)
+//   if doc < 0 { /* parse error */ }
+//   let name = json_obj_get(doc, "name", 4)
+//   if name >= 0 { print_str(g_json_src + json_str_off(name), json_str_len(name)) }
+//   let age = json_obj_get(doc, "age", 3)
+//   if age >= 0 { let n = json_num(age) }
+//
+// Every accessor takes a node handle. -1 means "absent" everywhere, so a
+// missing key and a failed parse are the same shape and a caller that forgets
+// to check gets -1 rather than garbage.
 // =============================================================================
 
-// =============================================================================
-// JsonValue — tagged union covering all JSON types
-// =============================================================================
-enum JsonValue {
-    Null
-    Bool(bool)
-    Int(i64)
-    Float(f64)
-    Str([]i8)           // slice into original source buffer (zero-copy)
-    Array([]JsonValue)  // elements stored in caller's region
-    Object([]JsonPair)  // key-value pairs stored in caller's region
-}
+// Node kinds.
+const JSON_NULL  = 0
+const JSON_BOOL  = 1
+const JSON_NUM   = 2
+const JSON_STR   = 3
+const JSON_ARR   = 4
+const JSON_OBJ   = 5
 
-struct JsonPair {
-    key: []i8           // slice into source buffer (zero-copy)
-    val: JsonValue
-}
+// A node is 6 slots in a flat arena:
+//   0 kind
+//   1 value      -- bool 0/1, or number
+//   2 span_off   -- offset into the source of a string, or of an object key
+//   3 span_len
+//   4 first      -- first child (array element or object member), else -1
+//   5 next       -- next sibling, else -1
+const JSON_NODE_SLOTS = 6
 
-// =============================================================================
-// Parser state
-// =============================================================================
-struct Parser {
-    src: []i8
-    pos: i64
-}
+let g_json_nodes: &i64 = 0
+let g_json_cnt = 0
+let g_json_cap = 0
+let g_json_src: &i8 = 0
+let g_json_len = 0
+let g_json_pos = 0
+let g_json_bad = 0
 
-// =============================================================================
-// json_parse(src) -> Result<JsonValue, JsonError>
-// =============================================================================
-fn json_parse(src: []i8) -> Result<JsonValue, []i8> {
-    let p = Parser { src: src, pos: 0 }
-    skip_ws(&mut p)
-    let val = parse_value(&mut p)?
-    skip_ws(&mut p)
-    if p.pos < p.src.len { ret err("trailing characters after JSON value") }
-    ret ok(val)
-}
-
-fn parse_value(p: &mut Parser) -> Result<JsonValue, []i8> {
-    if p.pos >= p.src.len { ret err("unexpected end of input") }
-    match p.src[p.pos] {
-        'n' => parse_null(p)
-        't' => parse_true(p)
-        'f' => parse_false(p)
-        '"' => parse_string(p)
-        '[' => parse_array(p)
-        '{' => parse_object(p)
-        '-' => parse_number(p)
-        c if c >= '0' and c <= '9' => parse_number(p)
-        c   => err(fmt_str("unexpected character '{}'", c))
+fn json_reset(src: &i8, len: i64) {
+    if g_json_nodes == 0 {
+        // 8192 nodes is 384KB; a manifest or an LSP message is far below that.
+        g_json_nodes = alloc_pages(96)
+        g_json_cap = 8192
     }
+    g_json_cnt = 0
+    g_json_src = src
+    g_json_len = len
+    g_json_pos = 0
+    g_json_bad = 0
+    ret 0
 }
 
-// ---- null / true / false ------------------------------------------------
-fn parse_null(p: &mut Parser) -> Result<JsonValue, []i8> {
-    expect_lit(p, "null")?
-    ret ok(JsonValue::Null)
-}
-fn parse_true(p: &mut Parser) -> Result<JsonValue, []i8> {
-    expect_lit(p, "true")?
-    ret ok(JsonValue::Bool(true))
-}
-fn parse_false(p: &mut Parser) -> Result<JsonValue, []i8> {
-    expect_lit(p, "false")?
-    ret ok(JsonValue::Bool(false))
-}
-fn expect_lit(p: &mut Parser, lit: ref []i8) -> Result<(), []i8> {
-    loop i in 0..lit.len {
-        if p.pos >= p.src.len or p.src[p.pos] != lit[i] {
-            ret err("invalid literal")
-        }
-        p.pos = p.pos + 1
+fn json_node_new(kind: i64) -> i64 {
+    if g_json_cnt >= g_json_cap {
+        g_json_bad = 1
+        ret 0 - 1
     }
-    ret ok(())
+    let n = g_json_cnt
+    let b = n * JSON_NODE_SLOTS
+    g_json_nodes[b + 0] = kind
+    g_json_nodes[b + 1] = 0
+    g_json_nodes[b + 2] = 0
+    g_json_nodes[b + 3] = 0
+    g_json_nodes[b + 4] = 0 - 1
+    g_json_nodes[b + 5] = 0 - 1
+    g_json_cnt = n + 1
+    ret n
 }
 
-// ---- string -------------------------------------------------------------
-// Returns a slice directly into p.src — zero copy.
-// Handles escape sequences by falling back to a copy when needed.
-fn parse_string(p: &mut Parser) -> Result<JsonValue, []i8> {
-    p.pos = p.pos + 1      // skip opening "
-    let start = p.pos
-    let has_escape = false
+// -- accessors ---------------------------------------------------------------
 
-    loop p.pos < p.src.len {
-        let c = p.src[p.pos]
-        if c == '"' {
-            let s = if has_escape {
-                unescape(p.src[start..p.pos])
-            } else {
-                p.src[start..p.pos]   // zero-copy slice
-            }
-            p.pos = p.pos + 1        // skip closing "
-            ret ok(JsonValue::Str(s))
-        }
-        if c == '\\' {
-            has_escape = true
-            p.pos = p.pos + 2        // skip escape sequence (simplified)
-        } else {
-            p.pos = p.pos + 1
-        }
+fn json_kind(n: i64) -> i64 {
+    if n < 0 { ret 0 - 1 }
+    ret g_json_nodes[n * JSON_NODE_SLOTS + 0]
+}
+
+fn json_num(n: i64) -> i64 {
+    if n < 0 { ret 0 }
+    ret g_json_nodes[n * JSON_NODE_SLOTS + 1]
+}
+
+fn json_bool(n: i64) -> i64 {
+    if n < 0 { ret 0 }
+    ret g_json_nodes[n * JSON_NODE_SLOTS + 1]
+}
+
+fn json_str_off(n: i64) -> i64 {
+    if n < 0 { ret 0 }
+    ret g_json_nodes[n * JSON_NODE_SLOTS + 2]
+}
+
+fn json_str_len(n: i64) -> i64 {
+    if n < 0 { ret 0 }
+    ret g_json_nodes[n * JSON_NODE_SLOTS + 3]
+}
+
+fn json_first(n: i64) -> i64 {
+    if n < 0 { ret 0 - 1 }
+    ret g_json_nodes[n * JSON_NODE_SLOTS + 4]
+}
+
+fn json_next(n: i64) -> i64 {
+    if n < 0 { ret 0 - 1 }
+    ret g_json_nodes[n * JSON_NODE_SLOTS + 5]
+}
+
+// Number of elements in an array, or members in an object.
+fn json_len(n: i64) -> i64 {
+    let c = 0
+    let k = json_first(n)
+    loop k >= 0 {
+        c = c + 1
+        k = json_next(k)
     }
-    ret err("unterminated string")
+    ret c
 }
 
-fn unescape(s: []i8) -> []i8 {
-    // Full unescape: \n \t \r \\ \" \uXXXX
-    // Returns a new []i8 (uses region alloc in full impl)
-    let buf = [4096]i8
-    let j   = 0i64
-    let i   = 0i64
-    loop i < s.len {
-        if s[i] == '\\' and i + 1 < s.len {
-            i = i + 1
-            match s[i] {
-                'n'  => { buf[j] = '\n'   j = j + 1 }
-                't'  => { buf[j] = '\t'   j = j + 1 }
-                'r'  => { buf[j] = '\r'   j = j + 1 }
-                '"'  => { buf[j] = '"'    j = j + 1 }
-                '\\' => { buf[j] = '\\'   j = j + 1 }
-                '/'  => { buf[j] = '/'    j = j + 1 }
-                'u'  => {
-                    // \uXXXX → UTF-8
-                    let cp = hex4(s, i + 1)
-                    j = j + utf8_encode(cp, buf, j)
-                    i = i + 4
-                }
-                _    => { buf[j] = s[i]   j = j + 1 }
-            }
-        } else {
-            buf[j] = s[i]
-            j = j + 1
-        }
+// nth element of an array (0-based), or -1.
+fn json_at(n: i64, idx: i64) -> i64 {
+    let i = 0
+    let k = json_first(n)
+    loop k >= 0 {
+        if i == idx { ret k }
+        i = i + 1
+        k = json_next(k)
+    }
+    ret 0 - 1
+}
+
+fn json_span_eq(off: i64, len: i64, key: &i8, klen: i64) -> i64 {
+    if len != klen { ret 0 }
+    let i = 0
+    loop i < len {
+        if g_json_src[off + i] != key[i] { ret 0 }
         i = i + 1
     }
-    ret buf[0..j]
+    ret 1
 }
 
-// ---- number -------------------------------------------------------------
-fn parse_number(p: &mut Parser) -> Result<JsonValue, []i8> {
-    let start = p.pos
-    let is_float = false
-
-    if p.src[p.pos] == '-' { p.pos = p.pos + 1 }
-    loop p.pos < p.src.len and p.src[p.pos] >= '0' and p.src[p.pos] <= '9' {
-        p.pos = p.pos + 1
+// Member of an object by key, or -1. Object members carry their key in the
+// span slots, so the value node and its key are the same node.
+fn json_obj_get(n: i64, key: &i8, klen: i64) -> i64 {
+    if json_kind(n) != JSON_OBJ { ret 0 - 1 }
+    let k = json_first(n)
+    loop k >= 0 {
+        if json_span_eq(json_str_off(k), json_str_len(k), key, klen) == 1 { ret k }
+        k = json_next(k)
     }
-    if p.pos < p.src.len and p.src[p.pos] == '.' {
-        is_float = true
-        p.pos = p.pos + 1
-        loop p.pos < p.src.len and p.src[p.pos] >= '0' and p.src[p.pos] <= '9' {
-            p.pos = p.pos + 1
-        }
-    }
-    if p.pos < p.src.len and (p.src[p.pos] == 'e' or p.src[p.pos] == 'E') {
-        is_float = true
-        p.pos = p.pos + 1
-        if p.pos < p.src.len and (p.src[p.pos] == '+' or p.src[p.pos] == '-') {
-            p.pos = p.pos + 1
-        }
-        loop p.pos < p.src.len and p.src[p.pos] >= '0' and p.src[p.pos] <= '9' {
-            p.pos = p.pos + 1
-        }
-    }
-
-    let tok = p.src[start..p.pos]
-    if is_float {
-        ret ok(JsonValue::Float(parse_f64(tok)?))
-    }
-    ret ok(JsonValue::Int(parse_i64_str(tok)?))
+    ret 0 - 1
 }
 
-// ---- array --------------------------------------------------------------
-fn parse_array(p: &mut Parser) -> Result<JsonValue, []i8> {
-    p.pos = p.pos + 1      // skip [
-    skip_ws(p)
-    let items = Vec<JsonValue>::new()
-    if p.pos < p.src.len and p.src[p.pos] == ']' {
-        p.pos = p.pos + 1
-        ret ok(JsonValue::Array(items.as_slice()))
-    }
-    loop {
-        skip_ws(p)
-        items.push(parse_value(p)?)
-        skip_ws(p)
-        if p.pos >= p.src.len { ret err("unterminated array") }
-        if p.src[p.pos] == ']' { p.pos = p.pos + 1   break }
-        if p.src[p.pos] != ',' { ret err("expected ',' in array") }
-        p.pos = p.pos + 1
-    }
-    ret ok(JsonValue::Array(items.as_slice()))
-}
+// -- scanner -----------------------------------------------------------------
 
-// ---- object -------------------------------------------------------------
-fn parse_object(p: &mut Parser) -> Result<JsonValue, []i8> {
-    p.pos = p.pos + 1      // skip {
-    skip_ws(p)
-    let pairs = Vec<JsonPair>::new()
-    if p.pos < p.src.len and p.src[p.pos] == '}' {
-        p.pos = p.pos + 1
-        ret ok(JsonValue::Object(pairs.as_slice()))
-    }
-    loop {
-        skip_ws(p)
-        // Key
-        let key_val = parse_string(p)?
-        let key = key_val.as_str().unwrap()
-        skip_ws(p)
-        if p.pos >= p.src.len or p.src[p.pos] != ':' {
-            ret err("expected ':' in object")
-        }
-        p.pos = p.pos + 1
-        skip_ws(p)
-        // Value
-        let val = parse_value(p)?
-        pairs.push(JsonPair { key: key, val: val })
-        skip_ws(p)
-        if p.pos >= p.src.len { ret err("unterminated object") }
-        if p.src[p.pos] == '}' { p.pos = p.pos + 1   break }
-        if p.src[p.pos] != ',' { ret err("expected ',' in object") }
-        p.pos = p.pos + 1
-    }
-    ret ok(JsonValue::Object(pairs.as_slice()))
-}
-
-fn skip_ws(p: &mut Parser) {
-    loop p.pos < p.src.len and
-         (p.src[p.pos] == ' ' or p.src[p.pos] == '\t' or
-          p.src[p.pos] == '\n' or p.src[p.pos] == '\r') {
-        p.pos = p.pos + 1
-    }
-}
-
-// =============================================================================
-// JsonValue accessor methods
-// =============================================================================
-impl JsonValue {
-    fn as_str(self) -> Result<[]i8, []i8> {
-        match self { Str(s) => ok(s)  _ => err("not a string") }
-    }
-    fn as_i64(self) -> Result<i64, []i8> {
-        match self {
-            Int(n)   => ok(n)
-            Float(f) => ok(f as i64)
-            _        => err("not a number")
+fn json_skip_ws() {
+    loop g_json_pos < g_json_len {
+        let c = g_json_src[g_json_pos]
+        if c == 32 or c == 9 or c == 10 or c == 13 {
+            g_json_pos = g_json_pos + 1
+        } else {
+            ret 0
         }
     }
-    fn as_f64(self) -> Result<f64, []i8> {
-        match self {
-            Float(f) => ok(f)
-            Int(n)   => ok(n as f64)
-            _        => err("not a number")
+    ret 0
+}
+
+fn json_peek() -> i64 {
+    if g_json_pos >= g_json_len { ret 0 - 1 }
+    ret g_json_src[g_json_pos]
+}
+
+fn json_lit(text: &i8, len: i64) -> i64 {
+    if g_json_pos + len > g_json_len { ret 0 }
+    let i = 0
+    loop i < len {
+        if g_json_src[g_json_pos + i] != text[i] { ret 0 }
+        i = i + 1
+    }
+    g_json_pos = g_json_pos + len
+    ret 1
+}
+
+// A string, with the span covering the contents between the quotes. Escapes are
+// left as written: this is a zero-copy parser, so it reports where the bytes
+// are rather than producing a decoded copy.
+fn json_parse_string_span(out_off: &i64, out_len: &i64) -> i64 {
+    if json_peek() != 34 { ret 0 }
+    g_json_pos = g_json_pos + 1
+    let start = g_json_pos
+    loop g_json_pos < g_json_len {
+        let c = g_json_src[g_json_pos]
+        if c == 92 {
+            g_json_pos = g_json_pos + 2
+        } else {
+            if c == 34 {
+                out_off[0] = start
+                out_len[0] = g_json_pos - start
+                g_json_pos = g_json_pos + 1
+                ret 1
+            }
+            g_json_pos = g_json_pos + 1
         }
     }
-    fn as_bool(self) -> Result<bool, []i8> {
-        match self { Bool(b) => ok(b)  _ => err("not a bool") }
+    ret 0
+}
+
+// Integers only. A fractional part parses and is skipped, with the integer part
+// kept, because the language has no f64 path through this arena.
+fn json_parse_number() -> i64 {
+    let neg = 0
+    if json_peek() == 45 {
+        neg = 1
+        g_json_pos = g_json_pos + 1
     }
-    fn is_null(self) -> bool {
-        match self { Null => true  _ => false }
+    let v = 0
+    let any = 0
+    loop g_json_pos < g_json_len {
+        let c = g_json_src[g_json_pos]
+        if c >= 48 and c <= 57 {
+            v = v * 10 + (c - 48)
+            any = 1
+            g_json_pos = g_json_pos + 1
+        } else {
+            g_json_pos = g_json_pos
+            if c == 46 {
+                g_json_pos = g_json_pos + 1
+            } else {
+                if any == 0 { g_json_bad = 1 }
+                if neg == 1 { ret 0 - v }
+                ret v
+            }
+        }
     }
-    fn get(self, key: ref []i8) -> Result<JsonValue, []i8> {
-        match self {
-            Object(pairs) => {
-                for p in pairs {
-                    if str_eq(p.key, key) { ret ok(p.val) }
+    if any == 0 { g_json_bad = 1 }
+    if neg == 1 { ret 0 - v }
+    ret v
+}
+
+fn json_parse_value() -> i64 {
+    json_skip_ws()
+    if g_json_bad == 1 { ret 0 - 1 }
+    let c = json_peek()
+
+    if c == 110 {
+        if json_lit("null", 4) == 1 { ret json_node_new(JSON_NULL) }
+        g_json_bad = 1
+        ret 0 - 1
+    }
+    if c == 116 {
+        if json_lit("true", 4) == 1 {
+            let n = json_node_new(JSON_BOOL)
+            if n >= 0 { g_json_nodes[n * JSON_NODE_SLOTS + 1] = 1 }
+            ret n
+        }
+        g_json_bad = 1
+        ret 0 - 1
+    }
+    if c == 102 {
+        if json_lit("false", 5) == 1 { ret json_node_new(JSON_BOOL) }
+        g_json_bad = 1
+        ret 0 - 1
+    }
+    if c == 34 {
+        let off = 0
+        let len = 0
+        if json_parse_string_span(&off, &len) == 0 {
+            g_json_bad = 1
+            ret 0 - 1
+        }
+        let n = json_node_new(JSON_STR)
+        if n >= 0 {
+            g_json_nodes[n * JSON_NODE_SLOTS + 2] = off
+            g_json_nodes[n * JSON_NODE_SLOTS + 3] = len
+        }
+        ret n
+    }
+    if c == 91 { ret json_parse_array() }
+    if c == 123 { ret json_parse_object() }
+
+    if c == 45 or (c >= 48 and c <= 57) {
+        let v = json_parse_number()
+        let n = json_node_new(JSON_NUM)
+        if n >= 0 { g_json_nodes[n * JSON_NODE_SLOTS + 1] = v }
+        ret n
+    }
+
+    g_json_bad = 1
+    ret 0 - 1
+}
+
+fn json_parse_array() -> i64 {
+    g_json_pos = g_json_pos + 1
+    let arr = json_node_new(JSON_ARR)
+    if arr < 0 { ret 0 - 1 }
+    let last = 0 - 1
+    json_skip_ws()
+    if json_peek() == 93 {
+        g_json_pos = g_json_pos + 1
+        ret arr
+    }
+    let more = 1
+    loop more == 1 {
+        let el = json_parse_value()
+        if g_json_bad == 1 { ret 0 - 1 }
+        if last < 0 {
+            g_json_nodes[arr * JSON_NODE_SLOTS + 4] = el
+        } else {
+            g_json_nodes[last * JSON_NODE_SLOTS + 5] = el
+        }
+        last = el
+        json_skip_ws()
+        let c = json_peek()
+        if c == 44 {
+            g_json_pos = g_json_pos + 1
+        } else {
+            if c == 93 {
+                g_json_pos = g_json_pos + 1
+                more = 0
+            } else {
+                g_json_bad = 1
+                ret 0 - 1
+            }
+        }
+    }
+    ret arr
+}
+
+fn json_parse_object() -> i64 {
+    g_json_pos = g_json_pos + 1
+    let obj = json_node_new(JSON_OBJ)
+    if obj < 0 { ret 0 - 1 }
+    let last = 0 - 1
+    json_skip_ws()
+    if json_peek() == 125 {
+        g_json_pos = g_json_pos + 1
+        ret obj
+    }
+    let more = 1
+    loop more == 1 {
+        json_skip_ws()
+        let koff = 0
+        let klen = 0
+        if json_parse_string_span(&koff, &klen) == 0 {
+            g_json_bad = 1
+            ret 0 - 1
+        }
+        json_skip_ws()
+        if json_peek() != 58 {
+            g_json_bad = 1
+            ret 0 - 1
+        }
+        g_json_pos = g_json_pos + 1
+        let val = json_parse_value()
+        if g_json_bad == 1 { ret 0 - 1 }
+        // The member's key lives in the value node's span slots, so a member is
+        // one node rather than a pair node plus a value node.
+        if val >= 0 {
+            if json_kind(val) == JSON_STR {
+                // A string value would otherwise want the same slots, so it is
+                // re-parented: the key goes on a wrapper whose only child is
+                // the string.
+                let w = json_node_new(JSON_STR)
+                if w >= 0 {
+                    g_json_nodes[w * JSON_NODE_SLOTS + 2] = koff
+                    g_json_nodes[w * JSON_NODE_SLOTS + 3] = klen
+                    g_json_nodes[w * JSON_NODE_SLOTS + 4] = val
+                    g_json_nodes[w * JSON_NODE_SLOTS + 1] = 1
                 }
-                ret err("key not found")
+                val = w
+            } else {
+                g_json_nodes[val * JSON_NODE_SLOTS + 2] = koff
+                g_json_nodes[val * JSON_NODE_SLOTS + 3] = klen
             }
-            _ => err("not an object")
+        }
+        if last < 0 {
+            g_json_nodes[obj * JSON_NODE_SLOTS + 4] = val
+        } else {
+            g_json_nodes[last * JSON_NODE_SLOTS + 5] = val
+        }
+        last = val
+        json_skip_ws()
+        let c = json_peek()
+        if c == 44 {
+            g_json_pos = g_json_pos + 1
+        } else {
+            if c == 125 {
+                g_json_pos = g_json_pos + 1
+                more = 0
+            } else {
+                g_json_bad = 1
+                ret 0 - 1
+            }
         }
     }
-    fn index(self, i: i64) -> Result<JsonValue, []i8> {
-        match self {
-            Array(items) => {
-                if i < 0 or i >= items.len { ret err("index out of bounds") }
-                ret ok(items[i])
-            }
-            _ => err("not an array")
-        }
-    }
-    fn len(self) -> i64 {
-        match self {
-            Array(items)  => items.len
-            Object(pairs) => pairs.len
-            Str(s)        => s.len
-            _             => 0
-        }
-    }
+    ret obj
 }
 
-// =============================================================================
-// Serialiser — writes JSON to a caller-supplied buffer
-// =============================================================================
-fn json_write(val: ref JsonValue, buf: []mut i8) -> i64 {
-    let pos = 0i64
-    write_value(val, buf, &mut pos, 0)
-    ret pos
+// Parse a document. Returns the root node handle, or -1 on any error.
+fn json_parse(src: &i8, len: i64) -> i64 {
+    json_reset(src, len)
+    let root = json_parse_value()
+    if g_json_bad == 1 { ret 0 - 1 }
+    ret root
 }
 
-fn json_write_pretty(val: ref JsonValue, buf: []mut i8) -> i64 {
-    let pos = 0i64
-    write_value_pretty(val, buf, &mut pos, 0)
-    ret pos
+// The text of a string member. For a member whose value is a string, the value
+// hangs off the wrapper as its first child; for a bare string node the span is
+// the text itself.
+fn json_str_value_off(n: i64) -> i64 {
+    if json_kind(n) != JSON_STR { ret 0 }
+    let c = json_first(n)
+    if c >= 0 { ret json_str_off(c) }
+    ret json_str_off(n)
 }
 
-fn write_value(val: ref JsonValue, buf: []mut i8, pos: &mut i64, _depth: i32) {
-    match val {
-        Null        => write_str(buf, pos, "null")
-        Bool(true)  => write_str(buf, pos, "true")
-        Bool(false) => write_str(buf, pos, "false")
-        Int(n)      => write_i64(buf, pos, n)
-        Float(f)    => write_f64(buf, pos, f)
-        Str(s)      => {
-            write_char(buf, pos, '"')
-            write_escaped(buf, pos, s)
-            write_char(buf, pos, '"')
-        }
-        Array(items) => {
-            write_char(buf, pos, '[')
-            loop i in 0..items.len {
-                if i > 0 { write_char(buf, pos, ',') }
-                write_value(&items[i], buf, pos, _depth)
-            }
-            write_char(buf, pos, ']')
-        }
-        Object(pairs) => {
-            write_char(buf, pos, '{')
-            loop i in 0..pairs.len {
-                if i > 0 { write_char(buf, pos, ',') }
-                write_char(buf, pos, '"')
-                write_escaped(buf, pos, pairs[i].key)
-                write_char(buf, pos, '"')
-                write_char(buf, pos, ':')
-                write_value(&pairs[i].val, buf, pos, _depth)
-            }
-            write_char(buf, pos, '}')
-        }
-    }
-}
-
-fn write_value_pretty(val: ref JsonValue, buf: []mut i8,
-                      pos: &mut i64, depth: i32) {
-    match val {
-        Array(items) => {
-            write_str(buf, pos, "[\n")
-            loop i in 0..items.len {
-                write_indent(buf, pos, depth + 1)
-                write_value_pretty(&items[i], buf, pos, depth + 1)
-                if i < items.len - 1 { write_char(buf, pos, ',') }
-                write_char(buf, pos, '\n')
-            }
-            write_indent(buf, pos, depth)
-            write_char(buf, pos, ']')
-        }
-        Object(pairs) => {
-            write_str(buf, pos, "{\n")
-            loop i in 0..pairs.len {
-                write_indent(buf, pos, depth + 1)
-                write_char(buf, pos, '"')
-                write_escaped(buf, pos, pairs[i].key)
-                write_str(buf, pos, "\": ")
-                write_value_pretty(&pairs[i].val, buf, pos, depth + 1)
-                if i < pairs.len - 1 { write_char(buf, pos, ',') }
-                write_char(buf, pos, '\n')
-            }
-            write_indent(buf, pos, depth)
-            write_char(buf, pos, '}')
-        }
-        _ => write_value(val, buf, pos, depth)
-    }
-}
-
-fn write_escaped(buf: []mut i8, pos: &mut i64, s: ref []i8) {
-    for c in s {
-        match c {
-            '"'  => write_str(buf, pos, "\\\"")
-            '\\' => write_str(buf, pos, "\\\\")
-            '\n' => write_str(buf, pos, "\\n")
-            '\r' => write_str(buf, pos, "\\r")
-            '\t' => write_str(buf, pos, "\\t")
-            _    => write_char(buf, pos, c)
-        }
-    }
-}
-
-fn write_indent(buf: []mut i8, pos: &mut i64, depth: i32) {
-    loop i in 0..depth * 2 { write_char(buf, pos, ' ') }
-}
-fn write_char(buf: []mut i8, pos: &mut i64, c: i8) {
-    buf[pos[0]] = c   pos[0] = pos[0] + 1
-}
-fn write_str(buf: []mut i8, pos: &mut i64, s: ref []i8) {
-    for c in s { write_char(buf, pos, c) }
+fn json_str_value_len(n: i64) -> i64 {
+    if json_kind(n) != JSON_STR { ret 0 }
+    let c = json_first(n)
+    if c >= 0 { ret json_str_len(c) }
+    ret json_str_len(n)
 }
