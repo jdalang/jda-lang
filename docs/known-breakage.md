@@ -19,7 +19,8 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Clear as of 2026-08-29** — all six fixed. Note how the last two were found:
+**Not clear.** Six are fixed; **1.7 is open** and was found on 2026-08-30
+while investigating 3.1. Note how the last two were found:
 not by reading source, but by running programs and checking *values*. 1.4 hid
 behind a clean compile, and 1.5 was actively protected by five passing tests
 that had recorded its wrong output. Only 1.6 announced itself.
@@ -60,6 +61,42 @@ silently misread as a one-element literal.
 Covered by `tests/conformance/stage1/pass/local_arrays.jda`, which segfaults on
 the previous compiler.
 
+
+### 1.7 A struct field used directly in a comparison compares the address
+
+**Status: OPEN.** Found while investigating 3.1. Reproduces locally.
+
+```jda
+struct T { a: i64 b: i64 }
+fn main() {
+    let t = T{ a: 5, b: 9 }
+    print("{t.a}\n")                      // 5 -- correct
+    let s = t.a + 1                        // 6 -- correct
+    if t.a == 5 { } else { }               // takes the ELSE branch
+}
+```
+
+`t.a` prints correctly and is correct in arithmetic, but as a **comparison
+operand** it evaluates to the struct's base address rather than the field. The
+emitted code never loads:
+
+```
+149: 48 81 f9 05 00 00 00    cmp rcx,0x5     ; rcx is the struct base
+```
+
+So `t.a == 5` is false, `t.a != 0` is true, and every comparison against a small
+constant takes the wrong branch — silently. Both fields fail, both operand
+orders fail (`5 == t.a` too, which bypasses the CMP-immediate peephole, so the
+missing load is upstream in the JIR rather than in the lowering). Assigning to a
+local first (`let v = t.a; if v == 5`) is correct and is the workaround.
+
+This is worse than most of Tier 1: comparisons drive control flow, so a wrong
+answer here silently takes the wrong branch rather than producing one wrong
+value. Anything of the shape `if node.kind == X` is affected.
+
+Not yet fixed. The likely area is field resolution losing the struct type for a
+comparison operand, so `lookup_field_idx_flat` misses and the postfix path
+returns the base pointer.
 
 ### 1.2 Tuple destructuring bound nothing ✅
 
@@ -300,45 +337,39 @@ port that is not built is already broken, it just has not been told yet.
 
 ## Tier 3 — infrastructure that hid the above
 
-### 3.1 Native x86-64 produced wrong code — `lea_fuse_store` left `imm` unset
+### 3.1 Native x86-64 produces wrong code
 
-**Status: FIXED (pending native confirmation).** This was never a platform bug.
+**Status: OPEN.** A contributing bug was fixed; the count did not move.
 
-110 of 430 conformance tests failed on a stock x86-64 runner while all passed
-under `linux/amd64` emulation. The recorded cause — programs that allocate
-producing no output — was wrong, and it sent every previous look at the runtime.
+110 of 430 conformance tests fail on a stock x86-64 runner while all pass under
+`linux/amd64` emulation. The cause recorded here for months — programs that
+allocate producing no output — is **wrong**, and it sent every previous
+investigation at the runtime. 48 of the 110 never allocate.
 
-The actual cause is a **compiler** bug. `lea_fuse_store` rewrites
-`STORE_MEM(val, addr)` into `STORE_MEM_SIB(val, base, idx, scale)` in place when
-the address matches `base + (idx << k)`. It sets `op` and the four operands and
-**never sets `imm`** — but `lower_store_mem_sib` emits `imm` as the `disp32` of
-`mov [base + idx*scale + disp], val`. Nothing ever sets `imm` on a `STORE_MEM`,
-and the plain lowering does not read it, so the field held whatever the slot
-happened to contain.
+What is established, by evidence rather than reasoning:
 
-That value is environment-dependent. On this machine it was 0 and every store
-was correct; on the runner it was **518**, so `p[0] = x` wrote to `p + 518` and
-the next read of `p[0]` returned 0 — no crash, no diagnostic, just a wrong
-program. It explains all three observed signatures: wrong values where the
-displaced write was never read back, segfaults where `p + garbage` left the
-mapping, and empty output where a length or buffer pointer was the casualty. It
-also explains why failures tracked program size: more stores fused, more chances
-to hit a non-zero slot.
+- Not the stack limit. 320/110 identically under `unlimited` and `8192`.
+- Not AVX-512 (the runner has `avx512f/bw/cd/dq/vl`), not 32-bit pointer
+  truncation, not the native address family, not `r15` as a clobbered heap
+  base, not asymmetric pool save/restore around syscalls.
+- **The compiler binary is byte-identical on both machines, but the binary it
+  produces is not** (`f064c959..` vs `273d42a6..`) from identical source and
+  identical paths, while being deterministic across repeated local runs, stack
+  limits and working directories. So this is a compiler bug, not a platform one.
+- Block-hashing that output narrowed it to 1 of 257 4KB blocks; byte-diffing
+  that block gave **two bytes** — the low half of a `disp32` in
+  `mov [base + idx*8 + disp], val`, emitted as 0 here and 518 there.
 
-`lea_fuse_load` deliberately preserves `imm` and is correct — `LOAD_MEM` does
-carry a real displacement (`ld.imm = imm_off * elem_sz_i`). Only the store side
-is cleared.
+`lea_fuse_store` was rewriting `STORE_MEM` into `STORE_MEM_SIB` without setting
+`imm`, which `lower_store_mem_sib` emits as that displacement. **That is fixed**
+— it is a real defect and had to go — but the native count stayed at 320/110, so
+it was a symptom rather than the cause.
 
-How it was found, since the path matters more than the fix: the compiler binary
-hashes identically on both machines, but the binary it *produces* did not
-(`f064c959..` here, `273d42a6..` there) from identical source and identical
-paths, while being deterministic across repeated local runs. Block hashing the
-output narrowed it to one 4KB block out of 257, and a byte diff of that block to
-**two bytes** — the low half of that `disp32`.
-
-The fix is a no-op locally: the produced binary is byte-identical, because `imm`
-was already 0 here. That is the point — the bug was only ever observable where
-the uninitialised value was not 0.
+The open question is what writes a non-zero value into a field that
+`copy_instr` copies from a zeroed `Instr{}`. That is the thread to pull: it
+implies something writes into instruction slots, or that struct literals are not
+reliably zeroed on that machine. Do not re-test the runtime hypotheses above;
+they are closed.
 
 ### 3.2 The pinned bootstrap seed nearly stopped building the compiler ✅
 
