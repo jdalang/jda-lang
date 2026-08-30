@@ -65,6 +65,26 @@ jobs:
       # should be zero is not zero here. Every struct literal is its own
       # unchecked mmap and there are 456 Instr{} sites, so this checks whether
       # fresh allocations stay zeroed and keep succeeding under load.
+      # 3.1: with both the STORE_MEM_SIB imm fix and 1.7 in, does this runner
+      # still produce a DIFFERENT binary from the same source? That is the
+      # question that separates "another environment-dependent codegen path"
+      # from "the produced code is now identical and the divergence is the
+      # platform after all".
+      - name: Same-bytes and block-0 diff
+        continue-on-error: true
+        run: |
+          set +e
+          printf 'fn main() {\n  let p = alloc_pages(1)\n  p[0] = 4242\n  let r = p[0]\n  print("noprint r={r}\\n")\n}\n' > /tmp/np2.jda
+          bootstrap/stage0/jda1 /tmp/np2.jda /tmp/np2 >/dev/null 2>&1
+          echo "  compiler sha: $(sha256sum bootstrap/stage0/jda1 | cut -c1-32)"
+          echo "  probe sha:    $(sha256sum /tmp/np2 | cut -c1-32)"
+          chmod +x /tmp/np2
+          echo -n "  result:       "; timeout 10 /tmp/np2
+          echo "  --- block 0 base64 ---"
+          head -c 4096 /tmp/np2 | base64 -w0
+          echo
+          exit 0
+
       - name: Probe allocation zeroing and exhaustion
         continue-on-error: true
         run: |
