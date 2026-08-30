@@ -60,6 +60,7 @@ const TOK_MINUS   = 29
 const TOK_STAR    = 30
 const TOK_SLASH   = 31
 const TOK_AMP     = 32
+const TOK_CARET   = 74   // bitwise XOR
 const TOK_DOT     = 33
 const TOK_F32     = 72
 const TOK_GTE     = 35
@@ -175,6 +176,7 @@ const OP_CMP_GT   = 9
 const OP_CMP_GTE  = 10
 const OP_CMP_LTE  = 11
 const OP_AND      = 12
+const OP_XOR      = 102  // bitwise XOR
 const OP_OR       = 13
 const OP_RET      = 14
 const OP_BR       = 15
@@ -3696,6 +3698,7 @@ fn char_to_tok_mid(c: i8) {
 }
 
 fn char_to_tok_hi(c: i8) {
+    if c == 94 { ret TOK_CARET }
     if c == 123 { ret TOK_LBRACE }
     if c == 124 { ret TOK_PIPE }
     if c == 125 { ret TOK_RBRACE }
@@ -7197,7 +7200,12 @@ fn op_precedence(op: i32) -> i32 {
     let add_p = ((op == TOK_PLUS) or (op == TOK_MINUS) or (op == TOK_SHR) or (op == TOK_SHL)) * 5
     let cmp_p = ((op == TOK_LT) or (op == TOK_GT) or (op == TOK_LTE) or (op == TOK_GTE)) * 4
     let eq_p = ((op == TOK_EQEQ) or (op == TOK_NEQ)) * 3
-    let and_p = ((op == TOK_AND) or (op == TOK_AMP)) * 2
+    // XOR shares AND's level here. This table feeds precedence climbing, which
+    // steps by prec + 1, so the scale must stay consecutive -- rescaling it to
+    // open a slot broke import resolution. The live expression chain is an
+    // explicit ladder (codegen_xor_inline) and gives XOR its own level between
+    // OR and AND there, which is what actually governs emitted code.
+    let and_p = ((op == TOK_AND) or (op == TOK_AMP) or (op == TOK_CARET)) * 2
     let or_p = ((op == TOK_OR) or (op == TOK_PIPE)) * 1
     let prec = mul_p + add_p + cmp_p + eq_p + and_p + or_p
     ret prec + (prec == 0) * -1
@@ -8776,8 +8784,9 @@ fn op_precedence(tok: i32) -> i32 {
     let cmp_p = ((tok == TOK_LT) or (tok == TOK_GT) or (tok == TOK_LTE) or (tok == TOK_GTE)) * 40
     let eq_p = ((tok == TOK_EQEQ) or (tok == TOK_NEQ)) * 30
     let and_p = (tok == TOK_AND) * 20
+    let xor_p = (tok == TOK_CARET) * 15
     let or_p = (tok == TOK_OR) * 10
-    ret mul_p + add_p + cmp_p + eq_p + and_p + or_p
+    ret mul_p + add_p + cmp_p + eq_p + and_p + or_p + xor_p
 }
 
 fn is_cmp_tok(tok: i32) -> i64 {
@@ -8821,7 +8830,7 @@ fn codegen_expr_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
 }
 
 fn codegen_or_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
-    let left_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
+    let left_id = codegen_xor_inline(toks, pos, stab, src, jfn, bb)
     let or_more = 1
     loop or_more == 1 {
         let op = tok_type_at(toks, pos[0])
@@ -8832,9 +8841,29 @@ fn codegen_or_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn:
             }
         }
         pos[0] = pos[0] + 1
-        let right_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
+        let right_id = codegen_xor_inline(toks, pos, stab, src, jfn, bb)
         let jir_op = tok_to_jir_op(op)
         left_id = emit_binop(jfn, bb, jir_op, left_id, right_id)
+    }
+    ret left_id
+}
+
+// XOR sits between OR and AND, as in C. The expression chain is an explicit
+// ladder rather than a precedence table, so a new operator needs a level here;
+// adding it to op_precedence alone parses but never emits, which is why
+// `6 ^ 3` briefly evaluated to 6.
+fn codegen_xor_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jfn: &JirFunction, bb: i64) -> i64 {
+    let left_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
+    let xor_more = 1
+    loop xor_more == 1 {
+        let op = tok_type_at(toks, pos[0])
+        if op != TOK_CARET {
+            xor_more = 0
+            ret left_id
+        }
+        pos[0] = pos[0] + 1
+        let right_id = codegen_and_inline(toks, pos, stab, src, jfn, bb)
+        left_id = emit_binop(jfn, bb, OP_XOR, left_id, right_id)
     }
     ret left_id
 }
@@ -14245,6 +14274,7 @@ fn tok_to_jir_op(tok: i32) -> i32 {
     if tok == TOK_LTE   { ret OP_CMP_LTE }
     if tok == TOK_GTE   { ret OP_CMP_GTE }
     if tok == TOK_AND or tok == TOK_AMP { ret OP_AND }  // Both logical and bitwise AND
+    if tok == TOK_CARET { ret OP_XOR }
     if tok == TOK_OR or tok == TOK_PIPE { ret OP_OR }  // Both logical and bitwise OR
     if tok == TOK_TILDE { ret OP_AND }  // Bitwise NOT - temporary: use AND (will be fixed later)
     if tok == TOK_SHR { ret OP_SHR }
@@ -14507,7 +14537,7 @@ fn coal_sub_bin(ins: &Instr) {
         if ins.operand0 == o { ins.operand0 = n }
         if ins.operand1 == o { ins.operand1 = n }
     }
-    if op == OP_DIV or op == OP_MOD or op == OP_AND or op == OP_OR {
+    if op == OP_DIV or op == OP_MOD or op == OP_AND or op == OP_OR or op == OP_XOR {
         if ins.operand0 == o { ins.operand0 = n }
         if ins.operand1 == o { ins.operand1 = n }
     }
@@ -14771,7 +14801,7 @@ fn dce(jfn: &JirFunction) {
             let id = jfn.blocks[bi].instrs[ii].id
             if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or op == OP_MOD or
                op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
-               op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
+               op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or op == OP_XOR or
                op == OP_SHR or op == OP_SHL {
                 if o0 >= 0 { used[o0] = 1 }
                 if o1 >= 0 { used[o1] = 1 }
@@ -14983,6 +15013,7 @@ fn inline_op_arith_ok(op: i64) -> i64 {
 
 fn inline_op_bit_ok(op: i64) -> i64 {
     if op == OP_AND { ret 1 }
+    if op == OP_XOR { ret 1 }
     if op == OP_OR { ret 1 }
     if op == OP_SHL { ret 1 }
     if op == OP_SHR { ret 1 }
@@ -15218,6 +15249,7 @@ fn inline_remap_op(ins: &Instr) {
     if op == OP_MUL { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_DIV { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_AND { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
+    if op == OP_XOR { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_OR  { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_SHL { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
     if op == OP_SHR { ins.operand0 = inline_rename_val(ins.operand0); ins.operand1 = inline_rename_val(ins.operand1) }
@@ -15612,6 +15644,7 @@ fn lea_count_instr_uses(ins: &Instr) {
     if op == OP_DIV { is_bin = 1 }
     if op == OP_MOD { is_bin = 1 }
     if op == OP_AND { is_bin = 1 }
+    if op == OP_XOR { is_bin = 1 }
     if op == OP_OR  { is_bin = 1 }
     if op == OP_SHR { is_bin = 1 }
     if op == OP_SHL { is_bin = 1 }
@@ -16714,6 +16747,12 @@ fn emit_sub_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
 }
 
 // AND r/m64, r64:  REX.W 21 /r
+fn emit_xor_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
+    emit_rex_w_rr(out, pos, src, dst)
+    emit_byte(out, pos, 0x31)
+    emit_byte(out, pos, modrm_rr(src, dst))
+}
+
 fn emit_and_rr(out: &i8, pos: &i64, dst: i32, src: i32) {
     emit_rex_w_rr(out, pos, src, dst)
     emit_byte(out, pos, 0x21)
@@ -18182,7 +18221,7 @@ fn lower_mod_magic(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
 fn lower_instr_arith(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, pos: &i64) -> i64 {
     // All arithmetic ops modify CPU flags
     if ins.op == OP_ADD or ins.op == OP_SUB or ins.op == OP_MUL or ins.op == OP_DIV or ins.op == OP_MOD { g_flags_live = 0 }
-    if ins.op == OP_AND or ins.op == OP_OR or ins.op == OP_SHL or ins.op == OP_SHR { g_flags_live = 0 }
+    if ins.op == OP_AND or ins.op == OP_OR or ins.op == OP_XOR or ins.op == OP_SHL or ins.op == OP_SHR { g_flags_live = 0 }
     let is_add = 0
     if ins.op == OP_ADD { is_add = 1 }
     if is_add == 1 {
@@ -18604,6 +18643,25 @@ fn lower_instr_cmpbit(ins: &Instr, ctx: &LowerCtx, jfn: &JirFunction, out: &i8, 
             ra_set_sp_top(&ctx.ra, csp2)
             ra_set_spill(&ctx.ra, ins.id, csp2)
             emit_store_spill(out, pos, csp2, dst)
+        }
+        ret 1
+    }
+    let is_xor = 0
+    if ins.op == OP_XOR { is_xor = 1 }
+    if is_xor == 1 {
+        let xa = get_or_load(ctx.ra, out, pos, ins.operand0)
+        emit_mov_rr(out, pos, PHYS_R12, xa)
+        let xb = get_or_load(ctx.ra, out, pos, ins.operand1)
+        emit_xor_rr(out, pos, PHYS_R12, xb)
+        consume_use(ctx, ins.operand0)
+        consume_use(ctx, ins.operand1)
+        let xdst = regalloc_alloc(ctx.ra, out, pos, ins.id)
+        emit_mov_rr(out, pos, xdst, PHYS_R12)
+        if ctx.use_cnt[ins.id] > 1 {
+            let xsp = ctx.ra.sp_top + 8
+            ra_set_sp_top(&ctx.ra, xsp)
+            ra_set_spill(&ctx.ra, ins.id, xsp)
+            emit_store_spill(out, pos, xsp, xdst)
         }
         ret 1
     }
@@ -25150,7 +25208,7 @@ fn lower_fn_mark_uses_instr(ctx: &LowerCtx, ins: &Instr) {
     let o3 = ins.operand3
     if op == OP_ADD or op == OP_SUB or op == OP_MUL or op == OP_DIV or op == OP_MOD or
        op == OP_CMP_EQ or op == OP_CMP_NE or op == OP_CMP_LT or op == OP_CMP_GT or
-       op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or
+       op == OP_CMP_LTE or op == OP_CMP_GTE or op == OP_AND or op == OP_OR or op == OP_XOR or
        op == OP_SHR or op == OP_SHL {
         mark_use(ctx, o0)
         mark_use(ctx, o1)

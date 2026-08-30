@@ -19,7 +19,7 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Not clear.** Seven are fixed; **1.8 is open** — a seventh function argument
+**Not clear.** Seven are fixed; **1.8 and 1.9 are open** — a seventh function argument
 is silently miscompiled, which is what caused 3.1. 1.7 was found while investigating
 3.1, which remains open and is a different bug. Note how the last two were found:
 not by reading source, but by running programs and checking *values*. 1.4 hid
@@ -157,6 +157,35 @@ to both `OP_CALL`/`OP_CALL_IND` and `OP_TAIL_CALL` builds a compiler that hangs
 on every input, `examples/hello.jda` included — so the marking interacts with
 something else, and the real fix needs to understand that interaction rather
 than just close the gap. Reverted; not committed.
+
+### 1.9 An unknown character silently truncates the function
+
+**Status: OPEN.**
+
+```jda
+fn main() {
+    print("before ")
+    let x = 6 $ 3      // any byte the lexer does not know
+    print("after\n")   // never runs, no diagnostic, exit 0
+}
+```
+
+`char_to_tok` returns `TOK_EOF` for a character it does not recognise, and the
+statement loop treats EOF as end of input — so everything after a stray byte is
+dropped. The program compiles, runs, exits 0, and simply stops producing output.
+
+This is how **`^` hid**: it was never lexed (see the `bitwise_xor` test), so
+every function using XOR was silently cut short at the first `^`. That is why
+`stdlib/crypto.jda` could not compile and why a program doing `let z = x ^ y`
+printed nothing after that line.
+
+`^` is fixed. The general case is not: any other unexpected byte still truncates.
+
+**A naive fix does not work.** Making `char_to_tok` report an error takes the
+whole suite from 431 passing to 0 — `char_to_tok` is called speculatively from
+several lexer paths that legitimately pass characters it does not map, so the
+error has to go at the emit sites that mean "this really is a token", not in the
+shared classifier. Reverted; not committed.
 
 ### 1.2 Tuple destructuring bound nothing ✅
 
