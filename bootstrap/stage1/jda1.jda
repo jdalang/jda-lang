@@ -425,6 +425,15 @@ let g_const_val_tbl: &i64 = 0
 // -1 for an integer constant; for a string constant this is the literal's
 // length and g_const_val_tbl holds its source offset.
 let g_const_str_len_tbl: &i64 = 0
+// Displacement for the SIB load/store emitters.
+//
+// It cannot be a parameter: those emitters already take six, and a seventh
+// argument is miscompiled by this compiler -- the callee reads stale stack
+// instead of the value, so the displacement never arrived. See the note above
+// emit_json_diagnostic. Locally that stale value happened to be 0 and every
+// store looked correct; on another machine it was 514, so `p[0] = x` wrote to
+// p + 514 and reading p[0] gave 0.
+let g_sib_disp = 0
 let g_const_cnt = 0
 // Flat struct name/size tables (avoids jda0 struct-array-field offset bug)
 let g_struct_name_off: &i64 = 0
@@ -15074,6 +15083,20 @@ fn inline_capture_meta(jfn: &JirFunction) {
                 ret_id = jfn.blocks[bi].instrs[ii].operand0
                 saw_ret = 1
             } else {
+                // Each record is 256 slots: 16 of header, then 13 per
+                // instruction, so 18 instructions fit. There was no bound. A
+                // longer function wrote past its own record into the next
+                // one, and past the last record (base 3856 + 256 = 4112) into
+                // the scratch region at 4368 -- which is written and read with
+                // a different layout: `dead` at +3 and imm at +8 there, against
+                // imm at +7 here. An overflowed instruction's imm therefore
+                // came back as its str_start, a source offset.
+                //
+                // Abandon the capture rather than truncate it: g_inline_tbl[0]
+                // is only bumped at the end of this function, so returning here
+                // leaves this function simply uninlined, which is correct if
+                // slower.
+                if op_cnt >= 18 { ret }
                 let k = op_slot + op_cnt * 13
                 g_inline_tbl[k + 0] = op
                 g_inline_tbl[k + 1] = jfn.blocks[bi].instrs[ii].itype
@@ -17080,7 +17103,8 @@ fn emit_load_mem_disp_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, disp: i64
 }
 
 // MOV r64, [base + idx*scale + disp32] — SIB addressing
-fn emit_load_mem_sib_reg(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
+fn emit_load_mem_sib_reg(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32) {
+    let disp = g_sib_disp
     let dst_hi = dst / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17097,7 +17121,8 @@ fn emit_load_mem_sib_reg(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, sca
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_load_mem_sib_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
+fn emit_load_mem_sib_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32) {
+    let disp = g_sib_disp
     let dst_hi = dst / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17115,7 +17140,8 @@ fn emit_load_mem_sib_reg8zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, 
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_load_mem_sib_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
+fn emit_load_mem_sib_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32) {
+    let disp = g_sib_disp
     emit_byte(out, pos, 0x66)
     let dst_hi = dst / 8
     let base_hi = base / 8
@@ -17133,7 +17159,8 @@ fn emit_load_mem_sib_reg16zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32,
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_load_mem_sib_reg32zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32, disp: i64) {
+fn emit_load_mem_sib_reg32zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32, scale: i32) {
+    let disp = g_sib_disp
     let dst_hi = dst / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17151,7 +17178,8 @@ fn emit_load_mem_sib_reg32zx(out: &i8, pos: &i64, dst: i32, base: i32, idx: i32,
 }
 
 // MOV [base + idx*scale + disp32], r64
-fn emit_store_mem_sib_reg(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
+fn emit_store_mem_sib_reg(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32) {
+    let disp = g_sib_disp
     let src_hi = src / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17168,7 +17196,8 @@ fn emit_store_mem_sib_reg(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, 
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_store_mem_sib_reg8(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
+fn emit_store_mem_sib_reg8(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32) {
+    let disp = g_sib_disp
     let src_hi = src / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17185,7 +17214,8 @@ fn emit_store_mem_sib_reg8(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32,
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_store_mem_sib_reg16(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
+fn emit_store_mem_sib_reg16(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32) {
+    let disp = g_sib_disp
     emit_byte(out, pos, 0x66)
     let src_hi = src / 8
     let base_hi = base / 8
@@ -17203,7 +17233,8 @@ fn emit_store_mem_sib_reg16(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32
     emit_i32_le(out, pos, disp)
 }
 
-fn emit_store_mem_sib_reg32(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32, disp: i64) {
+fn emit_store_mem_sib_reg32(out: &i8, pos: &i64, base: i32, idx: i32, scale: i32, src: i32) {
+    let disp = g_sib_disp
     let src_hi = src / 8
     let base_hi = base / 8
     let idx_hi = idx / 8
@@ -17861,15 +17892,19 @@ fn lower_load_mem_sib(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     let b = PHYS_R12
     if skip_r12 == 1 { b = base_r }
     if ld_sz == 1 {
-        emit_load_mem_sib_reg8zx(out, pos, dst, b, idx_r, scale, ins.imm)
+        g_sib_disp = ins.imm
+        emit_load_mem_sib_reg8zx(out, pos, dst, b, idx_r, scale)
     } else {
         if ld_sz == 2 {
-            emit_load_mem_sib_reg16zx(out, pos, dst, b, idx_r, scale, ins.imm)
+            g_sib_disp = ins.imm
+            emit_load_mem_sib_reg16zx(out, pos, dst, b, idx_r, scale)
         } else {
             if ld_sz == 4 {
-                emit_load_mem_sib_reg32zx(out, pos, dst, b, idx_r, scale, ins.imm)
+                g_sib_disp = ins.imm
+                emit_load_mem_sib_reg32zx(out, pos, dst, b, idx_r, scale)
             } else {
-                emit_load_mem_sib_reg(out, pos, dst, b, idx_r, scale, ins.imm)
+                g_sib_disp = ins.imm
+                emit_load_mem_sib_reg(out, pos, dst, b, idx_r, scale)
             }
         }
     }
@@ -17899,16 +17934,35 @@ fn lower_store_mem_sib(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 
     let scale = ins.operand3 as i32
     let sb = PHYS_R12
     if sms_skip == 1 { sb = base_r }
+    // The displacement is always zero, so it is written as zero rather than
+    // read from the instruction.
+    //
+    // lea_fuse_store is the only producer of OP_STORE_MEM_SIB, and it matches
+    // `base + (idx << k)` -- a pattern with no displacement term. Nothing ever
+    // sets imm on a STORE_MEM either, and the plain STORE_MEM lowering never
+    // reads it. So imm carries no meaning here and taking the disp32 from it
+    // only exposes whatever the field happens to hold.
+    //
+    // Zeroing imm at the fusion was not enough: on a machine where the value is
+    // non-zero it came back as 514 regardless, so something between the fusion
+    // and here writes the field. Reading a constant instead of the field makes
+    // that irrelevant, which is the right shape of fix for a value that is
+    // structurally always zero.
+    //
+    // The load side is deliberately different: LOAD_MEM does carry a real
+    // displacement, so lea_fuse_load preserves imm and lower_load_mem_sib
+    // still reads it.
+    g_sib_disp = 0
     if st_sz == 1 {
-        emit_store_mem_sib_reg8(out, pos, sb, idx_r, scale, val_r, ins.imm)
+        emit_store_mem_sib_reg8(out, pos, sb, idx_r, scale, val_r)
     } else {
         if st_sz == 2 {
-            emit_store_mem_sib_reg16(out, pos, sb, idx_r, scale, val_r, ins.imm)
+            emit_store_mem_sib_reg16(out, pos, sb, idx_r, scale, val_r)
         } else {
             if st_sz == 4 {
-                emit_store_mem_sib_reg32(out, pos, sb, idx_r, scale, val_r, ins.imm)
+                emit_store_mem_sib_reg32(out, pos, sb, idx_r, scale, val_r)
             } else {
-                emit_store_mem_sib_reg(out, pos, sb, idx_r, scale, val_r, ins.imm)
+                emit_store_mem_sib_reg(out, pos, sb, idx_r, scale, val_r)
             }
         }
     }
@@ -25146,10 +25200,26 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0xF0)
     emit_byte(out, pos, 0xFF)
     emit_byte(out, pos, 0xFF)
-    // MOV [R11], R11
-    emit_byte(out, pos, 0x4B)
-    emit_byte(out, pos, 0x89)
-    emit_byte(out, pos, 0x1B)
+    // MOV QWORD [R11], 0
+    //
+    // This used to be MOV [R11], R11, which writes an *address* into the frame
+    // at every 4KB boundary. Stack addresses are randomised per process, so
+    // every frame carried ASLR-dependent bytes, and any stack slot read before
+    // it was written picked one up. Under emulation the stack sits at a fixed
+    // address, so those bytes were constant and the compiler was deterministic;
+    // on a real kernel they vary run to run, which is exactly the
+    // nondeterminism measured on the runner -- five compiles of one input
+    // producing two different binaries.
+    //
+    // Writing zero still faults in the page, which is all the probe is for,
+    // and leaves the frame holding a stable value instead of an address.
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
     // SUB R11, 4096
     emit_byte(out, pos, 0x49)
     emit_byte(out, pos, 0x81)
@@ -25162,15 +25232,23 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0x49)
     emit_byte(out, pos, 0x39)
     emit_byte(out, pos, 0xE3)
-    // JGE -15
+    // JGE -19  (the loop body grew from 15 to 19 bytes when the probe store
+    // became MOV QWORD [R11], 0)
     emit_byte(out, pos, 0x7D)
-    emit_byte(out, pos, 0xF1)
+    emit_byte(out, pos, 0xED)
     // After loop, R11 = RSP - 4096. Touch two more pages below RSP.
     // When RSP is page-aligned, next fn's probe starts 2 pages below us.
-    // Touch 1: MOV [R11], RBX  (R11 = RSP - 4096)
-    emit_byte(out, pos, 0x4B)
-    emit_byte(out, pos, 0x89)
-    emit_byte(out, pos, 0x1B)
+    // Touch 1: MOV QWORD [R11], 0  (R11 = RSP - 4096)
+    // Was MOV [R11], RBX -- the caller's RBX, which can hold an address. Same
+    // reason as the loop store: the page must be faulted in, but what lands
+    // there must not vary between runs.
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
     // SUB R11, 4096  (R11 = RSP - 8192)
     emit_byte(out, pos, 0x49)
     emit_byte(out, pos, 0x81)
@@ -25179,10 +25257,14 @@ fn lower_fn_emit_prologue(jfn: &JirFunction, out: &i8, pos: &i64, is_main: i64) 
     emit_byte(out, pos, 0x10)
     emit_byte(out, pos, 0x00)
     emit_byte(out, pos, 0x00)
-    // Touch 2: MOV [R11], RBX  (R11 = RSP - 8192)
-    emit_byte(out, pos, 0x4B)
-    emit_byte(out, pos, 0x89)
-    emit_byte(out, pos, 0x1B)
+    // Touch 2: MOV QWORD [R11], 0  (R11 = RSP - 8192)
+    emit_byte(out, pos, 0x49)
+    emit_byte(out, pos, 0xC7)
+    emit_byte(out, pos, 0x03)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
+    emit_byte(out, pos, 0x00)
 }
 
 fn lower_fn_store_param7(jfn: &JirFunction, out: &i8, pos: &i64) {
@@ -25542,11 +25624,20 @@ fn lower_fn(jfn: &JirFunction, ctx: &LowerCtx, out: &i8, pos: &i64, is_main: i64
         poke_byte(out, patch_off + 2, i32_b2(real_frame))
         poke_byte(out, patch_off + 3, i32_b3(real_frame))
         // P4: Skip stack probe for small frames (<=65536 bytes)
-        // Probe is 35 bytes starting at fn_start+18. JMP rel8 at byte 18-19.
-        // IP after = 20, target = 53, disp = 33.
+        //
+        // The probe is 47 bytes starting at fn_start+18: LEA 7, then the loop
+        // (store 7 + SUB 7 + CMP 3 + JGE 2 = 19), then SUB 7 and two stores of
+        // 7. JMP rel8 occupies bytes 18-19, so IP after is 20, the target is
+        // 18 + 47 = 65, and the displacement is 45.
+        //
+        // This hardcodes the probe's length: changing any instruction in the
+        // probe above must change this displacement too, or the jump lands
+        // inside the probe and the function executes garbage. It was 33 when
+        // the three stores were 3-byte register stores instead of 7-byte
+        // immediate ones.
         if real_frame <= 65536 {
             poke_byte(out, fn_start + 18, 0xEB)
-            poke_byte(out, fn_start + 19, 0x21)
+            poke_byte(out, fn_start + 19, 0x2D)
         }
     }
     lower_fn_emit_epilogue(out, pos, is_main)
