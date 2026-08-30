@@ -17913,16 +17913,35 @@ fn lower_store_mem_sib(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 
     let scale = ins.operand3 as i32
     let sb = PHYS_R12
     if sms_skip == 1 { sb = base_r }
+    // The displacement is always zero, so it is written as zero rather than
+    // read from the instruction.
+    //
+    // lea_fuse_store is the only producer of OP_STORE_MEM_SIB, and it matches
+    // `base + (idx << k)` -- a pattern with no displacement term. Nothing ever
+    // sets imm on a STORE_MEM either, and the plain STORE_MEM lowering never
+    // reads it. So imm carries no meaning here and taking the disp32 from it
+    // only exposes whatever the field happens to hold.
+    //
+    // Zeroing imm at the fusion was not enough: on a machine where the value is
+    // non-zero it came back as 514 regardless, so something between the fusion
+    // and here writes the field. Reading a constant instead of the field makes
+    // that irrelevant, which is the right shape of fix for a value that is
+    // structurally always zero.
+    //
+    // The load side is deliberately different: LOAD_MEM does carry a real
+    // displacement, so lea_fuse_load preserves imm and lower_load_mem_sib
+    // still reads it.
+    let sib_disp = 0
     if st_sz == 1 {
-        emit_store_mem_sib_reg8(out, pos, sb, idx_r, scale, val_r, ins.imm)
+        emit_store_mem_sib_reg8(out, pos, sb, idx_r, scale, val_r, sib_disp)
     } else {
         if st_sz == 2 {
-            emit_store_mem_sib_reg16(out, pos, sb, idx_r, scale, val_r, ins.imm)
+            emit_store_mem_sib_reg16(out, pos, sb, idx_r, scale, val_r, sib_disp)
         } else {
             if st_sz == 4 {
-                emit_store_mem_sib_reg32(out, pos, sb, idx_r, scale, val_r, ins.imm)
+                emit_store_mem_sib_reg32(out, pos, sb, idx_r, scale, val_r, sib_disp)
             } else {
-                emit_store_mem_sib_reg(out, pos, sb, idx_r, scale, val_r, ins.imm)
+                emit_store_mem_sib_reg(out, pos, sb, idx_r, scale, val_r, sib_disp)
             }
         }
     }
