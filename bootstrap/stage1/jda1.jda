@@ -491,6 +491,17 @@ let g_lam_cur_idx = 0
 let g_dbg_main_lets = 0
 let g_const_gen_val = 0
 let g_pre_build_srclen = 0
+// The 7th argument of the call currently being parsed. It lives in a global
+// rather than a local because codegen_call_inline is large enough that one more
+// local in it produces a compiler that hangs on every input, and it is declared
+// here with the other globals rather than beside its helper because a read that
+// precedes the declaration resolves to 0 instead of the global.
+//
+// Safe across nesting: the value is written only after an argument expression
+// is fully compiled and read immediately after the argument loop, so an inner
+// call has already consumed its own 7th argument before the outer one writes.
+let g_call_arg6 = -1
+
 let g_iter_exit_bb = -1
 let g_iter_matched = 0
 let g_iter_result = -1
@@ -10381,13 +10392,21 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         } else if arg_cnt == 5 {
             arg5 = a_id
         }
+        // The 7th argument travels in `itype`, the way live_codegen_call_inline
+        // already does it: OP_CALL has no operand slot past six. This path used
+        // to skip the remaining tokens and clamp arg_cnt back to 6, which threw
+        // the argument away silently -- the callee then read whatever the caller
+        // happened to leave above the return address. That was known-breakage
+        // 1.8, and it is why the compiler's own SIB emitters were miscompiled.
+        codegen_note_arg6(arg_cnt, a_id)
         arg_cnt = arg_cnt + 1
-        if arg_cnt > 6 {
-            // Recovery: skip malformed extra args until call close.
+        if arg_cnt > 7 {
+            report_error_code("JDA-C001", "function call takes at most 7 arguments")
+            // Recovery: skip the rest of the argument list.
             loop tok_type_at(toks, pos[0]) != TOK_RPAREN and tok_type_at(toks, pos[0]) != TOK_EOF {
                 pos[0] = pos[0] + 1
             }
-            arg_cnt = 6
+            arg_cnt = 7
         }
         if tok_type_at(toks, pos[0]) == TOK_COMMA {
             pos[0] = pos[0] + 1
@@ -10406,12 +10425,12 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
         g_iter_a3 = arg3
         check_iter_dispatch(src, name_start, name_len)
     }
-    // Type check: verify argument count (skip if either side exceeds 6-arg codegen limit)
+    // Type check: verify argument count (7 is the codegen limit)
     if g_fn_param_cnt_tbl != 0 {
         let tc_fi = resolve_top_fn_index(src, name_start, name_len, g_fn_name_off_tbl, g_fn_name_len_tbl)
         if tc_fi >= 0 and tc_fi < 1024 {
             let expected_cnt = load_i64_at(g_fn_param_cnt_tbl, tc_fi)
-            if expected_cnt > 0 and expected_cnt <= 6 and arg_cnt < expected_cnt {
+            if expected_cnt > 0 and expected_cnt <= 7 and arg_cnt < expected_cnt {
                 report_error_code("JDA-T001", "too few arguments in function call")
             }
         }
@@ -10897,6 +10916,7 @@ fn codegen_call_inline(toks: &Token, pos: &i64, stab: &StructTable, src: &i8, jf
     ins.imm        = arg5
     ins.str_start = name_start
     ins.str_len   = name_len
+    live_codegen_set_call_arg6(&ins, arg_cnt, g_call_arg6)
     ret emit(jfn, bb, &ins)
 }
 
@@ -13824,6 +13844,11 @@ fn live_codegen_set_call_arg6(ins: &Instr, cnt: i64, a6: i64) {
     if cnt >= 7 { ins.itype = a6 }
 }
 
+
+fn codegen_note_arg6(cnt: i64, a_id: i64) {
+    if cnt == 6 { g_call_arg6 = a_id }
+}
+
 fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
     expect(TOK_LPAREN)
     // fn_addr(name) — argument is function name identifier, not expression
@@ -13889,7 +13914,7 @@ fn live_codegen_call_inline(name: &Token, bb: i64) -> i64 {
         } else if arg_cnt == 5 {
             arg5 = a_id
         }
-        if arg_cnt == 6 { arg6_tmp = a_id }
+        codegen_note_arg6(arg_cnt, a_id)
         arg_cnt = arg_cnt + 1
         if arg_cnt > 7 { report_error_code("JDA-C001", "function call takes at most 7 arguments") }
         if tok_type_at(g_dbg_toks_init, g_main_pos) == TOK_COMMA {
@@ -14782,6 +14807,16 @@ fn dce_mark_syscall_extra(jfn: &JirFunction, bi: i64, ii: i64, used: &i32) {
     if imm0 >= 0 { used[imm0] = 1 }
 }
 
+// A call's 7th argument rides in `itype`, because OP_CALL has no operand slot
+// past six. Marking it lives in its own function rather than inline in dce():
+// dce() already holds a 32KB `used` array plus a dozen operand locals, and one
+// more local there is enough to miscompile the compiler itself.
+fn dce_mark_call_arg7(jfn: &JirFunction, bi: i64, ii: i64, used: &i32) {
+    if jfn.blocks[bi].instrs[ii].operand3 < 7 { ret 0 }
+    let a6 = jfn.blocks[bi].instrs[ii].itype
+    if a6 >= 0 { used[a6] = 1 }
+}
+
 fn dce(jfn: &JirFunction) {
     let used = i32[8192]
     let bi = 0
@@ -14857,6 +14892,7 @@ fn dce(jfn: &JirFunction) {
                 if o3 >= 4 { if bt0 >= 0 { used[bt0] = 1 } }
                 if o3 >= 5 { if bt1 >= 0 { used[bt1] = 1 } }
                 if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }
+                dce_mark_call_arg7(jfn, bi, ii, used)
             }
             if op == OP_TAIL_CALL {
                 if o3 >= 1 { if o0 >= 0 { used[o0] = 1 } }
@@ -14865,6 +14901,7 @@ fn dce(jfn: &JirFunction) {
                 if o3 >= 4 { if bt0 >= 0 { used[bt0] = 1 } }
                 if o3 >= 5 { if bt1 >= 0 { used[bt1] = 1 } }
                 if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }
+                dce_mark_call_arg7(jfn, bi, ii, used)
             }
             if op == OP_RET     { used[id] = 1 }
             if op == OP_BR      { used[id] = 1 }
@@ -19126,7 +19163,6 @@ fn lower_instr_call(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) -> i64 {
     lower_call_push_arg7(ins, ctx, out, pos)
     lower_instr_call_args(ins, ctx, out, pos)
     lower_instr_call_emit(ins, ctx, out, pos)
-    lower_call_cleanup_arg7(ins, out, pos)
     let argc_vals = i64[6]
     argc_vals[0] = ins.operand0
     argc_vals[1] = ins.operand1
@@ -19198,6 +19234,12 @@ fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
     if ctx.use_cnt[ins.id] <= 0 { keep_res = 0 }
     if keep_res == 1 {
         emit_mov_rr(out, pos, PHYS_R12, PHYS_RAX)
+        // The 7th argument's stack slot must go before the pool is restored.
+        // Restoring first pops nine registers through a stack that is still one
+        // slot deep, so every saved register comes back holding its neighbour's
+        // value and the caller's last live local is lost -- which is what made a
+        // 7-argument call appear to return one of the caller's variables.
+        lower_call_cleanup_arg7(ins, out, pos)
         emit_restore_pool(ctx.ra, out, pos)
         let dst = regalloc_alloc(ctx.ra, out, pos, ins.id)
         if dst != PHYS_R12 {
@@ -19208,6 +19250,7 @@ fn lower_instr_call_emit(ins: &Instr, ctx: &LowerCtx, out: &i8, pos: &i64) {
         ra_set_spill(&ctx.ra, ins.id, cesp)
         emit_store_spill(out, pos, cesp, dst)
     } else {
+        lower_call_cleanup_arg7(ins, out, pos)
         emit_restore_pool(ctx.ra, out, pos)
     }
 }

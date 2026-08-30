@@ -101,9 +101,9 @@ affected.
 Covered by `tests/conformance/stage1/pass/struct_field_compare.jda`, which fails
 on the previous compiler.
 
-### 1.8 A seventh function argument is silently miscompiled
+### 1.8 A seventh function argument is silently miscompiled ✅
 
-**Status: OPEN.** This is what caused 3.1.
+**Status: FIXED.** This is what caused 3.1.
 
 ```jda
 fn seven(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 { ret g }
@@ -111,52 +111,157 @@ fn seven(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> i64 { ret g 
 fn stress() -> i64 {
     let v0 = 10   let v1 = 11   let v2 = 12
     let v3 = 13   let v4 = 14   let v5 = 15
-    let r1 = seven(v0, v1, v2, v3, v4, v5, 77)   // returns 13, the value of v3
-    let r2 = seven(v5, v4, v3, v2, v1, v0, 88)   // returns 11, the value of v1
+    let r1 = seven(v0, v1, v2, v3, v4, v5, 77)   // returned 13, the value of v3
+    let r2 = seven(v5, v4, v3, v2, v1, v0, 88)   // returned 11, the value of v1
     ret r1 * 1000 + r2 + v0 + v1 + v2 + v3 + v4 + v5   // 13086, not 77163
 }
 ```
 
-Six arguments are fine. The seventh is passed on the stack at `[rbp+16]`, and
-under register pressure the callee reads a different slot — it comes back
-holding one of the caller's locals. A simple call with no live values around it
-happens to work, which is why this survived: it fails only where it is hard to
-notice.
+**The diagnosis recorded here before was wrong.** It said the cause was a gap in
+the DCE liveness marking, and that a naive fix produced a compiler that hung on
+every input. Neither held up. `lower_fn_mark_uses_instr` — the register
+allocator's own liveness — already handled the 7th argument, and the hang was
+not caused by the marking at all. Three separate bugs were in play.
 
-The compiler's own source has warned about it all along, above
-`emit_json_diagnostic`: *"at most 6 parameters — a 7th argument is miscompiled
-by this compiler"*. That note was treated as a local style rule rather than a
-bug report, and eight emitters were written with seven parameters anyway.
-
-`JDA-C001` currently permits seven parameters, so the language accepts what it
-cannot compile.
-
-**Diagnosis, for whoever picks this up.** The stack mechanics are correct: the
-caller pushes the 7th argument last before the `CALL`, the argument setup for
-1-6 is push/pop balanced, and the callee reads `[rbp+16]`. Verified in the
-disassembly. What is wrong is *which register* gets pushed — the value 77 is
-materialised into `rdx`, and `lower_call_push_arg7` pushes `r9`.
-
-The cause is liveness. A call's 7th argument is carried in `itype`, because
-`OP_CALL` has no free operand slot past six. The `used[]` marking in the DCE
-pass walks call arguments and **stops at six**:
+**(a) The argument was thrown away during parsing.** `codegen_call_inline`
+stored only six arguments and, on seeing a seventh, skipped the remaining tokens
+and clamped `arg_cnt` back to 6:
 
 ```
-if o3 >= 6 { if imm0 >= 0 { used[imm0] = 1 } }     // and nothing for o3 >= 7
+        arg_cnt = arg_cnt + 1
+        if arg_cnt > 6 {
+            // Recovery: skip malformed extra args until call close.
+            ...
+            arg_cnt = 6
+        }
 ```
 
-So the value feeding the 7th argument is never marked live, nothing keeps its
-register reserved across the call setup, and under register pressure the
-allocator reuses it. With few live values it survives by luck, which is exactly
-why a simple seven-argument call works and a busy one does not. The operand
-*renaming* pass does handle `itype` at `ac >= 7`, so the omission is only in the
-liveness marking.
+So the call was emitted as a six-argument call. `operand3` never reached 7,
+`lower_call_push_arg7` never fired, and the callee read whatever was above the
+return address. The whole binary contained zero `add rsp, 8` — the arg7 cleanup
+— which is what made this visible: the path was dead, not merely mis-scheduled.
+The sibling path `live_codegen_call_inline` had carried the 7th argument in
+`itype` all along, so the two call paths disagreed.
 
-**A naive fix does not work.** Adding the missing `if o3 >= 7 { used[itype] = 1 }`
-to both `OP_CALL`/`OP_CALL_IND` and `OP_TAIL_CALL` builds a compiler that hangs
-on every input, `examples/hello.jda` included — so the marking interacts with
-something else, and the real fix needs to understand that interaction rather
-than just close the gap. Reverted; not committed.
+**(b) The stack slot was released after the register pool was restored.**
+`lower_call_cleanup_arg7` ran after `lower_instr_call_emit`, but that function
+emits the pool restore itself. The nine restore pops therefore ran while the
+argument slot was still on the stack, so every saved register came back holding
+its neighbour's value and the caller's last live local was lost:
+
+```
+    call
+    mov  %rax,%r12
+    pop  %r11        <-- reads the pushed 7th argument
+    ...
+    pop  %rax        <-- reads one slot past the saved pool
+    add  $0x8,%rsp   <-- far too late
+```
+
+That is why a call with live values around it came back holding one of the
+caller's locals, and a call with nothing live happened to work. The cleanup now
+runs between the result capture and the pool restore.
+
+**(c) DCE did have a gap, and it did matter — but only once (a) was fixed.**
+With the argument being passed, the constant feeding it was still collected,
+because the DCE marking stopped at six. Adding the marking is what turned the
+remaining wrong answers into right ones.
+
+**Why the earlier "naive fix hangs" was a red herring.** It hangs, but not for
+the reason implied. `dce()` holds a 32KB `used` array and a dozen operand
+locals, and `codegen_call_inline` is larger still; adding a single local to
+either produces a compiler that hangs on *every* input, `hello.jda` included.
+Moving the same logic into a small helper function — `dce_mark_call_arg7`, next
+to the existing `dce_mark_syscall_extra` — compiles and works. The 7th argument
+here is carried in a global for the same reason. This is a compiler bug in its
+own right and is recorded as 1.12.
+
+Tests: `tests/conformance/stage1/pass/call_seven_args.jda` covers the bare call,
+the pressured call, a 7-argument call nested as another's 7th argument, and
+reads every caller local after the call. `tests/rejected/call_eight_args.jda`
+pins the `JDA-C001` rejection at eight.
+
+**Still open, same shape, different path.** Indirect calls (`OP_CALL_IND`, which
+is what `call_closure` lowers to) cap out at five real arguments, and
+`codegen_call_closure_inline` parses further arguments without storing them
+while still counting them. Worse, the lowering pops into `RDI, RSI, RDX, R8, R9`
+— **skipping RCX** — so the fourth argument lands in the fifth register:
+
+```jda
+let f4 = fn(a: i64, b: i64, c: i64, d: i64) -> i64 { ret n + a + b + c + d }
+call_closure(f4, 1, 2, 3, 4)    // 106, not 110 -- d is lost
+```
+
+Recorded here rather than fixed, because it is a different lowering path.
+
+### 1.12 One more local in a large function produces a compiler that hangs
+
+**Status: OPEN — reproduced repeatedly, worked around, not fixed.**
+
+Adding a single local variable to `dce()` or to `codegen_call_inline` yields a
+compiler that builds cleanly and then hangs on every input, including
+`examples/hello.jda`. Removing the local, or moving the same work into a small
+helper function, makes it compile and run correctly. Observed three times while
+fixing 1.8, in both directions — adding a *call* to a helper reduced pressure
+enough that the same function compiled again.
+
+Both functions are unusually large: `dce()` holds a 32KB `i32[8192]` array plus
+a dozen operand locals and a hundred-line marking chain.
+
+This is almost certainly the same underlying defect as 1.11 — the register
+allocator mishandling a function past some pressure threshold — but it presents
+as a hang rather than a wrong value, so it is recorded separately until one fix
+is shown to close both.
+
+**Consequence for anyone working in this compiler:** if an edit to a large
+function produces a compiler that hangs, suspect this before suspecting the
+logic of the edit. Put the new work in a helper function instead.
+
+### 1.13 Global initialisers are ignored; a global read before its declaration is 0
+
+**Status: OPEN — reproduced, not fixed.**
+
+Two related name-resolution defects, both silent.
+
+**Initialisers never run.** Every global starts at zero regardless of what it is
+declared with:
+
+```jda
+let g_a = -1
+let g_b = 7
+
+fn main() {
+    print("{g_a}\n")    // 0, not -1
+    print("{g_b}\n")    // 0, not 7
+}
+```
+
+The compiler's own source declares about a dozen globals as `-1`
+(`g_iter_exit_bb`, `g_promo_slot0`, ...). They are all actually 0 at startup,
+and the code works only because each is assigned before it is read.
+
+**A global declared after its use resolves to 0.** Not to the global — to the
+constant zero, with no diagnostic:
+
+```jda
+fn reader() -> i64 { ret g_late }
+fn writer(v: i64) { g_late = v }
+
+let g_late = -1
+
+fn main() {
+    writer(42)
+    print("{reader()}\n")   // 0
+}
+```
+
+The write lands on the real global; only reads that textually precede the
+declaration are wrong, so the two halves of a program disagree about what the
+name means. This cost an hour during 1.8: the fix looked correct and produced
+`itype = 0` until the declaration was moved above its first use.
+
+Reads of an undeclared name should be an error. Until they are, **declare
+globals at the top of the file**, with the others.
 
 ### 1.9 An unknown character silently truncates the function
 
@@ -624,9 +729,17 @@ which is why this was never caught.
 7. **3.2** — CI assertion on the global count.
 8. ~~**3.1**~~ — **done**, and it was a compiler bug rather than a platform one:
    a fused store took its displacement from an uninitialised field.
-9. **1.11 division** — the open Tier 1 item with the widest blast radius:
-   `x / (1 << n)` is silently wrong and nothing in the suite covers it.
-10. **1.8 / 1.9** — both diagnosed, both with naive fixes that break the world.
+9. ~~**1.8**~~ — **done**, and the diagnosis recorded for it was wrong: the
+   7th argument was discarded during parsing, and the stack slot was released
+   after the register pool had been restored. DCE was a third, smaller part.
+10. **1.12** — the widest blast radius of anything open: one extra local in a
+   large function yields a compiler that hangs on every input, so it silently
+   shapes how every other fix in this file has to be written. Likely the same
+   defect as **1.11**; fix them together.
+11. **1.13** — globals ignore their initialisers, and a global read above its
+   declaration resolves to 0 with no diagnostic. Cheap to detect, and it makes
+   otherwise-correct fixes look wrong.
+12. **1.9** — diagnosed; the naive fix takes the suite from 431 passing to 0.
 
 ## A note on the README
 
@@ -638,16 +751,3 @@ The gap between those claims and Tier 1 is the real adoption problem. A visitor
 who clones this and writes `let xs = [1, 2, 3]` gets a segfault, and every
 headline number becomes suspect at once. Fix Tier 1 and Tier 2 before doing
 anything to attract traffic — the first impression is only available once.
-
-
-
-
-
-
-
-Two more bugs found, not fixed
-
-Both around IDIV, documented as known-breakage 1.11 with workarounds noted at their use sites:
-
-- m / (1 << n) returns 0 (m / 64 is fine). Hoisting the divisor sometimes helps and sometimes gives a different wrong answer — looks like allocation, not lowering.
-- Several inline divisions in a loop that also stores through a pointer parameter corrupt the pointer and segfault. One division per iteration, or moving each into its own function, works.
