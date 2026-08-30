@@ -87,7 +87,25 @@ jobs:
           done
           echo "  (local: all five are 376fec8482b157cf402b7e55efa30983)"
           echo -n "  probe output: "; chmod +x /tmp/det1; timeout 10 /tmp/det1
+          # Five runs on one machine with one environment differ only by ASLR,
+          # so if the compiler is address-dependent, disabling randomisation
+          # makes it deterministic. setarch -R works natively; it is only under
+          # QEMU that it cannot set the personality.
+          echo "  --- same five, with ASLR disabled ---"
+          for i in 1 2 3 4 5; do
+            setarch $(uname -m) -R bootstrap/stage0/jda1 /tmp/np2.jda /tmp/noaslr$i >/dev/null 2>&1
+            echo "  noaslr run $i: $(sha256sum /tmp/noaslr$i | cut -c1-32)"
+          done
           exit 0
+
+      # If the compiler is address-dependent, the whole suite should pass with
+      # randomisation off. That is diagnostic, not a fix, but it would confirm
+      # the class and give a usable workaround while the real cause is found.
+      - name: Conformance with ASLR disabled
+        continue-on-error: true
+        run: |
+          ulimit -s unlimited
+          setarch $(uname -m) -R bash tools/run_tests.sh 2>&1 | grep -E '^  (PASS|FAIL|TOTAL): '
 
       - name: Probe allocation zeroing and exhaustion
         continue-on-error: true
