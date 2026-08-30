@@ -1,0 +1,38 @@
+// A struct field used directly as a comparison operand.
+//
+// Struct types are carried as sid + 1000, but the live postfix path passed that
+// straight to lookup_field_idx_flat, which matches the bare sid. The lookup
+// never matched, the access fell through to returning the struct's base
+// pointer, and the comparison compared an address:
+//
+//   149: 48 81 f9 05 00 00 00    cmp rcx,0x5     ; rcx is the struct base
+//
+// So `t.a == 5` was false and `t.a != 0` was true, silently taking the wrong
+// branch. Printing the field, and using it in arithmetic, were always correct,
+// which is what kept this hidden.
+struct T { a: i64 b: i64 }
+
+fn main() {
+    let t = T{ a: 5, b: 9 }
+    print("{t.a} {t.b}\n")
+
+    if t.a == 5 { print("a-eq ok\n") } else { print("a-eq BUG\n") }
+    if t.b == 9 { print("b-eq ok\n") } else { print("b-eq BUG\n") }
+    if 5 == t.a { print("rev ok\n") } else { print("rev BUG\n") }
+    if t.a < 100 { print("lt ok\n") } else { print("lt BUG\n") }
+
+    // Arithmetic on a field was always correct; keep it covered.
+    let s = t.a + 1
+    let m = t.a * 2
+    print("{s} {m}\n")
+
+    // A zeroed literal must compare equal to 0, which is the shape that made
+    // every `Instr{}` field look non-zero.
+    let z = T{}
+    if z.a == 0 { print("zero-eq ok\n") } else { print("zero-eq BUG\n") }
+    // The original symptom: a zero field comparing as non-zero, because the
+    // address was compared instead.
+    if z.a != 0 { print("zero-ne BUG\n") } else { print("zero-ne ok\n") }
+    // A non-zero field really is != 0.
+    if t.a != 0 { print("nz ok\n") } else { print("nz BUG\n") }
+}

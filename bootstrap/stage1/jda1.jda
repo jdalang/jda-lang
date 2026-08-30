@@ -12411,6 +12411,13 @@ fn live_codegen_postfix_rest(bb: i64, expr_id: i64, cur_stype: i64) -> i64 {
         expect(TOK_IDENT)
         let sid = cur_stype
         if sid < 0 { sid = (0 - sid) - 1 }
+        // Struct types are carried as sid + 1000; lookup_field_idx_flat matches
+        // g_field_owner, which is the bare sid. Without this the lookup never
+        // matched, the access fell through to returning the base pointer, and
+        // `if t.a == 5` compared the struct's address against 5 -- silently
+        // taking the wrong branch. The other copy of this path normalises the
+        // same way (see the lookup_field_idx_any site).
+        if sid >= 1000 and is_pointer_type(cur_stype) == 0 { sid = sid - 1000 }
         let fi = lookup_field_idx_flat(sid, g_src_buf_ptr, field_ss, field_sl)
         let fi_ok = 1
         if fi == -1 { fi_ok = 0 }

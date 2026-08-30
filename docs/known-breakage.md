@@ -19,8 +19,8 @@ docker run --rm --platform=linux/amd64 -v $(pwd):/jda -w /jda jda-build \
 
 ## Tier 1 — the compiler is silently wrong
 
-**Not clear.** Six are fixed; **1.7 is open** and was found on 2026-08-30
-while investigating 3.1. Note how the last two were found:
+**Clear as of 2026-08-30** — seven fixed. 1.7 was found while investigating
+3.1, which remains open and is a different bug. Note how the last two were found:
 not by reading source, but by running programs and checking *values*. 1.4 hid
 behind a clean compile, and 1.5 was actively protected by five passing tests
 that had recorded its wrong output. Only 1.6 announced itself.
@@ -62,41 +62,43 @@ Covered by `tests/conformance/stage1/pass/local_arrays.jda`, which segfaults on
 the previous compiler.
 
 
-### 1.7 A struct field used directly in a comparison compares the address
+### 1.7 A struct field used directly in a comparison compared the address ✅
 
-**Status: OPEN.** Found while investigating 3.1. Reproduces locally.
+**Status: FIXED.**
 
 ```jda
 struct T { a: i64 b: i64 }
-fn main() {
-    let t = T{ a: 5, b: 9 }
-    print("{t.a}\n")                      // 5 -- correct
-    let s = t.a + 1                        // 6 -- correct
-    if t.a == 5 { } else { }               // takes the ELSE branch
-}
+let t = T{ a: 5, b: 9 }
+print("{t.a}")        // 5    always was correct
+let s = t.a + 1       // 6    always was correct
+if t.a == 5 { }       // took the ELSE branch
 ```
 
-`t.a` prints correctly and is correct in arithmetic, but as a **comparison
-operand** it evaluates to the struct's base address rather than the field. The
-emitted code never loads:
+Struct types are carried as `sid + 1000`. The **live** postfix path passed that
+value straight to `lookup_field_idx_flat`, which matches `g_field_owner` — a
+bare sid. The lookup never matched, the access fell through to returning the
+struct's base pointer, and the comparison compared an address:
 
 ```
 149: 48 81 f9 05 00 00 00    cmp rcx,0x5     ; rcx is the struct base
 ```
 
-So `t.a == 5` is false, `t.a != 0` is true, and every comparison against a small
-constant takes the wrong branch — silently. Both fields fail, both operand
-orders fail (`5 == t.a` too, which bypasses the CMP-immediate peephole, so the
-missing load is upstream in the JIR rather than in the lowering). Assigning to a
-local first (`let v = t.a; if v == 5`) is correct and is the workaround.
+The other copy of this path already normalised correctly (the
+`lookup_field_idx_any` site); the live copy handled only the negative
+struct-array encoding and not the `+ 1000` one.
 
-This is worse than most of Tier 1: comparisons drive control flow, so a wrong
-answer here silently takes the wrong branch rather than producing one wrong
-value. Anything of the shape `if node.kind == X` is affected.
+Why it stayed hidden: printing a field and using it in arithmetic were always
+correct, because `let` compiles its right-hand side through
+`codegen_expr_inline` while `if` goes through `live_codegen_expr_inline`. Only
+the `if` path was affected — so `let c = t.a == 5` gave the right answer while
+`if t.a == 5` did not, which is a difference almost nobody would think to test.
 
-Not yet fixed. The likely area is field resolution losing the struct type for a
-comparison operand, so `lookup_field_idx_flat` misses and the postfix path
-returns the base pointer.
+This one drove **control flow**, so it silently took the wrong branch rather
+than producing one wrong value. Anything shaped like `if node.kind == X` was
+affected.
+
+Covered by `tests/conformance/stage1/pass/struct_field_compare.jda`, which fails
+on the previous compiler.
 
 ### 1.2 Tuple destructuring bound nothing ✅
 
@@ -339,37 +341,57 @@ port that is not built is already broken, it just has not been told yet.
 
 ### 3.1 Native x86-64 produces wrong code
 
-**Status: OPEN.** A contributing bug was fixed; the count did not move.
+**Status: OPEN.** Two real bugs were found and fixed along the way; neither was
+the cause. The count is 321/110 with both in.
 
 110 of 430 conformance tests fail on a stock x86-64 runner while all pass under
 `linux/amd64` emulation. The cause recorded here for months — programs that
-allocate producing no output — is **wrong**, and it sent every previous
-investigation at the runtime. 48 of the 110 never allocate.
+allocate producing no output — is **wrong**; 48 of the 110 never allocate.
 
-What is established, by evidence rather than reasoning:
+**Closed by evidence. Do not re-test these.**
 
-- Not the stack limit. 320/110 identically under `unlimited` and `8192`.
-- Not AVX-512 (the runner has `avx512f/bw/cd/dq/vl`), not 32-bit pointer
-  truncation, not the native address family, not `r15` as a clobbered heap
-  base, not asymmetric pool save/restore around syscalls.
-- **The compiler binary is byte-identical on both machines, but the binary it
-  produces is not** (`f064c959..` vs `273d42a6..`) from identical source and
-  identical paths, while being deterministic across repeated local runs, stack
-  limits and working directories. So this is a compiler bug, not a platform one.
-- Block-hashing that output narrowed it to 1 of 257 4KB blocks; byte-diffing
-  that block gave **two bytes** — the low half of a `disp32` in
-  `mov [base + idx*8 + disp], val`, emitted as 0 here and 518 there.
+- Not the stack limit: 320/110 identically under `unlimited` and `8192`.
+- Not missing AVX-512 (runner has `avx512f/bw/cd/dq/vl`), not 32-bit pointer
+  truncation, not the native address family (`MAP_FIXED` at the native `0x15..`
+  address round-trips), not `r15` as a clobbered heap base (it is vestigial —
+  nothing reads it), not asymmetric pool save/restore (all three call sites
+  disassemble balanced).
+- **Not unzeroed memory.** `allocs=40000 nonzero=0` on the runner: struct
+  literals are reliably zeroed there. The earlier claim in this file that they
+  were not came from 1.7 reading a struct's *address* instead of its field.
+- Not 1.7, though the compiler's own source has 174 instances of that pattern.
 
-`lea_fuse_store` was rewriting `STORE_MEM` into `STORE_MEM_SIB` without setting
-`imm`, which `lower_store_mem_sib` emits as that displacement. **That is fixed**
-— it is a real defect and had to go — but the native count stayed at 320/110, so
-it was a symptom rather than the cause.
+**Established.** The compiler binary is byte-identical on both machines
+(`b7bae529..`), and it is deterministic locally across repeated runs, stack
+limits and working directories — yet the binary it *produces* from identical
+source differs. So this is a compiler bug, not a platform one.
 
-The open question is what writes a non-zero value into a field that
-`copy_instr` copies from a zeroed `Instr{}`. That is the thread to pull: it
-implies something writes into instruction slots, or that struct literals are not
-reliably zeroed on that machine. Do not re-test the runtime hypotheses above;
-they are closed.
+Block-hashing the produced binary narrows it to **1 of 257** 4KB blocks, every
+time, and byte-diffing that block gives **exactly two bytes**, at the same
+offsets each time:
+
+| | local | runner |
+|---|---|---|
+| before the `imm` fix | `00 00` | `06 02` (518) |
+| after the `imm` fix | `00 00` | `02 02` (514) |
+
+Both are the `disp32` of `mov [base + idx*8 + disp], val` at file offset
+`0x14d`. The store's next instruction reads `[base + 0]`, which was never
+written — so the program reads 0, which is what `r=0` and `late_roundtrip=0`
+are.
+
+**The open question is sharp.** `lea_fuse_store` now sets `imm = 0` explicitly,
+and that is the only producer of `OP_STORE_MEM_SIB`. Locally the emitted `disp32`
+is 0. On the runner, running *the same compiler binary*, it is 514. So something
+between the fusion and `lower_store_mem_sib` writes `imm`, and does so
+differently on the two machines.
+
+Candidate writers of `imm` on an in-block instruction, to audit in order:
+`set_const_imm` (guarded on `op == OP_CONST`), the two inliner restore sites at
+`instrs[ti].imm = g_inline_tbl[k + 7]` and `[k + 8]` — note they use *different*
+table offsets for the same field — and `slp_emit_pair`. The method that found
+the first two bugs works and is cheap: block-hash, diff, dump the one block, name
+the bytes.
 
 ### 3.2 The pinned bootstrap seed nearly stopped building the compiler ✅
 
